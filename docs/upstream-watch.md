@@ -6,14 +6,26 @@ dat0 depends on several pre-1.0 / fast-moving upstream components. This document
 
 | Component | Repo | Pin policy | Why we watch closely |
 |---|---|---|---|
-| **gpui** | <https://github.com/zed-industries/zed> | Pinned to a known-good commit hash. Bump deliberately. | Pre-1.0; Zed monorepo evolves rapidly. Used as core UI runtime. |
-| **gpui-component** | <https://github.com/longbridge/gpui-component> | Pinned to a known-good commit hash. | Pre-1.0; single-maintainer org (Longbridge). Used for Table, code editor, command palette, charts, themes. |
+| **gpui** | <https://github.com/zed-industries/zed> (published to crates.io as of v0.2.0, Oct 2025) | Pinned to an exact crates.io version (`=x.y.z`); also record the publish-commit SHA in `docs/internal/gpui-api-notes.md` for traceability. Bump deliberately. | Pre-1.0; Zed monorepo evolves rapidly. Used as core UI runtime. |
+| **gpui-component** | <https://github.com/longbridge/gpui-component> | Pinned to a tagged-release commit hash. | Pre-1.0; single-maintainer org (Longbridge). Used for Table, code editor, command palette, charts, themes. |
 | **duckdb-rs** | <https://github.com/duckdb/duckdb-rs> | Semver minor pin. | Streaming Arrow surface (`stream_arrow`) has known rough edges (issue #418). Track fixes. |
 | **DuckDB** (the engine) | <https://github.com/duckdb/duckdb> | Pin to a tested patch version; document upgrade impact. | Engine upgrades may break workspace DB compatibility. See spec §6.6 (migration scaffolding). |
 | **sqlite_scanner** (DuckDB extension) | <https://github.com/duckdb/sqlite_scanner> | Bundled with DuckDB version. | Used for `.sqlite` / `.db` ingest. |
 | **Sentry Rust SDK** | <https://github.com/getsentry/sentry-rust> | Semver minor pin. | Used as the GlitchTip-compatible error reporting client. |
 | **Sparkle** (macOS) | <https://github.com/sparkle-project/Sparkle> | Pin a stable release. | Auto-update path. |
 | **AppImageUpdate** (Linux) | <https://github.com/AppImage/AppImageUpdate> | Bundled binary subprocess. | Auto-update path. Subprocess only — see NOTICE.md. |
+
+## Current verified pins
+
+Verified by the P1.T0 spike on **2026-04-26**. Full API-surface notes live in [`docs/internal/gpui-api-notes.md`](internal/gpui-api-notes.md). When bumping, update both files.
+
+| Component | Version / Tag | SHA (full 40-char) | Verified | Notes |
+|---|---|---|---|---|
+| `gpui-component` (longbridge) | `v0.5.1` | `0f0ab35233212f8f3277028995caf0c41e13ee6c` | 2026-04-26 | Tagged release. Fixes macOS `core-text` build failure present in v0.5.0. |
+| `gpui` (Zed, via crates.io) | `0.2.2` | `08d95ad9d31f616a43dacda8416568d658dca6ae` | 2026-04-26 | Publish commit in `zed-industries/zed` ("chore: Bump gpui to 0.2.2 (#40856)", 2025-10-22). Consumed via `cargo` from crates.io, not as a git dep. |
+| `gpui-macros` (Zed, via crates.io) | `0.2.2` | (same as above) | 2026-04-26 | Companion crate; published from the same Zed commit. |
+
+> **Mechanism change (since planning snapshot):** `gpui-component` v0.5.1 declares `gpui = "0.2.2"` in its workspace `Cargo.toml`, consuming `gpui` as a published crates.io crate rather than as a git dependency. The pin policy still applies, but dat0 should pin via exact-version semver (`gpui = "=0.2.2"`) plus `Cargo.lock`, and record the publish-commit SHA in `docs/internal/gpui-api-notes.md` for audit.
 
 ## Cadence
 
