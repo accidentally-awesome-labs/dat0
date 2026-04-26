@@ -1,0 +1,57 @@
+# Rust / Cargo
+/target/
+**/*.rs.bk
+*.pdb
+
+# Cargo.lock is committed for binaries (dat0 is a binary application)
+
+# IDEs / editors
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS metadata
+.DS_Store
+Thumbs.db
+
+# Build artifacts (release packaging)
+*.dmg
+*.AppImage
+*.zip
+
+# Local environment
+.env
+.env.local
+.env.*.local
+
+# Secrets / signing (never commit)
+*.pem
+*.p12
+*.cer
+.sentry-cli.toml
+ed25519_private.key
+
+# Logs
+*.log
+
+# Test artifacts
+/test-output/
+**/__snapshots__/.tmp/
+
+# Performance bench scratch
+/criterion/
+flamegraph.svg
+
+# Python (for any auxiliary tooling)
+__pycache__/
+*.pyc
+.venv/
+
+# Node (for site repo if vendored locally)
+node_modules/
+.next/
+
+# macOS notarization scratch
+notarization-output.json
