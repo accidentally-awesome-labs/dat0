@@ -10,6 +10,23 @@
 
 ---
 
+## Risks & Caveats
+
+This is a planning artifact for a phase that depends heavily on **pre-1.0** dependencies (`gpui`, `gpui-component`). API stability is not guaranteed across the development lifetime of this plan. The plan's authoring assumes a snapshot of these crates' APIs at planning time; the executor must verify against the actual pinned commits and update task snippets where they drift.
+
+**Execution rule:** Tasks T2 (GPUI window), T14 (macOS menu), T16 (Settings UI panel), and T17 (Render impls in error_ux) ALL touch `gpui` / `gpui-component` directly. Before executing any of these, complete **Task T0: GPUI Pre-Phase API Spike**. The spike produces a `docs/internal/gpui-api-notes.md` document recording the actual import paths, type signatures, and macro forms for the pinned commits. T2/T14/T16/T17 then explicitly cross-reference that document instead of relying on the snippets in this plan.
+
+If any code snippet in T2/T14/T16/T17 contradicts what T0 produces, the T0 finding wins. Update the snippet inline as part of executing the affected task; commit the snippet correction with the task work.
+
+**Spec exit-criteria reconciliation (P1):** Three spec exit items are partially de-scoped relative to the spec body. They remain v1 commitments but ship in subsequent phases as noted:
+- "Sparkle 'Check for Updates' makes a network call to test appcast" — P1 ships scaffolding + an HTTP GET smoke; the Objective-C `SUUpdater` bridge ships P10. (Plan T15 implements the HTTP smoke explicitly.)
+- "Settings panel opens; changes persist across launches" — P1 ships persistence (T7/T8/T9/T21). The editable author-name + author-email widgets ship P3 alongside form-input primitives that depend on gpui-component's Input widget. P1 displays current values read-only.
+- "Theme switch (default ↔ alternate) works without restart" — P1 ships theme load + selection schema. Live application of theme changes through the running window ships P3 when more UI surfaces consume the active theme. In P1, a theme change is observable only on next launch.
+
+These deferrals are honest and recorded; the user has approved them as part of the planning review on 2026-04-26.
+
+---
+
 ## Prerequisites (from P0)
 
 Before starting Task 1, verify P0 exit criteria are met (see [`2026-04-26-dat0-p0-runbook.md`](2026-04-26-dat0-p0-runbook.md)). Specifically:
@@ -127,6 +144,69 @@ dat0/
 
 ## Tasks
 
+### Task 0: GPUI Pre-Phase API spike
+
+**Files:**
+- Create: `docs/internal/gpui-api-notes.md`
+
+This task is **research, not code**. Output is a verified-imports document. No commits to source code; only one commit to the documentation file.
+
+- [ ] **Step 0.1: Identify pinned commits**
+
+Visit `https://github.com/longbridge/gpui-component`. Find the latest tagged release commit. Record the SHA. Note its `Cargo.toml` — it pins `gpui` to a specific Zed commit. Record that SHA as well.
+
+Open `docs/internal/gpui-api-notes.md`. Record:
+- `gpui-component` SHA + tag + date pinned
+- `gpui` (Zed) SHA + tag + date pinned
+
+- [ ] **Step 0.2: Verify the GPUI window-open API surface**
+
+In the pinned `gpui` commit, locate `Application`, `App`, `WindowOptions`, `WindowBounds`, `Bounds`, `TitlebarOptions`, `Render`, `Window`, `Context`, `IntoElement`, `div()`. Record:
+- Module paths (`gpui::Application`, `gpui::WindowOptions`, etc.)
+- The exact signature of `Application::run<F: FnOnce(&mut App)>` or current equivalent
+- The exact signature of `cx.open_window<V, F>(opts, build) -> Result<...>`
+- Whether `Render::render` takes `(&mut self, &mut Window, &mut Context<Self>) -> impl IntoElement` or has changed
+
+Reference: read at least one Zed-internal example (e.g., `crates/gpui/examples/hello_world.rs` or similar) and copy the actual closure signature into the notes.
+
+- [ ] **Step 0.3: Verify the GPUI menu API**
+
+In the pinned `gpui` commit, locate `Menu`, `MenuItem`, `MenuItem::action`, the `actions!` macro, and `App::set_menus`. Record:
+- The exact `Menu` struct fields (likely `name: SharedString`, `items: Vec<MenuItem>`)
+- The `MenuItem::action` signature
+- How the `actions!` macro is invoked and what type it generates
+- Where `set_menus` is called — inside the `Application::run` closure, or via `cx.activate_menu(...)`, or other
+
+- [ ] **Step 0.4: Verify gpui-component Tailwind helpers**
+
+In the pinned `gpui-component` commit, locate the styled-extension trait that provides `flex`, `flex_row`, `flex_col`, `flex_1`, `w_64`, `child`, `children`, `when_some`. Record:
+- The trait name (likely `gpui_component::StyledExt` or `gpui::Styled`)
+- The required `use` statements to bring these into scope
+- Confirm `child(impl IntoElement)` accepts `String`/`&str` directly, or requires `SharedString::from(...)` wrapping
+
+- [ ] **Step 0.5: Verify the Settings UI section pattern**
+
+Look for any settings-panel patterns inside Zed's source (`crates/zed/src/zed.rs`, `settings_ui` if it exists, or similar). Record an example pattern: how does Zed compose a panel with sidebar + content? Note the actual API surface.
+
+- [ ] **Step 0.6: Note any gotchas**
+
+Record anything that surprised you — for example, a method renamed since the planning snapshot, a feature flag required, a build-script step needed, or a known issue tracked upstream.
+
+- [ ] **Step 0.7: Update upstream-watch.md with the verified pins**
+
+In `docs/upstream-watch.md`, replace the placeholder rows for `gpui` and `gpui-component` with the actual SHAs + tag + verification date. (T23 later records this; T0 establishes it.)
+
+- [ ] **Step 0.8: Commit the API notes**
+
+```bash
+git add docs/internal/gpui-api-notes.md docs/upstream-watch.md
+git commit -s -m "docs: GPUI API verification spike for P1 (P1.T0)"
+```
+
+**On exit, all subsequent GPUI-touching tasks (T2, T14, T16, T17) refer to `gpui-api-notes.md` for canonical import paths and signatures. Snippets in this plan that contradict the notes are corrected as those tasks execute.**
+
+---
+
 ### Task 1: Initialize Cargo workspace
 
 **Files:**
@@ -144,6 +224,8 @@ dat0/
 resolver = "2"
 members = [
     "crates/dat0-app",
+    "crates/dat0-engine",
+    "crates/dat0-format",
     "crates/dat0-i18n",
     "crates/dat0-keychain",
 ]
@@ -259,12 +341,13 @@ fn main() {
 }
 ```
 
-- [ ] **Step 1.7: Verify the workspace builds**
+- [ ] **Step 1.7: (skipped — see 1.9; stubs must be created before workspace builds)**
 
-Run: `cargo build`
-Expected: builds with no errors. Workspace compiles even though `dat0-i18n` and `dat0-keychain` don't exist yet — they're listed in `[workspace] members` but cargo will fail. Fix by also creating those stubs in Step 1.8.
+This step number is preserved for index continuity. Move directly to Step 1.8 to create the stub crates, then to 1.9 to verify the workspace builds.
 
-- [ ] **Step 1.8: Create stub `dat0-i18n` and `dat0-keychain` crates**
+- [ ] **Step 1.8: Create stub crates referenced in the workspace `members` array**
+
+The workspace declares five `members`: `dat0-app` (created in 1.5), plus four more that need stubs so `cargo` can resolve the workspace.
 
 `crates/dat0-i18n/Cargo.toml`:
 ```toml
@@ -279,7 +362,7 @@ path = "src/lib.rs"
 
 `crates/dat0-i18n/src/lib.rs`:
 ```rust
-//! dat0 internationalization helpers (stub; real API lands in Task 6+).
+//! dat0 internationalization helpers (stub; real API lands in Task 5).
 ```
 
 `crates/dat0-keychain/Cargo.toml`:
@@ -295,7 +378,39 @@ path = "src/lib.rs"
 
 `crates/dat0-keychain/src/lib.rs`:
 ```rust
-//! dat0 cross-platform keychain (stub; real API lands in Task 23+).
+//! dat0 cross-platform keychain (stub; real API lands in Task 12).
+```
+
+`crates/dat0-engine/Cargo.toml`:
+```toml
+[package]
+name = "dat0-engine"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+[lib]
+path = "src/lib.rs"
+```
+
+`crates/dat0-engine/src/lib.rs`:
+```rust
+//! dat0 query engine (stub; real API lands in P2).
+```
+
+`crates/dat0-format/Cargo.toml`:
+```toml
+[package]
+name = "dat0-format"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+[lib]
+path = "src/lib.rs"
+```
+
+`crates/dat0-format/src/lib.rs`:
+```rust
+//! dat0 .dat0 package format reader/writer (stub; real API lands in P8b).
 ```
 
 - [ ] **Step 1.9: Verify the workspace builds and runs**
@@ -322,14 +437,18 @@ git commit -s -m "chore: initialize Cargo workspace skeleton (P1.T1)"
 
 - [ ] **Step 2.1: Add GPUI to workspace dependencies**
 
-In root `Cargo.toml` `[workspace.dependencies]`, add:
+**Prerequisite:** T0 must be complete. Use the SHAs recorded in `docs/internal/gpui-api-notes.md` from T0.
+
+In root `Cargo.toml` `[workspace.dependencies]`, add (substitute the SHAs from T0):
 
 ```toml
-gpui = { git = "https://github.com/zed-industries/zed", rev = "<KNOWN_GOOD_COMMIT>" }
-gpui-component = { git = "https://github.com/longbridge/gpui-component", rev = "<KNOWN_GOOD_COMMIT>" }
+# Replace ${GPUI_SHA} and ${GPUI_COMPONENT_SHA} with the values recorded in
+# docs/internal/gpui-api-notes.md by Task T0.
+gpui = { git = "https://github.com/zed-industries/zed", rev = "${GPUI_SHA}" }
+gpui-component = { git = "https://github.com/longbridge/gpui-component", rev = "${GPUI_COMPONENT_SHA}" }
 ```
 
-Replace `<KNOWN_GOOD_COMMIT>` with the SHA pinned in the repo. To find it: clone gpui-component, check the latest tagged release commit; for gpui, use the commit referenced by gpui-component's `Cargo.toml`. Document both pins in `docs/upstream-watch.md`.
+Both pins are documented in `docs/upstream-watch.md` (T0 Step 0.7).
 
 - [ ] **Step 2.2: Add gpui to `dat0-app/Cargo.toml`**
 
@@ -403,7 +522,7 @@ impl gpui::Render for EmptyView {
 }
 ```
 
-> **Note:** GPUI is pre-1.0; specific imports (`Bounds`, `WindowBounds`, `WindowOptions`, etc.) may have moved. Match the imports the pinned commit uses by reading `gpui::prelude` and the crate's own examples. Update the snippet above if signatures differ.
+> **Authoritative reference for this snippet:** `docs/internal/gpui-api-notes.md` from T0. The snippet above is illustrative based on a planning-time snapshot. If T0 documented different imports, signature shapes, or method names for the pinned commit, **use the T0-verified versions** and commit the corrected snippet alongside this task's work. Examples Zed itself ships (under `crates/gpui/examples/`) are the canonical reference for any contradiction.
 
 - [ ] **Step 2.6: Update `main.rs` to call `run_app`**
 
@@ -763,7 +882,8 @@ while IFS= read -r line; do
     BAD=$((BAD + 1))
 done < <(grep -rEn '\.into\(\)|\.to_string\(\)' crates/dat0-app/src/ 2>/dev/null || true)
 
-# This is a soft-fail in P1; tighten in subsequent phases.
+# P1 mode: soft-fail (warn-only). Once UI grows enough to hand-curate the
+# whitelist, change to `exit $((BAD > 0))` to gate merges.
 echo "i18n-check: $BAD candidate(s) flagged"
 exit 0
 ```
@@ -1080,7 +1200,10 @@ impl SettingsWatcher {
     where
         F: Fn(Settings) + Send + 'static,
     {
-        let store = SettingsStore::with_path(path.clone());
+        // Take an explicit clone for the watcher subscription so the closure can own
+        // its own reference without consuming the original.
+        let watch_path = path.clone();
+        let store = SettingsStore::with_path(path);
         let mut watcher = notify::recommended_watcher(move |res: notify::Result<notify::Event>| {
             match res {
                 Ok(event) => {
@@ -1093,7 +1216,7 @@ impl SettingsWatcher {
                 Err(e) => tracing::warn!(?e, "settings watcher error"),
             }
         })?;
-        watcher.watch(&path, RecursiveMode::NonRecursive)?;
+        watcher.watch(&watch_path, RecursiveMode::NonRecursive)?;
         Ok(Self { _watcher: watcher })
     }
 }
@@ -1132,9 +1255,65 @@ git commit -s -m "feat: Settings file watcher (P1.T9)"
 - Create: `crates/dat0-app/src/theme/builtins/light.json`
 - Create: `crates/dat0-app/src/theme/builtins/high-contrast.json`
 
-- [ ] **Step 10.1: Vendor a Zed dark theme JSON as the seed**
+- [ ] **Step 10.1: Author the three built-in theme JSONs**
 
-Download a current Zed theme JSON from the Zed source (https://github.com/zed-industries/zed → assets/themes/) — pick "One Dark" or similar. Save to `crates/dat0-app/src/theme/builtins/dark.json`. Trim to the fields we use; full Zed schema is ~100 fields, dat0 uses a subset (background, foreground, accent, error, success, etc.).
+The dat0 v1 theme schema is a subset of Zed's. Author exactly these three files with the contents below (tweak palette later for visual identity, but ship valid JSON now).
+
+`crates/dat0-app/src/theme/builtins/dark.json`:
+
+```json
+{
+  "name": "dark",
+  "appearance": "dark",
+  "style": {
+    "background": "#0e1116",
+    "foreground": "#c9d1d9",
+    "border": "#30363d",
+    "accent": "#58a6ff",
+    "error": "#f85149",
+    "success": "#3fb950",
+    "warning": "#d29922"
+  }
+}
+```
+
+`crates/dat0-app/src/theme/builtins/light.json`:
+
+```json
+{
+  "name": "light",
+  "appearance": "light",
+  "style": {
+    "background": "#ffffff",
+    "foreground": "#1f2328",
+    "border": "#d0d7de",
+    "accent": "#0969da",
+    "error": "#cf222e",
+    "success": "#1a7f37",
+    "warning": "#9a6700"
+  }
+}
+```
+
+`crates/dat0-app/src/theme/builtins/high-contrast.json`:
+
+```json
+{
+  "name": "high-contrast",
+  "appearance": "dark",
+  "style": {
+    "background": "#000000",
+    "foreground": "#ffffff",
+    "border": "#ffffff",
+    "accent": "#ffff00",
+    "error": "#ff0000",
+    "success": "#00ff00",
+    "warning": "#ffaa00"
+  }
+}
+```
+
+Final theme palettes (matching brand identity from spec §8.9 — "stone, layers, distillation") will be tuned in P11 alongside brand asset finalization. P1 ships valid JSON conforming to the schema.
 
 - [ ] **Step 10.2: Failing test**
 
@@ -1230,9 +1409,7 @@ impl Theme {
 }
 ```
 
-Add `pub mod theme;` to `lib.rs`.
-
-Stub `light.json` and `high-contrast.json` similarly to `dark.json`.
+Add `pub mod theme;` to `lib.rs`. The three JSON files were authored in Step 10.1.
 
 - [ ] **Step 10.5: Run, expect pass**
 
@@ -1645,6 +1822,17 @@ fn redact_text(s: &str) -> String {
 
 Add `regex = "1"` to `dat0-app` deps.
 
+**Before writing telemetry code: ensure `.cargo/config.toml` exists** — without it, `option_env!` returns `None` at compile but `env!` would fail. We use `option_env!` plus a sane build-time fallback so local development doesn't require setting the env var. CI sets `DAT0_GLITCHTIP_DSN_PUBLIC` from the secret.
+
+Create `.cargo/config.toml` (at repo root):
+
+```toml
+[env]
+# Local-development fallback. CI overrides via the GLITCHTIP_DSN_PUBLIC secret.
+DAT0_GLITCHTIP_DSN_PUBLIC = "https://stub@glitchtip.invalid/1"
+DAT0_SPARKLE_APPCAST_URL = "https://dat0.dev/appcast.xml"
+```
+
 `crates/dat0-app/src/telemetry/mod.rs`:
 
 ```rust
@@ -1653,7 +1841,9 @@ pub mod redaction;
 use anyhow::Result;
 use sentry::ClientOptions;
 
-const SENTRY_DSN_PUBLIC: &str = env!("DAT0_GLITCHTIP_DSN_PUBLIC", "DAT0_GLITCHTIP_DSN_PUBLIC must be set at build time");
+/// DSN baked at build time. CI sets `DAT0_GLITCHTIP_DSN_PUBLIC` from the
+/// `GLITCHTIP_DSN_PUBLIC` secret; local builds use the stub from `.cargo/config.toml`.
+const SENTRY_DSN_PUBLIC: &str = env!("DAT0_GLITCHTIP_DSN_PUBLIC");
 
 pub struct Telemetry {
     _guard: Option<sentry::ClientInitGuard>,
@@ -1665,6 +1855,9 @@ impl Telemetry {
             tracing::info!("telemetry submission disabled (opt-in off)");
             return Ok(Self { _guard: None });
         }
+        // sentry's BeforeCallback type is version-dependent. As of sentry 0.36,
+        // it expects `Arc<dyn Fn(...) -> Option<Event<'static>> + Send + Sync>`.
+        // If a future bump breaks this, swap Arc<-->Box per the crate's BeforeCallback.
         let opts = ClientOptions {
             dsn: Some(SENTRY_DSN_PUBLIC.parse()?),
             release: Some(env!("CARGO_PKG_VERSION").into()),
@@ -1679,12 +1872,12 @@ impl Telemetry {
 
 Add `pub mod telemetry;` to `lib.rs`.
 
-> **Note:** the `env!()` for the DSN requires CI to set `DAT0_GLITCHTIP_DSN_PUBLIC` at build time. Local builds can use a stub value via `.cargo/config.toml`. Document in README.
+> **Note (verify against pinned crate):** the `before_send` callback type in sentry 0.36 may be `Arc<...>` or `Box<...>`. Check the actual `sentry::ClientOptions::before_send` type — if `Box`, change `std::sync::Arc::new` to `Box::new`. Test compilation before declaring this step done.
 
 - [ ] **Step 13.4: Run, expect pass**
 
-Run: `DAT0_GLITCHTIP_DSN_PUBLIC=https://foo@stub.invalid/1 cargo test -p dat0-app --test telemetry`
-Expected: PASS.
+Run: `cargo test -p dat0-app --test telemetry`
+Expected: PASS. (`.cargo/config.toml` provides `DAT0_GLITCHTIP_DSN_PUBLIC` for the build; no per-invocation env var needed.)
 
 - [ ] **Step 13.5: Commit**
 
@@ -1699,7 +1892,77 @@ git commit -s -m "feat: Sentry telemetry with before_send redaction (P1.T13)"
 
 **Files:**
 - Create: `crates/dat0-app/src/menu_macos.rs`
+- Create: `crates/dat0-app/tests/menu.rs`
 - Modify: `crates/dat0-app/src/window.rs`
+- Modify: `crates/dat0-i18n/src/strings/en.json`
+
+- [ ] **Step 14.0: Add menu strings to `en.json` first**
+
+(i18n keys must exist before the menu code references them, otherwise `t()` returns the literal key string and the menu reads gibberish.)
+
+Append to `crates/dat0-i18n/src/strings/en.json`:
+
+```json
+{
+  "menu.file": "File",
+  "menu.file.new_window": "New Window",
+  "menu.file.open_file": "Open File…",
+  "menu.file.open_workspace": "Open Workspace…",
+  "menu.file.open_package": "Open .dat0 Package…",
+  "menu.file.close": "Close Window",
+  "menu.file.quit": "Quit dat0",
+
+  "menu.edit": "Edit",
+  "menu.edit.undo": "Undo",
+  "menu.edit.redo": "Redo",
+  "menu.edit.cut": "Cut",
+  "menu.edit.copy": "Copy",
+  "menu.edit.paste": "Paste",
+
+  "menu.view": "View",
+  "menu.view.command_palette": "Command Palette…",
+  "menu.view.settings": "Settings…",
+
+  "menu.window": "Window",
+  "menu.window.minimize": "Minimize",
+  "menu.window.zoom": "Zoom",
+
+  "menu.help": "Help",
+  "menu.help.about": "About dat0",
+  "menu.help.docs": "Documentation",
+  "menu.help.discord": "Join Discord"
+}
+```
+
+- [ ] **Step 14.0b: Failing test — menu shape and i18n resolution**
+
+Create `crates/dat0-app/tests/menu.rs`:
+
+```rust
+#[cfg(target_os = "macos")]
+#[test]
+fn menu_keys_resolve_to_non_key_strings() {
+    // The menu module exposes the i18n keys it uses. Each must resolve
+    // to a different string than the key itself (otherwise i18n is broken).
+    let keys = dat0_app::menu_macos::menu_i18n_keys();
+    assert!(keys.len() >= 5, "expected at least 5 top-level menu keys");
+    for key in keys {
+        let resolved = dat0_i18n::t(key);
+        assert_ne!(resolved, key, "key {key} did not resolve");
+    }
+}
+
+#[cfg(not(target_os = "macos"))]
+#[test]
+fn menu_module_is_noop() {
+    // On non-macOS, build_menus returns an empty vec; this just verifies the
+    // module compiles via lib.rs.
+    let _ = dat0_app::menu_macos::menu_i18n_keys();
+}
+```
+
+Run: `cargo test -p dat0-app --test menu`
+Expected: fails — `menu_macos::menu_i18n_keys` not defined.
 
 - [ ] **Step 14.1: Implement menu structure**
 
@@ -1770,59 +2033,54 @@ gpui::actions!(dat0_menu, [
     Minimize, Zoom,
     ShowAbout, OpenDocs, OpenDiscord,
 ]);
-```
 
-- [ ] **Step 14.2: Add menu strings to `en.json`**
-
-Append to `crates/dat0-i18n/src/strings/en.json`:
-
-```json
-{
-  "app.name": "dat0",
-  "app.tagline": "local-first data workbench",
-
-  "menu.file": "File",
-  "menu.file.new_window": "New Window",
-  "menu.file.open_file": "Open File…",
-  "menu.file.open_workspace": "Open Workspace…",
-  "menu.file.open_package": "Open .dat0 Package…",
-  "menu.file.close": "Close Window",
-  "menu.file.quit": "Quit dat0",
-
-  "menu.edit": "Edit",
-  "menu.edit.undo": "Undo",
-  "menu.edit.redo": "Redo",
-  "menu.edit.cut": "Cut",
-  "menu.edit.copy": "Copy",
-  "menu.edit.paste": "Paste",
-
-  "menu.view": "View",
-  "menu.view.command_palette": "Command Palette…",
-  "menu.view.settings": "Settings…",
-
-  "menu.window": "Window",
-  "menu.window.minimize": "Minimize",
-  "menu.window.zoom": "Zoom",
-
-  "menu.help": "Help",
-  "menu.help.about": "About dat0",
-  "menu.help.docs": "Documentation",
-  "menu.help.discord": "Join Discord"
+/// Returns the top-level i18n keys this menu uses, for tests + audits.
+pub fn menu_i18n_keys() -> &'static [&'static str] {
+    &[
+        "menu.file", "menu.edit", "menu.view", "menu.window", "menu.help",
+    ]
 }
 ```
 
+> **Authoritative reference:** `docs/internal/gpui-api-notes.md` from T0. The `gpui::Menu` / `MenuItem::action` / `actions!` macro signatures shown here may differ from the pinned commit; if so, update from the T0 notes.
+
+- [ ] **Step 14.2: Run the menu test, expect pass**
+
+Run: `cargo test -p dat0-app --test menu`
+Expected: PASS.
+
 - [ ] **Step 14.3: Wire menu into the GPUI app**
 
-In `crates/dat0-app/src/window.rs`, before `run()`, set the menu:
+In `crates/dat0-app/src/window.rs`, **inside the `Application::run` closure** (not before it), call `cx.set_menus(...)`. Update the run_app body:
 
 ```rust
-#[cfg(target_os = "macos")]
-{
-    cx.set_menus(crate::menu_macos::build_menus(cx));
+pub fn run_app() -> Result<()> {
+    Application::new().run(|cx: &mut App| {
+        #[cfg(target_os = "macos")]
+        cx.set_menus(crate::menu_macos::build_menus(cx));
+
+        let bounds = Bounds::centered(None, size(px(1200.), px(800.)), cx);
+        cx.open_window(
+            WindowOptions {
+                window_bounds: Some(WindowBounds::Windowed(bounds)),
+                titlebar: Some(gpui::TitlebarOptions {
+                    title: Some(t("app.name").into()),
+                    ..Default::default()
+                }),
+                ..Default::default()
+            },
+            |_window, cx| cx.new(|_| EmptyView),
+        )
+        .expect("open window");
+        cx.activate(true);
+    });
+    Ok(())
 }
 ```
 
 Add `pub mod menu_macos;` to `lib.rs`.
+
+> **Authoritative reference:** `docs/internal/gpui-api-notes.md` from T0 — verify `App::set_menus` is the correct method name and that calling it inside the run closure is the documented pattern.
 
 - [ ] **Step 14.4: Run on macOS, verify menu bar**
 
@@ -1845,15 +2103,67 @@ git commit -s -m "feat: macOS native menu bar (P1.T14)"
 - Create: `crates/dat0-app/src/updater/sparkle.rs`
 - Create: `build.rs` for sparkle public key embedding
 
-- [ ] **Step 15.1: Add Sparkle Rust binding**
+- [ ] **Step 15.1: Add deps**
 
-Sparkle is an Objective-C framework. Bridge via `objc` and `cocoa` crates. Add to `dat0-app/Cargo.toml`:
+Add to `dat0-app/Cargo.toml` `[dependencies]`:
+
+```toml
+ureq = { version = "2", default-features = false, features = ["tls"] }
+```
+
+For future Objective-C bridge (P10), add macOS-specific deps now so the cfg-gated module compiles:
 
 ```toml
 [target.'cfg(target_os = "macos")'.dependencies]
 objc = "0.2"
 cocoa = "0.25"
 ```
+
+- [ ] **Step 15.1b: Failing test — appcast smoke + version**
+
+Create `crates/dat0-app/tests/updater.rs`:
+
+```rust
+use dat0_app::updater::Updater;
+
+#[cfg(target_os = "macos")]
+#[test]
+fn sparkle_reports_crate_version() {
+    use dat0_app::updater::SparkleUpdater;
+    let u = SparkleUpdater::new().unwrap();
+    assert_eq!(u.current_version(), env!("CARGO_PKG_VERSION"));
+}
+
+#[cfg(target_os = "linux")]
+#[test]
+fn appimage_reports_crate_version() {
+    use dat0_app::updater::AppImageUpdater;
+    let u = AppImageUpdater::new().unwrap();
+    assert_eq!(u.current_version(), env!("CARGO_PKG_VERSION"));
+}
+```
+
+Run: `cargo test -p dat0-app --test updater`
+Expected: fails with "no module `updater`".
+
+- [ ] **Step 15.2a: Place the Sparkle public key inside the app crate**
+
+P0 generated the EdDSA key pair and stored the public key at `docs/security/sparkle-public-key.txt` (P0 Step 6.4). Copy it into the app crate so `include_str!` can find it relative to the crate root:
+
+```bash
+mkdir -p crates/dat0-app/assets
+cp docs/security/sparkle-public-key.txt crates/dat0-app/assets/sparkle-public-key.txt
+```
+
+If P0's public key file does not yet exist (e.g., key generation deferred), author a placeholder file with a comment:
+
+```
+# Placeholder; replace with the EdDSA public key generated in P0 Step 6.1.
+# Format: base64-encoded Ed25519 public key (32 bytes).
+PLACEHOLDER_REPLACE_BEFORE_RELEASE
+```
+
+Sparkle will refuse updates with a placeholder; that is intentional until a real key is in place.
 
 - [ ] **Step 15.2: Write the Sparkle bridge stub**
 
@@ -1898,8 +2208,8 @@ pub struct SparkleUpdater {
 impl SparkleUpdater {
     pub fn new() -> Result<Self> {
         Ok(Self {
-            appcast_url: env!("DAT0_SPARKLE_APPCAST_URL", "appcast URL").into(),
-            public_key: include_str!("../../../../docs/security/sparkle-public-key.txt").trim().into(),
+            appcast_url: env!("DAT0_SPARKLE_APPCAST_URL").into(),
+            public_key: include_str!("../../assets/sparkle-public-key.txt").trim().into(),
             version: env!("CARGO_PKG_VERSION").into(),
         })
     }
@@ -1907,9 +2217,17 @@ impl SparkleUpdater {
 
 impl Updater for SparkleUpdater {
     fn check_for_updates(&self) -> Result<()> {
-        // P1: stub — real impl bridges to SUUpdater via Objective-C.
-        // The bridge is non-trivial and lands in P10 alongside notarization.
-        tracing::info!(appcast = %self.appcast_url, version = %self.version, "sparkle: check_for_updates (stub)");
+        // P1: HTTP GET smoke against the appcast URL. Real Objective-C SUUpdater
+        // bridge ships P10. The smoke satisfies the spec exit criterion ("makes
+        // a network call to test appcast") without the cross-language bridge.
+        tracing::info!(appcast = %self.appcast_url, version = %self.version, "sparkle: smoke GET");
+        let response = ureq::get(&self.appcast_url)
+            .timeout(std::time::Duration::from_secs(10))
+            .call();
+        match response {
+            Ok(r) => tracing::info!(status = r.status(), "appcast reachable"),
+            Err(e) => tracing::warn!(?e, "appcast smoke failed"),
+        }
         Ok(())
     }
 
@@ -1949,22 +2267,14 @@ impl Updater for AppImageUpdater {
 
 Add `pub mod updater;` to `lib.rs`.
 
-- [ ] **Step 15.3: Wire env vars**
+- [ ] **Step 15.3: Verify env vars are set**
 
-In `.cargo/config.toml`:
+`.cargo/config.toml` was created in Task 13. Verify both `DAT0_GLITCHTIP_DSN_PUBLIC` and `DAT0_SPARKLE_APPCAST_URL` are present. CI overrides these from secrets.
 
-```toml
-[env]
-DAT0_SPARKLE_APPCAST_URL = "https://dat0.dev/appcast.xml"
-DAT0_GLITCHTIP_DSN_PUBLIC = "https://STUB@glitchtip.invalid/1"
-```
+- [ ] **Step 15.4: Run the test, expect pass**
 
-CI overrides these from secrets.
-
-- [ ] **Step 15.4: Compile-only test**
-
-Build: `cargo build`
-Expected: builds with no errors. Stub log line confirms the path is wired when `check_for_updates()` is called (in later phases).
+Run: `cargo test -p dat0-app --test updater`
+Expected: PASS on the host platform (macOS test runs on macOS; Linux test runs on Linux; the other is `#[cfg]`-skipped).
 
 - [ ] **Step 15.5: Commit**
 
@@ -1982,6 +2292,35 @@ git commit -s -m "feat: Sparkle (macOS) + AppImageUpdate (Linux) scaffolding (P1
 - Create: `crates/dat0-app/src/settings_ui/sections/mod.rs`
 - Create: `crates/dat0-app/src/settings_ui/sections/profile.rs`
 - Create: `crates/dat0-app/src/settings_ui/sections/theme.rs`
+- Create: `crates/dat0-app/tests/settings_ui.rs`
+
+- [ ] **Step 16.0: Failing test — sections registry**
+
+Create `crates/dat0-app/tests/settings_ui.rs`:
+
+```rust
+use dat0_app::settings_ui::sections;
+
+#[test]
+fn registry_has_profile_and_theme() {
+    let all = sections::all_sections();
+    let ids: Vec<_> = all.iter().map(|s| s.id()).collect();
+    assert!(ids.contains(&"profile"), "profile section missing");
+    assert!(ids.contains(&"theme"), "theme section missing");
+}
+
+#[test]
+fn each_section_has_resolvable_name_key() {
+    for section in sections::all_sections() {
+        let resolved = dat0_i18n::t(section.name_key());
+        assert_ne!(resolved, section.name_key(),
+            "section name key {} did not resolve via i18n", section.name_key());
+    }
+}
+```
+
+Run: `cargo test -p dat0-app --test settings_ui`
+Expected: fails — `settings_ui::sections::all_sections` not defined.
 
 - [ ] **Step 16.1: Define a `SettingsSection` trait**
 
@@ -2050,7 +2389,7 @@ impl SettingsSection for ThemeSection {
 
 - [ ] **Step 16.4: Append i18n strings**
 
-Add to `en.json`:
+Add to `crates/dat0-i18n/src/strings/en.json`:
 
 ```json
 {
@@ -2061,6 +2400,9 @@ Add to `en.json`:
   "settings.theme.placeholder": "Choose a theme. Drop additional Zed-format JSON theme files into ~/Library/Application Support/dat0/themes/."
 }
 ```
+
+Run the test: `cargo test -p dat0-app --test settings_ui`
+Expected: PASS.
 
 - [ ] **Step 16.5: Build a Settings window/view**
 
@@ -2108,7 +2450,7 @@ impl Render for SettingsView {
 }
 ```
 
-> **Note:** GPUI's element-builder API is fluid (chained `flex_row`, `w_64`, etc.). The exact API surface evolves with the pinned commit — match it to whatever the pinned `gpui` reveals via examples in the Zed source. The above is illustrative.
+> **Authoritative reference:** `docs/internal/gpui-api-notes.md` from T0. The fluent helpers (`flex_row`, `w_64`, `flex_1`, `when_some`, `children`) come from `gpui-component`'s styled-extension trait — bring it into scope per T0's recorded `use` statements. The above body is illustrative; replace with verified API as needed.
 
 Add `pub mod settings_ui;` to `lib.rs`.
 
@@ -2128,6 +2470,48 @@ git commit -s -m "feat: Settings UI panel scaffolding with Profile + Theme secti
 - Create: `crates/dat0-app/src/error_ux/modal.rs`
 - Create: `crates/dat0-app/src/error_ux/toast.rs`
 - Create: `crates/dat0-app/src/error_ux/banner.rs`
+- Create: `crates/dat0-app/tests/error_ux.rs`
+
+- [ ] **Step 17.0: Failing test — primitives behavior**
+
+Create `crates/dat0-app/tests/error_ux.rs`:
+
+```rust
+use dat0_app::error_ux::{Modal, Toast, ToastSeverity, Banner, BannerSeverity};
+
+#[test]
+fn modal_builder_round_trip() {
+    let m = Modal::new("Title", "Body").with_primary("OK", || {});
+    assert_eq!(m.title, "Title");
+    assert_eq!(m.message, "Body");
+    assert!(m.primary_action.is_some());
+    assert_eq!(m.primary_action.as_ref().unwrap().0, "OK");
+}
+
+#[test]
+fn toast_info_default_dismiss() {
+    let t = Toast::info("hello");
+    assert!(matches!(t.severity, ToastSeverity::Info));
+    assert!(t.auto_dismiss_after.is_some());
+}
+
+#[test]
+fn toast_error_no_auto_dismiss() {
+    let t = Toast::error("oh no");
+    assert!(matches!(t.severity, ToastSeverity::Error));
+    assert!(t.auto_dismiss_after.is_none());
+}
+
+#[test]
+fn banner_warning_dismissible() {
+    let b = Banner::warning("careful");
+    assert!(matches!(b.severity, BannerSeverity::Warning));
+    assert!(b.dismissible);
+}
+```
+
+Run: `cargo test -p dat0-app --test error_ux`
+Expected: fails — `error_ux` module not defined.
 
 - [ ] **Step 17.1: Define the primitives module**
 
@@ -2175,10 +2559,17 @@ impl Modal {
 
 impl Render for Modal {
     fn render(&mut self, _window: &mut gpui::Window, _cx: &mut gpui::Context<Self>) -> impl IntoElement {
-        div().child(self.title.clone()).child(self.message.clone())
+        // gpui's `child(impl IntoElement)` doesn't accept `String` directly;
+        // wrap text in `SharedString::from(...)` (or use a styled text element
+        // per the T0 notes — verify exact pattern against pinned commit).
+        div()
+            .child(gpui::SharedString::from(self.title.clone()))
+            .child(gpui::SharedString::from(self.message.clone()))
     }
 }
 ```
+
+> **Authoritative reference:** `docs/internal/gpui-api-notes.md` from T0 — confirm whether `String` requires wrapping in `SharedString` or whether a text-styled helper from gpui-component is the canonical pattern.
 
 - [ ] **Step 17.3: Implement Toast**
 
@@ -2230,10 +2621,10 @@ impl Banner {
 
 Add `pub mod error_ux;` to `lib.rs`.
 
-- [ ] **Step 17.5: Compile**
+- [ ] **Step 17.5: Run tests, expect pass**
 
-Run: `cargo build`
-Expected: compiles. Visual integration with GPUI happens in later phases when these primitives are first used by features (e.g., `WorkspaceInUseModal` in P7).
+Run: `cargo test -p dat0-app --test error_ux`
+Expected: 4 tests PASS. Visual integration with GPUI happens in later phases when these primitives are first used by features (e.g., `WorkspaceInUseModal` in P7).
 
 - [ ] **Step 17.6: Commit**
 
@@ -2248,13 +2639,15 @@ git commit -s -m "feat: error/dialog UX primitives (Modal, Toast, Banner) (P1.T1
 
 **Files:**
 - Create: `about.toml`
+- Create: `docs/about-template.hbs`
+- Create: `scripts/notice-extract.sh`
 - Create: `.github/workflows/notice.yml`
 
 - [ ] **Step 18.1: Install cargo-about locally**
 
 Run: `cargo install cargo-about`
 
-- [ ] **Step 18.2: Configure**
+- [ ] **Step 18.2: Configure cargo-about**
 
 `about.toml`:
 
@@ -2267,15 +2660,56 @@ ignore-dev-dependencies = true
 include = ["x86_64-unknown-linux-gnu", "aarch64-unknown-linux-gnu", "x86_64-apple-darwin", "aarch64-apple-darwin"]
 ```
 
-- [ ] **Step 18.3: Generate the third-party section of NOTICE**
+- [ ] **Step 18.3: Author the Handlebars template**
+
+`docs/about-template.hbs`:
+
+```handlebars
+<!-- BEGIN cargo-about generated -->
+{{#each licenses}}
+## {{this.name}} (SPDX: {{this.id}})
+
+Used by:
+{{#each this.used_by}}
+- {{this.crate.name}} {{this.crate.version}}{{#if this.crate.repository}} — {{this.crate.repository}}{{/if}}
+{{/each}}
+
+{{/each}}
+<!-- END cargo-about generated -->
+```
+
+- [ ] **Step 18.4: Author the NOTICE extract script**
+
+`scripts/notice-extract.sh`:
+
+```bash
+#!/usr/bin/env bash
+# Extracts the auto-generated section of NOTICE.md so it can be diffed
+# against a freshly-generated `cargo about` output. Section is delimited
+# by HTML comments emitted by docs/about-template.hbs.
+set -euo pipefail
+
+INPUT="${1:-NOTICE.md}"
+
+awk '
+    /^<!-- BEGIN cargo-about generated -->/ { capture = 1; next }
+    /^<!-- END cargo-about generated -->/   { capture = 0; next }
+    capture { print }
+' "$INPUT"
+```
+
+Make executable: `chmod +x scripts/notice-extract.sh`
+
+- [ ] **Step 18.5: Generate the third-party section of NOTICE**
 
 Run: `cargo about generate -c about.toml docs/about-template.hbs > /tmp/third-party.txt`
 
-(Template handlebars file: simple list of crate name + license + version; available examples in cargo-about README.)
+Open `NOTICE.md`. Insert the generated content between `<!-- BEGIN cargo-about generated -->` and `<!-- END cargo-about generated -->` markers (creating those markers if they don't exist). The markers must wrap a single contiguous block; everything outside the markers is hand-maintained.
 
-Splice the generated list into `NOTICE.md` under "Third-party software" (preserving the manual top-level entries).
+Verify with: `./scripts/notice-extract.sh NOTICE.md | diff - /tmp/third-party.txt`
+Expected: no differences.
 
-- [ ] **Step 18.4: CI gate — fail on NOTICE drift**
+- [ ] **Step 18.6: CI gate — fail on NOTICE drift**
 
 `.github/workflows/notice.yml`:
 
@@ -2283,7 +2717,13 @@ Splice the generated list into `NOTICE.md` under "Third-party software" (preserv
 name: NOTICE drift check
 on:
   pull_request:
-    paths: ["Cargo.toml", "Cargo.lock", "crates/**/Cargo.toml", "NOTICE.md"]
+    paths:
+      - "Cargo.toml"
+      - "Cargo.lock"
+      - "crates/**/Cargo.toml"
+      - "NOTICE.md"
+      - "about.toml"
+      - "docs/about-template.hbs"
 jobs:
   notice:
     runs-on: ubuntu-latest
@@ -2295,15 +2735,19 @@ jobs:
         run: cargo about generate -c about.toml docs/about-template.hbs > /tmp/third-party.txt
       - name: Diff NOTICE
         run: |
-          # Extract the auto-generated section and compare
           ./scripts/notice-extract.sh NOTICE.md > /tmp/notice-current.txt
-          diff /tmp/notice-current.txt /tmp/third-party.txt && echo "NOTICE in sync" || (echo "NOTICE drift; regenerate locally" && exit 1)
+          if ! diff /tmp/notice-current.txt /tmp/third-party.txt; then
+            echo "::error::NOTICE.md is out of sync with the dependency tree."
+            echo "Run locally: cargo about generate -c about.toml docs/about-template.hbs and replace the marked section in NOTICE.md."
+            exit 1
+          fi
+          echo "NOTICE in sync"
 ```
 
-- [ ] **Step 18.5: Commit**
+- [ ] **Step 18.7: Commit**
 
 ```bash
-git add about.toml .github/workflows/notice.yml NOTICE.md docs/
+git add about.toml docs/about-template.hbs scripts/notice-extract.sh .github/workflows/notice.yml NOTICE.md
 git commit -s -m "ci: cargo-about NOTICE drift gate (P1.T18)"
 ```
 
@@ -2311,14 +2755,16 @@ git commit -s -m "ci: cargo-about NOTICE drift gate (P1.T18)"
 
 ### Task 19: Performance bench harness scaffolding
 
+> **TDD note:** benches don't follow the failing-test-first pattern in P1; they exist to be run by `cargo bench` and produce numbers. They become CI merge gates at P10. Treat T19 as scaffolding only; expect `cargo bench` to run successfully and produce timing/output, not as a behavior assertion.
+
 **Files:**
-- Create: `benches/engine_smoke.rs`
-- Create: `benches/grid_scroll.rs`
-- Modify: `Cargo.toml` (root or `dat0-app`) to declare benches
+- Create: `crates/dat0-app/benches/engine_smoke.rs`
+- Create: `crates/dat0-app/benches/grid_scroll.rs`
+- Modify: `crates/dat0-app/Cargo.toml`
 
 - [ ] **Step 19.1: Engine smoke bench (criterion)**
 
-`benches/engine_smoke.rs`:
+Place benches inside the crate's canonical `benches/` directory: `crates/dat0-app/benches/engine_smoke.rs`:
 
 ```rust
 use criterion::{black_box, criterion_group, criterion_main, Criterion};
@@ -2337,7 +2783,6 @@ In `crates/dat0-app/Cargo.toml`:
 ```toml
 [[bench]]
 name = "engine_smoke"
-path = "../../benches/engine_smoke.rs"
 harness = false
 
 [dev-dependencies]
@@ -2346,7 +2791,7 @@ criterion = { workspace = true }
 
 - [ ] **Step 19.2: Grid scroll bench (custom harness)**
 
-`benches/grid_scroll.rs`:
+`crates/dat0-app/benches/grid_scroll.rs`:
 
 ```rust
 //! Custom grid-scroll FPS harness placeholder.
@@ -2367,7 +2812,6 @@ In `crates/dat0-app/Cargo.toml`:
 ```toml
 [[bench]]
 name = "grid_scroll"
-path = "../../benches/grid_scroll.rs"
 harness = false
 ```
 
@@ -2426,10 +2870,10 @@ jobs:
       fail-fast: false
       matrix:
         target:
-          - { os: macos-14,        triple: aarch64-apple-darwin,    name: macos-arm64  }
-          - { os: macos-13,        triple: x86_64-apple-darwin,     name: macos-x86_64 }
-          - { os: ubuntu-latest,   triple: x86_64-unknown-linux-gnu, name: linux-x86_64 }
-          - { os: ubuntu-latest,   triple: aarch64-unknown-linux-gnu, name: linux-arm64 }
+          - { os: macos-14,         triple: aarch64-apple-darwin,     name: macos-arm64  }
+          - { os: macos-13,         triple: x86_64-apple-darwin,      name: macos-x86_64 }
+          - { os: ubuntu-latest,    triple: x86_64-unknown-linux-gnu, name: linux-x86_64 }
+          - { os: ubuntu-22.04-arm, triple: aarch64-unknown-linux-gnu, name: linux-arm64 }
     runs-on: ${{ matrix.target.os }}
     env:
       DAT0_SPARKLE_APPCAST_URL: https://dat0.dev/appcast.xml
@@ -2442,7 +2886,16 @@ jobs:
         if: runner.os == 'Linux'
         run: |
           sudo apt-get update
-          sudo apt-get install -y libsecret-1-dev dbus-x11 gnome-keyring
+          sudo apt-get install -y libsecret-1-dev dbus-x11 gnome-keyring libpango1.0-dev
+      - name: Linux — start dbus + gnome-keyring (Secret Service backend)
+        if: runner.os == 'Linux'
+        run: |
+          eval "$(dbus-launch --sh-syntax)"
+          # Empty-password unlock for CI; daemon prints DBUS env to stdout
+          eval "$(printf '\n' | gnome-keyring-daemon --unlock --start --components=secrets)"
+          echo "DBUS_SESSION_BUS_ADDRESS=$DBUS_SESSION_BUS_ADDRESS" >> $GITHUB_ENV
+          echo "GNOME_KEYRING_CONTROL=$GNOME_KEYRING_CONTROL" >> $GITHUB_ENV
+          echo "SSH_AUTH_SOCK=$SSH_AUTH_SOCK" >> $GITHUB_ENV
       - name: Build
         run: cargo build --workspace --release --target ${{ matrix.target.triple }}
       - name: Test
@@ -2546,12 +2999,42 @@ fn main() -> anyhow::Result<()> {
 }
 ```
 
-- [ ] **Step 21.3: Verify**
+- [ ] **Step 21.3: Verify via integration test**
+
+Create `crates/dat0-app/tests/boot.rs`:
+
+```rust
+//! Boot-orchestration integration test. Uses a tempdir for paths.
+
+use dat0_app::{boot::AppContext, settings::Settings};
+use serial_test::serial;  // boot mutates process-global tracing subscriber; serialize tests
+
+#[test]
+#[serial]
+fn boot_returns_ok_with_defaults() {
+    // To isolate from the user's real config dir, override via env vars
+    // that platform::config_dir() respects (XDG on Linux, Application Support on macOS).
+    // For this test we accept the default and just verify no crash.
+    let ctx = AppContext::boot();
+    assert!(ctx.is_ok(), "boot failed: {:?}", ctx.err());
+    let ctx = ctx.unwrap();
+    let snapshot = ctx.settings.read().unwrap().clone();
+    assert_eq!(snapshot.theme.name, "dark");
+    assert!(!snapshot.telemetry.crash_submission_enabled);
+}
+```
+
+Add `serial_test = "3"` to `[dev-dependencies]`.
+
+Run: `cargo test -p dat0-app --test boot`
+Expected: PASS.
+
+- [ ] **Step 21.4: Smoke run the binary**
 
 Run: `cargo run --bin dat0`
 Expected: app starts, creates `~/Library/Application Support/dat0/` (macOS) or XDG-equivalent (Linux), writes a default `settings.toml` if none exists, opens window, prints `INFO dat0 starting`.
 
-- [ ] **Step 21.4: Commit**
+- [ ] **Step 21.5: Commit**
 
 ```bash
 git add crates/dat0-app/
@@ -2658,13 +3141,17 @@ git commit -s -m "test: P1 exit smoke covers settings, theme, i18n, keychain, te
 **Files:**
 - Modify: `docs/upstream-watch.md`
 
-- [ ] **Step 23.1: Record the actual pinned commits**
+- [ ] **Step 23.1: Audit + finalize the pinned-commit record**
 
-After Task 2, you pinned `gpui` and `gpui-component` to specific commits. Open `docs/upstream-watch.md` and replace each `<KNOWN_GOOD_COMMIT>` placeholder in the table with the actual SHA and the date you pinned it.
+Task 0 wrote initial pin records to `docs/upstream-watch.md`. Task 2 may have bumped the pin if T0's choice didn't compile cleanly. Open `docs/upstream-watch.md` and ensure the recorded SHAs match what's actually in the workspace `Cargo.toml` after T2.
+
+If T2's `cargo build` succeeded against the T0-recorded SHAs, no change needed. If T2 had to bump, update the SHAs and dates here.
+
+Format:
 
 ```markdown
-| **gpui** | <https://github.com/zed-industries/zed> | Pinned to `abc1234` (2026-04-26). | ... |
-| **gpui-component** | <https://github.com/longbridge/gpui-component> | Pinned to `def5678` (2026-04-26). | ... |
+| **gpui** | <https://github.com/zed-industries/zed> | Pinned to `abc1234` (verified 2026-04-26). | ... |
+| **gpui-component** | <https://github.com/longbridge/gpui-component> | Pinned to `def5678` (verified 2026-04-26). | ... |
 ```
 
 - [ ] **Step 23.2: Commit**
@@ -2706,7 +3193,7 @@ When merged, P1 is closed. Move to P2 implementation plan (to be written when P1
 
 ## Self-review
 
-This plan covers the §21.2 P1 scope. Cross-checked:
+This plan covers the §21.2 P1 scope, with the deferrals declared in the "Risks & Caveats" section at the top. Cross-checked:
 
 - Cargo workspace skeleton ✓ T1
 - GPUI shell with basic window ✓ T2
@@ -2730,11 +3217,17 @@ This plan covers the §21.2 P1 scope. Cross-checked:
 - P1 exit smoke ✓ T22
 - Pinned commits recorded ✓ T23
 
-**Known gaps deliberately deferred:**
-- Settings panel UI is skeletal — full editable form widgets (text inputs for author name/email, dropdown for theme) need form-input primitives that don't exist in P1. Stub renderers shipped; real surfaces wire up in P3 alongside the DataGrid component primitives.
-- Sparkle bridge to Objective-C `SUUpdater` is stubbed — full Objective-C bridge in P10 alongside notarization. P1 ships configuration + appcast URL + public key embedding only.
-- AppImageUpdate subprocess invocation deferred to P10.
-- Theme live-switching: schema + load works in P1; observable theme change throughout the running app waits for P3 when more UI exists.
+**Known gaps deliberately deferred** (all reconciled in "Risks & Caveats" at top):
+- Settings panel: P1 ships persistence + read-only display + sections registry; full editable widgets (author-name/email inputs, theme dropdown) ship P3 with form-input primitives.
+- Sparkle: P1 ships an HTTP GET smoke against the appcast URL (satisfies "makes a network call" exit criterion); the Objective-C `SUUpdater` bridge ships P10.
+- AppImageUpdate: subprocess invocation deferred to P10.
+- Theme live-switching: P1 ships schema + load + selection; observable in-window updates wait for P3 when more UI consumes the active theme.
+- Linux Secret Service "setup banner" UX: explicit error path documented; banner UI ships when error_ux primitives are first instantiated by a feature in later phases.
+
+**Pre-1.0 dependency reality:**
+- T2/T14/T16/T17 contain illustrative GPUI code based on a planning-time API snapshot.
+- T0 (GPUI Pre-Phase API Spike) executes first and produces `docs/internal/gpui-api-notes.md` with verified imports + signatures.
+- Each affected task's snippets are corrected against T0 findings before the task's commit lands.
 
 **Plan-level cleanup notes:**
 - All file paths are exact.
