@@ -22,8 +22,8 @@ Verified by the P1.T0 spike on **2026-04-26**. Full API-surface notes live in [`
 | Component | Version / Tag | SHA (full 40-char) | Verified | Notes |
 |---|---|---|---|---|
 | `gpui-component` (longbridge) | `v0.5.1` | `0f0ab35233212f8f3277028995caf0c41e13ee6c` | 2026-04-26 | Tagged release. Fixes macOS `core-text` build failure present in v0.5.0. |
-| `gpui` (Zed, via crates.io) | `0.2.2` | `08d95ad9d31f616a43dacda8416568d658dca6ae` | 2026-04-26 | Publish commit in `zed-industries/zed` ("chore: Bump gpui to 0.2.2 (#40856)", 2025-10-22). Consumed via `cargo` from crates.io, not as a git dep. |
-| `gpui-macros` (Zed, via crates.io) | `0.2.2` | (same as above) | 2026-04-26 | Companion crate; published from the same Zed commit. |
+| `gpui` (Zed, via crates.io) | `=0.2.2` | `08d95ad9d31f616a43dacda8416568d658dca6ae` | 2026-04-26 | Publish commit in `zed-industries/zed` ("chore: Bump gpui to 0.2.2 (#40856)", 2025-10-22). Consumed via `cargo` from crates.io, not as a git dep. The `=` prefix is the literal `Cargo.toml` form (exact-version pin), per the policy in the table above. |
+| `gpui-macros` (Zed, via crates.io) | `=0.2.2` | `08d95ad9d31f616a43dacda8416568d658dca6ae` | 2026-04-26 | Companion crate; published from the same Zed commit. Same exact-version pin form as `gpui`. |
 
 > **Mechanism change (since planning snapshot):** `gpui-component` v0.5.1 declares `gpui = "0.2.2"` in its workspace `Cargo.toml`, consuming `gpui` as a published crates.io crate rather than as a git dependency. The pin policy still applies, but dat0 should pin via exact-version semver (`gpui = "=0.2.2"`) plus `Cargo.lock`, and record the publish-commit SHA in `docs/internal/gpui-api-notes.md` for audit.
 

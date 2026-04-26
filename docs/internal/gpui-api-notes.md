@@ -12,8 +12,16 @@ This document is the canonical reference for the GPUI / gpui-component API surfa
 | Component | Tag | Date pinned | SHA (full 40-char) | Source / pin form |
 |---|---|---|---|---|
 | `gpui-component` (longbridge) | `v0.5.1` | 2026-02-05 | `0f0ab35233212f8f3277028995caf0c41e13ee6c` | git tag in `longbridge/gpui-component` |
-| `gpui` (Zed) | `v0.2.2` (crates.io) | 2025-10-22 | `08d95ad9d31f616a43dacda8416568d658dca6ae` | crates.io publish commit in `zed-industries/zed`; commit message: "chore: Bump gpui to 0.2.2 (#40856)" |
-| `gpui-macros` (Zed) | `v0.2.2` (crates.io) | 2025-10-22 | (same as above) | crates.io |
+| `gpui` (Zed) | `=0.2.2` (crates.io) | 2025-10-22 | `08d95ad9d31f616a43dacda8416568d658dca6ae` | crates.io publish commit in `zed-industries/zed`; commit message: "chore: Bump gpui to 0.2.2 (#40856)" |
+| `gpui-macros` (Zed) | `=0.2.2` (crates.io) | 2025-10-22 | `08d95ad9d31f616a43dacda8416568d658dca6ae` | crates.io; same publish commit as `gpui` |
+
+The literal `Cargo.toml` form for the Zed pins (exact-version, per the upstream-watch policy) is:
+
+```toml
+[dependencies]
+gpui = "=0.2.2"
+gpui-macros = "=0.2.2"
+```
 
 ### Plan-contradicting finding (important)
 
@@ -398,6 +406,250 @@ Pattern summary: **outer `v_flex` (title bar + body), inner body is `div().flex(
 For T16, the gpui-component `setting` module is a higher-level abstraction; Zed's pattern is the lower-level reference for the outer chrome/sidebar layout if dat0's settings UI grows beyond what `SettingPage` natively supports. dat0 should start with gpui-component's `setting` module and fall back to a hand-rolled `Sidebar` + content split (using `gpui_component::sidebar::Sidebar`, `crates/ui/src/sidebar/mod.rs:29`) only if needed.
 
 `Sidebar` from gpui-component: `pub struct Sidebar<E: Collapsible + IntoElement + 'static>`, constructed via `Sidebar::new(side: Side)` / `Sidebar::left()` / `Sidebar::right()`, with `.header(...)`, `.footer(...)`, `.child(E)`, `.children(...)`, `.collapsible(bool)`, `.collapsed(bool)`. Width constants: `COLLAPSED_WIDTH = px(48.)`.
+
+---
+
+## 0.5b Dialog / Modal / Sheet primitives (T17 reference)
+
+T17 implements error/dialog UX (modal, toast, banner). The canonical name in gpui-component v0.5.1 is **`Dialog`** — there is no separate `Modal` type; a "modal" in dat0's UX vocabulary maps to `Dialog` here. A separate **`Sheet`** primitive exists (slide-in panel from a window edge). Notifications (toasts) live in `gpui_component::notification` and are pushed via `WindowExt::push_notification`.
+
+All Dialog / Sheet / Notification rendering depends on the window's root view being a `gpui_component::Root` — see §0.2 #2. Without the `Root::new(view, window, cx)` wrapper, calls to `window.open_dialog(...)`, `window.open_sheet(...)`, and `window.push_notification(...)` have no overlay layer to render into.
+
+### `Dialog` struct (`crates/ui/src/dialog.rs:76`)
+
+```rust
+pub struct Dialog {
+    style: StyleRefinement,
+    title: Option<AnyElement>,
+    footer: Option<FooterFn>,
+    content: Div,
+    width: Pixels,
+    max_width: Option<Pixels>,
+    margin_top: Option<Pixels>,
+    on_close: Rc<dyn Fn(&ClickEvent, &mut Window, &mut App) + 'static>,
+    on_ok: Option<Rc<dyn Fn(&ClickEvent, &mut Window, &mut App) -> bool + 'static>>,
+    on_cancel: Rc<dyn Fn(&ClickEvent, &mut Window, &mut App) -> bool + 'static>,
+    button_props: DialogButtonProps,
+    close_button: bool,
+    overlay: bool,
+    overlay_closable: bool,
+    keyboard: bool,
+    pub(crate) focus_handle: FocusHandle,
+    pub(crate) layer_ix: usize,
+    pub(crate) overlay_visible: bool,
+}
+```
+
+### `Dialog` constructor + builder methods (`crates/ui/src/dialog.rs`)
+
+Verbatim public signatures, with file:line references:
+
+```rust
+// dialog.rs:112
+pub fn new(_: &mut Window, cx: &mut App) -> Self
+
+// dialog.rs:130
+pub fn title(mut self, title: impl IntoElement) -> Self
+
+// dialog.rs:134
+pub fn footer<E, F>(mut self, footer: F) -> Self
+//   (where F builds the footer; full where-clause at the source)
+
+// dialog.rs:151
+pub fn confirm(self) -> Self
+
+// dialog.rs:157
+pub fn alert(self) -> Self
+
+// dialog.rs:162
+pub fn button_props(mut self, button_props: DialogButtonProps) -> Self
+
+// dialog.rs:166
+pub fn on_close(mut self, on_close: impl Fn(&ClickEvent, &mut Window, &mut App) + 'static) -> Self
+
+// dialog.rs:174
+pub fn on_ok(mut self, on_ok: impl Fn(&ClickEvent, &mut Window, &mut App) -> bool + 'static) -> Self
+
+// dialog.rs:181
+pub fn on_cancel(mut self, on_cancel: impl Fn(&ClickEvent, &mut Window, &mut App) -> bool + 'static) -> Self
+
+// dialog.rs:188
+pub fn close_button(mut self, close_button: bool) -> Self
+
+// dialog.rs:192
+pub fn margin_top(mut self, margin_top: Pixels) -> Self
+
+// dialog.rs:196
+pub fn w(mut self, width: Pixels) -> Self
+
+// dialog.rs:202
+pub fn width(mut self, width: Pixels) -> Self
+
+// dialog.rs:206
+pub fn max_w(mut self, max_width: Pixels) -> Self
+
+// dialog.rs:210
+pub fn overlay(mut self, overlay: bool) -> Self
+
+// dialog.rs:214
+pub fn overlay_closable(mut self, overlay_closable: bool) -> Self
+
+// dialog.rs:220
+pub fn keyboard(mut self, keyboard: bool) -> Self
+```
+
+Notes:
+- `Dialog::new` requires both `&mut Window` and `&mut App`. It is **not** a free constructor — it depends on a live `Window` to allocate a `FocusHandle`.
+- `confirm()` / `alert()` are preset variants (set `button_props` and behavior flags); use `confirm()` for OK/Cancel modals, `alert()` for OK-only.
+- `on_ok` / `on_cancel` callbacks return `bool` — returning `false` aborts the close so validation can keep the dialog open.
+- Children/content are added through `ParentElement` via `.child(...)` / `.children(...)` (Dialog implements `ParentElement` and `Styled`).
+
+### `DialogButtonProps` builder (`crates/ui/src/dialog.rs:35`)
+
+```rust
+pub struct DialogButtonProps {
+    ok_text: Option<SharedString>,
+    ok_variant: ButtonVariant,
+    cancel_text: Option<SharedString>,
+    cancel_variant: ButtonVariant,
+}
+
+// dialog.rs:46
+pub fn ok_text(mut self, ok_text: impl Into<SharedString>) -> Self
+// dialog.rs:50
+pub fn ok_variant(mut self, ok_variant: ButtonVariant) -> Self
+// dialog.rs:54
+pub fn cancel_text(mut self, cancel_text: impl Into<SharedString>) -> Self
+// dialog.rs:58
+pub fn cancel_variant(mut self, cancel_variant: ButtonVariant) -> Self
+```
+
+### How dialogs are opened — `WindowExt` trait (`crates/ui/src/root.rs:32`)
+
+The opening API is on `WindowExt`, which is implemented for `gpui::Window` (re-exported as `gpui_component::WindowExt`). Verbatim trait signatures:
+
+```rust
+// root.rs:32
+pub trait WindowExt: Sized {
+    // root.rs:34
+    fn open_sheet<F>(&mut self, cx: &mut App, build: F)
+    where
+        F: Fn(Sheet, &mut Window, &mut App) -> Sheet + 'static;
+
+    // root.rs:39
+    fn open_sheet_at<F>(&mut self, placement: Placement, cx: &mut App, build: F)
+    where
+        F: Fn(Sheet, &mut Window, &mut App) -> Sheet + 'static;
+
+    // root.rs:44
+    fn has_active_sheet(&mut self, cx: &mut App) -> bool;
+
+    // root.rs:47
+    fn close_sheet(&mut self, cx: &mut App);
+
+    // root.rs:50
+    fn open_dialog<F>(&mut self, cx: &mut App, build: F)
+    where
+        F: Fn(Dialog, &mut Window, &mut App) -> Dialog + 'static;
+
+    // root.rs:55
+    fn has_active_dialog(&mut self, cx: &mut App) -> bool;
+
+    // root.rs:58
+    fn close_dialog(&mut self, cx: &mut App);
+
+    // root.rs:61
+    fn close_all_dialogs(&mut self, cx: &mut App);
+
+    // root.rs:64
+    fn push_notification(&mut self, note: impl Into<Notification>, cx: &mut App);
+
+    // root.rs:67
+    fn remove_notification<T: Sized + 'static>(&mut self, cx: &mut App);
+}
+```
+
+Verbatim invocation from the `dialog_overlay` example (`examples/dialog_overlay/src/main.rs:10-14`):
+
+```rust
+fn show_dialog(&mut self, _: &ClickEvent, window: &mut Window, cx: &mut Context<Self>) {
+    window.open_dialog(cx, move |dialog, _, _| {
+        dialog.title("Test dialog").child("Hello from dialog!")
+    });
+}
+```
+
+And the corresponding sheet open from the same file (`examples/dialog_overlay/src/main.rs:16-20`):
+
+```rust
+fn show_drawer(&mut self, _: &ClickEvent, window: &mut Window, cx: &mut Context<Self>) {
+    window.open_sheet(cx, move |drawer, _, _| {
+        drawer.title("Test Drawer").child("Hello from Drawer!")
+    });
+}
+```
+
+### Render-time wiring (`examples/dialog_overlay/src/main.rs:76-77`)
+
+The view's `Render` impl must include the dialog and sheet layers as children — otherwise `Root` has the active dialog state but nothing draws it:
+
+```rust
+.children(Root::render_dialog_layer(window, cx))
+.children(Root::render_sheet_layer(window, cx))
+```
+
+These are public methods on `gpui_component::Root` (`crates/ui/src/root.rs:309` and `:278` respectively). For T17, dat0's top-level view (the one wrapped by `Root::new`) must call both at the end of its render tree.
+
+### `Sheet` struct (`crates/ui/src/sheet.rs:28`) — exists; verbatim definition
+
+```rust
+#[derive(IntoElement)]
+pub struct Sheet {
+    pub(crate) focus_handle: FocusHandle,
+    pub(crate) placement: Placement,
+    pub(crate) size: DefiniteLength,
+    resizable: bool,
+    on_close: Rc<dyn Fn(&ClickEvent, &mut Window, &mut App) + 'static>,
+    title: Option<AnyElement>,
+    footer: Option<AnyElement>,
+    content: Div,
+    margin_top: Pixels,
+    overlay: bool,
+    overlay_closable: bool,
+}
+```
+
+`Sheet` builder methods (verbatim signatures, file:line):
+
+```rust
+// sheet.rs:44
+pub fn new(_: &mut Window, cx: &mut App) -> Self
+// sheet.rs:61
+pub fn title(mut self, title: impl IntoElement) -> Self
+// sheet.rs:67
+pub fn footer(mut self, footer: impl IntoElement) -> Self
+// sheet.rs:72
+pub fn size(mut self, size: impl Into<DefiniteLength>) -> Self
+// sheet.rs:80
+pub fn margin_top(mut self, top: Pixels) -> Self
+// sheet.rs:86
+pub fn resizable(mut self, resizable: bool) -> Self
+// sheet.rs:92
+pub fn overlay(mut self, overlay: bool) -> Self
+// sheet.rs:98
+pub fn overlay_closable(mut self, overlay_closable: bool) -> Self
+// sheet.rs:104
+pub fn on_close(mut self, on_close: impl Fn(&ClickEvent, &mut Window, &mut App) + 'static) -> Self
+```
+
+`Sheet` defaults to `Placement::Right` with `350px` size and a top margin equal to `TITLE_BAR_HEIGHT`. Use `WindowExt::open_sheet_at(Placement::Bottom, ...)` etc. to slide from a different edge.
+
+### Notes for T17 (banner / toast)
+
+- **Modal** as a distinct type: does **not** exist. Use `Dialog` with `.overlay(true).overlay_closable(false)` for a hard-modal style, or `.confirm()` / `.alert()` presets.
+- **Toast / notification**: use `WindowExt::push_notification(note, cx)`. The notification type lives in `gpui_component::notification` (declared as a public module at `crates/ui/src/lib.rs`). Toasts render into the same `Root` overlay layer; do not require a separate render-layer call beyond what `Root` already wires.
+- **Banner**: gpui-component does not ship a dedicated banner primitive. T17 implements one as a styled `div` placed inline above main content (no overlay needed).
+- **Cross-reference**: the `Root::new(view, window, cx)` wrapper is mandatory (§0.2 #2). T17 must verify T2 has shipped the `Root` wrapper before any dialog/toast work begins; otherwise the open_* calls succeed silently but render nothing.
 
 ---
 
