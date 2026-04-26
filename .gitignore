@@ -55,3 +55,6 @@ node_modules/
 
 # macOS notarization scratch
 notarization-output.json
+
+# Git worktrees (local development scratch)
+.worktrees/
