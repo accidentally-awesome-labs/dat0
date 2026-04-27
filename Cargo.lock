@@ -1279,6 +1279,7 @@ dependencies = [
  "anyhow",
  "dat0-i18n",
  "dat0-keychain",
+ "dirs 5.0.1",
  "gpui",
  "gpui-component",
  "notify 6.1.1",
