@@ -27,6 +27,8 @@ Verified by the P1.T0 spike on **2026-04-26**. Full API-surface notes live in [`
 
 > **Mechanism change (since planning snapshot):** `gpui-component` v0.5.1 declares `gpui = "0.2.2"` in its workspace `Cargo.toml`, consuming `gpui` as a published crates.io crate rather than as a git dependency. The pin policy still applies, but dat0 should pin via exact-version semver (`gpui = "=0.2.2"`) plus `Cargo.lock`, and record the publish-commit SHA in `docs/internal/gpui-api-notes.md` for audit.
 
+**P1 audit closure (2026-04-26):** T23 audit confirmed SHAs above match workspace `Cargo.toml` after T0–T22 implementation. No bumps were required during P1 execution. Next scheduled bump-check: monthly cadence per "Cadence" below.
+
 ## Cadence
 
 - **Weekly:** scan release feeds for all tracked components. Roughly 30 minutes of skim time.
