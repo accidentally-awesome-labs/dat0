@@ -1284,6 +1284,7 @@ dependencies = [
  "gpui-component",
  "notify 6.1.1",
  "once_cell",
+ "regex",
  "sentry",
  "serde",
  "serde_json",
