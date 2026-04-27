@@ -1,0 +1,3 @@
+# Placeholder; replace with the EdDSA public key generated in P0 Step 6.1.
+# Format: base64-encoded Ed25519 public key (32 bytes).
+PLACEHOLDER_REPLACE_BEFORE_RELEASE

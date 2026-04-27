@@ -1,0 +1,13 @@
+{
+  "name": "high-contrast",
+  "appearance": "dark",
+  "style": {
+    "background": "#000000",
+    "foreground": "#ffffff",
+    "border": "#ffffff",
+    "accent": "#ffff00",
+    "error": "#ff0000",
+    "success": "#00ff00",
+    "warning": "#ffaa00"
+  }
+}

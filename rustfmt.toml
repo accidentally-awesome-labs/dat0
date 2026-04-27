@@ -1,0 +1,4 @@
+# Stable-channel-safe rustfmt config. Import-grouping options
+# (imports_granularity, group_imports) require nightly; deferred — see T20.
+edition = "2024"
+max_width = 100

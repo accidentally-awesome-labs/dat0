@@ -1,0 +1,9 @@
+{{#each licenses}}
+## {{this.name}} (SPDX: {{this.id}})
+
+Used by:
+{{#each this.used_by}}
+- {{this.crate.name}} {{this.crate.version}}{{#if this.crate.repository}} — {{this.crate.repository}}{{/if}}
+{{/each}}
+
+{{/each}}

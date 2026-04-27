@@ -1,0 +1,3 @@
+[env]
+DAT0_GLITCHTIP_DSN_PUBLIC = "https://stub@glitchtip.invalid/1"
+DAT0_SPARKLE_APPCAST_URL = "https://dat0.dev/appcast.xml"

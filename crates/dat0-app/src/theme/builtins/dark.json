@@ -1,0 +1,13 @@
+{
+  "name": "dark",
+  "appearance": "dark",
+  "style": {
+    "background": "#0e1116",
+    "foreground": "#c9d1d9",
+    "border": "#30363d",
+    "accent": "#58a6ff",
+    "error": "#f85149",
+    "success": "#3fb950",
+    "warning": "#d29922"
+  }
+}

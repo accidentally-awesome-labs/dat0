@@ -1,0 +1,39 @@
+# cargo-about config — defines the policy for the NOTICE drift gate.
+#
+# `accepted` is the SPDX allow-list of licenses we permit in the dependency tree.
+# Any dep whose license is NOT on this list will fail the CI drift check, forcing
+# a deliberate review.
+#
+# Notes on entries beyond the obvious permissive set:
+#   - Unicode-3.0 / Unicode-DFS-2016: ICU crates (icu_*, tinystr, etc.) — permissive.
+#   - 0BSD: BSD Zero Clause, used by enum-iterator (transitive) — public-domain-equivalent.
+#   - CC0-1.0: public-domain dedication, used by notify, tiny-keccak, hexf-parse.
+#   - CDLA-Permissive-2.0: data-license used by webpki-roots — permissive, no copyleft.
+#   - MPL-2.0: weak (file-level) copyleft, used by option-ext (transitive via `dirs`).
+#       Permitted because we consume the crate unmodified; MPL-2.0 only triggers
+#       source-disclosure obligations on modified MPL files, which we don't ship.
+
+accepted = [
+    "Apache-2.0",
+    "MIT",
+    "BSD-2-Clause",
+    "BSD-3-Clause",
+    "0BSD",
+    "ISC",
+    "Zlib",
+    "Unicode-DFS-2016",
+    "Unicode-3.0",
+    "CC0-1.0",
+    "CDLA-Permissive-2.0",
+    "MPL-2.0",
+]
+
+ignore-build-dependencies = true
+ignore-dev-dependencies = true
+
+targets = [
+    "x86_64-unknown-linux-gnu",
+    "aarch64-unknown-linux-gnu",
+    "x86_64-apple-darwin",
+    "aarch64-apple-darwin",
+]
