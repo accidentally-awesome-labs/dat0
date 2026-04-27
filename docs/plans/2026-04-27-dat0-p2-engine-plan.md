@@ -170,7 +170,7 @@ dat0/
 
 - [ ] **Step 0.1: Pick the duckdb-rs version**
 
-Visit `https://crates.io/crates/duckdb`. Find the latest 1.4.x release (e.g., `1.4.0`, `1.4.1`, etc.). Record the exact version. Open its `Cargo.toml` to confirm features available; in particular look for: `bundled`, `json`, `parquet`, `sqlite_scanner` (whether it exists as a feature), `motherduck`, `vtab`, `vtab-arrow`.
+Visit `https://crates.io/crates/duckdb`. Find the latest 1.4.x release (e.g., `1.4.4`). Decide between the maintenance line (`1.4.x`) and the CalVer line (`1.10500.0`+, which corresponds to upstream DuckDB native versions). If picking CalVer, note that DuckDB native SQL syntax may have drifted from 1.4.x — verify ATTACH forms, `read_json`/`read_csv` params, and migration runner SQL stay valid. Record the exact version. Open its `Cargo.toml` to confirm features available; in particular look for: `bundled`, `json`, `parquet`, `sqlite_scanner` (whether it exists as a feature), `motherduck`, `vtab`, `vtab-arrow`.
 
 Open `docs/internal/duckdb-arrow-api-notes.md` and write:
 
@@ -181,9 +181,9 @@ Verified for **dat0 P2** on `<YYYY-MM-DD>`.
 
 ## Pinned versions
 
-- `duckdb` crate version: `<exact, e.g., 1.4.1>`
+- `duckdb` crate version: `<exact, e.g., 1.4.4 — latest 1.4.x as of Jan 2026>`
 - duckdb-rs publish commit (if available): `<SHA>`
-- Underlying DuckDB native version: `<e.g., 1.4.1>`
+- Underlying DuckDB native version: `<e.g., 1.4.4>`
 
 ## Feature flags enabled in dat0-engine Cargo.toml
 
@@ -323,7 +323,7 @@ Edit `/Users/salar/Projects/dat0/Cargo.toml`. Add to `[workspace.dependencies]`:
 # Engine: DuckDB native + bundled extensions (json, parquet are statically linked under `bundled`).
 # CSV reading is in DuckDB core; sqlite_scanner is NOT bundled (see D-009) and is loaded at runtime.
 # Arrow types are consumed via duckdb::arrow re-exports — DO NOT add a standalone `arrow` dep.
-duckdb = { version = "=1.4.1", features = ["bundled", "json", "parquet"] }
+duckdb = { version = "=1.4.4", features = ["bundled", "json", "parquet"] }
 
 # Streaming
 futures = "0.3"
@@ -332,7 +332,11 @@ futures = "0.3"
 dat0-engine = { path = "crates/dat0-engine" }
 ```
 
-> If T0 confirmed a different exact version than `1.4.1`, use that.
+> The default `=1.4.4` is the latest 1.4.x maintenance release (Jan 2026). T0 may
+> bump to a newer 1.4.x patch or pivot to the CalVer line (`1.10500.0`+, which
+> aligns with upstream DuckDB native version). If T0 picks the CalVer line,
+> verify that DuckDB SQL syntax (`(TYPE SQLITE)` ATTACH form, `read_json` params,
+> etc.) hasn't drifted; record any drift in the API notes file.
 
 Also confirm `tempfile = "3"` is already in workspace deps (P1 added it). It will be used by engine tests.
 
@@ -526,6 +530,9 @@ pub enum EngineError {
 
     #[error("Engine connection mutex poisoned (prior panic in worker thread)")]
     EnginePoisoned,
+
+    #[error("Engine is in Failed state: {0}")]
+    EngineFailed(String),
 }
 ```
 
@@ -605,6 +612,14 @@ impl FileFormat {
 }
 
 /// Per spec §2.9. `encoding` deliberately absent (D-010).
+///
+/// **Spec deviation (intentional):** spec §2.9 declares `format: FileFormat`
+/// with auto-detection externalized to the caller. The plan uses
+/// `format: Option<FileFormat>` so the engine handles auto-detect internally
+/// (None = sniff from path extension). This is the same end-user contract,
+/// shifted one layer: callers can still pass an explicit format. Document in
+/// T1 commit message; revisit if P3 import wizard prefers explicit-format
+/// dispatch.
 #[derive(Debug, Clone, Default)]
 pub struct RegisterOpts {
     pub format: Option<FileFormat>, // None = sniff from extension
@@ -737,7 +752,7 @@ use crate::types::{EngineStatus, MemoryBudget};
 /// The concrete engine type. Per spec §2.1.
 pub struct DuckDBEngine {
     pub(crate) conn: Arc<Mutex<duckdb::Connection>>,
-    pub(crate) interrupt: duckdb::InterruptHandle,
+    pub(crate) interrupt: Arc<duckdb::InterruptHandle>,
     pub(crate) budget: MemoryBudget,
     pub(crate) scratch_path: PathBuf,
     pub(crate) status: Arc<RwLock<EngineStatus>>,
@@ -751,7 +766,7 @@ impl DuckDBEngine {
 }
 ```
 
-> If T0 found that `InterruptHandle` is not natively `Clone`/`Send`, change the field to `Arc<duckdb::InterruptHandle>`. Update `clone_interrupt()` callers in T8/T16 accordingly.
+> `Connection::interrupt_handle()` returns `Arc<InterruptHandle>` directly per duckdb-rs 1.4.4 — no double-wrapping needed. T0 confirms this exactly. If T0 finds the API has changed (e.g., returns a bare `InterruptHandle: Clone`), drop the `Arc<>` wrap and update T2's constructor accordingly.
 
 - [ ] **Step 1.10: Create stub modules for everything not yet implemented**
 
@@ -824,10 +839,14 @@ git add Cargo.toml Cargo.lock .gitignore crates/dat0-engine tests/fixtures/small
 git commit -s -m "$(cat <<'EOF'
 feat(engine): T1 — dat0-engine skeleton + small in-repo fixtures
 
-Adds duckdb workspace dep (=1.4.x with bundled+json+parquet),
+Adds duckdb workspace dep (=1.4.4 with bundled+json+parquet),
 async-trait, futures. Defines EngineError, type surface (TableInfo,
 RegisterOpts, etc.), QueryEngine trait verbatim per design-spec §6.1,
 and a stub DuckDBEngine struct.
+
+Spec deviation (intentional): RegisterOpts.format is Option<FileFormat>
+rather than FileFormat per spec §2.9 — engine handles auto-detect
+internally so callers don't have to pre-sniff. Same end-user contract.
 
 Drops 7 small in-repo fixtures (CSV happy/edge, JSON/JSONL/NDJSON,
 Parquet, SQLite) for unit tests. Large fixtures (gitignored) generated
@@ -959,7 +978,7 @@ use crate::Result;
 
 pub struct DuckDBEngine {
     pub(crate) conn: Arc<Mutex<duckdb::Connection>>,
-    pub(crate) interrupt: duckdb::InterruptHandle,
+    pub(crate) interrupt: Arc<duckdb::InterruptHandle>,
     pub(crate) budget: MemoryBudget,
     pub(crate) scratch_path: PathBuf,
     pub(crate) status: Arc<RwLock<EngineStatus>>,
@@ -970,6 +989,7 @@ impl DuckDBEngine {
     /// `Initializing`; call `init()` to transition to `Ready`.
     pub fn new(scratch_path: PathBuf, budget: MemoryBudget) -> Result<Self> {
         let conn = duckdb::Connection::open(&scratch_path)?;
+        // duckdb-rs 1.4.x: `interrupt_handle()` returns `Arc<InterruptHandle>` directly.
         let interrupt = conn.interrupt_handle();
         Ok(Self {
             conn: Arc::new(Mutex::new(conn)),
@@ -1005,9 +1025,7 @@ impl DuckDBEngine {
         let status = self.status.read().map_err(|_| EngineError::EnginePoisoned)?;
         match &*status {
             EngineStatus::Closing | EngineStatus::Closed => Err(EngineError::EngineClosed),
-            EngineStatus::Failed(reason) => Err(EngineError::Io(
-                std::io::Error::other(format!("engine failed: {reason}")),
-            )),
+            EngineStatus::Failed(reason) => Err(EngineError::EngineFailed(reason.clone())),
             _ => Ok(()),
         }
     }
@@ -1029,7 +1047,7 @@ impl crate::QueryEngine for DuckDBEngine {
         // T14 installs sqlite_scanner once at app boot. Engine init only LOADs.
         // For tests where boot has not run, LOAD will fail with "extension not
         // found" — tests that exercise sqlite ATTACH must call
-        // `extension_bootstrap::ensure_sqlite_scanner_for_tests()` first.
+        // `extension_bootstrap::__test_install_sqlite_scanner()` first.
         let result: Result<()> = tokio::task::spawn_blocking(move || {
             let conn = conn.lock().map_err(|_| EngineError::EnginePoisoned)?;
             // Memory + thread pragmas
@@ -1065,10 +1083,17 @@ impl crate::QueryEngine for DuckDBEngine {
     #[instrument(skip(self))]
     async fn close(&self) -> Result<()> {
         self.set_status(EngineStatus::Closing);
-        // Drop the connection by replacing with a closed marker. We cannot
-        // easily extract from Arc<Mutex<...>>; instead, run a no-op shutdown
-        // and rely on Drop semantics when the engine itself drops.
-        // TODO(T2): if duckdb-rs gains an explicit close, use it.
+        // duckdb-rs exposes `Connection::close(self)` (consuming) but our
+        // connection lives behind `Arc<Mutex<_>>` and is shared with any
+        // outstanding `spawn_blocking` workers (paged/streaming/etc.). We
+        // cannot consume it here without breaking those workers. Instead:
+        // 1. Flip status to Closed so subsequent calls fail via assert_open.
+        // 2. The connection drops naturally when the last Arc reference goes,
+        //    typically when the engine itself drops along with all in-flight
+        //    streams. This is safe — DuckDB's Connection::Drop closes the
+        //    underlying handle.
+        // P3+ may want graceful drain (interrupt + await all streams) before
+        // marking Closed; for P2 the synchronous status flip is sufficient.
         self.set_status(EngineStatus::Closed);
         Ok(())
     }
@@ -1963,6 +1988,23 @@ async fn register_ndjson() {
     assert_eq!(v, "3");
     engine.close().await.unwrap();
 }
+
+#[tokio::test]
+async fn register_json_rejects_type_overrides_p2() {
+    // P2: type_overrides for JSON would silently drop columns due to DuckDB
+    // read_json's subset semantics on `columns={}`. Reject explicitly.
+    let dir = tempfile::tempdir().unwrap();
+    let engine = DuckDBEngine::new(dir.path().join("a.duckdb"), budget()).unwrap();
+    engine.init().await.unwrap();
+    let mut opts = RegisterOpts::default();
+    opts.type_overrides.insert("id".into(), "BIGINT".into());
+    let err = engine
+        .register_file(&fixture("simple.json"), opts)
+        .await
+        .expect_err("must reject type_overrides for JSON in P2");
+    assert!(matches!(err, dat0_engine::EngineError::Io(_)));
+    engine.close().await.unwrap();
+}
 ```
 
 - [ ] **Step 5.2: Run, verify failure**
@@ -2017,21 +2059,24 @@ pub(crate) fn build_json_view_sql(
         }
         params.push(format!("sample_size={}", s));
     }
+    // SEMANTIC NOTE: DuckDB's read_json `columns={...}` parameter has SUBSET
+    // semantics — when set, only the listed columns are exposed (other columns
+    // are dropped). This is materially different from read_csv's `types={...}`
+    // which is a partial override leaving non-listed columns auto-detected.
+    // Applying RegisterOpts.type_overrides as a `columns={}` clause would
+    // therefore silently drop columns the user didn't list — a contract bug.
+    // For P2, JSON registration ignores type_overrides. P3 import wizard or
+    // a later phase wires JSON column-type overrides via a different shape
+    // (likely a separate full-schema field). If type_overrides is non-empty
+    // for a JSON file, we surface a clear error rather than silently dropping
+    // columns.
     if !opts.type_overrides.is_empty() {
-        let mut entries = opts.type_overrides.iter().collect::<Vec<_>>();
-        entries.sort_by(|a, b| a.0.cmp(b.0));
-        let inner = entries
-            .iter()
-            .map(|(col, typ)| {
-                format!(
-                    "'{}': '{}'",
-                    col.replace('\'', "''"),
-                    typ.replace('\'', "''")
-                )
-            })
-            .collect::<Vec<_>>()
-            .join(", ");
-        params.push(format!("columns={{{}}}", inner));
+        return Err(EngineError::Io(std::io::Error::other(
+            "RegisterOpts.type_overrides is not yet supported for JSON formats in P2 \
+             (DuckDB read_json's `columns` param has subset, not partial-override, \
+             semantics — applying it would silently drop other columns). \
+             Use the column-typed result via a follow-up SQL CAST instead.",
+        )));
     }
     let args = format!("'{}', {}", escaped_path, params.join(", "));
     Ok(format!(
@@ -2248,10 +2293,10 @@ pub(crate) fn run_materialized(
     conn: &duckdb::Connection,
     sql: &str,
 ) -> Result<QueryResult> {
-    let mut stmt = conn.prepare(sql)?;
+    let mut stmt = conn.prepare(sql).map_err(translate_duckdb_err)?;
     // T0 confirmed: query_arrow returns an iterator of RecordBatch.
     // Symbol may be different; T0 records exact name.
-    let arrow_iter = stmt.query_arrow([])?;
+    let arrow_iter = stmt.query_arrow([]).map_err(translate_duckdb_err)?;
     let mut batches: Vec<duckdb::arrow::record_batch::RecordBatch> = Vec::new();
     let schema = arrow_iter.get_schema();
     for batch in arrow_iter {
@@ -2268,9 +2313,25 @@ pub(crate) fn run_materialized(
         .collect();
     Ok(QueryResult { columns, batches })
 }
+
+/// Translate a `duckdb::Error` into the appropriate `EngineError`. Specifically:
+/// when the underlying DuckDB call was interrupted (because a sibling task
+/// called `Engine::interrupt()`), surface as `EngineError::Interrupted` rather
+/// than a generic `DuckDb(_)`. P5 SQL Console depends on this discriminator
+/// for Cmd+. UX (D-008).
+pub(crate) fn translate_duckdb_err(e: duckdb::Error) -> crate::error::EngineError {
+    if let duckdb::Error::DuckDBFailure(_, ref msg) = e {
+        if msg.as_deref().map(|s| s.contains("INTERRUPT")).unwrap_or(false) {
+            return crate::error::EngineError::Interrupted;
+        }
+    }
+    crate::error::EngineError::DuckDb(e)
+}
 ```
 
-> If T0 found that `query_arrow` returns `Result<RecordBatch, Error>` per-item (not infallible), wrap with `for batch_res in arrow_iter { batches.push(batch_res?); }` and propagate the error.
+> If T0 found that `query_arrow` returns `Result<RecordBatch, Error>` per-item (not infallible), wrap with `for batch_res in arrow_iter { batches.push(batch_res.map_err(translate_duckdb_err)?); }`.
+
+> The exact substring matching `"INTERRUPT"` is heuristic. T0 should verify what DuckDB's interrupt error code looks like at the pinned version; if there's a richer error variant (e.g., `Error::Interrupted` or a code constant), match on that instead. Track as PD-NNN if T0 finds a cleaner translation path.
 
 In `duckdb_engine.rs`, replace `execute()`:
 
@@ -2493,14 +2554,14 @@ pub(crate) fn spawn_streaming(
         let mut stmt = match conn.prepare(&sql) {
             Ok(s) => s,
             Err(e) => {
-                let _ = tx.blocking_send(Err(EngineError::DuckDb(e)));
+                let _ = tx.blocking_send(Err(crate::execute::translate_duckdb_err(e)));
                 return;
             }
         };
         let arrow_iter = match stmt.query_arrow([]) {
             Ok(it) => it,
             Err(e) => {
-                let _ = tx.blocking_send(Err(EngineError::DuckDb(e)));
+                let _ = tx.blocking_send(Err(crate::execute::translate_duckdb_err(e)));
                 return;
             }
         };
@@ -2827,7 +2888,7 @@ fn budget() -> MemoryBudget {
     MemoryBudget { bytes: 256 * 1024 * 1024 }
 }
 
-async fn engine_with_things() -> DuckDBEngine {
+async fn engine_with_things() -> (DuckDBEngine, tempfile::TempDir) {
     let dir = tempfile::tempdir().unwrap();
     let engine = DuckDBEngine::new(dir.path().join("a.duckdb"), budget()).unwrap();
     engine.init().await.unwrap();
@@ -2839,13 +2900,14 @@ async fn engine_with_things() -> DuckDBEngine {
         )
         .await
         .unwrap();
-    std::mem::forget(dir); // keep tempdir alive for the test (engine binds to its path)
-    engine
+    // Return both so the caller's scope keeps the tempdir alive alongside the
+    // engine. Avoids the `mem::forget` leak of an earlier draft.
+    (engine, dir)
 }
 
 #[tokio::test]
 async fn export_csv() {
-    let engine = engine_with_things().await;
+    let (engine, _dir) = engine_with_things().await;
     let bytes = engine.export_table("things", ExportFormat::Csv).await.unwrap();
     let s = String::from_utf8(bytes).unwrap();
     assert!(s.contains("id"));
@@ -2856,7 +2918,7 @@ async fn export_csv() {
 
 #[tokio::test]
 async fn export_json() {
-    let engine = engine_with_things().await;
+    let (engine, _dir) = engine_with_things().await;
     let bytes = engine.export_table("things", ExportFormat::Json).await.unwrap();
     let s = String::from_utf8(bytes).unwrap();
     assert!(s.contains("\"id\""));
@@ -2865,7 +2927,7 @@ async fn export_json() {
 
 #[tokio::test]
 async fn export_parquet_yields_nonempty_bytes() {
-    let engine = engine_with_things().await;
+    let (engine, _dir) = engine_with_things().await;
     let bytes = engine.export_table("things", ExportFormat::Parquet).await.unwrap();
     // Parquet magic: starts with 'PAR1'
     assert!(bytes.starts_with(b"PAR1"));
@@ -3173,14 +3235,15 @@ Replace `crates/dat0-engine/src/extension_bootstrap.rs`:
 //! once at app startup before any window opens. Tests use the
 //! `__test_install_sqlite_scanner` variant.
 
-use std::sync::Once;
+use std::sync::OnceLock;
 use tracing::{info, warn};
 
 use crate::error::EngineError;
 use crate::Result;
 
-static INSTALL_ONCE: Once = Once::new();
-static mut INSTALL_RESULT: Option<std::result::Result<(), String>> = None;
+/// Memoized install outcome. `OnceLock::get_or_init` runs the closure exactly
+/// once per process; subsequent calls return the cached `&Result<(), String>`.
+static INSTALL_RESULT: OnceLock<std::result::Result<(), String>> = OnceLock::new();
 
 /// Install + LOAD `sqlite_scanner` exactly once per process. Subsequent calls
 /// short-circuit to the cached result.
@@ -3188,9 +3251,8 @@ static mut INSTALL_RESULT: Option<std::result::Result<(), String>> = None;
 /// Called by `dat0-app` at boot path before any window opens. Engine `init()`
 /// only LOADs (not INSTALLs) on the assumption this has already run.
 pub fn install_sqlite_scanner_at_app_boot(scratch_template: std::path::PathBuf) -> Result<()> {
-    let mut result: Option<std::result::Result<(), String>> = None;
-    INSTALL_ONCE.call_once(|| {
-        let outcome = (|| -> std::result::Result<(), String> {
+    let outcome: &std::result::Result<(), String> = INSTALL_RESULT.get_or_init(|| {
+        let result = (|| -> std::result::Result<(), String> {
             let conn = duckdb::Connection::open(&scratch_template)
                 .map_err(|e| format!("open: {e}"))?;
             conn.execute_batch("INSTALL sqlite_scanner; LOAD sqlite_scanner;")
@@ -3198,26 +3260,30 @@ pub fn install_sqlite_scanner_at_app_boot(scratch_template: std::path::PathBuf) 
             info!(target: "dat0_engine::extensions", "sqlite_scanner installed and loaded");
             Ok(())
         })();
-        if let Err(ref e) = outcome {
+        if let Err(ref e) = result {
             warn!(target: "dat0_engine::extensions", error = %e, "sqlite_scanner install failed");
         }
-        // SAFETY: INSTALL_ONCE ensures this branch runs at most once.
-        unsafe {
-            INSTALL_RESULT = Some(outcome.clone());
-        }
-        result = Some(outcome);
+        result
     });
-    // If we just executed the install, `result` is Some. Otherwise read cache.
-    let r = match result {
-        Some(r) => r,
-        None => unsafe { INSTALL_RESULT.clone().expect("call_once ran") },
-    };
-    r.map_err(|msg| EngineError::Io(std::io::Error::other(msg)))
+    outcome.clone().map_err(|msg| EngineError::Io(std::io::Error::other(msg)))
 }
 
-/// Test-only: install via a per-test Connection. Installs are global (the
-/// extension lives in `~/.duckdb/extensions/`); LOAD is per-connection. Tests
-/// running in parallel may race the INSTALL — `call_once` serializes them.
+/// Test-only: install via a per-test Connection.
+///
+/// **Concurrency note:** within a single test-binary process, `OnceLock`
+/// serializes the install. But `cargo test --workspace` runs each test crate
+/// as a separate process, and they share `~/.duckdb/extensions/` on disk —
+/// the canonical default extension cache. The first time tests run cold, two
+/// processes can race the INSTALL of `sqlite_scanner.duckdb_extension`.
+/// Mitigations:
+///   1. CI runs a one-shot priming step before the test matrix (recommended;
+///      add to `.github/workflows/ci.yml` in T13 as a step that calls
+///      `cargo run -p dat0-fixtures-priming -- --install-extensions` or runs
+///      a small `cargo test -p dat0-engine --test attach_dispatch` to warm
+///      the cache).
+///   2. Alternatively, set `DUCKDB_EXTENSION_DIRECTORY` per test process to
+///      a tempdir — but extension caches won't persist across cargo runs.
+/// Track as a P2 candidate plan-defect (PD-005) if cold-cache race is observed.
 #[doc(hidden)]
 pub fn __test_install_sqlite_scanner() -> Result<()> {
     let scratch = std::env::temp_dir().join(format!(
@@ -3227,8 +3293,6 @@ pub fn __test_install_sqlite_scanner() -> Result<()> {
     install_sqlite_scanner_at_app_boot(scratch)
 }
 ```
-
-> The `static mut` cell + `Once` is the canonical way to memoize a fallible result. Beware: any clippy version that complains about `static mut INSTALL_RESULT` may need an `#[allow(static_mut_refs)]`. Alternative: replace with `OnceLock<Result<(), String>>`. Prefer `OnceLock` if T0 confirmed the toolchain supports it (rust 1.70+; we're on 1.95, so yes — refactor to `OnceLock` if clippy complains).
 
 - [ ] **Step 11b.2: Write the failing test**
 
@@ -3625,6 +3689,7 @@ Insert after the Rust install step in the `build` job's steps list:
 
 ```yaml
       - name: Cache fixtures
+        id: cache-fixtures
         uses: actions/cache@v4
         with:
           path: tests/fixtures/large/
@@ -3636,13 +3701,19 @@ Insert after the Rust install step in the `build` job's steps list:
           mkdir -p tests/fixtures/large
           cargo run --release -p dat0-fixtures -- --out tests/fixtures/large --seed 42
 
+      - name: Prime sqlite_scanner extension cache (avoid concurrent INSTALL race)
+        run: |
+          cargo run --release -p dat0-fixtures -- --out /tmp/dat0-prime --csv-bytes 4096 --sqlite-target-bytes 4096 || true
+          # Force a one-shot INSTALL so subsequent test-binary processes find the extension cached.
+          cargo test -p dat0-engine --test attach_dispatch -- --nocapture || true
+
       - name: Run tests (with --include-ignored to exercise large fixtures)
         run: cargo test --workspace --target ${{ matrix.target.triple }} -- --include-ignored
 ```
 
 > If the existing CI has a separate `Run tests` step, replace its `cargo test` invocation with `cargo test --workspace -- --include-ignored`. The `--include-ignored` flag picks up T17's exit-criterion tests which are `#[ignore = "requires generated fixtures"]`.
 
-If `steps.cache-fixtures.outputs.cache-hit` doesn't resolve (the step needs an `id`), set `id: cache-fixtures` on the cache step.
+> The "prime sqlite_scanner extension cache" step pre-warms `~/.duckdb/extensions/` before the parallel test matrix runs, sidestepping the concurrent-install race documented in T11b's `__test_install_sqlite_scanner` doc-comment. The `|| true` swallows non-fatal errors (e.g., the test binary not yet existing on first run); the priming is best-effort, the test step still asserts the install succeeded.
 
 - [ ] **Step 13.3: Local CI dry-run**
 
@@ -3685,7 +3756,7 @@ Wire `install_sqlite_scanner_at_app_boot` into `dat0-app::boot`. Single-shot, ru
 - Modify: `crates/dat0-app/src/boot.rs`
 - Possibly modify: `crates/dat0-app/src/error_ux/banner.rs` (if banner needs an "extension install failed" preset)
 
-**Subagent dispatch profile:** combined-verify (small integration; main risk is path-binding and banner wiring).
+**Subagent dispatch profile:** full review (T14 is the first consumer of P1's `Banner` primitive; the primitive's exported shape isn't pinned in this plan and has to be verified against P1's actual `crates/dat0-app/src/error_ux/banner.rs` API. Also: the banner's i18n key flow + Sentry redaction interaction need a code-quality review pass).
 
 - [ ] **Step 14.1: Add `dat0-engine` to `dat0-app/Cargo.toml`**
 
@@ -3977,15 +4048,34 @@ async fn interrupt_isolates_per_engine() {
         b_clone.execute("SELECT 1::INTEGER as v").await
     });
 
-    // Wait briefly, then interrupt A.
-    tokio::time::sleep(Duration::from_millis(100)).await;
-    a.interrupt();
+    // Issue interrupt repeatedly until A returns (or test-level timeout fires).
+    // A 100ms sleep then a single interrupt is unreliable on slow CI runners
+    // where the spawn_blocking thread may not yet be scheduled.
+    let interrupter = {
+        let a = a.clone();
+        tokio::spawn(async move {
+            for _ in 0..100 {
+                tokio::time::sleep(Duration::from_millis(50)).await;
+                a.interrupt();
+            }
+        })
+    };
 
-    let a_result = long_query.await.unwrap();
+    // Cap A's wait at 30 seconds; if interrupt doesn't propagate by then,
+    // something is broken — fail the test rather than hang.
+    let a_result = tokio::time::timeout(Duration::from_secs(30), long_query)
+        .await
+        .expect("A's long query exceeded 30s timeout — interrupt did not propagate")
+        .unwrap();
     let b_result = short_query.await.unwrap();
+    interrupter.abort();
 
-    // A must surface an error (Interrupted, or DuckDb wrapping interrupted).
-    assert!(a_result.is_err(), "A should have been interrupted");
+    // A must surface EngineError::Interrupted specifically (not just any Err).
+    // T7's translate_duckdb_err normalizes DuckDB's interrupt-error to this variant.
+    match a_result {
+        Err(dat0_engine::EngineError::Interrupted) => {} // expected
+        other => panic!("expected EngineError::Interrupted, got {other:?}"),
+    }
     // B must complete cleanly, unaffected.
     assert!(b_result.is_ok(), "B should complete normally despite A's interrupt");
     let qr = b_result.unwrap();
@@ -3996,7 +4086,10 @@ async fn interrupt_isolates_per_engine() {
 }
 ```
 
-> If T0 found that DuckDB's interrupt surfaces specifically as `EngineError::DuckDb(...)` rather than `EngineError::Interrupted`, the test still passes (both are `Err`). T7's execute() impl can be enhanced later to translate the specific DuckDB interrupted-error code to `EngineError::Interrupted` — track as PD-NNN if T0 finds a clean translation path.
+> If T0 finds that DuckDB at the pinned version surfaces interrupt errors via
+> a different mechanism than the substring match in T7's `translate_duckdb_err`,
+> update the translator AND this test together. Both depend on the same
+> classification.
 
 - [ ] **Step 16.2: Run, verify pass**
 
@@ -4142,13 +4235,16 @@ async fn one_hundred_mb_sqlite_attach() {
 
 #[tokio::test]
 #[ignore = "requires generated fixtures"]
-async fn streaming_is_zero_copy_no_json_serialization() {
-    // The contract: at no point in the streaming pipeline does the engine
-    // serialize a batch to JSON. Verify by checking that the QueryResult
-    // the stream emits is `RecordBatch` (Arrow) — an Arrow batch is by its
-    // memory layout the same as DuckDB's internal Vector representation
-    // (zero-copy via the C-data interface). If T0 confirmed the pipeline,
-    // this test is structural: it checks the type chain, not bytes.
+async fn streaming_emits_arrow_recordbatch_type_chain() {
+    // The streaming exit criterion claims "verified zero-copy from engine to
+    // consumer (no JSON serialization in path)". The type-chain assertion
+    // here proves the WEAKER property: the consumer receives
+    // `duckdb::arrow::record_batch::RecordBatch` directly — no `Value`/`String`/JSON
+    // intermediation is possible without a transformation step the type system
+    // would surface. Genuine zero-copy verification (peak RSS bounded
+    // independently of fixture size, batch buffers shared between DuckDB and
+    // the consumer's address space) is deferred to a P3 perf bench because it
+    // requires RSS measurement instrumentation we don't have in P2.
     if skip_if_no_fixtures() { return; }
     let dir = tempfile::tempdir().unwrap();
     let engine = DuckDBEngine::new(dir.path().join("a.duckdb"), budget()).unwrap();
@@ -4162,8 +4258,8 @@ async fn streaming_is_zero_copy_no_json_serialization() {
         .await
         .unwrap();
     let batch = stream.next().await.unwrap().unwrap();
-    // If this compiles, the type chain is RecordBatch through and through —
-    // no JSON intermediation possible.
+    // Type assertion: if this compiles, the chain is RecordBatch through and
+    // through. No JSON path possible without an explicit transform step.
     let _: &duckdb::arrow::record_batch::RecordBatch = &batch;
     assert!(batch.num_rows() > 0);
     engine.close().await.unwrap();
@@ -4370,9 +4466,7 @@ No gaps.
 
 ### 2. Placeholder scan
 
-Searched for "TBD", "TODO", "implement later", "fill in details", "Add appropriate error handling", "handle edge cases". Two TODOs intentionally left in code:
-
-- T2's `// TODO(T2): if duckdb-rs gains an explicit close, use it.` — this is a **forward-pointing comment**, not a plan placeholder, and it correctly indicates that close() is a no-op until duckdb-rs exposes a richer API. Keep.
+Searched for "TBD", "TODO", "implement later", "fill in details", "Add appropriate error handling", "handle edge cases". No actual placeholders. The plan's earlier draft had `// TODO(T2)` in the close() body; replaced with an accurate paragraph explaining why Connection::close(self) cannot be called from inside Arc<Mutex<_>> and what P3+ may want to do (graceful drain).
 
 All steps contain actual content the engineer can act on. Code blocks present in every code-step. Test names + assertions concrete.
 
@@ -4393,7 +4487,7 @@ No mismatches.
 
 Plan complete and saved to `docs/plans/2026-04-27-dat0-p2-engine-plan.md`. Two execution options:
 
-**1. Subagent-Driven (recommended)** — I dispatch a fresh subagent per task, two-stage review per task (spec-compliance reviewer + code-quality reviewer), combined-verify shortcut on tasks T1, T9, T10, T13, T14, T18 per the dispatch profile tags. This mirrors the P1 execution pattern that successfully shipped 25 tasks; ~50–70 dispatches expected for this 20-task plan.
+**1. Subagent-Driven (recommended)** — I dispatch a fresh subagent per task, two-stage review per task (spec-compliance reviewer + code-quality reviewer), combined-verify shortcut on tasks T1, T9, T10, T13, T18 per the dispatch profile tags. This mirrors the P1 execution pattern that successfully shipped 25 tasks; ~55–75 dispatches expected for this 20-task plan.
 
 **2. Inline Execution** — I execute tasks in this session using the executing-plans skill, with checkpoints for review after each batch.
 
