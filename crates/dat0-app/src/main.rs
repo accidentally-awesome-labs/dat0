@@ -1,3 +1,3 @@
-fn main() {
-    println!("hello, dat0");
+fn main() -> anyhow::Result<()> {
+    dat0_app::run_app()
 }
