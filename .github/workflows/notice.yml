@@ -1,0 +1,31 @@
+name: NOTICE drift check
+on:
+  pull_request:
+    paths:
+      - "Cargo.toml"
+      - "Cargo.lock"
+      - "crates/**/Cargo.toml"
+      - "NOTICE.md"
+      - "about.toml"
+      - "docs/about-template.hbs"
+jobs:
+  notice:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Install cargo-about
+        # cargo-about >=0.9 ships the binary behind the `cli` feature; without
+        # `--features=cli` the install completes but produces no executable.
+        run: cargo install cargo-about --locked --features=cli
+      - name: Regenerate third-party list
+        run: cargo about generate -c about.toml docs/about-template.hbs > /tmp/third-party.txt
+      - name: Diff NOTICE
+        run: |
+          ./scripts/notice-extract.sh NOTICE.md > /tmp/notice-current.txt
+          if ! diff /tmp/notice-current.txt /tmp/third-party.txt; then
+            echo "::error::NOTICE.md is out of sync with the dependency tree."
+            echo "Run locally: cargo about generate -c about.toml docs/about-template.hbs and replace the marked section in NOTICE.md."
+            exit 1
+          fi
+          echo "NOTICE in sync"
