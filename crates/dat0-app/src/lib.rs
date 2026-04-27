@@ -1,6 +1,7 @@
 //! dat0 desktop application library (internal API surface).
 
 pub mod boot;
+pub mod error_ux;
 pub mod menu_macos;
 pub mod platform;
 pub mod recents;
