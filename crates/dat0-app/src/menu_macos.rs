@@ -46,7 +46,10 @@ pub fn build_menus(_cx: &mut gpui::App) -> Vec<gpui::Menu> {
         Menu {
             name: dat0_i18n::t("menu.view").into(),
             items: vec![
-                MenuItem::action(dat0_i18n::t("menu.view.command_palette"), OpenCommandPalette),
+                MenuItem::action(
+                    dat0_i18n::t("menu.view.command_palette"),
+                    OpenCommandPalette,
+                ),
                 MenuItem::action(dat0_i18n::t("menu.view.settings"), OpenSettings),
             ],
         },

@@ -57,9 +57,8 @@ fn redact_text(s: &str) -> String {
     // "<redacted>". The two capture groups exist purely to bound the prefix
     // and consume any trailing path segments before the next whitespace or
     // delimiter.
-    let re = regex::Regex::new(
-        r#"(/Users/[^/\s]+|/home/[^/\s]+|[A-Z]:\\[^\\\s]+)([\\/][^"'\s,]*)?"#,
-    )
-    .expect("redaction regex must compile");
+    let re =
+        regex::Regex::new(r#"(/Users/[^/\s]+|/home/[^/\s]+|[A-Z]:\\[^\\\s]+)([\\/][^"'\s,]*)?"#)
+            .expect("redaction regex must compile");
     re.replace_all(s, "<redacted>").into_owned()
 }

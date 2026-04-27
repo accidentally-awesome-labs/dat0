@@ -39,11 +39,14 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
         with:
           targets: ${{ matrix.target.triple }}
-      - name: Linux deps for keychain tests
+      - name: Linux deps (keychain + GPUI)
         if: runner.os == 'Linux'
         run: |
           sudo apt-get update
-          sudo apt-get install -y libsecret-1-dev dbus-x11 gnome-keyring libpango1.0-dev
+          sudo apt-get install -y \
+            libsecret-1-dev dbus-x11 gnome-keyring \
+            libpango1.0-dev libxkbcommon-dev libxkbcommon-x11-dev \
+            libfontconfig1-dev libssl-dev
       - name: Linux — start dbus + gnome-keyring (Secret Service backend)
         if: runner.os == 'Linux'
         run: |

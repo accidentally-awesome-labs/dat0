@@ -34,9 +34,7 @@ impl Telemetry {
         let opts = ClientOptions {
             dsn: Some(SENTRY_DSN_PUBLIC.parse()?),
             release: Some(env!("CARGO_PKG_VERSION").into()),
-            before_send: Some(std::sync::Arc::new(|event| {
-                redaction::redact_event(event)
-            })),
+            before_send: Some(std::sync::Arc::new(redaction::redact_event)),
             ..Default::default()
         };
         let guard = sentry::init(opts);

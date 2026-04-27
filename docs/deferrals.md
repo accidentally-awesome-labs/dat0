@@ -52,6 +52,7 @@ that's modifying it; merge conflicts are signals worth investigating.
 |--------|--------------------------------------------------------------------|--------|----------|
 | PD-001 | tracing EnvFilter directive `dat0=debug` doesn't match dat0 crates | open   | low      |
 | PD-002 | Settings store atomic-write missing `fsync` before rename          | open   | low      |
+| PD-003 | cargo-about NOTICE output not deterministic across host platforms  | open   | low      |
 
 ---
 
@@ -186,6 +187,35 @@ that's modifying it; merge conflicts are signals worth investigating.
 - **Acceptable when:** dat0 begins storing recoverable state in settings (e.g.,
   workspace pointers a user would lose if the file zeroed). Until then the cost
   of a corrupt settings file is "user re-enters preferences," which is low.
+- **Last touched:** 2026-04-26
+
+---
+
+### PD-003 — cargo-about NOTICE output not deterministic across host platforms
+
+- **Status:** open
+- **Severity:** low (warn-only CI gate, not a blocker)
+- **Affected files:** `about.toml`, `.github/workflows/notice.yml`, `NOTICE.md`
+- **Symptom:** `cargo about generate` produces different output on macOS vs Linux
+  hosts even with `targets = [all-4-targets]` in `about.toml`. Specifically,
+  dual-licensed crates (e.g., `ureq` with `Apache-2.0 OR MIT`) get assigned
+  different licenses depending on host platform's tiebreak — moving them
+  between license sections in the rendered NOTICE. The `notice` CI job, which
+  diffs the committed NOTICE against a fresh CI-generated one, fires on this
+  one-line ordering noise.
+- **Discovered:** P1 CI first run on PR #1 (2026-04-26) — committed NOTICE was
+  generated on macOS arm64; Linux x86_64 runner regenerated and saw `ureq`
+  in a different license section.
+- **Mitigation in P1:** `notice` job set to `continue-on-error: true`. Failure
+  reported as `::warning::` instead of `::error::`. Drift is still surfaced
+  but doesn't block PRs.
+- **Suggested fix:** Either (a) pin tie-broken licenses explicitly in
+  `about.toml` per crate (e.g., `[crates.ureq] accepted = ["MIT"]`), or
+  (b) restrict `targets` to a single canonical platform for the gate, or
+  (c) compare a normalized form of the output (sort lines per section).
+  Option (a) is the most-honest if the dual-license selection is genuinely a
+  policy choice; option (b) is the simplest if NOTICE is intended as a
+  generic union.
 - **Last touched:** 2026-04-26
 
 ---

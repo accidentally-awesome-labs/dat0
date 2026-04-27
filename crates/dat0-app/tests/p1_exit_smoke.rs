@@ -2,7 +2,7 @@
 
 #[test]
 fn settings_toml_round_trip() {
-    use dat0_app::settings::{store::SettingsStore, Settings};
+    use dat0_app::settings::{Settings, store::SettingsStore};
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("settings.toml");
     let store = SettingsStore::with_path(path);
@@ -31,7 +31,10 @@ fn keychain_round_trip() {
     let kc = dat0_keychain::Keychain::new("dat0-p1-smoke").unwrap();
     let _ = kc.delete("smoke");
     kc.set("smoke", b"value").unwrap();
-    assert_eq!(kc.get("smoke").unwrap().as_deref(), Some(b"value".as_slice()));
+    assert_eq!(
+        kc.get("smoke").unwrap().as_deref(),
+        Some(b"value".as_slice())
+    );
     kc.delete("smoke").unwrap();
 }
 
@@ -55,7 +58,10 @@ fn recents_round_trip() {
     let dir = tempfile::tempdir().unwrap();
     let p = dir.path().join("recents.json");
     let mut r = Recents::with_path(p.clone());
-    r.push(RecentEntry::Workspace { path: "/tmp/w".into() }).unwrap();
+    r.push(RecentEntry::Workspace {
+        path: "/tmp/w".into(),
+    })
+    .unwrap();
     drop(r);
     // No `mut` — we never push to the second handle, only read.
     let r2 = Recents::with_path(p);

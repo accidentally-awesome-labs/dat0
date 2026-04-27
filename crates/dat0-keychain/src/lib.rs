@@ -79,10 +79,8 @@ mod platform {
             .enable_all()
             .build()?;
         rt.block_on(async {
-            let ss = secret_service::SecretService::connect(
-                secret_service::EncryptionType::Dh,
-            )
-            .await?;
+            let ss =
+                secret_service::SecretService::connect(secret_service::EncryptionType::Dh).await?;
             let collection = ss.get_default_collection().await?;
             collection
                 .create_item(
@@ -103,10 +101,8 @@ mod platform {
             .enable_all()
             .build()?;
         rt.block_on(async {
-            let ss = secret_service::SecretService::connect(
-                secret_service::EncryptionType::Dh,
-            )
-            .await?;
+            let ss =
+                secret_service::SecretService::connect(secret_service::EncryptionType::Dh).await?;
             let attrs = std::collections::HashMap::from([("service", service), ("key", key)]);
             let items = ss.search_items(attrs).await?;
             match items.unlocked.first() {
@@ -121,10 +117,8 @@ mod platform {
             .enable_all()
             .build()?;
         rt.block_on(async {
-            let ss = secret_service::SecretService::connect(
-                secret_service::EncryptionType::Dh,
-            )
-            .await?;
+            let ss =
+                secret_service::SecretService::connect(secret_service::EncryptionType::Dh).await?;
             let attrs = std::collections::HashMap::from([("service", service), ("key", key)]);
             for item in ss.search_items(attrs).await?.unlocked {
                 item.delete().await?;
@@ -136,7 +130,7 @@ mod platform {
 
 #[cfg(not(any(target_os = "macos", target_os = "linux")))]
 mod platform {
-    use anyhow::{anyhow, Result};
+    use anyhow::{Result, anyhow};
 
     pub fn set(_: &str, _: &str, _: &[u8]) -> Result<()> {
         Err(anyhow!("unsupported platform"))

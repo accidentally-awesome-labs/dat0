@@ -8,13 +8,9 @@ pub fn config_dir() -> Result<PathBuf> {
 }
 
 pub fn data_dir() -> Result<PathBuf> {
-    Ok(dirs::data_dir()
-        .context("no XDG_DATA_HOME")?
-        .join("dat0"))
+    Ok(dirs::data_dir().context("no XDG_DATA_HOME")?.join("dat0"))
 }
 
 pub fn cache_dir() -> Result<PathBuf> {
-    Ok(dirs::cache_dir()
-        .context("no XDG_CACHE_HOME")?
-        .join("dat0"))
+    Ok(dirs::cache_dir().context("no XDG_CACHE_HOME")?.join("dat0"))
 }

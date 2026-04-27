@@ -55,11 +55,11 @@ impl Render for SettingsView {
             .iter()
             .position(|s| s.id() == self.selected_section);
 
-        let sidebar = div()
-            .w_64()
-            .flex()
-            .flex_col()
-            .children(sections.iter().map(|s| div().child(dat0_i18n::t(s.name_key()))));
+        let sidebar = div().w_64().flex().flex_col().children(
+            sections
+                .iter()
+                .map(|s| div().child(dat0_i18n::t(s.name_key()))),
+        );
 
         let content = div().flex_1().when_some(active_index, |d, idx| {
             d.child(sections[idx].render(window, app))

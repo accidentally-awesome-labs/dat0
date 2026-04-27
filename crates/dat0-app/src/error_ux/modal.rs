@@ -4,7 +4,7 @@
 //! is intentionally minimal at P1 — actual dialog presentation will be wired
 //! up through gpui-component's `Dialog` / `Sheet` API at use sites (P7+).
 
-use gpui::{div, prelude::*, IntoElement};
+use gpui::{IntoElement, div, prelude::*};
 
 /// Boxed action callback. Stored alongside its label for the button.
 pub type ModalAction = (String, std::sync::Arc<dyn Fn() + Send + Sync>);

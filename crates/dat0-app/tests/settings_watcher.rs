@@ -1,4 +1,4 @@
-use dat0_app::settings::{store::SettingsStore, watcher::SettingsWatcher, Settings};
+use dat0_app::settings::{Settings, store::SettingsStore, watcher::SettingsWatcher};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 use tempfile::tempdir;
@@ -14,7 +14,8 @@ fn watcher_fires_on_change() {
     let recv_clone = received.clone();
     let watcher = SettingsWatcher::start(path.clone(), move |new_settings| {
         recv_clone.lock().unwrap().push(new_settings);
-    }).unwrap();
+    })
+    .unwrap();
 
     // Mutate
     let mut s = Settings::default();

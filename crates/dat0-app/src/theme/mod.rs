@@ -17,8 +17,11 @@ impl Theme {
             "high-contrast" => include_str!("builtins/high-contrast.json"),
             other => anyhow::bail!("unknown built-in theme: {other}"),
         };
-        let parsed: ZedTheme = serde_json::from_str(json)
-            .with_context(|| format!("parse builtin theme {name}"))?;
-        Ok(Self { name: parsed.name, style: parsed.style })
+        let parsed: ZedTheme =
+            serde_json::from_str(json).with_context(|| format!("parse builtin theme {name}"))?;
+        Ok(Self {
+            name: parsed.name,
+            style: parsed.style,
+        })
     }
 }

@@ -1,6 +1,6 @@
-use std::path::PathBuf;
-use anyhow::{Context, Result};
 use crate::settings::Settings;
+use anyhow::{Context, Result};
+use std::path::PathBuf;
 
 pub struct SettingsStore {
     path: PathBuf,
