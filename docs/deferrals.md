@@ -45,6 +45,7 @@ that's modifying it; merge conflicts are signals worth investigating.
 | D-003 | Sparkle Objective-C `SUUpdater` bridge             | open | P1   | P10    |
 | D-004 | AppImageUpdate subprocess invocation               | open | P1   | P10    |
 | D-005 | Linux Secret Service "setup banner" UX             | open | P1   | TBD    |
+| D-006 | macOS x86_64 (Intel) CI matrix coverage            | open | P1   | TBD    |
 
 ## At-a-glance — Plan defects
 
@@ -134,6 +135,34 @@ that's modifying it; merge conflicts are signals worth investigating.
   init fails, with link to user-runnable docs for `gnome-keyring-daemon` /
   `kwalletmanager` setup.
 - **Originating doc:** `docs/plans/2026-04-26-dat0-p1-foundation-plan.md` §"Risks & Caveats"
+- **Last touched:** 2026-04-26
+
+### D-006 — macOS x86_64 (Intel) CI matrix coverage
+
+- **Status:** open
+- **Deferred from:** P1 (T20)
+- **Target phase:** TBD — gated on external CI capacity (self-hosted runner,
+  paid runner pool, or GitHub queue recovery for `macos-13` images)
+- **Reason:** GitHub-hosted Intel-Mac (`macos-13`) runners are heavily
+  oversubscribed since Apple's transition to Apple Silicon. PR #1's
+  `macos-13` job sat queued for 50+ minutes without ever starting; this
+  is reportedly typical for the image. Holding P1's PR merge on its
+  scheduling is not productive.
+- **What P1 ships:** `macos-14` (Apple Silicon arm64) build + test in
+  CI; `linux-x86_64` and `linux-arm64` matrix coverage. Local development
+  still builds for any installed target. The Cargo workspace is
+  cross-architecture-clean; `macos-13` would be a re-confirmation, not
+  a new validation surface.
+- **What target phase delivers:** Restore the `macos-13` matrix entry
+  when one of: a self-hosted Intel-Mac runner is provisioned, GitHub's
+  hosted queue stabilizes for the image, or the team migrates the matrix
+  to a paid runner provider. Suggested phase: P10 hardening, since that's
+  also when notarization and signing infrastructure lands.
+- **Originating doc:** PR #1 first-run timeout; `.github/workflows/ci.yml`
+  matrix definition.
+- **Closes (partial):** spec §21.2 P1 exit — "Cold-launches on macOS arm64,
+  macOS x86_64, Linux x86_64, Linux aarch64" — Apple Silicon + both Linux
+  triples covered; macOS Intel coverage deferred.
 - **Last touched:** 2026-04-26
 
 ---
