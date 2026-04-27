@@ -37,6 +37,9 @@ once_cell = "1"
 # zed-industries/zed. We mirror that here with exact-version pins (`=0.2.2`) plus the SHA
 # recorded in docs/upstream-watch.md for traceability.
 gpui = "=0.2.2"
+# Workspace-pinned for version traceability; not currently a direct dep
+# (transitively resolved via gpui). T14 may add direct usage if `actions!`
+# turns out to be re-exported through gpui-macros at the pinned version.
 gpui-macros = "=0.2.2"
 gpui-component = { git = "https://github.com/longbridge/gpui-component", rev = "0f0ab35233212f8f3277028995caf0c41e13ee6c" }
 

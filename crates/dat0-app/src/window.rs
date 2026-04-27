@@ -19,6 +19,10 @@ use gpui_component::Root;
 ///
 /// Blocks the calling thread on the platform event loop until the user
 /// closes the last window (the standard GPUI shutdown path).
+///
+/// Currently panics via `.expect("open window")` if the platform refuses
+/// to open a window — treated as a fatal startup error in P1. Graceful
+/// handling (propagating through the `Result` return) lands at T17/T21.
 pub fn run_app() -> Result<()> {
     Application::new().run(|cx: &mut App| {
         // Required before opening any window: initialises the gpui-component
