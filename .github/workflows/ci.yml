@@ -52,10 +52,25 @@ jobs:
           echo "DBUS_SESSION_BUS_ADDRESS=$DBUS_SESSION_BUS_ADDRESS" >> $GITHUB_ENV
           echo "GNOME_KEYRING_CONTROL=$GNOME_KEYRING_CONTROL" >> $GITHUB_ENV
           echo "SSH_AUTH_SOCK=$SSH_AUTH_SOCK" >> $GITHUB_ENV
-      - name: macOS — install Metal Toolchain
+      - name: macOS — ensure Metal Toolchain is available
         if: runner.os == 'macOS'
         run: |
-          xcodebuild -downloadComponent MetalToolchain
+          # Probe whether the metal compiler is already on PATH (GitHub-hosted
+          # Xcode bundles the Metal Toolchain by default on most images).
+          if xcrun --find metal >/dev/null 2>&1; then
+            echo "Metal Toolchain already present: $(xcrun --find metal)"
+            exit 0
+          fi
+          # Newer Xcode (~26.x) ships Metal Toolchain as a separately-downloadable
+          # component. The flag does not exist on older Xcode versions, so try it
+          # but fall back if rejected.
+          if xcodebuild -downloadComponent MetalToolchain 2>/dev/null; then
+            echo "Metal Toolchain downloaded via xcodebuild."
+            exit 0
+          fi
+          echo "::error::Metal Toolchain not present and xcodebuild -downloadComponent unsupported on this Xcode."
+          echo "::error::xcodebuild version: $(xcodebuild -version | head -1)"
+          exit 1
       - name: Build
         run: cargo build --workspace --release --target ${{ matrix.target.triple }}
       - name: Test
