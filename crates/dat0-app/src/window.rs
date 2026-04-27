@@ -9,6 +9,7 @@
 //! notifications silently fail to render later (T17 depends on this).
 
 use anyhow::Result;
+use dat0_i18n::t;
 use gpui::{
     App, Application, Bounds, Context, IntoElement, Render, TitlebarOptions, Window, WindowBounds,
     WindowOptions, div, prelude::*, px, size,
@@ -36,7 +37,7 @@ pub fn run_app() -> Result<()> {
             WindowOptions {
                 window_bounds: Some(WindowBounds::Windowed(bounds)),
                 titlebar: Some(TitlebarOptions {
-                    title: Some("dat0".into()),
+                    title: Some(t("app.name").into()),
                     ..Default::default()
                 }),
                 ..Default::default()

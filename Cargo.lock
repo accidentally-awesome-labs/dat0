@@ -1305,6 +1305,10 @@ version = "0.1.0"
 [[package]]
 name = "dat0-i18n"
 version = "0.1.0"
+dependencies = [
+ "once_cell",
+ "serde_json",
+]
 
 [[package]]
 name = "dat0-keychain"
