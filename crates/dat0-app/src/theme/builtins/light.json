@@ -1,0 +1,13 @@
+{
+  "name": "light",
+  "appearance": "light",
+  "style": {
+    "background": "#ffffff",
+    "foreground": "#1f2328",
+    "border": "#d0d7de",
+    "accent": "#0969da",
+    "error": "#cf222e",
+    "success": "#1a7f37",
+    "warning": "#9a6700"
+  }
+}
