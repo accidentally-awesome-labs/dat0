@@ -36,6 +36,40 @@ Use the same name and email as your `git config user.name` and `git config user.
 
 A bot enforces DCO sign-off on every pull request. Commits without a sign-off are flagged and must be amended before merge.
 
+## Building from source
+
+Once a P1 branch is checked out, the repo builds with stable Rust. Prerequisites:
+
+**All platforms**
+
+- Rust toolchain — `rust-toolchain.toml` pins to stable. Install via [rustup](https://rustup.rs).
+- `git` 2.30+
+
+**macOS**
+
+- Xcode Command Line Tools: `xcode-select --install`
+- **Metal Toolchain** (required by GPUI's build script): `xcodebuild -downloadComponent MetalToolchain` (~700 MB; one-time per machine). Without this, `cargo build` fails compiling `gpui`'s shaders.
+
+**Linux**
+
+```sh
+sudo apt-get install -y libsecret-1-dev dbus-x11 gnome-keyring libpango1.0-dev
+```
+
+(Required for the `dat0-keychain` Secret Service backend and GPUI's text rendering. Equivalent packages on Fedora / Arch are similarly named.)
+
+**Build, test, run**
+
+```sh
+cargo build --workspace
+cargo test --workspace
+cargo run --bin dat0
+```
+
+A standalone window titled "dat0" opens. Close it to exit.
+
+**Note on `.cargo/config.toml`**: stub values for `DAT0_GLITCHTIP_DSN_PUBLIC` and `DAT0_SPARKLE_APPCAST_URL` are baked at compile time; CI overrides via secrets. Local dev needs no extra env setup.
+
 ## How to propose changes
 
 1. **Open an issue first** for non-trivial changes, especially around the spec. This avoids wasted work if the direction differs.
@@ -46,12 +80,15 @@ A bot enforces DCO sign-off on every pull request. Commits without a sign-off ar
 
 ## Coding standards
 
-To be filled in once the implementation begins (Phase P1). The spec calls for:
-- Rust 2024 edition
-- `rustfmt` enforced in CI
-- `clippy` warnings as errors in CI
-- Unit + integration + GPUI snapshot tests required for new code
-- All UI strings must pass through the `t("…")` i18n helper
+- Rust 2024 edition (workspace pins MSRV 1.85)
+- `cargo fmt --all -- --check` clean (rustfmt config in `rustfmt.toml`; nightly-only options have been removed pending a CI fmt-strategy decision)
+- `cargo clippy --workspace --all-targets -- -D warnings` clean
+- Unit + integration tests required for new code; GPUI snapshot tests scaffolded but nominal in P1
+- All UI strings must pass through `dat0_i18n::t("…")`. The `scripts/i18n-check.sh` heuristic flags candidates; CI runs it in warn-only mode in P1 and tightens to a merge gate as the UI grows.
+
+## Phase scope, deferrals, plan defects
+
+Before opening a non-trivial PR, scan [`docs/deferrals.md`](docs/deferrals.md) — the canonical register of work split across phases and known plan defects. Phase plans live in `docs/plans/` and reference this register.
 
 ## Code of Conduct
 
