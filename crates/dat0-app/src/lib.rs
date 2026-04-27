@@ -2,6 +2,7 @@
 
 pub mod boot;
 pub mod platform;
+pub mod recents;
 pub mod settings;
 pub mod theme;
 pub mod window;
