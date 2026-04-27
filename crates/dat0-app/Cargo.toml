@@ -33,6 +33,15 @@ dat0-keychain = { workspace = true }
 
 [dev-dependencies]
 tempfile = { workspace = true }
+criterion = { workspace = true }
+
+[[bench]]
+name = "engine_smoke"
+harness = false
+
+[[bench]]
+name = "grid_scroll"
+harness = false
 
 [lib]
 path = "src/lib.rs"
