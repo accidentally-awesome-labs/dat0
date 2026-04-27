@@ -23,5 +23,10 @@
   "menu.help": "Help",
   "menu.help.about": "About dat0",
   "menu.help.docs": "Documentation",
-  "menu.help.discord": "Join Discord"
+  "menu.help.discord": "Join Discord",
+  "settings": "Settings",
+  "settings.profile": "Profile",
+  "settings.profile.placeholder": "Your name and email — used as the author of .dat0 packages you create.",
+  "settings.theme": "Theme",
+  "settings.theme.placeholder": "Choose a theme. Drop additional Zed-format JSON theme files into ~/Library/Application Support/dat0/themes/."
 }
