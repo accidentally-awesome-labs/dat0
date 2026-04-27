@@ -1,4 +1,27 @@
 {
   "app.name": "dat0",
-  "app.tagline": "local-first data workbench"
+  "app.tagline": "local-first data workbench",
+  "menu.file": "File",
+  "menu.file.new_window": "New Window",
+  "menu.file.open_file": "Open File…",
+  "menu.file.open_workspace": "Open Workspace…",
+  "menu.file.open_package": "Open .dat0 Package…",
+  "menu.file.close": "Close Window",
+  "menu.file.quit": "Quit dat0",
+  "menu.edit": "Edit",
+  "menu.edit.undo": "Undo",
+  "menu.edit.redo": "Redo",
+  "menu.edit.cut": "Cut",
+  "menu.edit.copy": "Copy",
+  "menu.edit.paste": "Paste",
+  "menu.view": "View",
+  "menu.view.command_palette": "Command Palette…",
+  "menu.view.settings": "Settings…",
+  "menu.window": "Window",
+  "menu.window.minimize": "Minimize",
+  "menu.window.zoom": "Zoom",
+  "menu.help": "Help",
+  "menu.help.about": "About dat0",
+  "menu.help.docs": "Documentation",
+  "menu.help.discord": "Join Discord"
 }

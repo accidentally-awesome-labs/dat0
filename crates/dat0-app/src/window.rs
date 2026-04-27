@@ -32,6 +32,19 @@ pub fn run_app() -> Result<()> {
         // will fail silently.
         gpui_component::init(cx);
 
+        // Install the macOS native menu bar (P1.T14). On non-macOS targets
+        // `build_menus` returns an empty Vec, so this is a no-op.
+        // Per gpui v0.2.2 (`docs/internal/gpui-api-notes.md` §0.3),
+        // `App::set_menus` is invoked inside the `Application::run` closure;
+        // there is no `cx.activate_menu(...)` API. `set_menus` borrows `cx`
+        // immutably while `build_menus` takes `&mut App`, so the call is
+        // split into two statements to satisfy the borrow checker.
+        #[cfg(target_os = "macos")]
+        {
+            let menus = crate::menu_macos::build_menus(cx);
+            cx.set_menus(menus);
+        }
+
         let bounds = Bounds::centered(None, size(px(1200.), px(800.)), cx);
         cx.open_window(
             WindowOptions {
