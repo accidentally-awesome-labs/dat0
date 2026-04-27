@@ -7,6 +7,7 @@ pub mod recents;
 pub mod settings;
 pub mod telemetry;
 pub mod theme;
+pub mod updater;
 pub mod window;
 
 pub use window::run_app;

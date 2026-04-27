@@ -48,6 +48,9 @@ gpui-component = { git = "https://github.com/longbridge/gpui-component", rev = "
 sentry = { version = "0.36", default-features = false, features = ["backtrace", "panic", "rustls", "reqwest"] }
 regex = "1"
 
+# HTTP (used by updater module for appcast smoke checks)
+ureq = { version = "2", default-features = false, features = ["tls"] }
+
 # Bench
 criterion = { version = "0.5", features = ["html_reports"] }
 

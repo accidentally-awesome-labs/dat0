@@ -25,6 +25,7 @@ once_cell = { workspace = true }
 dirs = { workspace = true }
 sentry = { workspace = true }
 regex = { workspace = true }
+ureq = { workspace = true }
 gpui = { workspace = true }
 gpui-component = { workspace = true }
 dat0-i18n = { workspace = true }
