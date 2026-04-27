@@ -53,6 +53,7 @@ that's modifying it; merge conflicts are signals worth investigating.
 | PD-001 | tracing EnvFilter directive `dat0=debug` doesn't match dat0 crates | open   | low      |
 | PD-002 | Settings store atomic-write missing `fsync` before rename          | open   | low      |
 | PD-003 | cargo-about NOTICE output not deterministic across host platforms  | open   | low      |
+| PD-004 | Linux Secret Service backend not reachable from CI keychain tests  | open   | low      |
 
 ---
 
@@ -216,6 +217,46 @@ that's modifying it; merge conflicts are signals worth investigating.
   Option (a) is the most-honest if the dual-license selection is genuinely a
   policy choice; option (b) is the simplest if NOTICE is intended as a
   generic union.
+- **Last touched:** 2026-04-26
+
+---
+
+### PD-004 — Linux Secret Service backend not reachable from CI keychain tests
+
+- **Status:** open
+- **Severity:** low (tests skipped on Linux CI; macOS coverage still authoritative for keychain primitive)
+- **Affected files:** `crates/dat0-keychain/tests/round_trip.rs`,
+  `crates/dat0-app/tests/p1_exit_smoke.rs`, `.github/workflows/ci.yml`
+- **Symptom:** Keychain round-trip tests on Linux runners panic with
+  `SS error: result not returned from SS API`. The CI job sets up
+  `dbus-launch` + `gnome-keyring-daemon --unlock --start --components=secrets`
+  in one step and propagates `DBUS_SESSION_BUS_ADDRESS` via `$GITHUB_ENV`,
+  but the daemon process does not survive cleanly across step boundaries
+  on GitHub-hosted Ubuntu images. By the time `cargo test` runs, the
+  Secret Service bus is unreachable.
+- **Discovered:** P1 CI first run on PR #1 (2026-04-26) — both
+  `ubuntu-latest` and `ubuntu-22.04-arm` failed.
+- **Mitigation in P1:** keychain tests gated `#[cfg_attr(target_os = "linux", ignore = "...")]`
+  so they're skipped on Linux runners. macOS keychain coverage (T12) is
+  authoritative for the round-trip contract; Linux-side correctness is
+  established only by compilation under `#[cfg(target_os = "linux")]`.
+- **Suggested fix paths:**
+  - **(a) Run tests under `dbus-run-session`:**
+    ```yaml
+    - name: Test (Linux)
+      if: runner.os == 'Linux'
+      run: |
+        dbus-run-session -- bash -c '
+          gnome-keyring-daemon --unlock --start --components=secrets <<<"" >/dev/null
+          cargo test --workspace --target ${{ matrix.target.triple }}
+        '
+    ```
+    Self-contained per-step session bus; daemon and tests live in the same
+    invocation. Most reliable.
+  - **(b) Use the OS-keyring crate's "mock" feature** for unit tests; keep
+    integration tests macOS-only. Cleaner separation but less coverage.
+  - **(c) Self-hosted Linux runner with persistent gnome-keyring** —
+    overkill for what's tested.
 - **Last touched:** 2026-04-26
 
 ---
