@@ -1,12 +1,17 @@
-//! Parquet registration. T6 fills this in.
+//! Parquet registration via DuckDB `read_parquet`.
 
 use std::path::Path;
 
 use crate::Result;
 use crate::error::EngineError;
 
-pub(crate) fn build_parquet_view_sql(_path: &Path, _table_name: &str) -> Result<String> {
-    Err(EngineError::NotImplemented {
-        feature: "register_file parquet (T6)",
-    })
+pub(crate) fn build_parquet_view_sql(path: &Path, table_name: &str) -> Result<String> {
+    let path_str = path
+        .to_str()
+        .ok_or_else(|| EngineError::InvalidPath(path.to_path_buf()))?;
+    let escaped_path = path_str.replace('\'', "''");
+    Ok(format!(
+        "CREATE OR REPLACE VIEW \"{}\" AS SELECT * FROM read_parquet('{}');",
+        table_name, escaped_path
+    ))
 }
