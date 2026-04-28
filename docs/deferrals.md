@@ -51,6 +51,7 @@ that's modifying it; merge conflicts are signals worth investigating.
 | D-009 | Bundle `sqlite_scanner` static when duckdb-rs exposes a feature | open | P2 | TBD |
 | D-010 | Non-UTF-8 file encoding handling                   | open | P2   | TBD    |
 | D-011 | Remove `__debug_query_scalar` test-only helper     | open | P2   | P3     |
+| D-012 | Engine catalog `TableInfo` synthesis (origin + schema) | open | P2   | P3     |
 
 ## At-a-glance — Plan defects
 
@@ -314,6 +315,35 @@ that's modifying it; merge conflicts are signals worth investigating.
 - **Originating doc:** `docs/plans/2026-04-27-dat0-p2-engine-plan.md` (T2
   fix-up commit `f7ed3a7`); P2 retro `docs/plans/2026-04-27-dat0-p2-retro.md`
   § "Recommendations for P3" #3.
+- **Last touched:** 2026-04-28
+
+### D-012 — Engine catalog `TableInfo` synthesis (origin + schema)
+
+- **Status:** open
+- **Deferred from:** P2 (T9 catalog ops)
+- **Target phase:** P3 (Scratch mode + DataGrid)
+- **Reason:** DuckDB doesn't persist `TableOrigin` metadata across reconnects,
+  and the engine has no per-table origin registry yet. P2's `get_tables`
+  synthesizes `TableOrigin::Derived(DerivedOrigin::Sql(""))` as a placeholder
+  for every table — a false positive that future code may misinterpret.
+  Similarly, `create_table` returns `TableInfo { schema: "main", ... }`
+  hardcoded regardless of where the table actually lands; if a caller ever
+  changes `current_schema` or passes a qualified name, the returned
+  `TableInfo.schema` will be wrong.
+- **What P2 ships:** `TableInfo.origin` and `TableInfo.schema` populated with
+  best-effort placeholders. `register_file` produces the correct
+  `TableOrigin::File(PathBuf)`. All other paths return `Derived(Sql(""))`
+  or hardcoded `"main"`.
+- **What target phase delivers:** either (a) per-engine origin registry
+  (a `__dat0_meta_table_origins` table populated on `create_table` /
+  `register_file` / `attach`-derived tables, queried by `get_tables`), OR
+  (b) explicit `TableOrigin::Unknown` variant added to `types.rs` so the
+  type system surfaces "we don't know" instead of lying. P3 SQL Console
+  surfaces table origins to the user; that's when the placeholder becomes
+  user-visible noise.
+- **Originating doc:** `docs/plans/2026-04-27-dat0-p2-engine-plan.md` T9 +
+  T9 review notes; `docs/plans/2026-04-27-dat0-p2-retro.md` § "Reviewer-
+  flagged minor follow-ups".
 - **Last touched:** 2026-04-28
 
 ---
