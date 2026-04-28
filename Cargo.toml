@@ -4,6 +4,7 @@ members = [
     "crates/dat0-app",
     "crates/dat0-engine",
     "crates/dat0-format",
+    "crates/dat0-fixtures",
     "crates/dat0-i18n",
     "crates/dat0-keychain",
 ]
@@ -58,7 +59,28 @@ criterion = { version = "0.5", features = ["html_reports"] }
 tempfile = "3"
 serial_test = "3"
 
+# Engine: DuckDB native + bundled extensions (json, parquet are statically linked under `bundled`).
+# CSV reading is in DuckDB core; sqlite_scanner is NOT bundled (see D-009) and is loaded at runtime.
+# Arrow types are consumed via duckdb::arrow re-exports — DO NOT add a standalone `arrow` dep.
+duckdb = { version = "=1.4.4", features = ["bundled", "json", "parquet"] }
+
+# Streaming
+futures = "0.3"
+
+# Trait async helpers
+async-trait = "0.1"
+
+# CPU count probe (engine threads pragma)
+num_cpus = "1"
+
+# Fixtures generator (T12): deterministic CSV/Parquet/SQLite from a seed.
+clap = { version = "4", features = ["derive"] }
+rand = "0.8"
+rand_chacha = "0.3" # deterministic PRNG (cross-platform reproducibility)
+rusqlite = { version = "0.31", features = ["bundled"] }
+
 # Internal crates
+dat0-engine = { path = "crates/dat0-engine" }
 dat0-i18n = { path = "crates/dat0-i18n" }
 dat0-keychain = { path = "crates/dat0-keychain" }
 

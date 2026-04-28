@@ -6,5 +6,20 @@ license.workspace = true
 repository.workspace = true
 authors.workspace = true
 rust-version.workspace = true
+
 [lib]
 path = "src/lib.rs"
+
+[dependencies]
+duckdb.workspace = true
+futures.workspace = true
+tokio.workspace = true
+tracing.workspace = true
+thiserror.workspace = true
+serde.workspace = true
+async-trait.workspace = true
+num_cpus.workspace = true
+tempfile.workspace = true
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["rt-multi-thread", "macros", "fs", "sync", "time"] }

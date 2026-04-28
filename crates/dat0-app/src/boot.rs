@@ -3,6 +3,7 @@ use std::sync::Arc;
 use tracing_subscriber::{EnvFilter, fmt, prelude::*};
 
 use crate::{
+    error_ux::banner::{self, Banner},
     platform,
     recents::Recents,
     settings::{Settings, store::SettingsStore, watcher::SettingsWatcher},
@@ -62,11 +63,58 @@ impl AppContext {
 
         let telemetry = Telemetry::init(initial.telemetry.crash_submission_enabled)?;
 
+        // Install the DuckDB sqlite_scanner extension exactly once before any
+        // window opens. Engine init() in P2 only LOADs (not INSTALLs) on the
+        // assumption this has already run — this avoids a multi-window race
+        // for the shared `~/.duckdb/extensions/` cache (spec §2.5).
+        install_sqlite_scanner(&data_dir);
+
         Ok(Self {
             settings,
             _settings_watcher: watcher,
             recents,
             _telemetry: telemetry,
         })
+    }
+}
+
+/// Single-shot install of `sqlite_scanner` at app boot. Failures are logged
+/// and surfaced as a pending [`Banner`] for the render layer to drain — the
+/// app continues launching with SQLite ATTACH degraded.
+fn install_sqlite_scanner(data_dir: &std::path::Path) {
+    let scratch_dir = data_dir.join("ext-bootstrap");
+    if let Err(e) = std::fs::create_dir_all(&scratch_dir) {
+        tracing::warn!(
+            error = %e,
+            path = %scratch_dir.display(),
+            "could not create extension bootstrap scratch dir; falling back to temp_dir"
+        );
+    }
+    // If create_dir_all on data_dir failed, fall back to temp_dir so the
+    // INSTALL still has a writable scratch DB to open against.
+    let bootstrap_db = if scratch_dir.exists() {
+        scratch_dir.join("bootstrap.duckdb")
+    } else {
+        std::env::temp_dir()
+            .join("dat0")
+            .join("ext-bootstrap")
+            .join("bootstrap.duckdb")
+    };
+    if let Some(parent) = bootstrap_db.parent() {
+        let _ = std::fs::create_dir_all(parent);
+    }
+
+    if let Err(e) =
+        dat0_engine::extension_bootstrap::install_sqlite_scanner_at_app_boot(bootstrap_db)
+    {
+        tracing::error!(
+            error = %e,
+            "sqlite_scanner install failed at boot; SQLite ATTACH will be unavailable"
+        );
+        // Surface a Banner via the P1 error_ux primitive so the render layer
+        // can drain and display it once notification surfaces are wired up.
+        let title = dat0_i18n::t("boot.sqlite_scanner_install_failed.title");
+        let body = dat0_i18n::t("boot.sqlite_scanner_install_failed.body");
+        banner::push(Banner::warning(format!("{title}: {body}")));
     }
 }

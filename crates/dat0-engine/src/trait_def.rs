@@ -1,0 +1,34 @@
+//! `QueryEngine` trait per design-spec §6.1 verbatim.
+
+use std::path::Path;
+
+use crate::Result;
+use crate::types::{
+    ArrowRecordBatchStream, AttachOpts, ColumnInfo, DerivedOrigin, EngineStatus, ExportFormat,
+    PagedQueryResult, QueryResult, RegisterOpts, TableInfo,
+};
+
+#[async_trait::async_trait]
+pub trait QueryEngine: Send + Sync {
+    async fn init(&self) -> Result<()>;
+    async fn close(&self) -> Result<()>;
+    fn status(&self) -> EngineStatus;
+
+    async fn register_file(&self, path: &Path, opts: RegisterOpts) -> Result<TableInfo>;
+    async fn create_table(&self, name: &str, sql: &str, origin: DerivedOrigin)
+    -> Result<TableInfo>;
+    async fn drop_table(&self, name: &str, schema: Option<&str>) -> Result<()>;
+    async fn rename_table(&self, old: &str, new: &str, schema: Option<&str>) -> Result<()>;
+
+    async fn execute(&self, sql: &str) -> Result<QueryResult>;
+    async fn execute_paged(&self, sql: &str, offset: u64, limit: u64) -> Result<PagedQueryResult>;
+    async fn execute_streaming(&self, sql: &str) -> Result<ArrowRecordBatchStream>;
+
+    async fn describe_table(&self, name: &str, schema: Option<&str>) -> Result<Vec<ColumnInfo>>;
+    async fn get_tables(&self) -> Result<Vec<TableInfo>>;
+
+    async fn export_table(&self, name: &str, format: ExportFormat) -> Result<Vec<u8>>;
+
+    async fn attach(&self, dsn: &str, alias: &str, opts: AttachOpts) -> Result<()>;
+    async fn detach(&self, alias: &str) -> Result<()>;
+}

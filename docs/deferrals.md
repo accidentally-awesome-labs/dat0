@@ -46,6 +46,12 @@ that's modifying it; merge conflicts are signals worth investigating.
 | D-004 | AppImageUpdate subprocess invocation               | open | P1   | P10    |
 | D-005 | Linux Secret Service "setup banner" UX             | open | P1   | TBD    |
 | D-006 | macOS x86_64 (Intel) CI matrix coverage            | open | P1   | TBD    |
+| D-007 | MotherDuck ATTACH end-to-end                       | open | P2   | P5     |
+| D-008 | Cancellation-token wiring through `QueryEngine` trait | open | P2 | P5     |
+| D-009 | Bundle `sqlite_scanner` static when duckdb-rs exposes a feature | open | P2 | TBD |
+| D-010 | Non-UTF-8 file encoding handling                   | open | P2   | TBD    |
+| D-011 | Remove `__debug_query_scalar` test-only helper     | open | P2   | P3     |
+| D-012 | Engine catalog `TableInfo` synthesis (origin + schema) | open | P2   | P3     |
 
 ## At-a-glance — Plan defects
 
@@ -55,6 +61,9 @@ that's modifying it; merge conflicts are signals worth investigating.
 | PD-002 | Settings store atomic-write missing `fsync` before rename          | open   | low      |
 | PD-003 | cargo-about NOTICE output not deterministic across host platforms  | open   | low      |
 | PD-004 | Linux Secret Service backend not reachable from CI keychain tests  | open   | low      |
+| PD-005 | P2 plan T3 snippet uses `&*conn` triggering clippy explicit-auto-deref | closed | trivial |
+| PD-006 | P2 plan T12 fixtures snippet uses bare `rng.gen::<…>()` — reserved keyword in Rust 2024 | closed | low      |
+| PD-007 | P2 plan T14 snippet calls non-existent `error_ux::banner::push_banner` with mismatched `Banner` shape | closed | low      |
 
 ---
 
@@ -74,7 +83,7 @@ that's modifying it; merge conflicts are signals worth investigating.
   bound to the existing `SettingsStore`.
 - **Originating doc:** `docs/plans/2026-04-26-dat0-p1-foundation-plan.md` §"Risks & Caveats"
 - **Closes:** spec §21.2 P1 exit — "Settings panel opens; changes persist across launches" (full editability)
-- **Last touched:** 2026-04-26
+- **Last touched:** 2026-04-28
 
 ### D-002 — Theme live-switch through running window
 
@@ -90,7 +99,7 @@ that's modifying it; merge conflicts are signals worth investigating.
   re-renders on theme change without restart.
 - **Originating doc:** `docs/plans/2026-04-26-dat0-p1-foundation-plan.md` §"Risks & Caveats"
 - **Closes:** spec §21.2 P1 exit — "Theme switch (default ↔ alternate) works without restart"
-- **Last touched:** 2026-04-26
+- **Last touched:** 2026-04-28
 
 ### D-003 — Sparkle Objective-C `SUUpdater` bridge
 
@@ -106,7 +115,7 @@ that's modifying it; merge conflicts are signals worth investigating.
   parsing, signature verification, in-app update prompt UI, restart flow.
 - **Originating doc:** `docs/plans/2026-04-26-dat0-p1-foundation-plan.md` §"Risks & Caveats"
 - **Closes:** spec §21.2 P10 exit — "Sparkle 'Check for Updates' finds a test update + applies it"
-- **Last touched:** 2026-04-26
+- **Last touched:** 2026-04-28
 
 ### D-004 — AppImageUpdate subprocess invocation
 
@@ -120,7 +129,7 @@ that's modifying it; merge conflicts are signals worth investigating.
 - **What target phase delivers:** Subprocess wiring, progress reporting,
   restart flow.
 - **Originating doc:** `docs/plans/2026-04-26-dat0-p1-foundation-plan.md` §"Risks & Caveats"
-- **Last touched:** 2026-04-26
+- **Last touched:** 2026-04-28
 
 ### D-005 — Linux Secret Service "setup banner" UX
 
@@ -135,7 +144,7 @@ that's modifying it; merge conflicts are signals worth investigating.
   init fails, with link to user-runnable docs for `gnome-keyring-daemon` /
   `kwalletmanager` setup.
 - **Originating doc:** `docs/plans/2026-04-26-dat0-p1-foundation-plan.md` §"Risks & Caveats"
-- **Last touched:** 2026-04-26
+- **Last touched:** 2026-04-28
 
 ### D-006 — macOS x86_64 (Intel) CI matrix coverage
 
@@ -163,7 +172,179 @@ that's modifying it; merge conflicts are signals worth investigating.
 - **Closes (partial):** spec §21.2 P1 exit — "Cold-launches on macOS arm64,
   macOS x86_64, Linux x86_64, Linux aarch64" — Apple Silicon + both Linux
   triples covered; macOS Intel coverage deferred.
-- **Last touched:** 2026-04-26
+- **Last touched:** 2026-04-28
+
+### D-007 — MotherDuck ATTACH end-to-end
+
+- **Status:** open
+- **Deferred from:** P2
+- **Target phase:** P5 (SQL Console)
+- **Reason:** The `motherduck` Cargo feature does not exist in duckdb-rs as of
+  the P2.T0 spike (verified 2026-04-27 against duckdb-rs `v1.4.4` —
+  `crates/duckdb/Cargo.toml` feature graph contains no `motherduck` entry).
+  The keychain primitive shipped in P1 has no consumer until a UI surface
+  needs the token. Integration testing requires a MotherDuck dev DB credential
+  not yet provisioned. The P2 spec exit names only `sqlite:` for end-to-end
+  ATTACH coverage.
+- **What P2 ships:** generic `attach()` method that parses the DSN prefix;
+  `sqlite:` end-to-end (extension lazy-loaded via boot-path
+  `INSTALL sqlite_scanner; LOAD sqlite_scanner;`); `md:` returns
+  `EngineError::NotImplemented { feature: "MotherDuck" }`.
+- **What target phase delivers:** motherduck extension load (boot-path,
+  same template as sqlite_scanner); a `MotherDuckTokenStore` consumer of the
+  P1 keychain primitive; integration tests against a MotherDuck dev DB;
+  per-query timing chip ("local: 38ms / md: 412ms") in the P5 SQL Console
+  status bar.
+- **Originating doc:** `docs/specs/2026-04-27-dat0-p2-engine-design.md` §7
+- **Closes:** spec §6.5 entirely (partial closure — `sqlite:` lands in P2;
+  `md:` lands in P5).
+- **Last touched:** 2026-04-28
+
+### D-008 — Cancellation-token wiring through `QueryEngine` trait
+
+- **Status:** open
+- **Deferred from:** P2
+- **Target phase:** P5 (SQL Console)
+- **Reason:** P2 has zero callers passing tokens — adding a
+  `cancel: CancellationToken` parameter on every `execute*` trait method now
+  would ship dead-weight ergonomics that can't be evaluated against a real
+  call-site. P5 SQL Console is the first surface that needs `Cmd+.` → cancel
+  propagation through a streaming query; trait shape is best evaluated against
+  that real call-site rather than guessed twice. Engine internals already
+  support cancellation today via `Engine::interrupt()` (backed by
+  `Arc<duckdb::InterruptHandle>`, verified at P2.T0) — the trait amendment is
+  signature ergonomics, not a behavioral change.
+- **What P2 ships:** internal `Arc<duckdb::InterruptHandle>` field on
+  `DuckDBEngine`; public `Engine::interrupt(&self)` method callable from
+  sibling tasks; `EngineError::Interrupted` variant present in the error enum.
+- **What target phase delivers:** trait amendment to add
+  `cancel: CancellationToken` parameter on `execute` / `execute_paged` /
+  `execute_streaming`; automatic interrupt-on-drop semantics for cancellation
+  tokens; structured cancellation propagation through the streaming `mpsc`
+  channel; Cmd+. UX wiring in the P5 SQL Console.
+- **Originating doc:** `docs/specs/2026-04-27-dat0-p2-engine-design.md` §7
+  + §2.2.
+- **Last touched:** 2026-04-28
+
+### D-009 — Bundle `sqlite_scanner` static when duckdb-rs exposes a feature
+
+- **Status:** open
+- **Deferred from:** P2 (opens unconditionally with the spec; duckdb-rs's
+  feature surface determines whether it ever closes)
+- **Target phase:** TBD — closes when duckdb-rs adds a `sqlite_scanner`
+  Cargo feature for static linking, OR stays open as documented intent if
+  upstream never does. The constraint is real: the duckdb-rs README states
+  the ICU extension isn't bundled "due to crates.io's 10MB package size
+  limit," and `sqlite_scanner` is in the same distribution category.
+- **Reason:** Opens unconditionally so we don't lose the intent if upstream
+  adds the feature later. The "why" is the crates.io 10MB package size limit
+  cited in the duckdb-rs README — the same constraint that keeps the ICU
+  extension out of the bundled distribution applies to `sqlite_scanner`. As
+  of P2.T0 verification (2026-04-27, duckdb-rs `v1.4.4`), the published
+  feature surface contains no `sqlite_scanner` entry — confirmed by
+  enumerating `crates/duckdb/Cargo.toml`.
+- **What P2 ships:** lazy-load via the `dat0-app` boot path —
+  `INSTALL sqlite_scanner; LOAD sqlite_scanner;` executed once before any
+  window opens (per spec §2.5). First-run UX uses the P1 `Banner` primitive
+  to show extension-download status. Engine `init()` per instance does
+  `LOAD sqlite_scanner;` only (extension already installed by boot path).
+- **What target phase delivers:** replaces boot-path `INSTALL` with a
+  build-time static link, eliminating the first-run extension-download UX
+  surface entirely. Boot path simplifies to `LOAD sqlite_scanner;` against
+  the statically-linked extension.
+- **Re-check trigger for closing:** duckdb-rs release notes mentioning a new
+  feature flag for sqlite_scanner, OR the feature-graph row in
+  `docs/internal/duckdb-arrow-api-notes.md` § "Extension features" gaining
+  a positive entry on monthly upstream-watch refresh.
+- **Originating doc:** `docs/specs/2026-04-27-dat0-p2-engine-design.md` §7
+  + §2.5; `docs/internal/duckdb-arrow-api-notes.md` § "Extension features".
+- **Note (P2 retro):** P2.T0 re-verified 2026-04-27: duckdb-rs 1.4.4 has no
+  `sqlite_scanner` Cargo feature. Lazy-load remains the locked path.
+- **Last touched:** 2026-04-28
+
+### D-010 — Non-UTF-8 file encoding handling
+
+- **Status:** open
+- **Deferred from:** P2
+- **Target phase:** TBD (likely P3 import wizard or v1.x polish)
+- **Reason:** DuckDB's `read_csv` has no encoding parameter; supporting
+  non-UTF-8 cleanly requires either Rust-side preconversion or a separate
+  read path. Neither is a P2 concern — the engine's job is to expose what
+  DuckDB supports natively. UI-side detection / conversion belongs with the
+  P3 import wizard surface where the user can confirm the encoding choice.
+- **What P2 ships:** `RegisterOpts` has no `encoding` field. CSV / TSV / JSON
+  / NDJSON files are assumed UTF-8 (matches DuckDB's `read_csv` default).
+  Non-UTF-8 input fails at parse time with a DuckDB error surfaced through
+  `EngineError`.
+- **What target phase delivers:** either (a) Rust-side preconversion via
+  `encoding_rs` for CSV inputs flagged as non-UTF-8 by `chardet` /
+  heuristic, with a banner ("We detected this file is encoded as <X>; do
+  you want to convert?"), or (b) explicit user override in the import wizard
+  with a conversion preview. P3 picks one or escalates to v1.x.
+- **Originating doc:** `docs/specs/2026-04-27-dat0-p2-engine-design.md` §7.
+- **Last touched:** 2026-04-28
+
+### D-011 — Remove `__debug_query_scalar` test-only helper
+
+- **Status:** open
+- **Deferred from:** P2 (T2 fix-up; commit `f7ed3a7`)
+- **Target phase:** P3
+- **Reason:** During P2.T2, bootstrap tests needed scalar-query access before
+  T7's `execute()` shipped. The test-only helper `__debug_query_scalar` filled
+  the gap and was marked `#[deprecated(note = "test-only; will be replaced by
+  execute() in T7")]` in T2's review fix-up. T7 then shipped `execute()`, but
+  ripping the helper out of 8 test files was deferred to avoid scope creep
+  inside P2 (the deprecation attribute + per-file `#![allow(deprecated)]`
+  prevent the helper from leaking into production callers in the meantime).
+- **What P2 ships:** `pub async fn __debug_query_scalar` on `DuckDBEngine` with
+  `#[doc(hidden)]` and `#[deprecated]` attributes; file-level
+  `#![allow(deprecated)]` in 8 test files (`crates/dat0-engine/tests/`:
+  `bootstrap.rs`, `migrations.rs`, `register_csv.rs`, `register_json.rs`,
+  `register_parquet.rs`, `attach_sqlite.rs`, `multi_window.rs`,
+  `exit_criteria.rs`).
+- **What target phase delivers:** helper removed from `DuckDBEngine`; each test
+  call site rewritten to use `engine.execute("…")` + Arrow array downcast (a
+  small inline `scalar_string` helper per file is the recommended shape); the 8
+  `#![allow(deprecated)]` file-level attributes dropped. Behavior unchanged —
+  same conditions verified via the public API.
+- **Trigger:** scheduled cleanup agent (claude.ai routine
+  `trig_01SNW3fxTeeR1gHkCTe37HHE`, fires `2026-05-19T13:00:00Z`). Pre-flight
+  gate: agent bails if neither a `P3` commit on `origin/main` nor a `p3-*`
+  branch exists; user re-arms via routines UI in that case. On success the
+  agent opens a PR from `cleanup/remove-debug-query-scalar`.
+- **Originating doc:** `docs/plans/2026-04-27-dat0-p2-engine-plan.md` (T2
+  fix-up commit `f7ed3a7`); P2 retro `docs/plans/2026-04-27-dat0-p2-retro.md`
+  § "Recommendations for P3" #3.
+- **Last touched:** 2026-04-28
+
+### D-012 — Engine catalog `TableInfo` synthesis (origin + schema)
+
+- **Status:** open
+- **Deferred from:** P2 (T9 catalog ops)
+- **Target phase:** P3 (Scratch mode + DataGrid)
+- **Reason:** DuckDB doesn't persist `TableOrigin` metadata across reconnects,
+  and the engine has no per-table origin registry yet. P2's `get_tables`
+  synthesizes `TableOrigin::Derived(DerivedOrigin::Sql(""))` as a placeholder
+  for every table — a false positive that future code may misinterpret.
+  Similarly, `create_table` returns `TableInfo { schema: "main", ... }`
+  hardcoded regardless of where the table actually lands; if a caller ever
+  changes `current_schema` or passes a qualified name, the returned
+  `TableInfo.schema` will be wrong.
+- **What P2 ships:** `TableInfo.origin` and `TableInfo.schema` populated with
+  best-effort placeholders. `register_file` produces the correct
+  `TableOrigin::File(PathBuf)`. All other paths return `Derived(Sql(""))`
+  or hardcoded `"main"`.
+- **What target phase delivers:** either (a) per-engine origin registry
+  (a `__dat0_meta_table_origins` table populated on `create_table` /
+  `register_file` / `attach`-derived tables, queried by `get_tables`), OR
+  (b) explicit `TableOrigin::Unknown` variant added to `types.rs` so the
+  type system surfaces "we don't know" instead of lying. P3 SQL Console
+  surfaces table origins to the user; that's when the placeholder becomes
+  user-visible noise.
+- **Originating doc:** `docs/plans/2026-04-27-dat0-p2-engine-plan.md` T9 +
+  T9 review notes; `docs/plans/2026-04-27-dat0-p2-retro.md` § "Reviewer-
+  flagged minor follow-ups".
+- **Last touched:** 2026-04-28
 
 ---
 
@@ -186,7 +367,7 @@ that's modifying it; merge conflicts are signals worth investigating.
 - **Suggested fix:** Replace with explicit per-crate directives —
   `info,dat0_app=debug,dat0_engine=debug,dat0_format=debug,dat0_i18n=debug,dat0_keychain=debug`
   — or use a shared helper that enumerates dat0 crate prefixes.
-- **Last touched:** 2026-04-26
+- **Last touched:** 2026-04-28
 
 ### PD-002 — Settings store atomic-write missing `fsync` before rename
 
@@ -217,7 +398,7 @@ that's modifying it; merge conflicts are signals worth investigating.
 - **Acceptable when:** dat0 begins storing recoverable state in settings (e.g.,
   workspace pointers a user would lose if the file zeroed). Until then the cost
   of a corrupt settings file is "user re-enters preferences," which is low.
-- **Last touched:** 2026-04-26
+- **Last touched:** 2026-04-28
 
 ---
 
@@ -246,7 +427,7 @@ that's modifying it; merge conflicts are signals worth investigating.
   Option (a) is the most-honest if the dual-license selection is genuinely a
   policy choice; option (b) is the simplest if NOTICE is intended as a
   generic union.
-- **Last touched:** 2026-04-26
+- **Last touched:** 2026-04-28
 
 ---
 
@@ -286,7 +467,103 @@ that's modifying it; merge conflicts are signals worth investigating.
     integration tests macOS-only. Cleaner separation but less coverage.
   - **(c) Self-hosted Linux runner with persistent gnome-keyring** —
     overkill for what's tested.
-- **Last touched:** 2026-04-26
+- **Last touched:** 2026-04-28
+
+---
+
+### PD-005 — P2 plan T3 snippet uses `&*conn` triggering clippy explicit-auto-deref
+
+- **Status:** closed
+- **Severity:** trivial (style-only; auto-deref handles it)
+- **Affected files:** `crates/dat0-engine/src/duckdb_engine.rs::apply_migrations_real`
+- **Symptom:** Plan §"Task 3, Step 3.4" provides a verbatim snippet that calls
+  `crate::migrations::apply_migrations(&*conn, …)` where `conn` is a
+  `MutexGuard<duckdb::Connection>`. Under `clippy -D warnings` (Rust 1.95+
+  toolchain pinned in `rust-toolchain.toml`), this fires
+  `clippy::explicit_auto_deref` because `&conn` would coerce identically.
+- **Discovered:** P2 T3 implementation (2026-04-27) — `cargo clippy
+  --workspace --all-targets -- -D warnings` failed compile on first attempt.
+- **Fix applied:** Replaced `&*conn` with `&conn` in the wired-in
+  `apply_migrations_real` body. Behavior identical; clippy clean.
+- **Originating doc:** `docs/plans/2026-04-27-dat0-p2-engine-plan.md` Step 3.4
+  code block.
+- **Closed by:** P2 T3 commit `4418cbd` on branch `p2-engine`.
+- **Last touched:** 2026-04-28
+
+---
+
+### PD-006 — P2 plan T12 fixtures snippet uses bare `rng.gen::<…>()` — reserved keyword in Rust 2024
+
+- **Status:** closed
+- **Severity:** low (mechanical fix; both raw-identifier escape and rand 0.9 upgrade are clean alternatives)
+- **Affected files:** `crates/dat0-fixtures/src/main.rs`
+- **Symptom:** Plan §"Task 12, Step 12.3" provides verbatim code with
+  `rng.gen::<u32>()`, `rng.gen::<f64>()`, and friends. The workspace is on
+  edition 2024 (`rust-version = "1.85"` in root `Cargo.toml`), where `gen` is a
+  reserved keyword for the eventual `gen` block syntax. rand 0.8 still names
+  its `Rng` trait method `gen`, so bare `rng.gen::<T>()` calls fail to parse
+  with `error: expected identifier, found reserved keyword 'gen'`.
+- **Discovered:** P2 T12 implementation (2026-04-27) — first
+  `cargo build -p dat0-fixtures` produced 7 parse errors; rustc itself emits a
+  `help: escape gen to use it as an identifier` hint suggesting `rng.r#gen::<T>()`.
+- **Fix applied:** Replaced bare `rng.gen::<T>()` calls with the raw-identifier
+  form `rng.r#gen::<T>()`. `rng.gen_bool(...)`, `rng.gen_range(...)` are
+  unaffected (suffixed identifiers, not the `gen` keyword). Determinism
+  preserved — `r#gen` is purely lexical and resolves to the identical method.
+- **Alternative considered:** Upgrade to rand 0.9, which renames `Rng::gen` →
+  `Rng::random`. Rejected as a larger change for T12; staying on rand 0.8
+  matches the plan's pinned version and the existing transitive resolution in
+  `Cargo.lock`. If a future task adopts rand 0.9 workspace-wide, T12 can drop
+  the `r#gen` escapes.
+- **Originating doc:** `docs/plans/2026-04-27-dat0-p2-engine-plan.md` Step 12.3
+  code block (lines 3503-3601).
+- **Closed by:** P2 T12 commit `0cc61bd` on branch `p2-engine`.
+- **Last touched:** 2026-04-28
+
+---
+
+### PD-007 — P2 plan T14 snippet calls non-existent `error_ux::banner::push_banner` with mismatched `Banner` shape
+
+- **Status:** closed
+- **Severity:** low (P1 Banner is intentionally a pure-data type; the plan
+  predicted this in its inline note and asked the implementer to adapt)
+- **Affected files:** `crates/dat0-app/src/error_ux/banner.rs`,
+  `crates/dat0-app/src/boot.rs`
+- **Symptom:** Plan §"Task 14, Step 14.2" supplies verbatim code calling
+  `crate::error_ux::banner::push_banner(crate::error_ux::banner::Banner { severity: …::Severity::Warning, title_key, body_key, link })`.
+  None of those identifiers match P1's actual API:
+  - No `push_banner` function exists — P1 ships `Banner` as a pure-data
+    state struct with no in-process registry or service layer.
+  - The severity enum is `BannerSeverity` (not `Severity`).
+  - `Banner`'s fields are `{ message: String, severity, dismissible, action_label }`
+    — there are no `title_key`, `body_key`, or `link` fields.
+  - `Banner` does not exist as a render-attached primitive yet either; the
+    intent in P1 was that real GPUI rendering wires it up at use sites in P7.
+- **Discovered:** P2 T14 implementation (2026-04-27) on first attempt to
+  compile boot.rs against the verbatim plan snippet. The plan itself
+  flags the risk (line 3799) and instructs sub-agents to consult the
+  actual file and adapt — so this is more "expected drift" than a defect,
+  but logging per protocol since the verbatim code does not compile.
+- **Fix applied:**
+  1. Added a minimal in-process pending-banner queue to
+     `error_ux::banner` (`push(Banner)` + `drain_pending() -> Vec<Banner>`)
+     so boot-time call sites can stash banners before any window exists.
+     The render layer (P7+) drains on first window open.
+  2. Boot calls `banner::push(Banner::warning(format!("{title}: {body}")))`
+     using the existing P1 constructor. The `link` field has no slot yet;
+     the link target is documented in the i18n body for now and can be
+     promoted to a structured field when `Banner` grows an action surface.
+  3. i18n keys `boot.sqlite_scanner_install_failed.title` /
+     `boot.sqlite_scanner_install_failed.body` added to
+     `crates/dat0-i18n/src/strings/en.json` per plan.
+- **Alternative considered:** Defer all banner UX to P7 and only
+  `tracing::error!` at boot. Rejected — the queue-based solution is ~30
+  lines, preserves the user-facing surface the plan promised, and is
+  exactly the API shape P7 will need anyway.
+- **Originating doc:** `docs/plans/2026-04-27-dat0-p2-engine-plan.md`
+  Step 14.2 code block (lines 3775-3796).
+- **Closed by:** P2 T14 commit `9ea964b` on branch `p2-engine`.
+- **Last touched:** 2026-04-28
 
 ---
 
