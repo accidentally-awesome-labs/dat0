@@ -50,6 +50,7 @@ that's modifying it; merge conflicts are signals worth investigating.
 | D-008 | Cancellation-token wiring through `QueryEngine` trait | open | P2 | P5     |
 | D-009 | Bundle `sqlite_scanner` static when duckdb-rs exposes a feature | open | P2 | TBD |
 | D-010 | Non-UTF-8 file encoding handling                   | open | P2   | TBD    |
+| D-011 | Remove `__debug_query_scalar` test-only helper     | open | P2   | P3     |
 
 ## At-a-glance — Plan defects
 
@@ -280,6 +281,39 @@ that's modifying it; merge conflicts are signals worth investigating.
   you want to convert?"), or (b) explicit user override in the import wizard
   with a conversion preview. P3 picks one or escalates to v1.x.
 - **Originating doc:** `docs/specs/2026-04-27-dat0-p2-engine-design.md` §7.
+- **Last touched:** 2026-04-28
+
+### D-011 — Remove `__debug_query_scalar` test-only helper
+
+- **Status:** open
+- **Deferred from:** P2 (T2 fix-up; commit `f7ed3a7`)
+- **Target phase:** P3
+- **Reason:** During P2.T2, bootstrap tests needed scalar-query access before
+  T7's `execute()` shipped. The test-only helper `__debug_query_scalar` filled
+  the gap and was marked `#[deprecated(note = "test-only; will be replaced by
+  execute() in T7")]` in T2's review fix-up. T7 then shipped `execute()`, but
+  ripping the helper out of 8 test files was deferred to avoid scope creep
+  inside P2 (the deprecation attribute + per-file `#![allow(deprecated)]`
+  prevent the helper from leaking into production callers in the meantime).
+- **What P2 ships:** `pub async fn __debug_query_scalar` on `DuckDBEngine` with
+  `#[doc(hidden)]` and `#[deprecated]` attributes; file-level
+  `#![allow(deprecated)]` in 8 test files (`crates/dat0-engine/tests/`:
+  `bootstrap.rs`, `migrations.rs`, `register_csv.rs`, `register_json.rs`,
+  `register_parquet.rs`, `attach_sqlite.rs`, `multi_window.rs`,
+  `exit_criteria.rs`).
+- **What target phase delivers:** helper removed from `DuckDBEngine`; each test
+  call site rewritten to use `engine.execute("…")` + Arrow array downcast (a
+  small inline `scalar_string` helper per file is the recommended shape); the 8
+  `#![allow(deprecated)]` file-level attributes dropped. Behavior unchanged —
+  same conditions verified via the public API.
+- **Trigger:** scheduled cleanup agent (claude.ai routine
+  `trig_01SNW3fxTeeR1gHkCTe37HHE`, fires `2026-05-19T13:00:00Z`). Pre-flight
+  gate: agent bails if neither a `P3` commit on `origin/main` nor a `p3-*`
+  branch exists; user re-arms via routines UI in that case. On success the
+  agent opens a PR from `cleanup/remove-debug-query-scalar`.
+- **Originating doc:** `docs/plans/2026-04-27-dat0-p2-engine-plan.md` (T2
+  fix-up commit `f7ed3a7`); P2 retro `docs/plans/2026-04-27-dat0-p2-retro.md`
+  § "Recommendations for P3" #3.
 - **Last touched:** 2026-04-28
 
 ---
