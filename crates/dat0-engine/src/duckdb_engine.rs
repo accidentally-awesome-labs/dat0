@@ -252,21 +252,28 @@ impl crate::QueryEngine for DuckDBEngine {
         .map_err(|e| EngineError::Io(std::io::Error::other(e.to_string())))?
     }
 
+    #[instrument(skip(self), fields(sql_len = sql.len(), offset, limit))]
     async fn execute_paged(
         &self,
-        _sql: &str,
-        _offset: u64,
-        _limit: u64,
+        sql: &str,
+        offset: u64,
+        limit: u64,
     ) -> Result<crate::types::PagedQueryResult> {
-        Err(EngineError::NotImplemented {
-            feature: "execute_paged (T8)",
+        self.assert_open()?;
+        let conn = self.conn.clone();
+        let sql = sql.to_owned();
+        tokio::task::spawn_blocking(move || -> Result<crate::types::PagedQueryResult> {
+            let conn = conn.lock().map_err(|_| EngineError::EnginePoisoned)?;
+            crate::execute::paged::run_paged(&conn, &sql, offset, limit)
         })
+        .await
+        .map_err(|e| EngineError::Io(std::io::Error::other(e.to_string())))?
     }
 
-    async fn execute_streaming(&self, _sql: &str) -> Result<crate::types::ArrowRecordBatchStream> {
-        Err(EngineError::NotImplemented {
-            feature: "execute_streaming (T8)",
-        })
+    #[instrument(skip(self), fields(sql_len = sql.len()))]
+    async fn execute_streaming(&self, sql: &str) -> Result<crate::types::ArrowRecordBatchStream> {
+        self.assert_open()?;
+        crate::execute::streaming::spawn_streaming(self.conn.clone(), sql.to_owned())
     }
 
     async fn describe_table(
