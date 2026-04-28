@@ -60,6 +60,7 @@ that's modifying it; merge conflicts are signals worth investigating.
 | PD-003 | cargo-about NOTICE output not deterministic across host platforms  | open   | low      |
 | PD-004 | Linux Secret Service backend not reachable from CI keychain tests  | open   | low      |
 | PD-005 | P2 plan T3 snippet uses `&*conn` triggering clippy explicit-auto-deref | closed | trivial |
+| PD-006 | P2 plan T12 fixtures snippet uses bare `rng.gen::<…>()` — reserved keyword in Rust 2024 | closed | low      |
 
 ---
 
@@ -420,6 +421,36 @@ that's modifying it; merge conflicts are signals worth investigating.
 - **Originating doc:** `docs/plans/2026-04-27-dat0-p2-engine-plan.md` Step 3.4
   code block.
 - **Closed by:** P2 T3 commit on branch `p2-engine`.
+- **Last touched:** 2026-04-27
+
+---
+
+### PD-006 — P2 plan T12 fixtures snippet uses bare `rng.gen::<…>()` — reserved keyword in Rust 2024
+
+- **Status:** closed
+- **Severity:** low (mechanical fix; both raw-identifier escape and rand 0.9 upgrade are clean alternatives)
+- **Affected files:** `crates/dat0-fixtures/src/main.rs`
+- **Symptom:** Plan §"Task 12, Step 12.3" provides verbatim code with
+  `rng.gen::<u32>()`, `rng.gen::<f64>()`, and friends. The workspace is on
+  edition 2024 (`rust-version = "1.85"` in root `Cargo.toml`), where `gen` is a
+  reserved keyword for the eventual `gen` block syntax. rand 0.8 still names
+  its `Rng` trait method `gen`, so bare `rng.gen::<T>()` calls fail to parse
+  with `error: expected identifier, found reserved keyword 'gen'`.
+- **Discovered:** P2 T12 implementation (2026-04-27) — first
+  `cargo build -p dat0-fixtures` produced 7 parse errors; rustc itself emits a
+  `help: escape gen to use it as an identifier` hint suggesting `rng.r#gen::<T>()`.
+- **Fix applied:** Replaced bare `rng.gen::<T>()` calls with the raw-identifier
+  form `rng.r#gen::<T>()`. `rng.gen_bool(...)`, `rng.gen_range(...)` are
+  unaffected (suffixed identifiers, not the `gen` keyword). Determinism
+  preserved — `r#gen` is purely lexical and resolves to the identical method.
+- **Alternative considered:** Upgrade to rand 0.9, which renames `Rng::gen` →
+  `Rng::random`. Rejected as a larger change for T12; staying on rand 0.8
+  matches the plan's pinned version and the existing transitive resolution in
+  `Cargo.lock`. If a future task adopts rand 0.9 workspace-wide, T12 can drop
+  the `r#gen` escapes.
+- **Originating doc:** `docs/plans/2026-04-27-dat0-p2-engine-plan.md` Step 12.3
+  code block (lines 3503-3601).
+- **Closed by:** P2 T12 commit on branch `p2-engine`.
 - **Last touched:** 2026-04-27
 
 ---

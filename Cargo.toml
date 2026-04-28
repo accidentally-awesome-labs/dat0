@@ -4,6 +4,7 @@ members = [
     "crates/dat0-app",
     "crates/dat0-engine",
     "crates/dat0-format",
+    "crates/dat0-fixtures",
     "crates/dat0-i18n",
     "crates/dat0-keychain",
 ]
@@ -71,6 +72,12 @@ async-trait = "0.1"
 
 # CPU count probe (engine threads pragma)
 num_cpus = "1"
+
+# Fixtures generator (T12): deterministic CSV/Parquet/SQLite from a seed.
+clap = { version = "4", features = ["derive"] }
+rand = "0.8"
+rand_chacha = "0.3" # deterministic PRNG (cross-platform reproducibility)
+rusqlite = { version = "0.31", features = ["bundled"] }
 
 # Internal crates
 dat0-engine = { path = "crates/dat0-engine" }

@@ -1,0 +1,23 @@
+[package]
+name = "dat0-fixtures"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+rust-version.workspace = true
+
+[[bin]]
+name = "dat0-fixtures"
+path = "src/main.rs"
+
+[dependencies]
+clap.workspace = true
+rand.workspace = true
+rand_chacha.workspace = true
+duckdb.workspace = true
+rusqlite.workspace = true
+anyhow.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true
