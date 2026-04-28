@@ -239,10 +239,22 @@ impl crate::QueryEngine for DuckDBEngine {
         })
     }
 
-    async fn execute(&self, _sql: &str) -> Result<crate::types::QueryResult> {
-        Err(EngineError::NotImplemented {
-            feature: "execute (T7)",
+    async fn execute(&self, sql: &str) -> Result<crate::types::QueryResult> {
+        self.assert_open()?;
+        // `EnteredSpan` is `!Send`, so it can't cross the `.await` below. Scope
+        // it to the synchronous setup (cheap clones + `to_owned`) and drop it
+        // before awaiting `spawn_blocking`. The span still records on entry/exit
+        // around the setup work; the blocking worker is its own ambient context.
+        let (conn, sql) = {
+            let _span = tracing::info_span!("engine.execute", sql_len = sql.len()).entered();
+            (self.conn.clone(), sql.to_owned())
+        };
+        tokio::task::spawn_blocking(move || -> Result<crate::types::QueryResult> {
+            let conn = conn.lock().map_err(|_| EngineError::EnginePoisoned)?;
+            crate::execute::run_materialized(&conn, &sql)
         })
+        .await
+        .map_err(|e| EngineError::Io(std::io::Error::other(e.to_string())))?
     }
 
     async fn execute_paged(
