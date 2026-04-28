@@ -1,3 +1,5 @@
+#![allow(deprecated)] // __debug_query_scalar is intentionally test-only
+
 use std::time::Duration;
 
 use dat0_engine::{DuckDBEngine, EngineStatus, MemoryBudget, QueryEngine};
@@ -52,6 +54,17 @@ async fn engine_rejects_ops_after_close() {
         .await
         .expect_err("must reject ops after close");
     assert!(matches!(err, dat0_engine::EngineError::EngineClosed));
+}
+
+#[tokio::test]
+async fn engine_rejects_double_init() {
+    let dir = tempfile::tempdir().unwrap();
+    let scratch = dir.path().join("scratch.duckdb");
+    let engine = DuckDBEngine::new(scratch.clone(), budget_512mb()).unwrap();
+    engine.init().await.unwrap();
+    let err = engine.init().await.expect_err("second init must fail");
+    assert!(matches!(err, dat0_engine::EngineError::EngineFailed(_)));
+    engine.close().await.unwrap();
 }
 
 #[tokio::test]

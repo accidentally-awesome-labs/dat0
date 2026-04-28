@@ -41,6 +41,7 @@ impl DuckDBEngine {
 
     /// Test-only scalar probe. T7 replaces in tests with `execute()`.
     #[doc(hidden)]
+    #[deprecated(note = "test-only; will be replaced by execute() in T7")]
     pub async fn __debug_query_scalar(&self, sql: &str) -> Result<String> {
         self.assert_open()?;
         let conn = self.conn.clone();
@@ -67,8 +68,16 @@ impl DuckDBEngine {
     }
 
     fn set_status(&self, new_status: EngineStatus) {
-        if let Ok(mut s) = self.status.write() {
-            *s = new_status;
+        match self.status.write() {
+            Ok(mut s) => *s = new_status,
+            Err(_) => {
+                // Status RwLock poisoned by a panicking worker thread. We can't
+                // write the new status; subsequent assert_open() and status() calls
+                // will observe the poisoned lock and surface EngineError::EnginePoisoned
+                // / EngineStatus::Failed respectively. Logging here makes the
+                // poisoned state visible operationally per spec §2.9.
+                tracing::error!("status RwLock poisoned in set_status; engine state indeterminate");
+            }
         }
     }
 }
@@ -77,6 +86,20 @@ impl DuckDBEngine {
 impl crate::QueryEngine for DuckDBEngine {
     #[instrument(skip(self), fields(scratch = %self.scratch_path.display(), budget_mb = self.budget.bytes / (1024*1024)))]
     async fn init(&self) -> Result<()> {
+        // Guard: init must only be called once, when status is Initializing.
+        {
+            let s = self
+                .status
+                .read()
+                .map_err(|_| EngineError::EnginePoisoned)?;
+            if !matches!(*s, EngineStatus::Initializing) {
+                return Err(EngineError::EngineFailed(format!(
+                    "init() called on engine in non-Initializing state: {:?}",
+                    *s
+                )));
+            }
+        }
+
         let conn = self.conn.clone();
         let budget = self.budget;
 
