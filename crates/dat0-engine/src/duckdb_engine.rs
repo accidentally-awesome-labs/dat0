@@ -348,21 +348,42 @@ impl crate::QueryEngine for DuckDBEngine {
         .map_err(|e| EngineError::Io(std::io::Error::other(e.to_string())))?
     }
 
-    async fn attach(
-        &self,
-        _dsn: &str,
-        _alias: &str,
-        _opts: crate::types::AttachOpts,
-    ) -> Result<()> {
-        Err(EngineError::NotImplemented {
-            feature: "attach (T11)",
+    #[instrument(skip(self), fields(dsn_scheme = ?dsn.split(':').next(), alias))]
+    async fn attach(&self, dsn: &str, alias: &str, opts: crate::types::AttachOpts) -> Result<()> {
+        self.assert_open()?;
+        let (scheme, rest) = crate::attach::parse_scheme(dsn)?;
+        match scheme {
+            crate::attach::AttachScheme::MotherDuck => {
+                // D-007: end-to-end deferred to P5.
+                return Err(EngineError::NotImplemented {
+                    feature: "MotherDuck",
+                });
+            }
+            crate::attach::AttachScheme::Sqlite => {}
+        }
+        let sql = crate::attach::build_attach_sqlite_sql(rest, alias, &opts);
+        let conn = self.conn.clone();
+        tokio::task::spawn_blocking(move || -> Result<()> {
+            let conn = conn.lock().map_err(|_| EngineError::EnginePoisoned)?;
+            conn.execute_batch(&sql)?;
+            Ok(())
         })
+        .await
+        .map_err(|e| EngineError::Io(std::io::Error::other(e.to_string())))?
     }
 
-    async fn detach(&self, _alias: &str) -> Result<()> {
-        Err(EngineError::NotImplemented {
-            feature: "detach (T11)",
+    #[instrument(skip(self), fields(alias))]
+    async fn detach(&self, alias: &str) -> Result<()> {
+        self.assert_open()?;
+        let sql = crate::attach::build_detach_sql(alias);
+        let conn = self.conn.clone();
+        tokio::task::spawn_blocking(move || -> Result<()> {
+            let conn = conn.lock().map_err(|_| EngineError::EnginePoisoned)?;
+            conn.execute_batch(&sql)?;
+            Ok(())
         })
+        .await
+        .map_err(|e| EngineError::Io(std::io::Error::other(e.to_string())))?
     }
 }
 
