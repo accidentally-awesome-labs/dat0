@@ -84,6 +84,12 @@ async fn register_json_rejects_type_overrides_p2() {
         .register_file(&fixture("simple.json"), opts)
         .await
         .expect_err("must reject type_overrides for JSON in P2");
-    assert!(matches!(err, dat0_engine::EngineError::Io(_)));
+    assert!(matches!(
+        err,
+        dat0_engine::EngineError::InvalidOption {
+            field: "type_overrides",
+            ..
+        }
+    ));
     engine.close().await.unwrap();
 }

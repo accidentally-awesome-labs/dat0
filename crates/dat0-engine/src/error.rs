@@ -19,6 +19,9 @@ pub enum EngineError {
     #[error("Unsupported file format: {0}")]
     UnsupportedFormat(String),
 
+    #[error("Invalid option for {field}: {reason}")]
+    InvalidOption { field: &'static str, reason: String },
+
     #[error("Unknown ATTACH scheme: {0}; supported: sqlite:")]
     UnknownAttachScheme(String),
 
@@ -35,6 +38,9 @@ pub enum EngineError {
 
     #[error("Query interrupted")]
     Interrupted,
+
+    #[error("Worker task join failure: {0}")]
+    TaskJoin(String),
 
     #[error("Engine is closed or closing; new operations rejected")]
     EngineClosed,

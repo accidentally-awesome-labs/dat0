@@ -32,9 +32,10 @@ pub(crate) fn build_json_view_sql(
     let mut params: Vec<String> = vec![format_clause.to_string()];
     if let Some(s) = opts.sample_rows {
         if s == 0 {
-            return Err(EngineError::Io(std::io::Error::other(
-                "RegisterOpts.sample_rows must be > 0 when set; use None for default",
-            )));
+            return Err(EngineError::InvalidOption {
+                field: "sample_rows",
+                reason: "must be > 0 when set; use None for default".into(),
+            });
         }
         params.push(format!("sample_size={}", s));
     }
@@ -50,12 +51,14 @@ pub(crate) fn build_json_view_sql(
     // for a JSON file, we surface a clear error rather than silently dropping
     // columns.
     if !opts.type_overrides.is_empty() {
-        return Err(EngineError::Io(std::io::Error::other(
-            "RegisterOpts.type_overrides is not yet supported for JSON formats in P2 \
-             (DuckDB read_json's `columns` param has subset, not partial-override, \
-             semantics — applying it would silently drop other columns). \
-             Use the column-typed result via a follow-up SQL CAST instead.",
-        )));
+        return Err(EngineError::InvalidOption {
+            field: "type_overrides",
+            reason: "not yet supported for JSON formats in P2 (DuckDB read_json's `columns` \
+                     param has subset, not partial-override, semantics — applying it would \
+                     silently drop other columns). Use the column-typed result via a \
+                     follow-up SQL CAST instead."
+                .into(),
+        });
     }
     let args = format!("'{}', {}", escaped_path, params.join(", "));
     Ok(format!(

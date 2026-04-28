@@ -53,7 +53,7 @@ impl DuckDBEngine {
             Ok(v)
         })
         .await
-        .map_err(|e| EngineError::Io(std::io::Error::other(e.to_string())))?
+        .map_err(|e| EngineError::TaskJoin(e.to_string()))?
     }
 
     fn assert_open(&self) -> Result<()> {
@@ -122,7 +122,7 @@ impl crate::QueryEngine for DuckDBEngine {
             Ok(())
         })
         .await
-        .map_err(|e| EngineError::Io(std::io::Error::other(e.to_string())))?;
+        .map_err(|e| EngineError::TaskJoin(e.to_string()))?;
 
         match result {
             Ok(()) => {
@@ -206,7 +206,7 @@ impl crate::QueryEngine for DuckDBEngine {
             }
         })
         .await
-        .map_err(|e| EngineError::Io(std::io::Error::other(e.to_string())))??;
+        .map_err(|e| EngineError::TaskJoin(e.to_string()))??;
 
         Ok(crate::types::TableInfo {
             name: table_name,
@@ -233,7 +233,7 @@ impl crate::QueryEngine for DuckDBEngine {
             crate::catalog::create_table(&conn, &name, &sql)
         })
         .await
-        .map_err(|e| EngineError::Io(std::io::Error::other(e.to_string())))?
+        .map_err(|e| EngineError::TaskJoin(e.to_string()))?
     }
 
     #[instrument(skip(self), fields(name = name))]
@@ -247,7 +247,7 @@ impl crate::QueryEngine for DuckDBEngine {
             crate::catalog::drop_table(&conn, &name, schema.as_deref())
         })
         .await
-        .map_err(|e| EngineError::Io(std::io::Error::other(e.to_string())))?
+        .map_err(|e| EngineError::TaskJoin(e.to_string()))?
     }
 
     #[instrument(skip(self), fields(old = old, new = new))]
@@ -262,7 +262,7 @@ impl crate::QueryEngine for DuckDBEngine {
             crate::catalog::rename_table(&conn, &old, &new, schema.as_deref())
         })
         .await
-        .map_err(|e| EngineError::Io(std::io::Error::other(e.to_string())))?
+        .map_err(|e| EngineError::TaskJoin(e.to_string()))?
     }
 
     #[instrument(skip(self), fields(sql_len = sql.len()))]
@@ -275,7 +275,7 @@ impl crate::QueryEngine for DuckDBEngine {
             crate::execute::run_materialized(&conn, &sql)
         })
         .await
-        .map_err(|e| EngineError::Io(std::io::Error::other(e.to_string())))?
+        .map_err(|e| EngineError::TaskJoin(e.to_string()))?
     }
 
     #[instrument(skip(self), fields(sql_len = sql.len(), offset, limit))]
@@ -293,7 +293,7 @@ impl crate::QueryEngine for DuckDBEngine {
             crate::execute::paged::run_paged(&conn, &sql, offset, limit)
         })
         .await
-        .map_err(|e| EngineError::Io(std::io::Error::other(e.to_string())))?
+        .map_err(|e| EngineError::TaskJoin(e.to_string()))?
     }
 
     #[instrument(skip(self), fields(sql_len = sql.len()))]
@@ -317,7 +317,7 @@ impl crate::QueryEngine for DuckDBEngine {
             crate::catalog::describe_table(&conn, &name, schema.as_deref())
         })
         .await
-        .map_err(|e| EngineError::Io(std::io::Error::other(e.to_string())))?
+        .map_err(|e| EngineError::TaskJoin(e.to_string()))?
     }
 
     #[instrument(skip_all)]
@@ -329,7 +329,7 @@ impl crate::QueryEngine for DuckDBEngine {
             crate::catalog::get_tables(&conn)
         })
         .await
-        .map_err(|e| EngineError::Io(std::io::Error::other(e.to_string())))?
+        .map_err(|e| EngineError::TaskJoin(e.to_string()))?
     }
 
     #[instrument(skip(self), fields(name = name, format = ?format))]
@@ -346,7 +346,7 @@ impl crate::QueryEngine for DuckDBEngine {
             crate::export::export_table_bytes(&conn, &name, format)
         })
         .await
-        .map_err(|e| EngineError::Io(std::io::Error::other(e.to_string())))?
+        .map_err(|e| EngineError::TaskJoin(e.to_string()))?
     }
 
     #[instrument(skip(self), fields(dsn_scheme = ?dsn.split(':').next(), alias))]
@@ -370,7 +370,7 @@ impl crate::QueryEngine for DuckDBEngine {
             Ok(())
         })
         .await
-        .map_err(|e| EngineError::Io(std::io::Error::other(e.to_string())))?
+        .map_err(|e| EngineError::TaskJoin(e.to_string()))?
     }
 
     #[instrument(skip(self), fields(alias))]
@@ -384,7 +384,7 @@ impl crate::QueryEngine for DuckDBEngine {
             Ok(())
         })
         .await
-        .map_err(|e| EngineError::Io(std::io::Error::other(e.to_string())))?
+        .map_err(|e| EngineError::TaskJoin(e.to_string()))?
     }
 }
 
@@ -400,6 +400,6 @@ impl DuckDBEngine {
             Ok(())
         })
         .await
-        .map_err(|e| EngineError::Io(std::io::Error::other(e.to_string())))?
+        .map_err(|e| EngineError::TaskJoin(e.to_string()))?
     }
 }

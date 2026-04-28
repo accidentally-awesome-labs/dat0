@@ -48,9 +48,10 @@ pub(crate) fn build_csv_view_sql(
     }
     if let Some(s) = opts.sample_rows {
         if s == 0 {
-            return Err(EngineError::Io(std::io::Error::other(
-                "RegisterOpts.sample_rows must be > 0 when set; use None for default",
-            )));
+            return Err(EngineError::InvalidOption {
+                field: "sample_rows",
+                reason: "must be > 0 when set; use None for default".into(),
+            });
         }
         params.push(format!("sample_size={}", s));
     }
