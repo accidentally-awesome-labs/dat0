@@ -16,7 +16,7 @@ the actual API.
 
 | Component | Version / Tag | Date pinned | SHA (40-char) | Source |
 |---|---|---|---|---|
-| `duckdb` (crates.io) | `=1.4.4` | 2026-01-27 (release) | `46d2e094ae741a4e7a500ae4389abf2cfd7e1458` | crates.io publish from `duckdb/duckdb-rs` tag `v1.4.4` |
+| `duckdb` (crates.io) | `=1.4.4` | 2025-01-27 (release) | `46d2e094ae741a4e7a500ae4389abf2cfd7e1458` | crates.io publish from `duckdb/duckdb-rs` tag `v1.4.4` |
 | Underlying DuckDB native | `1.4.4` | (bundled via `libduckdb-sys`) | tracks duckdb-rs `v1.4.4` | bundled C++ library shipped through the `bundled` feature |
 
 Pin form in `Cargo.toml` (T1 will write):
@@ -172,15 +172,22 @@ pub struct DuckDBEngine {
 The spec's intent (cheap-clone, share with sibling cancel tasks) is satisfied:
 `Arc::clone` is a refcount bump.
 
-`InterruptHandle` itself is `#[derive(Copy)]` and implements `Send + Sync`.
-The `Arc<>` wrap makes shared ownership across tasks the canonical pattern;
-holding only the inner `InterruptHandle` by `Copy` is also legal but means
-you can't outlive the `Connection`'s drop without UB unless you keep an `Arc`
-strong ref alive somewhere.
+`InterruptHandle` is `Send + Sync` (added via `unsafe impl` in
+`crates/duckdb/src/inner_connection.rs` at v1.4.4). It is **NOT `Copy` and
+NOT `Clone`** — its sole field is a `Mutex<ffi::duckdb_connection>`, and
+`Mutex<T>` is neither `Copy` nor `Clone`, so the struct can't derive either
+trait. There is no manual `Clone` impl on the struct. This is exactly why
+`Connection::interrupt_handle()` returns an `Arc<InterruptHandle>`: the
+`Arc<>` wrapper is what enables shared ownership across tasks. To share the
+handle with sibling cancel tasks, clone the `Arc`, not the handle itself
+(`Arc::clone(&engine.interrupt)` — refcount bump, no inner copy).
 
 `InterruptHandle::interrupt(&self)` causes any in-flight query on the
 originating connection to fail with `Error::DuckDBFailure`. Idempotent / safe
-to call after the connection is dropped (no-op).
+to call after the connection is dropped (no-op — inferred from source: the
+`is_null()` guard around `ffi::duckdb_interrupt` in
+`crates/duckdb/src/inner_connection.rs` short-circuits when the connection
+has been freed; not stated in upstream docs).
 
 ---
 
@@ -245,9 +252,13 @@ Engine-side implications (T7 `execute_streaming`):
    EngineError>` is correct; the engine just needs to be aware that the source
    iterator can't itself report the mid-stream error case.
 2. Cancellation via `interrupt_handle.interrupt()` causes `step()` to return
-   `None` — to the consumer this looks like normal end-of-stream. T7 must
-   check the engine's status (set by the cancelling sibling task) before
-   reporting "completed" vs "interrupted".
+   either `None` or a `Result::Err` that the iterator's `?` collapses to
+   `None` — observationally indistinguishable to the consumer (looks like
+   normal end-of-stream either way). The engine layer must use the
+   post-iteration `Statement` status check (or an explicit interrupted-flag
+   set by the cancelling sibling task) to disambiguate cancelled-vs-completed.
+   T7 keeps the engine status flag as the source of truth for "interrupted vs
+   completed".
 3. Pre-flight prepare errors *do* surface — they come back from
    `prepare(...)` / `query_arrow(...)` directly as `Result`. Only mid-stream
    errors collapse.
@@ -294,7 +305,10 @@ duckdb::arrow::error::ArrowError           // arrow-side error type
 duckdb::arrow::array::*                    // Array trait + per-type Array structs
 ```
 
-Workspace import convention (T2 sets the canonical aliases):
+**Recommended import convention (advisory — T2 may revise).** This block is a
+suggested set of aliases, not part of the verified API surface. The canonical
+choice belongs in T2 implementation; the suggestion below avoids re-deriving
+paths in every file that touches Arrow types:
 
 ```rust
 use duckdb::arrow::record_batch::RecordBatch;
@@ -373,7 +387,7 @@ COPY (FROM generate_series(100000)) TO 'fixture.parquet'
 | `COMPRESSION` | `snappy` | Accepts `uncompressed`, `snappy`, `gzip`, `zstd`, `brotli`, `lz4`, `lz4_raw`. T12 uses default unless fixture size demands smaller. |
 | `COMPRESSION_LEVEL` | `3` | zstd-only; range 1–22. |
 | `ROW_GROUP_SIZE` | `122880` | Target rows per row-group. T12 fixtures don't need to tune this. |
-| `ROW_GROUP_SIZE_BYTES` | (unset) | Alternative byte-budget form (e.g., `'2MB'`). |
+| `ROW_GROUP_SIZE_BYTES` | `row_group_size × 1024` (≈122 MB at default 122,880 rows × 1024) | Alternative byte-budget form (e.g., `'2MB'`). Default per [DuckDB COPY docs](https://duckdb.org/docs/current/sql/statements/copy.html). |
 | `ROW_GROUPS_PER_FILE` | (unset) | Triggers multi-file output. |
 | `PARQUET_VERSION` | `V1` | `V1` or `V2`. P2 has no V2 requirement. |
 | `FIELD_IDS` | (unset) | `'auto'` infers from schema. |
@@ -397,7 +411,11 @@ COPY (FROM generate_series(100000)) TO 'fixture.parquet'
 1. **`interrupt_handle()` returns `Arc<InterruptHandle>`, not bare
    `InterruptHandle`.** Spec §2.1 hedged on this — the answer is "yes,
    already Arc-wrapped". Engine struct field type is `Arc<duckdb::InterruptHandle>`.
-   `Arc::clone` is the cheap-clone idiom; cloning is a refcount bump.
+   The `InterruptHandle` struct itself is `Send + Sync` (via `unsafe impl`)
+   but is **NOT `Copy` and NOT `Clone`** — its inner `Mutex<duckdb_connection>`
+   field forecloses both. The `Arc<>` returned by `interrupt_handle()` is
+   precisely what enables shared ownership across tasks: clone the `Arc`, not
+   the handle. `Arc::clone` is the cheap-clone idiom (refcount bump).
 
 2. **`Arrow<'_>::Item = RecordBatch`, not `Result<RecordBatch, _>`.** Source
    iterator collapses mid-stream errors to end-of-stream silently. Engine
@@ -461,10 +479,8 @@ COPY (FROM generate_series(100000)) TO 'fixture.parquet'
 
 URLs fetched on **2026-04-27** (P2.T0 verification date):
 
-- <https://crates.io/crates/duckdb> — version listing (initial fetch returned
-  no payload via WebFetch; cross-referenced via the GitHub Releases page below)
 - <https://github.com/duckdb/duckdb-rs/releases> — release notes for v1.4.4
-  (2026-01-27) and v1.10500.0 (2025-03-11), commit SHA `46d2e094...`
+  (2025-01-27) and v1.10500.0 (2025-03-11), commit SHA `46d2e094...`
 - <https://github.com/duckdb/duckdb-rs/releases/tag/v1.4.4> — exact tag SHA
   + release-note quotes
 - <https://github.com/duckdb/duckdb-rs/blob/v1.4.4/crates/duckdb/Cargo.toml>
@@ -480,7 +496,8 @@ URLs fetched on **2026-04-27** (P2.T0 verification date):
 - <https://docs.rs/duckdb/1.4.4/duckdb/struct.Statement.html> —
   `query_arrow` / `stream_arrow` signatures and lifetime bounds
 - <https://docs.rs/duckdb/1.4.4/duckdb/struct.InterruptHandle.html> —
-  `Send + Sync + Copy` confirmation
+  `Send + Sync` confirmation (via `unsafe impl`); struct is not `Copy` /
+  not `Clone` (inner `Mutex<duckdb_connection>` field forecloses both)
 - <https://docs.rs/duckdb/1.4.4/duckdb/struct.Arrow.html> — Iterator
   impl, `Item = RecordBatch`, `!Send`
 - <https://docs.rs/duckdb/1.4.4/duckdb/struct.ArrowStream.html> —

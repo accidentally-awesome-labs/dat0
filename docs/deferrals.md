@@ -231,10 +231,13 @@ that's modifying it; merge conflicts are signals worth investigating.
   upstream never does. The constraint is real: the duckdb-rs README states
   the ICU extension isn't bundled "due to crates.io's 10MB package size
   limit," and `sqlite_scanner` is in the same distribution category.
-- **Reason:** As of P2.T0 verification (2026-04-27, duckdb-rs `v1.4.4`), the
-  published feature surface contains no `sqlite_scanner` entry — confirmed
-  by enumerating `crates/duckdb/Cargo.toml`. Opens unconditionally so the
-  intent isn't lost if upstream adds the feature later.
+- **Reason:** Opens unconditionally so we don't lose the intent if upstream
+  adds the feature later. The "why" is the crates.io 10MB package size limit
+  cited in the duckdb-rs README — the same constraint that keeps the ICU
+  extension out of the bundled distribution applies to `sqlite_scanner`. As
+  of P2.T0 verification (2026-04-27, duckdb-rs `v1.4.4`), the published
+  feature surface contains no `sqlite_scanner` entry — confirmed by
+  enumerating `crates/duckdb/Cargo.toml`.
 - **What P2 ships:** lazy-load via the `dat0-app` boot path —
   `INSTALL sqlite_scanner; LOAD sqlite_scanner;` executed once before any
   window opens (per spec §2.5). First-run UX uses the P1 `Banner` primitive
