@@ -331,14 +331,21 @@ impl crate::QueryEngine for DuckDBEngine {
         .map_err(|e| EngineError::Io(std::io::Error::other(e.to_string())))?
     }
 
+    #[instrument(skip(self), fields(name = name, format = ?format))]
     async fn export_table(
         &self,
-        _name: &str,
-        _format: crate::types::ExportFormat,
+        name: &str,
+        format: crate::types::ExportFormat,
     ) -> Result<Vec<u8>> {
-        Err(EngineError::NotImplemented {
-            feature: "export_table (T10)",
+        self.assert_open()?;
+        let conn = self.conn.clone();
+        let name = name.to_owned();
+        tokio::task::spawn_blocking(move || -> Result<Vec<u8>> {
+            let conn = conn.lock().map_err(|_| EngineError::EnginePoisoned)?;
+            crate::export::export_table_bytes(&conn, &name, format)
         })
+        .await
+        .map_err(|e| EngineError::Io(std::io::Error::other(e.to_string())))?
     }
 
     async fn attach(
