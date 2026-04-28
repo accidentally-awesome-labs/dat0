@@ -69,6 +69,9 @@ futures = "0.3"
 # Trait async helpers
 async-trait = "0.1"
 
+# CPU count probe (engine threads pragma)
+num_cpus = "1"
+
 # Internal crates
 dat0-engine = { path = "crates/dat0-engine" }
 dat0-i18n = { path = "crates/dat0-i18n" }

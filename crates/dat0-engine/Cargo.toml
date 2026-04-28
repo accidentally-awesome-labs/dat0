@@ -18,6 +18,7 @@ tracing.workspace = true
 thiserror.workspace = true
 serde.workspace = true
 async-trait.workspace = true
+num_cpus.workspace = true
 
 [dev-dependencies]
 tempfile.workspace = true
