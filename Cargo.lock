@@ -1700,6 +1700,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "criterion",
+ "dat0-engine",
  "dat0-i18n",
  "dat0-keychain",
  "dirs 5.0.1",

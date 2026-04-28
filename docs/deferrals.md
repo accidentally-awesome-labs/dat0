@@ -61,6 +61,7 @@ that's modifying it; merge conflicts are signals worth investigating.
 | PD-004 | Linux Secret Service backend not reachable from CI keychain tests  | open   | low      |
 | PD-005 | P2 plan T3 snippet uses `&*conn` triggering clippy explicit-auto-deref | closed | trivial |
 | PD-006 | P2 plan T12 fixtures snippet uses bare `rng.gen::<…>()` — reserved keyword in Rust 2024 | closed | low      |
+| PD-007 | P2 plan T14 snippet calls non-existent `error_ux::banner::push_banner` with mismatched `Banner` shape | closed | low      |
 
 ---
 
@@ -451,6 +452,51 @@ that's modifying it; merge conflicts are signals worth investigating.
 - **Originating doc:** `docs/plans/2026-04-27-dat0-p2-engine-plan.md` Step 12.3
   code block (lines 3503-3601).
 - **Closed by:** P2 T12 commit on branch `p2-engine`.
+- **Last touched:** 2026-04-27
+
+---
+
+### PD-007 — P2 plan T14 snippet calls non-existent `error_ux::banner::push_banner` with mismatched `Banner` shape
+
+- **Status:** closed
+- **Severity:** low (P1 Banner is intentionally a pure-data type; the plan
+  predicted this in its inline note and asked the implementer to adapt)
+- **Affected files:** `crates/dat0-app/src/error_ux/banner.rs`,
+  `crates/dat0-app/src/boot.rs`
+- **Symptom:** Plan §"Task 14, Step 14.2" supplies verbatim code calling
+  `crate::error_ux::banner::push_banner(crate::error_ux::banner::Banner { severity: …::Severity::Warning, title_key, body_key, link })`.
+  None of those identifiers match P1's actual API:
+  - No `push_banner` function exists — P1 ships `Banner` as a pure-data
+    state struct with no in-process registry or service layer.
+  - The severity enum is `BannerSeverity` (not `Severity`).
+  - `Banner`'s fields are `{ message: String, severity, dismissible, action_label }`
+    — there are no `title_key`, `body_key`, or `link` fields.
+  - `Banner` does not exist as a render-attached primitive yet either; the
+    intent in P1 was that real GPUI rendering wires it up at use sites in P7.
+- **Discovered:** P2 T14 implementation (2026-04-27) on first attempt to
+  compile boot.rs against the verbatim plan snippet. The plan itself
+  flags the risk (line 3799) and instructs sub-agents to consult the
+  actual file and adapt — so this is more "expected drift" than a defect,
+  but logging per protocol since the verbatim code does not compile.
+- **Fix applied:**
+  1. Added a minimal in-process pending-banner queue to
+     `error_ux::banner` (`push(Banner)` + `drain_pending() -> Vec<Banner>`)
+     so boot-time call sites can stash banners before any window exists.
+     The render layer (P7+) drains on first window open.
+  2. Boot calls `banner::push(Banner::warning(format!("{title}: {body}")))`
+     using the existing P1 constructor. The `link` field has no slot yet;
+     the link target is documented in the i18n body for now and can be
+     promoted to a structured field when `Banner` grows an action surface.
+  3. i18n keys `boot.sqlite_scanner_install_failed.title` /
+     `boot.sqlite_scanner_install_failed.body` added to
+     `crates/dat0-i18n/src/strings/en.json` per plan.
+- **Alternative considered:** Defer all banner UX to P7 and only
+  `tracing::error!` at boot. Rejected — the queue-based solution is ~30
+  lines, preserves the user-facing surface the plan promised, and is
+  exactly the API shape P7 will need anyway.
+- **Originating doc:** `docs/plans/2026-04-27-dat0-p2-engine-plan.md`
+  Step 14.2 code block (lines 3775-3796).
+- **Closed by:** P2 T14 commit on branch `p2-engine`.
 - **Last touched:** 2026-04-27
 
 ---
