@@ -216,27 +216,52 @@ impl crate::QueryEngine for DuckDBEngine {
         })
     }
 
+    #[instrument(skip(self), fields(name = name, sql_len = sql.len()))]
     async fn create_table(
         &self,
-        _name: &str,
-        _sql: &str,
+        name: &str,
+        sql: &str,
         _origin: crate::types::DerivedOrigin,
     ) -> Result<crate::types::TableInfo> {
-        Err(EngineError::NotImplemented {
-            feature: "create_table (T9)",
+        self.assert_open()?;
+        let conn = self.conn.clone();
+        let name = name.to_owned();
+        let sql = sql.to_owned();
+        tokio::task::spawn_blocking(move || -> Result<crate::types::TableInfo> {
+            let conn = conn.lock().map_err(|_| EngineError::EnginePoisoned)?;
+            crate::catalog::create_table(&conn, &name, &sql)
         })
+        .await
+        .map_err(|e| EngineError::Io(std::io::Error::other(e.to_string())))?
     }
 
-    async fn drop_table(&self, _name: &str, _schema: Option<&str>) -> Result<()> {
-        Err(EngineError::NotImplemented {
-            feature: "drop_table (T9)",
+    #[instrument(skip(self), fields(name = name))]
+    async fn drop_table(&self, name: &str, schema: Option<&str>) -> Result<()> {
+        self.assert_open()?;
+        let conn = self.conn.clone();
+        let name = name.to_owned();
+        let schema = schema.map(|s| s.to_owned());
+        tokio::task::spawn_blocking(move || -> Result<()> {
+            let conn = conn.lock().map_err(|_| EngineError::EnginePoisoned)?;
+            crate::catalog::drop_table(&conn, &name, schema.as_deref())
         })
+        .await
+        .map_err(|e| EngineError::Io(std::io::Error::other(e.to_string())))?
     }
 
-    async fn rename_table(&self, _old: &str, _new: &str, _schema: Option<&str>) -> Result<()> {
-        Err(EngineError::NotImplemented {
-            feature: "rename_table (T9)",
+    #[instrument(skip(self), fields(old = old, new = new))]
+    async fn rename_table(&self, old: &str, new: &str, schema: Option<&str>) -> Result<()> {
+        self.assert_open()?;
+        let conn = self.conn.clone();
+        let old = old.to_owned();
+        let new = new.to_owned();
+        let schema = schema.map(|s| s.to_owned());
+        tokio::task::spawn_blocking(move || -> Result<()> {
+            let conn = conn.lock().map_err(|_| EngineError::EnginePoisoned)?;
+            crate::catalog::rename_table(&conn, &old, &new, schema.as_deref())
         })
+        .await
+        .map_err(|e| EngineError::Io(std::io::Error::other(e.to_string())))?
     }
 
     #[instrument(skip(self), fields(sql_len = sql.len()))]
@@ -276,20 +301,34 @@ impl crate::QueryEngine for DuckDBEngine {
         crate::execute::streaming::spawn_streaming(self.conn.clone(), sql.to_owned())
     }
 
+    #[instrument(skip(self), fields(name = name, schema = ?schema))]
     async fn describe_table(
         &self,
-        _name: &str,
-        _schema: Option<&str>,
+        name: &str,
+        schema: Option<&str>,
     ) -> Result<Vec<crate::types::ColumnInfo>> {
-        Err(EngineError::NotImplemented {
-            feature: "describe_table (T9)",
+        self.assert_open()?;
+        let conn = self.conn.clone();
+        let name = name.to_owned();
+        let schema = schema.map(|s| s.to_owned());
+        tokio::task::spawn_blocking(move || -> Result<Vec<crate::types::ColumnInfo>> {
+            let conn = conn.lock().map_err(|_| EngineError::EnginePoisoned)?;
+            crate::catalog::describe_table(&conn, &name, schema.as_deref())
         })
+        .await
+        .map_err(|e| EngineError::Io(std::io::Error::other(e.to_string())))?
     }
 
+    #[instrument(skip_all)]
     async fn get_tables(&self) -> Result<Vec<crate::types::TableInfo>> {
-        Err(EngineError::NotImplemented {
-            feature: "get_tables (T9)",
+        self.assert_open()?;
+        let conn = self.conn.clone();
+        tokio::task::spawn_blocking(move || -> Result<Vec<crate::types::TableInfo>> {
+            let conn = conn.lock().map_err(|_| EngineError::EnginePoisoned)?;
+            crate::catalog::get_tables(&conn)
         })
+        .await
+        .map_err(|e| EngineError::Io(std::io::Error::other(e.to_string())))?
     }
 
     async fn export_table(

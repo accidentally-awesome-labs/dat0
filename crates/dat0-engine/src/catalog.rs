@@ -1,1 +1,100 @@
-//! T9 fills this in.
+//! Catalog ops: describe, list, create, drop, rename.
+
+use crate::Result;
+use crate::types::{ColumnInfo, DerivedOrigin, TableInfo, TableOrigin};
+
+pub(crate) fn describe_table(
+    conn: &duckdb::Connection,
+    name: &str,
+    schema: Option<&str>,
+) -> Result<Vec<ColumnInfo>> {
+    let qualified = qualified_name(name, schema);
+    let mut stmt = conn.prepare(&format!("DESCRIBE {}", qualified))?;
+    let cols: Vec<ColumnInfo> = stmt
+        .query_map([], |row| {
+            Ok(ColumnInfo {
+                name: row.get::<_, String>(0)?,
+                data_type: row.get::<_, String>(1)?,
+                nullable: row
+                    .get::<_, String>(2)
+                    .map(|s| s.eq_ignore_ascii_case("YES"))
+                    .unwrap_or(true),
+            })
+        })?
+        .filter_map(std::result::Result::ok)
+        .collect();
+    Ok(cols)
+}
+
+pub(crate) fn get_tables(conn: &duckdb::Connection) -> Result<Vec<TableInfo>> {
+    // Use information_schema for portability; columns: table_schema, table_name.
+    let mut stmt = conn.prepare(
+        "SELECT table_schema, table_name
+         FROM information_schema.tables
+         WHERE table_schema NOT IN ('information_schema', 'pg_catalog')
+           AND table_name NOT LIKE '__dat0_meta%'",
+    )?;
+    let rows: Vec<(String, String)> = stmt
+        .query_map([], |row| {
+            Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+        })?
+        .filter_map(std::result::Result::ok)
+        .collect();
+
+    let mut tables = Vec::with_capacity(rows.len());
+    for (schema, name) in rows {
+        let cols = describe_table(conn, &name, Some(&schema))?;
+        tables.push(TableInfo {
+            name,
+            schema,
+            columns: cols,
+            row_count_estimate: None,
+            origin: TableOrigin::Derived(DerivedOrigin::Sql(String::new())),
+        });
+    }
+    Ok(tables)
+}
+
+pub(crate) fn create_table(conn: &duckdb::Connection, name: &str, sql: &str) -> Result<TableInfo> {
+    let create_sql = format!("CREATE TABLE \"{}\" AS {}", name, sql);
+    conn.execute_batch(&create_sql)?;
+    let columns = describe_table(conn, name, None)?;
+    Ok(TableInfo {
+        name: name.to_string(),
+        schema: "main".to_string(),
+        columns,
+        row_count_estimate: None,
+        origin: TableOrigin::Derived(DerivedOrigin::Sql(sql.to_string())),
+    })
+}
+
+pub(crate) fn drop_table(
+    conn: &duckdb::Connection,
+    name: &str,
+    schema: Option<&str>,
+) -> Result<()> {
+    let qualified = qualified_name(name, schema);
+    conn.execute_batch(&format!("DROP TABLE {}", qualified))?;
+    Ok(())
+}
+
+pub(crate) fn rename_table(
+    conn: &duckdb::Connection,
+    old: &str,
+    new: &str,
+    schema: Option<&str>,
+) -> Result<()> {
+    let qualified_old = qualified_name(old, schema);
+    conn.execute_batch(&format!(
+        "ALTER TABLE {} RENAME TO \"{}\"",
+        qualified_old, new
+    ))?;
+    Ok(())
+}
+
+fn qualified_name(name: &str, schema: Option<&str>) -> String {
+    match schema {
+        Some(s) => format!("\"{}\".\"{}\"", s, name),
+        None => format!("\"{}\"", name),
+    }
+}
