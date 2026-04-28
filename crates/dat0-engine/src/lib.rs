@@ -4,15 +4,15 @@
 //! See `docs/specs/2026-04-27-dat0-p2-engine-design.md` for the architectural
 //! contract.
 
-pub mod attach;
-pub mod catalog;
+pub(crate) mod attach;
+pub(crate) mod catalog;
 pub mod duckdb_engine;
 pub mod error;
-pub mod execute;
-pub mod export;
+pub(crate) mod execute;
+pub(crate) mod export;
 pub mod extension_bootstrap;
 pub mod migrations;
-pub mod register;
+pub(crate) mod register;
 pub(crate) mod tracing_helpers;
 pub mod trait_def;
 pub mod types;
