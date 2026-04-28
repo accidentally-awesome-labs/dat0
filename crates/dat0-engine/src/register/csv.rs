@@ -3,6 +3,7 @@
 use std::path::Path;
 
 use crate::Result;
+use crate::catalog::quote_ident;
 use crate::error::EngineError;
 use crate::types::{FileFormat, RegisterOpts};
 
@@ -77,8 +78,9 @@ pub(crate) fn build_csv_view_sql(
     };
 
     Ok(format!(
-        "CREATE OR REPLACE VIEW \"{}\" AS SELECT * FROM read_csv({});",
-        table_name, read_args
+        "CREATE OR REPLACE VIEW {} AS SELECT * FROM read_csv({});",
+        quote_ident(table_name),
+        read_args
     ))
 }
 

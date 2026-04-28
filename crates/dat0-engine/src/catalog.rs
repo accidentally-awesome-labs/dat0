@@ -3,6 +3,14 @@
 use crate::Result;
 use crate::types::{ColumnInfo, DerivedOrigin, TableInfo, TableOrigin};
 
+/// Escape a SQL identifier for safe interpolation into a quoted-identifier
+/// position. DuckDB doubles `"` to `""` inside `"..."`, the same way SQL
+/// string literals double `'` to `''`. Without this, a name containing
+/// `"` could break out of the quoted-identifier and inject SQL.
+pub(crate) fn quote_ident(name: &str) -> String {
+    format!("\"{}\"", name.replace('"', "\"\""))
+}
+
 pub(crate) fn describe_table(
     conn: &duckdb::Connection,
     name: &str,
@@ -56,7 +64,7 @@ pub(crate) fn get_tables(conn: &duckdb::Connection) -> Result<Vec<TableInfo>> {
 }
 
 pub(crate) fn create_table(conn: &duckdb::Connection, name: &str, sql: &str) -> Result<TableInfo> {
-    let create_sql = format!("CREATE TABLE \"{}\" AS {}", name, sql);
+    let create_sql = format!("CREATE TABLE {} AS {}", quote_ident(name), sql);
     conn.execute_batch(&create_sql)?;
     let columns = describe_table(conn, name, None)?;
     Ok(TableInfo {
@@ -86,15 +94,16 @@ pub(crate) fn rename_table(
 ) -> Result<()> {
     let qualified_old = qualified_name(old, schema);
     conn.execute_batch(&format!(
-        "ALTER TABLE {} RENAME TO \"{}\"",
-        qualified_old, new
+        "ALTER TABLE {} RENAME TO {}",
+        qualified_old,
+        quote_ident(new)
     ))?;
     Ok(())
 }
 
 fn qualified_name(name: &str, schema: Option<&str>) -> String {
     match schema {
-        Some(s) => format!("\"{}\".\"{}\"", s, name),
-        None => format!("\"{}\"", name),
+        Some(s) => format!("{}.{}", quote_ident(s), quote_ident(name)),
+        None => quote_ident(name),
     }
 }

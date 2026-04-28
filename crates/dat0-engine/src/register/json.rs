@@ -3,6 +3,7 @@
 use std::path::Path;
 
 use crate::Result;
+use crate::catalog::quote_ident;
 use crate::error::EngineError;
 use crate::types::{FileFormat, RegisterOpts};
 
@@ -58,7 +59,8 @@ pub(crate) fn build_json_view_sql(
     }
     let args = format!("'{}', {}", escaped_path, params.join(", "));
     Ok(format!(
-        "CREATE OR REPLACE VIEW \"{}\" AS SELECT * FROM read_json({});",
-        table_name, args
+        "CREATE OR REPLACE VIEW {} AS SELECT * FROM read_json({});",
+        quote_ident(table_name),
+        args
     ))
 }

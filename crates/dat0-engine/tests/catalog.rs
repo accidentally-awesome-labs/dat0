@@ -42,3 +42,30 @@ async fn create_describe_drop_cycle() {
 
     engine.close().await.unwrap();
 }
+
+#[tokio::test]
+async fn create_table_with_embedded_quote_in_name() {
+    let dir = tempfile::tempdir().unwrap();
+    let engine = DuckDBEngine::new(dir.path().join("a.duckdb"), budget()).unwrap();
+    engine.init().await.unwrap();
+
+    // Hostile name: contains a literal `"`. Without quote_ident escaping,
+    // this would close the identifier mid-format and inject SQL.
+    let evil_name = r#"weird"name"#;
+    let info = engine
+        .create_table(
+            evil_name,
+            "SELECT 1::INTEGER AS id",
+            DerivedOrigin::Sql("test".into()),
+        )
+        .await
+        .unwrap();
+    assert_eq!(info.name, evil_name);
+
+    let cols = engine.describe_table(evil_name, None).await.unwrap();
+    assert_eq!(cols.len(), 1);
+
+    engine.drop_table(evil_name, None).await.unwrap();
+
+    engine.close().await.unwrap();
+}

@@ -5,6 +5,7 @@
 use std::io::Read;
 
 use crate::Result;
+use crate::catalog::quote_ident;
 use crate::error::EngineError;
 use crate::types::ExportFormat;
 
@@ -28,18 +29,19 @@ pub(crate) fn export_table_bytes(
         .ok_or_else(|| EngineError::InvalidPath(path.clone()))?
         .replace('\'', "''");
 
+    let qtable = quote_ident(table);
     let copy_sql = match format {
         ExportFormat::Csv => format!(
-            "COPY (SELECT * FROM \"{}\") TO '{}' (FORMAT CSV, HEADER)",
-            table, path_str
+            "COPY (SELECT * FROM {}) TO '{}' (FORMAT CSV, HEADER)",
+            qtable, path_str
         ),
         ExportFormat::Json => format!(
-            "COPY (SELECT * FROM \"{}\") TO '{}' (FORMAT JSON, ARRAY)",
-            table, path_str
+            "COPY (SELECT * FROM {}) TO '{}' (FORMAT JSON, ARRAY)",
+            qtable, path_str
         ),
         ExportFormat::Parquet => format!(
-            "COPY (SELECT * FROM \"{}\") TO '{}' (FORMAT PARQUET)",
-            table, path_str
+            "COPY (SELECT * FROM {}) TO '{}' (FORMAT PARQUET)",
+            qtable, path_str
         ),
     };
     conn.execute_batch(&copy_sql)?;

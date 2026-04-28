@@ -6,6 +6,7 @@ use std::sync::{Arc, Mutex, RwLock};
 use tracing::{debug, error, instrument};
 
 use crate::Result;
+use crate::catalog::quote_ident;
 use crate::error::EngineError;
 use crate::types::{EngineStatus, MemoryBudget};
 
@@ -187,7 +188,7 @@ impl crate::QueryEngine for DuckDBEngine {
                 let conn = conn.lock().map_err(|_| EngineError::EnginePoisoned)?;
                 conn.execute_batch(&sql)?;
                 // DESCRIBE returns columns: column_name, column_type, null, key, default, extra
-                let mut stmt = conn.prepare(&format!("DESCRIBE \"{}\"", table_name))?;
+                let mut stmt = conn.prepare(&format!("DESCRIBE {}", quote_ident(&table_name)))?;
                 let rows: Vec<crate::types::ColumnInfo> = stmt
                     .query_map([], |row| {
                         Ok(crate::types::ColumnInfo {
