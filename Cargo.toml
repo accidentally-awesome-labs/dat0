@@ -58,7 +58,19 @@ criterion = { version = "0.5", features = ["html_reports"] }
 tempfile = "3"
 serial_test = "3"
 
+# Engine: DuckDB native + bundled extensions (json, parquet are statically linked under `bundled`).
+# CSV reading is in DuckDB core; sqlite_scanner is NOT bundled (see D-009) and is loaded at runtime.
+# Arrow types are consumed via duckdb::arrow re-exports — DO NOT add a standalone `arrow` dep.
+duckdb = { version = "=1.4.4", features = ["bundled", "json", "parquet"] }
+
+# Streaming
+futures = "0.3"
+
+# Trait async helpers
+async-trait = "0.1"
+
 # Internal crates
+dat0-engine = { path = "crates/dat0-engine" }
 dat0-i18n = { path = "crates/dat0-i18n" }
 dat0-keychain = { path = "crates/dat0-keychain" }
 
