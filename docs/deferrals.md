@@ -81,7 +81,7 @@ that's modifying it; merge conflicts are signals worth investigating.
   bound to the existing `SettingsStore`.
 - **Originating doc:** `docs/plans/2026-04-26-dat0-p1-foundation-plan.md` §"Risks & Caveats"
 - **Closes:** spec §21.2 P1 exit — "Settings panel opens; changes persist across launches" (full editability)
-- **Last touched:** 2026-04-26
+- **Last touched:** 2026-04-28
 
 ### D-002 — Theme live-switch through running window
 
@@ -97,7 +97,7 @@ that's modifying it; merge conflicts are signals worth investigating.
   re-renders on theme change without restart.
 - **Originating doc:** `docs/plans/2026-04-26-dat0-p1-foundation-plan.md` §"Risks & Caveats"
 - **Closes:** spec §21.2 P1 exit — "Theme switch (default ↔ alternate) works without restart"
-- **Last touched:** 2026-04-26
+- **Last touched:** 2026-04-28
 
 ### D-003 — Sparkle Objective-C `SUUpdater` bridge
 
@@ -113,7 +113,7 @@ that's modifying it; merge conflicts are signals worth investigating.
   parsing, signature verification, in-app update prompt UI, restart flow.
 - **Originating doc:** `docs/plans/2026-04-26-dat0-p1-foundation-plan.md` §"Risks & Caveats"
 - **Closes:** spec §21.2 P10 exit — "Sparkle 'Check for Updates' finds a test update + applies it"
-- **Last touched:** 2026-04-26
+- **Last touched:** 2026-04-28
 
 ### D-004 — AppImageUpdate subprocess invocation
 
@@ -127,7 +127,7 @@ that's modifying it; merge conflicts are signals worth investigating.
 - **What target phase delivers:** Subprocess wiring, progress reporting,
   restart flow.
 - **Originating doc:** `docs/plans/2026-04-26-dat0-p1-foundation-plan.md` §"Risks & Caveats"
-- **Last touched:** 2026-04-26
+- **Last touched:** 2026-04-28
 
 ### D-005 — Linux Secret Service "setup banner" UX
 
@@ -142,7 +142,7 @@ that's modifying it; merge conflicts are signals worth investigating.
   init fails, with link to user-runnable docs for `gnome-keyring-daemon` /
   `kwalletmanager` setup.
 - **Originating doc:** `docs/plans/2026-04-26-dat0-p1-foundation-plan.md` §"Risks & Caveats"
-- **Last touched:** 2026-04-26
+- **Last touched:** 2026-04-28
 
 ### D-006 — macOS x86_64 (Intel) CI matrix coverage
 
@@ -170,7 +170,7 @@ that's modifying it; merge conflicts are signals worth investigating.
 - **Closes (partial):** spec §21.2 P1 exit — "Cold-launches on macOS arm64,
   macOS x86_64, Linux x86_64, Linux aarch64" — Apple Silicon + both Linux
   triples covered; macOS Intel coverage deferred.
-- **Last touched:** 2026-04-26
+- **Last touched:** 2026-04-28
 
 ### D-007 — MotherDuck ATTACH end-to-end
 
@@ -196,7 +196,7 @@ that's modifying it; merge conflicts are signals worth investigating.
 - **Originating doc:** `docs/specs/2026-04-27-dat0-p2-engine-design.md` §7
 - **Closes:** spec §6.5 entirely (partial closure — `sqlite:` lands in P2;
   `md:` lands in P5).
-- **Last touched:** 2026-04-27
+- **Last touched:** 2026-04-28
 
 ### D-008 — Cancellation-token wiring through `QueryEngine` trait
 
@@ -222,7 +222,7 @@ that's modifying it; merge conflicts are signals worth investigating.
   channel; Cmd+. UX wiring in the P5 SQL Console.
 - **Originating doc:** `docs/specs/2026-04-27-dat0-p2-engine-design.md` §7
   + §2.2.
-- **Last touched:** 2026-04-27
+- **Last touched:** 2026-04-28
 
 ### D-009 — Bundle `sqlite_scanner` static when duckdb-rs exposes a feature
 
@@ -256,7 +256,9 @@ that's modifying it; merge conflicts are signals worth investigating.
   a positive entry on monthly upstream-watch refresh.
 - **Originating doc:** `docs/specs/2026-04-27-dat0-p2-engine-design.md` §7
   + §2.5; `docs/internal/duckdb-arrow-api-notes.md` § "Extension features".
-- **Last touched:** 2026-04-27
+- **Note (P2 retro):** P2.T0 re-verified 2026-04-27: duckdb-rs 1.4.4 has no
+  `sqlite_scanner` Cargo feature. Lazy-load remains the locked path.
+- **Last touched:** 2026-04-28
 
 ### D-010 — Non-UTF-8 file encoding handling
 
@@ -278,7 +280,7 @@ that's modifying it; merge conflicts are signals worth investigating.
   you want to convert?"), or (b) explicit user override in the import wizard
   with a conversion preview. P3 picks one or escalates to v1.x.
 - **Originating doc:** `docs/specs/2026-04-27-dat0-p2-engine-design.md` §7.
-- **Last touched:** 2026-04-27
+- **Last touched:** 2026-04-28
 
 ---
 
@@ -301,7 +303,7 @@ that's modifying it; merge conflicts are signals worth investigating.
 - **Suggested fix:** Replace with explicit per-crate directives —
   `info,dat0_app=debug,dat0_engine=debug,dat0_format=debug,dat0_i18n=debug,dat0_keychain=debug`
   — or use a shared helper that enumerates dat0 crate prefixes.
-- **Last touched:** 2026-04-26
+- **Last touched:** 2026-04-28
 
 ### PD-002 — Settings store atomic-write missing `fsync` before rename
 
@@ -332,7 +334,7 @@ that's modifying it; merge conflicts are signals worth investigating.
 - **Acceptable when:** dat0 begins storing recoverable state in settings (e.g.,
   workspace pointers a user would lose if the file zeroed). Until then the cost
   of a corrupt settings file is "user re-enters preferences," which is low.
-- **Last touched:** 2026-04-26
+- **Last touched:** 2026-04-28
 
 ---
 
@@ -361,7 +363,7 @@ that's modifying it; merge conflicts are signals worth investigating.
   Option (a) is the most-honest if the dual-license selection is genuinely a
   policy choice; option (b) is the simplest if NOTICE is intended as a
   generic union.
-- **Last touched:** 2026-04-26
+- **Last touched:** 2026-04-28
 
 ---
 
@@ -401,7 +403,7 @@ that's modifying it; merge conflicts are signals worth investigating.
     integration tests macOS-only. Cleaner separation but less coverage.
   - **(c) Self-hosted Linux runner with persistent gnome-keyring** —
     overkill for what's tested.
-- **Last touched:** 2026-04-26
+- **Last touched:** 2026-04-28
 
 ---
 
@@ -421,8 +423,8 @@ that's modifying it; merge conflicts are signals worth investigating.
   `apply_migrations_real` body. Behavior identical; clippy clean.
 - **Originating doc:** `docs/plans/2026-04-27-dat0-p2-engine-plan.md` Step 3.4
   code block.
-- **Closed by:** P2 T3 commit on branch `p2-engine`.
-- **Last touched:** 2026-04-27
+- **Closed by:** P2 T3 commit `4418cbd` on branch `p2-engine`.
+- **Last touched:** 2026-04-28
 
 ---
 
@@ -451,8 +453,8 @@ that's modifying it; merge conflicts are signals worth investigating.
   the `r#gen` escapes.
 - **Originating doc:** `docs/plans/2026-04-27-dat0-p2-engine-plan.md` Step 12.3
   code block (lines 3503-3601).
-- **Closed by:** P2 T12 commit on branch `p2-engine`.
-- **Last touched:** 2026-04-27
+- **Closed by:** P2 T12 commit `0cc61bd` on branch `p2-engine`.
+- **Last touched:** 2026-04-28
 
 ---
 
@@ -496,8 +498,8 @@ that's modifying it; merge conflicts are signals worth investigating.
   exactly the API shape P7 will need anyway.
 - **Originating doc:** `docs/plans/2026-04-27-dat0-p2-engine-plan.md`
   Step 14.2 code block (lines 3775-3796).
-- **Closed by:** P2 T14 commit on branch `p2-engine`.
-- **Last touched:** 2026-04-27
+- **Closed by:** P2 T14 commit `9ea964b` on branch `p2-engine`.
+- **Last touched:** 2026-04-28
 
 ---
 
