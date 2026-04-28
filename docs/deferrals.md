@@ -46,6 +46,10 @@ that's modifying it; merge conflicts are signals worth investigating.
 | D-004 | AppImageUpdate subprocess invocation               | open | P1   | P10    |
 | D-005 | Linux Secret Service "setup banner" UX             | open | P1   | TBD    |
 | D-006 | macOS x86_64 (Intel) CI matrix coverage            | open | P1   | TBD    |
+| D-007 | MotherDuck ATTACH end-to-end                       | open | P2   | P5     |
+| D-008 | Cancellation-token wiring through `QueryEngine` trait | open | P2 | P5     |
+| D-009 | Bundle `sqlite_scanner` static when duckdb-rs exposes a feature | open | P2 | TBD |
+| D-010 | Non-UTF-8 file encoding handling                   | open | P2   | TBD    |
 
 ## At-a-glance — Plan defects
 
@@ -164,6 +168,111 @@ that's modifying it; merge conflicts are signals worth investigating.
   macOS x86_64, Linux x86_64, Linux aarch64" — Apple Silicon + both Linux
   triples covered; macOS Intel coverage deferred.
 - **Last touched:** 2026-04-26
+
+### D-007 — MotherDuck ATTACH end-to-end
+
+- **Status:** open
+- **Deferred from:** P2
+- **Target phase:** P5 (SQL Console)
+- **Reason:** The `motherduck` Cargo feature does not exist in duckdb-rs as of
+  the P2.T0 spike (verified 2026-04-27 against duckdb-rs `v1.4.4` —
+  `crates/duckdb/Cargo.toml` feature graph contains no `motherduck` entry).
+  The keychain primitive shipped in P1 has no consumer until a UI surface
+  needs the token. Integration testing requires a MotherDuck dev DB credential
+  not yet provisioned. The P2 spec exit names only `sqlite:` for end-to-end
+  ATTACH coverage.
+- **What P2 ships:** generic `attach()` method that parses the DSN prefix;
+  `sqlite:` end-to-end (extension lazy-loaded via boot-path
+  `INSTALL sqlite_scanner; LOAD sqlite_scanner;`); `md:` returns
+  `EngineError::NotImplemented { feature: "MotherDuck" }`.
+- **What target phase delivers:** motherduck extension load (boot-path,
+  same template as sqlite_scanner); a `MotherDuckTokenStore` consumer of the
+  P1 keychain primitive; integration tests against a MotherDuck dev DB;
+  per-query timing chip ("local: 38ms / md: 412ms") in the P5 SQL Console
+  status bar.
+- **Originating doc:** `docs/specs/2026-04-27-dat0-p2-engine-design.md` §7
+- **Closes:** spec §6.5 entirely (partial closure — `sqlite:` lands in P2;
+  `md:` lands in P5).
+- **Last touched:** 2026-04-27
+
+### D-008 — Cancellation-token wiring through `QueryEngine` trait
+
+- **Status:** open
+- **Deferred from:** P2
+- **Target phase:** P5 (SQL Console)
+- **Reason:** P2 has zero callers passing tokens — adding a
+  `cancel: CancellationToken` parameter on every `execute*` trait method now
+  would ship dead-weight ergonomics that can't be evaluated against a real
+  call-site. P5 SQL Console is the first surface that needs `Cmd+.` → cancel
+  propagation through a streaming query; trait shape is best evaluated against
+  that real call-site rather than guessed twice. Engine internals already
+  support cancellation today via `Engine::interrupt()` (backed by
+  `Arc<duckdb::InterruptHandle>`, verified at P2.T0) — the trait amendment is
+  signature ergonomics, not a behavioral change.
+- **What P2 ships:** internal `Arc<duckdb::InterruptHandle>` field on
+  `DuckDBEngine`; public `Engine::interrupt(&self)` method callable from
+  sibling tasks; `EngineError::Interrupted` variant present in the error enum.
+- **What target phase delivers:** trait amendment to add
+  `cancel: CancellationToken` parameter on `execute` / `execute_paged` /
+  `execute_streaming`; automatic interrupt-on-drop semantics for cancellation
+  tokens; structured cancellation propagation through the streaming `mpsc`
+  channel; Cmd+. UX wiring in the P5 SQL Console.
+- **Originating doc:** `docs/specs/2026-04-27-dat0-p2-engine-design.md` §7
+  + §2.2.
+- **Last touched:** 2026-04-27
+
+### D-009 — Bundle `sqlite_scanner` static when duckdb-rs exposes a feature
+
+- **Status:** open
+- **Deferred from:** P2 (opens unconditionally with the spec; duckdb-rs's
+  feature surface determines whether it ever closes)
+- **Target phase:** TBD — closes when duckdb-rs adds a `sqlite_scanner`
+  Cargo feature for static linking, OR stays open as documented intent if
+  upstream never does. The constraint is real: the duckdb-rs README states
+  the ICU extension isn't bundled "due to crates.io's 10MB package size
+  limit," and `sqlite_scanner` is in the same distribution category.
+- **Reason:** As of P2.T0 verification (2026-04-27, duckdb-rs `v1.4.4`), the
+  published feature surface contains no `sqlite_scanner` entry — confirmed
+  by enumerating `crates/duckdb/Cargo.toml`. Opens unconditionally so the
+  intent isn't lost if upstream adds the feature later.
+- **What P2 ships:** lazy-load via the `dat0-app` boot path —
+  `INSTALL sqlite_scanner; LOAD sqlite_scanner;` executed once before any
+  window opens (per spec §2.5). First-run UX uses the P1 `Banner` primitive
+  to show extension-download status. Engine `init()` per instance does
+  `LOAD sqlite_scanner;` only (extension already installed by boot path).
+- **What target phase delivers:** replaces boot-path `INSTALL` with a
+  build-time static link, eliminating the first-run extension-download UX
+  surface entirely. Boot path simplifies to `LOAD sqlite_scanner;` against
+  the statically-linked extension.
+- **Re-check trigger for closing:** duckdb-rs release notes mentioning a new
+  feature flag for sqlite_scanner, OR the feature-graph row in
+  `docs/internal/duckdb-arrow-api-notes.md` § "Extension features" gaining
+  a positive entry on monthly upstream-watch refresh.
+- **Originating doc:** `docs/specs/2026-04-27-dat0-p2-engine-design.md` §7
+  + §2.5; `docs/internal/duckdb-arrow-api-notes.md` § "Extension features".
+- **Last touched:** 2026-04-27
+
+### D-010 — Non-UTF-8 file encoding handling
+
+- **Status:** open
+- **Deferred from:** P2
+- **Target phase:** TBD (likely P3 import wizard or v1.x polish)
+- **Reason:** DuckDB's `read_csv` has no encoding parameter; supporting
+  non-UTF-8 cleanly requires either Rust-side preconversion or a separate
+  read path. Neither is a P2 concern — the engine's job is to expose what
+  DuckDB supports natively. UI-side detection / conversion belongs with the
+  P3 import wizard surface where the user can confirm the encoding choice.
+- **What P2 ships:** `RegisterOpts` has no `encoding` field. CSV / TSV / JSON
+  / NDJSON files are assumed UTF-8 (matches DuckDB's `read_csv` default).
+  Non-UTF-8 input fails at parse time with a DuckDB error surfaced through
+  `EngineError`.
+- **What target phase delivers:** either (a) Rust-side preconversion via
+  `encoding_rs` for CSV inputs flagged as non-UTF-8 by `chardet` /
+  heuristic, with a banner ("We detected this file is encoded as <X>; do
+  you want to convert?"), or (b) explicit user override in the import wizard
+  with a conversion preview. P3 picks one or escalates to v1.x.
+- **Originating doc:** `docs/specs/2026-04-27-dat0-p2-engine-design.md` §7.
+- **Last touched:** 2026-04-27
 
 ---
 
