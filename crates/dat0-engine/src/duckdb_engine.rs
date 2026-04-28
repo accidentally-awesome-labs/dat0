@@ -125,8 +125,10 @@ impl crate::QueryEngine for DuckDBEngine {
 
         match result {
             Ok(()) => {
-                // Apply migrations (T3) — placeholder until T3 lands.
-                self.apply_migrations_t3_placeholder().await?;
+                // Apply migrations (T3) — runs after pragmas so they execute under
+                // the configured memory budget; before Ready so callers never see
+                // a partly-migrated engine.
+                self.apply_migrations_real().await?;
                 self.set_status(EngineStatus::Ready);
                 debug!("engine ready");
                 Ok(())
@@ -267,8 +269,17 @@ impl crate::QueryEngine for DuckDBEngine {
 }
 
 impl DuckDBEngine {
-    /// T3 replaces with the real migration runner.
-    async fn apply_migrations_t3_placeholder(&self) -> Result<()> {
-        Ok(())
+    /// Run the migration runner inside `spawn_blocking` (DuckDB calls block).
+    /// Returns Ok on success; on failure the engine init's match arm will flip
+    /// status to `Failed`.
+    async fn apply_migrations_real(&self) -> Result<()> {
+        let conn = self.conn.clone();
+        tokio::task::spawn_blocking(move || -> Result<()> {
+            let conn = conn.lock().map_err(|_| EngineError::EnginePoisoned)?;
+            crate::migrations::apply_migrations(&conn, crate::migrations::MIGRATIONS)?;
+            Ok(())
+        })
+        .await
+        .map_err(|e| EngineError::Io(std::io::Error::other(e.to_string())))?
     }
 }

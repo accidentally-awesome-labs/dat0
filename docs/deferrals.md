@@ -59,6 +59,7 @@ that's modifying it; merge conflicts are signals worth investigating.
 | PD-002 | Settings store atomic-write missing `fsync` before rename          | open   | low      |
 | PD-003 | cargo-about NOTICE output not deterministic across host platforms  | open   | low      |
 | PD-004 | Linux Secret Service backend not reachable from CI keychain tests  | open   | low      |
+| PD-005 | P2 plan T3 snippet uses `&*conn` triggering clippy explicit-auto-deref | closed | trivial |
 
 ---
 
@@ -399,6 +400,27 @@ that's modifying it; merge conflicts are signals worth investigating.
   - **(c) Self-hosted Linux runner with persistent gnome-keyring** —
     overkill for what's tested.
 - **Last touched:** 2026-04-26
+
+---
+
+### PD-005 — P2 plan T3 snippet uses `&*conn` triggering clippy explicit-auto-deref
+
+- **Status:** closed
+- **Severity:** trivial (style-only; auto-deref handles it)
+- **Affected files:** `crates/dat0-engine/src/duckdb_engine.rs::apply_migrations_real`
+- **Symptom:** Plan §"Task 3, Step 3.4" provides a verbatim snippet that calls
+  `crate::migrations::apply_migrations(&*conn, …)` where `conn` is a
+  `MutexGuard<duckdb::Connection>`. Under `clippy -D warnings` (Rust 1.95+
+  toolchain pinned in `rust-toolchain.toml`), this fires
+  `clippy::explicit_auto_deref` because `&conn` would coerce identically.
+- **Discovered:** P2 T3 implementation (2026-04-27) — `cargo clippy
+  --workspace --all-targets -- -D warnings` failed compile on first attempt.
+- **Fix applied:** Replaced `&*conn` with `&conn` in the wired-in
+  `apply_migrations_real` body. Behavior identical; clippy clean.
+- **Originating doc:** `docs/plans/2026-04-27-dat0-p2-engine-plan.md` Step 3.4
+  code block.
+- **Closed by:** P2 T3 commit on branch `p2-engine`.
+- **Last touched:** 2026-04-27
 
 ---
 
