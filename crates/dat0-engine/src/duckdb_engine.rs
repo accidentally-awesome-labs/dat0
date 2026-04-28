@@ -170,11 +170,49 @@ impl crate::QueryEngine for DuckDBEngine {
 
     async fn register_file(
         &self,
-        _path: &std::path::Path,
-        _opts: crate::types::RegisterOpts,
+        path: &std::path::Path,
+        opts: crate::types::RegisterOpts,
     ) -> Result<crate::types::TableInfo> {
-        Err(EngineError::NotImplemented {
-            feature: "register_file (T4-T6)",
+        self.assert_open()?;
+        let conn = self.conn.clone();
+        let table_name = crate::register::derive_table_name(path);
+        let sql = crate::register::dispatch_register_sql(path, &opts, &table_name)?;
+        let path = path.to_path_buf();
+
+        let columns = tokio::task::spawn_blocking({
+            let conn = conn.clone();
+            let sql = sql.clone();
+            let table_name = table_name.clone();
+            move || -> Result<Vec<crate::types::ColumnInfo>> {
+                let conn = conn.lock().map_err(|_| EngineError::EnginePoisoned)?;
+                conn.execute_batch(&sql)?;
+                // DESCRIBE returns columns: column_name, column_type, null, key, default, extra
+                let mut stmt = conn.prepare(&format!("DESCRIBE \"{}\"", table_name))?;
+                let rows: Vec<crate::types::ColumnInfo> = stmt
+                    .query_map([], |row| {
+                        Ok(crate::types::ColumnInfo {
+                            name: row.get::<_, String>(0)?,
+                            data_type: row.get::<_, String>(1)?,
+                            nullable: row
+                                .get::<_, String>(2)
+                                .map(|s| s.eq_ignore_ascii_case("YES"))
+                                .unwrap_or(true),
+                        })
+                    })?
+                    .filter_map(std::result::Result::ok)
+                    .collect();
+                Ok(rows)
+            }
+        })
+        .await
+        .map_err(|e| EngineError::Io(std::io::Error::other(e.to_string())))??;
+
+        Ok(crate::types::TableInfo {
+            name: table_name,
+            schema: "main".to_string(),
+            columns,
+            row_count_estimate: None,
+            origin: crate::types::TableOrigin::File(path),
         })
     }
 
