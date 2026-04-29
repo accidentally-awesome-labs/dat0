@@ -4,11 +4,17 @@ on:
     branches: [main]
   pull_request:
 
+# Cancel in-progress runs on the same branch/PR when a new commit lands.
+# Stops minute-stacking from rapid-fire pushes.
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   fmt:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - uses: dtolnay/rust-toolchain@stable
         with: { components: rustfmt }
       - run: cargo fmt --all -- --check
@@ -16,7 +22,7 @@ jobs:
   clippy:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - uses: dtolnay/rust-toolchain@stable
         with: { components: clippy }
       - run: cargo clippy --workspace --all-targets -- -D warnings
@@ -25,21 +31,21 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        # macos-13 (Intel) deliberately omitted from P1: GitHub-hosted Intel-Mac
-        # runners are heavily oversubscribed and routinely never leave the queue.
-        # Build is structurally identical to macos-arm64 except for the target
-        # triple. Tracked as D-006 in docs/deferrals.md; revisit when CI capacity
-        # allows (self-hosted runner, paid runner pool, or GitHub queue recovery).
+        # Per-PR matrix kept narrow on purpose. Heavier coverage runs in
+        # heavy.yml on a schedule (and on demand via `run-heavy` PR label).
+        # macos-13 (Intel): D-006 — oversubscribed runner pool.
+        # linux-arm64: moved to heavy.yml — adds ~30% minutes for marginal
+        #   coverage delta vs linux-x86_64. Re-add if a real arm-Linux user
+        #   surfaces.
         target:
-          - { os: macos-14,         triple: aarch64-apple-darwin,     name: macos-arm64  }
-          - { os: ubuntu-latest,    triple: x86_64-unknown-linux-gnu, name: linux-x86_64 }
-          - { os: ubuntu-22.04-arm, triple: aarch64-unknown-linux-gnu, name: linux-arm64 }
+          - { os: macos-14,      triple: aarch64-apple-darwin,     name: macos-arm64  }
+          - { os: ubuntu-latest, triple: x86_64-unknown-linux-gnu, name: linux-x86_64 }
     runs-on: ${{ matrix.target.os }}
     env:
       DAT0_SPARKLE_APPCAST_URL: https://dat0.dev/appcast.xml
       DAT0_GLITCHTIP_DSN_PUBLIC: ${{ secrets.GLITCHTIP_DSN_PUBLIC }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - uses: dtolnay/rust-toolchain@stable
         with:
           targets: ${{ matrix.target.triple }}
@@ -80,27 +86,19 @@ jobs:
           exit 1
       - name: Build
         run: cargo build --workspace --release --target ${{ matrix.target.triple }}
-      - name: Cache fixtures
-        id: cache-fixtures
-        uses: actions/cache@v4
-        with:
-          path: tests/fixtures/large/
-          key: fixtures-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('crates/dat0-fixtures/**') }}-seed-42
-      - name: Generate fixtures (if cache miss)
-        if: steps.cache-fixtures.outputs.cache-hit != 'true'
-        run: |
-          mkdir -p tests/fixtures/large
-          cargo run --release -p dat0-fixtures -- --out tests/fixtures/large --seed 42
       - name: Prime sqlite_scanner extension cache (avoid concurrent INSTALL race)
         run: |
           cargo run --release -p dat0-fixtures -- --out /tmp/dat0-prime --csv-bytes 4096 --sqlite-target-bytes 4096 || true
           # Force a one-shot INSTALL so subsequent test-binary processes find the extension cached.
           cargo test -p dat0-engine --test attach_dispatch -- --nocapture || true
       - name: Test
-        run: cargo test --workspace --target ${{ matrix.target.triple }} -- --include-ignored
+        # `--include-ignored` deliberately omitted. Heavy exit_criteria tests
+        # (1 GB CSV / 500 MB Parquet / 100 MB SQLite) run nightly via
+        # heavy.yml. PR-time validation runs the fast suite only.
+        run: cargo test --workspace --target ${{ matrix.target.triple }}
 
   i18n-check:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - run: ./scripts/i18n-check.sh

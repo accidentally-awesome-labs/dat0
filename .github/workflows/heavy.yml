@@ -1,0 +1,65 @@
+name: Heavy tests
+# Exit-criterion tests gated by `#[ignore = "requires generated fixtures"]`.
+# Run on a schedule + manually + on PRs labelled `run-heavy`. Kept off the
+# per-push CI path because fixture generation (1 GB CSV + 500 MB Parquet +
+# 100 MB SQLite) plus end-to-end execution dominates billable minutes.
+on:
+  schedule:
+    # 06:00 UTC daily (~01:00 ET) — quiet window, results visible by start of day.
+    - cron: '0 6 * * *'
+  workflow_dispatch:
+  pull_request:
+    types: [opened, synchronize, reopened, labeled]
+
+concurrency:
+  group: heavy-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  exit-criteria:
+    # Skip on PRs unless explicitly labelled. Schedule + manual + push always run.
+    if: >
+      github.event_name != 'pull_request' ||
+      contains(github.event.pull_request.labels.*.name, 'run-heavy')
+    runs-on: ubuntu-latest
+    env:
+      DAT0_SPARKLE_APPCAST_URL: https://dat0.dev/appcast.xml
+      DAT0_GLITCHTIP_DSN_PUBLIC: ${{ secrets.GLITCHTIP_DSN_PUBLIC }}
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-unknown-linux-gnu
+      - name: Linux deps (keychain + GPUI)
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libsecret-1-dev dbus-x11 gnome-keyring \
+            libpango1.0-dev libxkbcommon-dev libxkbcommon-x11-dev \
+            libfontconfig1-dev libssl-dev
+      - name: Start dbus + gnome-keyring (Secret Service backend)
+        run: |
+          eval "$(dbus-launch --sh-syntax)"
+          eval "$(printf '\n' | gnome-keyring-daemon --unlock --start --components=secrets)"
+          echo "DBUS_SESSION_BUS_ADDRESS=$DBUS_SESSION_BUS_ADDRESS" >> $GITHUB_ENV
+          echo "GNOME_KEYRING_CONTROL=$GNOME_KEYRING_CONTROL" >> $GITHUB_ENV
+          echo "SSH_AUTH_SOCK=$SSH_AUTH_SOCK" >> $GITHUB_ENV
+      - name: Build engine + fixtures
+        run: cargo build --release -p dat0-engine -p dat0-fixtures
+      - name: Cache fixtures
+        id: cache-fixtures
+        uses: actions/cache@v5
+        with:
+          path: tests/fixtures/large/
+          key: fixtures-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('crates/dat0-fixtures/**') }}-seed-42
+      - name: Generate fixtures (if cache miss)
+        if: steps.cache-fixtures.outputs.cache-hit != 'true'
+        run: |
+          mkdir -p tests/fixtures/large
+          cargo run --release -p dat0-fixtures -- --out tests/fixtures/large --seed 42
+      - name: Prime sqlite_scanner extension cache (avoid concurrent INSTALL race)
+        run: |
+          cargo run --release -p dat0-fixtures -- --out /tmp/dat0-prime --csv-bytes 4096 --sqlite-target-bytes 4096 || true
+          cargo test -p dat0-engine --test attach_dispatch -- --nocapture || true
+      - name: Run exit_criteria
+        run: cargo test -p dat0-engine --test exit_criteria -- --include-ignored
