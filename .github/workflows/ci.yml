@@ -37,10 +37,13 @@ jobs:
         # linux-arm64: moved to heavy.yml — adds ~30% minutes for marginal
         #   coverage delta vs linux-x86_64. Re-add if a real arm-Linux user
         #   surfaces.
+        # `labels` is an array of runner labels. Hosted runners use a single
+        # built-in label (e.g. `macos-14`). Self-hosted uses the registered
+        # label set. `runs-on: ${{ fromJSON(...) }}` AND-matches all labels.
         target:
-          - { os: macos-14,      triple: aarch64-apple-darwin,     name: macos-arm64  }
-          - { os: ubuntu-latest, triple: x86_64-unknown-linux-gnu, name: linux-x86_64 }
-    runs-on: ${{ matrix.target.os }}
+          - { labels: '["macos-14"]',                              triple: aarch64-apple-darwin,     name: macos-arm64  }
+          - { labels: '["self-hosted", "Linux", "runnerkit"]',     triple: x86_64-unknown-linux-gnu, name: linux-x86_64 }
+    runs-on: ${{ fromJSON(matrix.target.labels) }}
     env:
       DAT0_SPARKLE_APPCAST_URL: https://dat0.dev/appcast.xml
       DAT0_GLITCHTIP_DSN_PUBLIC: ${{ secrets.GLITCHTIP_DSN_PUBLIC }}

@@ -21,7 +21,9 @@ jobs:
     if: >
       github.event_name != 'pull_request' ||
       contains(github.event.pull_request.labels.*.name, 'run-heavy')
-    runs-on: ubuntu-latest
+    # Routed to the self-hosted runner registered via runnerkit. Linux x86_64
+    # only — see ci.yml notes on linux-arm64 deferral.
+    runs-on: [self-hosted, Linux, runnerkit]
     env:
       DAT0_SPARKLE_APPCAST_URL: https://dat0.dev/appcast.xml
       DAT0_GLITCHTIP_DSN_PUBLIC: ${{ secrets.GLITCHTIP_DSN_PUBLIC }}
