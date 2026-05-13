@@ -52,8 +52,14 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
         with:
           targets: ${{ matrix.target.triple }}
+      # apt + dbus-launch steps are skipped on self-hosted runners. Those
+      # runners must have the listed packages pre-installed on the host image
+      # (see docs/ci.md for the install command) and dbus/gnome-keyring
+      # running as user services. runnerkit images do not include sudo
+      # NOPASSWD, so per-job `sudo apt` fails. Hosted ubuntu-latest still
+      # needs them installed in-job since the image is wiped per run.
       - name: Linux deps (keychain + GPUI)
-        if: runner.os == 'Linux'
+        if: runner.os == 'Linux' && runner.environment == 'github-hosted'
         run: |
           sudo apt-get update
           sudo apt-get install -y \
@@ -61,7 +67,7 @@ jobs:
             libpango1.0-dev libxkbcommon-dev libxkbcommon-x11-dev \
             libfontconfig1-dev libssl-dev
       - name: Linux — start dbus + gnome-keyring (Secret Service backend)
-        if: runner.os == 'Linux'
+        if: runner.os == 'Linux' && runner.environment == 'github-hosted'
         run: |
           eval "$(dbus-launch --sh-syntax)"
           eval "$(printf '\n' | gnome-keyring-daemon --unlock --start --components=secrets)"
