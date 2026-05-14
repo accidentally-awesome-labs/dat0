@@ -52,6 +52,7 @@ that's modifying it; merge conflicts are signals worth investigating.
 | D-010 | Non-UTF-8 file encoding handling                   | open | P2   | TBD    |
 | D-011 | Remove `__debug_query_scalar` test-only helper     | open | P2   | P3     |
 | D-012 | Engine catalog `TableInfo` synthesis (origin + schema) | open | P2   | P3     |
+| D-013 | Self-hosted macOS CI runner (cut hosted macos-14 10× billing) | open | P2 | TBD |
 
 ## At-a-glance — Plan defects
 
@@ -345,6 +346,39 @@ that's modifying it; merge conflicts are signals worth investigating.
   T9 review notes; `docs/plans/2026-04-27-dat0-p2-retro.md` § "Reviewer-
   flagged minor follow-ups".
 - **Last touched:** 2026-04-28
+
+### D-013 — Self-hosted macOS CI runner (cut hosted macos-14 10× billing)
+
+- **Status:** open
+- **Deferred from:** P2 (PR #3 — `ci(p2)` split + self-hosted Linux routing)
+- **Target phase:** TBD — gated on hardware purchase (dedicated Mac mini).
+- **Reason:** PR #3 routed the `linux-x86_64` matrix entry to a runnerkit
+  self-hosted runner, dropping that job's billing to 0×. The `macos-14`
+  matrix entry remains on GitHub-hosted runners at the 10× billing
+  multiplier, which is the dominant remaining contributor to the org-level
+  Actions cap. Self-hosting macOS requires Apple hardware (EULA: macOS
+  guests may only run on Apple-branded hosts), so the cost reduction is
+  blocked on owning or renting a Mac. Running CI on the active dev Mac
+  was rejected because background CI fights interactive dev work for
+  CPU/RAM and creates dependency on the machine staying awake.
+- **What P2 / PR #3 ships:** Linux x86_64 build + test on runnerkit
+  self-hosted (`[self-hosted, Linux, runnerkit]`); heavy exit_criteria
+  suite on the same runner via `heavy.yml` (schedule + `run-heavy`
+  label). `macos-arm64` stays on `macos-14` hosted. Per-PR Actions
+  minute usage roughly halved.
+- **What target phase delivers:** A dedicated Apple Silicon Mac mini
+  running Tart-managed ephemeral macOS VMs as GitHub Actions runners
+  (label set `[self-hosted, macos, runnerkit]` or similar). Route the
+  `ci.yml` `macos-14` matrix entry to those labels. Validate Metal
+  Toolchain, Xcode CLT, rustup, and the keychain/Secret Service test
+  paths inside the VM image. Expected outcome: macOS CI minutes → 0×;
+  cargo cache + Xcode cache survive between runs (faster feedback).
+- **Originating doc:** PR #3 conversation; `.github/workflows/ci.yml`
+  matrix definition (`macos-14` entry).
+- **Closes (partial):** the org Actions cap remediation chain started
+  by the SQLite fixture + heavy-test split. Linux side complete;
+  macOS side remains.
+- **Last touched:** 2026-05-14
 
 ---
 
