@@ -129,41 +129,32 @@ fn write_sqlite(path: &Path, seed: u64, target_bytes: u64) -> Result<()> {
              unit_price REAL
          );",
     )?;
+    // Target rows from target_bytes ÷ measured ~75 bytes/row (schema + sqlite
+    // page overhead). Polling file size mid-transaction is unreliable: WAL
+    // keeps the main `.sqlite` file flat until checkpoint, masking progress
+    // and tripping early-exit safeguards.
+    const APPROX_ROW_BYTES: u64 = 75;
+    let target_rows = (target_bytes / APPROX_ROW_BYTES).max(1);
     let mut rng = ChaCha8Rng::seed_from_u64(seed);
     let cities = ["new_york", "london", "tokyo", "berlin", "paris", "sydney"];
     let depts = ["sales", "engineering", "marketing", "ops", "finance"];
     let tx = conn.unchecked_transaction()?;
-    let mut id: i64 = 0;
-    let mut last_size = 0_u64;
     let mut stmt = tx.prepare(
         "INSERT INTO items (id, name, score, flag, city, department, quantity, unit_price)
          VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
     )?;
-    loop {
-        for _ in 0..10_000 {
-            id += 1;
-            // `r#gen` raw-identifier escape: see PD-006 note above.
-            stmt.execute(rusqlite::params![
-                id,
-                format!("item_{:08x}", rng.r#gen::<u32>()),
-                rng.r#gen::<f64>() * 1000.0,
-                if rng.gen_bool(0.6) { 1 } else { 0 },
-                cities[rng.gen_range(0..cities.len())],
-                depts[rng.gen_range(0..depts.len())],
-                rng.gen_range(0..1000_i64),
-                rng.r#gen::<f64>() * 100.0,
-            ])?;
-        }
-        // Re-prepare to flush. Inspect file size every 10k inserts.
-        let size = std::fs::metadata(path).map(|m| m.len()).unwrap_or(0);
-        if size >= target_bytes {
-            break;
-        }
-        if size == last_size {
-            // Forward progress safeguard
-            break;
-        }
-        last_size = size;
+    for id in 1..=(target_rows as i64) {
+        // `r#gen` raw-identifier escape: see PD-006 note above.
+        stmt.execute(rusqlite::params![
+            id,
+            format!("item_{:08x}", rng.r#gen::<u32>()),
+            rng.r#gen::<f64>() * 1000.0,
+            if rng.gen_bool(0.6) { 1 } else { 0 },
+            cities[rng.gen_range(0..cities.len())],
+            depts[rng.gen_range(0..depts.len())],
+            rng.gen_range(0..1000_i64),
+            rng.r#gen::<f64>() * 100.0,
+        ])?;
     }
     drop(stmt);
     tx.commit()?;
