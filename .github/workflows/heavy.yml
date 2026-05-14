@@ -4,9 +4,15 @@ name: Heavy tests
 # per-push CI path because fixture generation (1 GB CSV + 500 MB Parquet +
 # 100 MB SQLite) plus end-to-end execution dominates billable minutes.
 on:
-  schedule:
-    # 06:00 UTC daily (~01:00 ET) — quiet window, results visible by start of day.
-    - cron: '0 6 * * *'
+  # Cron disabled at this stage: solo-dev + pre-P3 + low PR frequency means
+  # most nightly runs would burn ~45m runner-time with no engine/fixture
+  # change to validate. The label-gated PR trigger and manual dispatch
+  # below cover the signals that matter today. Re-enable when:
+  #   (a) team grows to 2+ devs,
+  #   (b) release cadence demands continuous validation, or
+  #   (c) a drift incident shows nightly would have caught it earlier.
+  # schedule:
+  #   - cron: '0 6 * * *'   # 06:00 UTC daily
   workflow_dispatch:
   pull_request:
     types: [opened, synchronize, reopened, labeled]
