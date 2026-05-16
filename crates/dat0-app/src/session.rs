@@ -59,6 +59,11 @@ pub struct Session {
 impl Session {
     /// Create a brand-new session under `state_root/scratch/{uuid}/`.
     ///
+    /// Caller passes `state_root` (e.g. `$STATE`) by reference; the function
+    /// generates the UUID and joins the path internally. Asymmetric with
+    /// [`Session::recover`] which receives the full `scratch_dir` because
+    /// the caller has already scanned the directory tree.
+    ///
     /// Generates a UUID v7, creates the directory, builds + initialises the
     /// DuckDB engine, persists an empty `session.json`, and returns the live
     /// session.
@@ -228,10 +233,10 @@ impl Session {
 
 /// Build and initialise a `DuckDBEngine` bound to `scratch_dir`.
 ///
-/// The DB file is `scratch_dir/session.duckdb`. Only `init()` is async;
-/// `DuckDBEngine::new` is synchronous.
+/// The DB file is `scratch_dir/scratch.duckdb` (per spec §3 scratch layout).
+/// Only `init()` is async; `DuckDBEngine::new` is synchronous.
 async fn build_engine(scratch_dir: &Path, budget_bytes: u64) -> Result<DuckDBEngine> {
-    let db_path = scratch_dir.join("session.duckdb");
+    let db_path = scratch_dir.join("scratch.duckdb");
     let budget = MemoryBudget {
         bytes: budget_bytes,
     };
@@ -317,9 +322,6 @@ mod tests {
             sess.scratch_dir.clone()
             // sess drops here, releasing the engine + DB lock
         };
-
-        // Give the engine a moment to release the lock before recovering.
-        tokio::task::yield_now().await;
 
         let recovered = Session::recover(scratch_dir, TEST_BUDGET)
             .await
