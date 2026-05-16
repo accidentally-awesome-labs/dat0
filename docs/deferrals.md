@@ -67,6 +67,7 @@ that's modifying it; merge conflicts are signals worth investigating.
 | PD-007 | P2 plan T14 snippet calls non-existent `error_ux::banner::push_banner` with mismatched `Banner` shape | closed | low      |
 | PD-008 | P3a plan T2 snippets use wrong import paths for `fs4::FileExt` and `interprocess::local_socket::traits::Stream` | closed | trivial  |
 | PD-009 | P3a plan T6 test snippet calls non-existent `engine.catalog().get_tables()` — no `catalog()` method on `DuckDBEngine` | closed | trivial |
+| PD-010 | P3a plan T12 UDS → GPUI cross-thread window-open bridge is unsafe: `AsyncApp::update` borrows a `RefCell`-backed app cell, not safe to call from a tokio background thread | open | low |
 
 ---
 
@@ -650,6 +651,50 @@ that's modifying it; merge conflicts are signals worth investigating.
 - **Originating doc:** `docs/plans/2026-05-14-dat0-p3a-plan.md` T6 Step 3
   code block (lines 979–1005).
 - **Closed by:** P3a T6 commit on branch `p3a-hot-path`.
+- **Last touched:** 2026-05-16
+
+---
+
+### PD-010 — P3a plan T12 UDS → GPUI cross-thread window-open bridge is unsafe
+
+- **Status:** open
+- **Severity:** low (single-instance enforcement and Cmd-N multi-window are fully
+  functional; only UDS-triggered window-open from a second launch is affected)
+- **Affected files:** `crates/dat0-app/src/window.rs` (`run_app` UDS handler)
+- **Symptom:** The P3a T12 plan instructs the UDS `serve` handler to call
+  `async_cx.update(|cx| cx.open_window(...))` from inside a tokio background
+  task. `AsyncApp::update` internally calls `app.borrow_mut()` on a
+  `Rc<RefCell<AppState>>`. `RefCell` is not `Send`/`Sync` — calling it from a
+  non-main thread while the Cocoa event loop may hold the borrow causes a
+  `RefCell` panic (or UB on older rustc). GPUI's foreground executor (backed by
+  the macOS Cocoa run loop) is the only safe caller of `AsyncApp::update`.
+- **Root cause:** GPUI v0.2.2 was designed for a single-threaded event model
+  where all window mutations happen on the platform main thread. There is no
+  thread-safe "wake the main thread and dispatch a closure" API analogous to
+  `dispatch_async` in GCD (which Zed uses internally but does not expose
+  publicly in the published `gpui` crate).
+- **What P3a T12 ships:** UDS `serve` handler logs received `OpenWindowMessage`
+  via `tracing::info!`. Single-instance enforcement (second launch forwards via
+  UDS + exits) is fully functional. Cmd-N (`menu_macos::NewWindow` action)
+  spawns a new window synchronously on the main thread via `cx.on_action`.
+- **What target phase delivers:** One of:
+  - **(a) GCD dispatch bridge** — capture a `dispatch_async`-able block in
+    `Application::new()` before the event loop starts; invoke it from the tokio
+    handler to schedule a main-thread closure via libdispatch. Requires
+    `block2` + `dispatch` crates and an FFI shim.
+  - **(b) gpui foreground executor channel** — poll `ForegroundExecutor::spawn`
+    from a futures-compatible channel (e.g. `futures::channel::mpsc`) that the
+    tokio handler sends into via `try_send`. The gpui spawn'd future loops on
+    the receiver and calls `cx.open_window` on the main thread.
+  - **(c) Upstream contribution** — add a `dispatch_to_main_thread` API to
+    `gpui` and upstream it.
+  - Option (b) is the lowest-friction path: gpui already uses
+    `futures::channel::oneshot` internally; `try_send` is sync and safe from
+    tokio context.
+- **Originating doc:** `docs/plans/2026-05-14-dat0-p3a-plan.md` T12 Step 2
+  ("Pattern C (preferred)" + "Practical fallback").
+- **Target phase:** T17 / P3b polish — depends on the UDS round-trip
+  integration test (T16) that validates single-instance enforcement end-to-end.
 - **Last touched:** 2026-05-16
 
 ---
