@@ -325,9 +325,14 @@ impl crate::QueryEngine for DuckDBEngine {
     async fn get_tables(&self) -> Result<Vec<crate::types::TableInfo>> {
         self.assert_open()?;
         let conn = self.conn.clone();
+        let origins = self
+            .table_origins
+            .read()
+            .expect("table_origins poisoned")
+            .clone();
         tokio::task::spawn_blocking(move || -> Result<Vec<crate::types::TableInfo>> {
             let conn = conn.lock().map_err(|_| EngineError::EnginePoisoned)?;
-            crate::catalog::get_tables(&conn)
+            crate::catalog::get_tables(&conn, &origins)
         })
         .await
         .map_err(|e| EngineError::TaskJoin(e.to_string()))?
@@ -410,9 +415,9 @@ impl DuckDBEngine {
 
     /// Return the recorded `TableOrigin` for `name`, or `None` if not tracked.
     ///
-    /// T7 (`catalog::get_tables`) consumes this to attach the correct origin to
-    /// each `TableInfo` row returned from `information_schema`.
-    #[allow(dead_code)] // consumed by T7; remove this attr when T7 lands
+    /// T7 passes the origins map directly to `catalog::get_tables` rather than
+    /// going through this accessor. Available for T8/T9 call sites.
+    #[allow(dead_code)] // available for T8/T9; not consumed by T7
     pub(crate) fn table_origin(&self, name: &str) -> Option<TableOrigin> {
         self.table_origins
             .read()

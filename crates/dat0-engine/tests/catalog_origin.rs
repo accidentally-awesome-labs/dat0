@@ -4,7 +4,9 @@
 //! not exist on `DuckDBEngine`. Adapted to call `engine.get_tables().await`
 //! directly via the `QueryEngine` trait. Filed as PD-009.
 
-use dat0_engine::{DuckDBEngine, MemoryBudget, QueryEngine, RegisterOpts, TableOrigin};
+use dat0_engine::{
+    DerivedOrigin, DuckDBEngine, MemoryBudget, QueryEngine, RegisterOpts, TableOrigin,
+};
 
 #[tokio::test]
 async fn register_file_origin_is_file() {
@@ -32,4 +34,31 @@ async fn register_file_origin_is_file() {
         TableOrigin::File(p) => assert_eq!(p, &csv),
         other => panic!("expected File origin, got {:?}", other),
     }
+}
+
+#[tokio::test]
+async fn create_table_returns_real_schema() {
+    let tmp = tempfile::tempdir().unwrap();
+    let engine = DuckDBEngine::new(
+        tmp.path().join("scratch.duckdb"),
+        MemoryBudget {
+            bytes: 128 * 1024 * 1024,
+        },
+    )
+    .unwrap();
+    engine.init().await.unwrap();
+
+    let info = engine
+        .create_table(
+            "t1",
+            "SELECT 1 AS x",
+            DerivedOrigin::Sql("SELECT 1 AS x".into()),
+        )
+        .await
+        .expect("create_table");
+    assert_eq!(info.schema, "main");
+    // After create, the table is visible in catalog with the correct schema.
+    let tables = engine.get_tables().await.unwrap();
+    let entry = tables.iter().find(|t| t.name == "t1").expect("entry");
+    assert_eq!(entry.schema, "main");
 }

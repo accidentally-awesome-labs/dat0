@@ -51,7 +51,7 @@ that's modifying it; merge conflicts are signals worth investigating.
 | D-009 | Bundle `sqlite_scanner` static when duckdb-rs exposes a feature | open | P2 | TBD |
 | D-010 | Non-UTF-8 file encoding handling                   | open | P2   | TBD    |
 | D-011 | Remove `__debug_query_scalar` test-only helper     | closed | P2   | P3a    |
-| D-012 | Engine catalog `TableInfo` synthesis (origin + schema) | partial | P2   | P3     |
+| D-012 | Engine catalog `TableInfo` synthesis (origin + schema) | closed | P2   | P3a    |
 | D-013 | Self-hosted macOS CI runner (cut hosted macos-14 10× billing) | open | P2 | TBD |
 
 ## At-a-glance — Plan defects
@@ -318,35 +318,33 @@ that's modifying it; merge conflicts are signals worth investigating.
 
 ### D-012 — Engine catalog `TableInfo` synthesis (origin + schema)
 
-- **Status:** partially closed (T6 done; T7 pending)
+- **Status:** CLOSED — 2026-05-16 (P3a T6+T7)
 - **Deferred from:** P2 (T9 catalog ops)
-- **Target phase:** P3 (Scratch mode + DataGrid)
+- **Target phase:** P3a (Scratch mode + DataGrid)
 - **Reason:** DuckDB doesn't persist `TableOrigin` metadata across reconnects,
-  and the engine has no per-table origin registry yet. P2's `get_tables`
-  synthesizes `TableOrigin::Derived(DerivedOrigin::Sql(""))` as a placeholder
-  for every table — a false positive that future code may misinterpret.
-  Similarly, `create_table` returns `TableInfo { schema: "main", ... }`
-  hardcoded regardless of where the table actually lands; if a caller ever
-  changes `current_schema` or passes a qualified name, the returned
-  `TableInfo.schema` will be wrong.
-- **What P2 ships:** `TableInfo.origin` and `TableInfo.schema` populated with
-  best-effort placeholders. `register_file` produces the correct
-  `TableOrigin::File(PathBuf)`. All other paths return `Derived(Sql(""))`
+  and the engine had no per-table origin registry. P2's `get_tables`
+  synthesized `TableOrigin::Derived(DerivedOrigin::Sql(""))` as a placeholder
+  for every table — a false positive that future code could misinterpret.
+  Similarly, `create_table` returned `TableInfo { schema: "main", ... }`
+  hardcoded regardless of where the table actually landed.
+- **What P2 shipped:** `TableInfo.origin` and `TableInfo.schema` populated with
+  best-effort placeholders. `register_file` produced the correct
+  `TableOrigin::File(PathBuf)`. All other paths returned `Derived(Sql(""))`
   or hardcoded `"main"`.
-- **What target phase delivers:** per-engine in-memory origin registry
+- **What P3a T6+T7 delivered:** per-engine in-memory origin registry
   (`DuckDBEngine.table_origins: Arc<RwLock<HashMap<String, TableOrigin>>>`)
   populated on `register_file` (→ `File(path)`) and `create_table`
   (→ `Derived(Sql(sql))`). `get_tables` (T7) joins `information_schema`
-  rows against this map; untracked tables fall through to the existing
-  `Derived(Sql(""))` placeholder.
+  rows against the map; untracked tables fall through to the existing
+  `Derived(Sql(""))` placeholder. `create_table` resolves `schema` via
+  `information_schema.tables` rather than hardcoding `"main"`.
 - **P4 remainder (attach):** `attach` does not enumerate the tables inside the
   attached database, so `TableOrigin::Attached { alias, source }` entries are
-  not recorded per table. Per-table attach origin tracking deferred to P4.
+  not recorded per table. Per-table attach origin tracking is deferred to P4.
   See TODO comment in `duckdb_engine.rs` `attach` impl.
-- **T6 state (2026-05-16):** `DuckDBEngine.table_origins` field added;
-  write sites wired for `register_file` and `create_table`; `pub(crate)`
-  accessor `table_origin(&str) -> Option<TableOrigin>` added. `get_tables`
-  still returns placeholder (T7 pending).
+- **Closed by:** P3a T6 commit `324d89f`; T7 commit on branch `p3a-hot-path`
+  (2026-05-16). Tests: `register_file_origin_is_file` + `create_table_returns_real_schema`
+  in `crates/dat0-engine/tests/catalog_origin.rs` both pass.
 - **Originating doc:** `docs/plans/2026-04-27-dat0-p2-engine-plan.md` T9 +
   T9 review notes; `docs/plans/2026-04-27-dat0-p2-retro.md` § "Reviewer-
   flagged minor follow-ups".
