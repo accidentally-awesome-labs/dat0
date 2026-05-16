@@ -12,5 +12,6 @@ pub mod telemetry;
 pub mod theme;
 pub mod updater;
 pub mod window;
+pub mod window_registry;
 
 pub use window::run_app;
