@@ -39,7 +39,7 @@ use gpui::{
 };
 use gpui_component::Root;
 use parking_lot::Mutex;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::sync::Arc;
 
 use crate::app_lock::{AppLock, OpenWindowMessage};
@@ -57,7 +57,8 @@ use crate::window_registry::{WindowHandle, WindowRegistry};
 ///
 /// `registry` receives a `register` call for the newly opened window so
 /// that T17's window-count assertion can observe it.
-fn spawn_window(cx: &mut App, state_root: &Path, registry: Arc<Mutex<WindowRegistry>>) {
+#[cfg(target_os = "macos")]
+fn spawn_window(cx: &mut App, state_root: &std::path::Path, registry: Arc<Mutex<WindowRegistry>>) {
     // SAFETY: block_on is called from the Cocoa/GPUI main thread (cx.on_action
     // fires synchronously here), NOT inside a tokio async context. If gpui ever
     // dispatches actions via tokio::spawn, this becomes a nested-runtime panic;
@@ -163,6 +164,7 @@ pub fn run_app(lock: AppLock, initial_paths: Vec<PathBuf>) -> Result<()> {
         }
     });
 
+    #[cfg(target_os = "macos")]
     let state_root_for_action = state_root.clone();
     let registry_for_run = Arc::clone(&registry);
     Application::new().run(move |cx: &mut App| {
