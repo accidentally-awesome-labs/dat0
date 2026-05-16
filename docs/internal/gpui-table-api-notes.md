@@ -122,15 +122,9 @@ pub trait TableDelegate: Sized + 'static {
         cx: &mut Context<TableState<Self>>,
     ) -> impl IntoElement { ... }
 
-    /// Return true when ALL rows are already loaded (no more data to fetch).
+    /// Return true to enable load more data when scrolling to the bottom.
     ///
     /// Default: true
-    ///
-    /// IMPORTANT: The name is counter-intuitive. `is_eof` returning `true` means
-    /// "no more data" — but the internal `load_more_if_need` calls `load_more`
-    /// only when `is_eof` returns `true`. In practice the widget calls `load_more`
-    /// every time the scroll nears the bottom, regardless of this flag, unless you
-    /// override to return `false` after initiating a load. See §4 Open Questions.
     fn is_eof(&self, cx: &App) -> bool {
         true
     }
@@ -144,8 +138,20 @@ pub trait TableDelegate: Sized + 'static {
 
     /// Load more data when the table is scrolled to the bottom.
     ///
-    /// Performed in a background task via `cx.spawn_in`.
+    /// This will performed in a background task.
+    ///
+    /// This is always called when the table is near the bottom,
+    /// so you must check if there is more data to load or lock the loading state.
     fn load_more(&mut self, window: &mut Window, cx: &mut Context<TableState<Self>>) {}
+
+    /// Render the last empty column, default to empty.
+    fn render_last_empty_col(
+        &mut self,
+        window: &mut Window,
+        cx: &mut Context<TableState<Self>>,
+    ) -> impl IntoElement {
+        h_flex().w_3().h_full().flex_shrink_0()
+    }
 
     /// Called when the visible range of rows changed. Must be fast.
     fn visible_rows_changed(
