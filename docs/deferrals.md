@@ -51,7 +51,7 @@ that's modifying it; merge conflicts are signals worth investigating.
 | D-009 | Bundle `sqlite_scanner` static when duckdb-rs exposes a feature | open | P2 | TBD |
 | D-010 | Non-UTF-8 file encoding handling                   | open | P2   | TBD    |
 | D-011 | Remove `__debug_query_scalar` test-only helper     | closed | P2   | P3a    |
-| D-012 | Engine catalog `TableInfo` synthesis (origin + schema) | open | P2   | P3     |
+| D-012 | Engine catalog `TableInfo` synthesis (origin + schema) | partial | P2   | P3     |
 | D-013 | Self-hosted macOS CI runner (cut hosted macos-14 10× billing) | open | P2 | TBD |
 
 ## At-a-glance — Plan defects
@@ -66,6 +66,7 @@ that's modifying it; merge conflicts are signals worth investigating.
 | PD-006 | P2 plan T12 fixtures snippet uses bare `rng.gen::<…>()` — reserved keyword in Rust 2024 | closed | low      |
 | PD-007 | P2 plan T14 snippet calls non-existent `error_ux::banner::push_banner` with mismatched `Banner` shape | closed | low      |
 | PD-008 | P3a plan T2 snippets use wrong import paths for `fs4::FileExt` and `interprocess::local_socket::traits::Stream` | closed | trivial  |
+| PD-009 | P3a plan T6 test snippet calls non-existent `engine.catalog().get_tables()` — no `catalog()` method on `DuckDBEngine` | closed | trivial |
 
 ---
 
@@ -317,7 +318,7 @@ that's modifying it; merge conflicts are signals worth investigating.
 
 ### D-012 — Engine catalog `TableInfo` synthesis (origin + schema)
 
-- **Status:** open
+- **Status:** partially closed (T6 done; T7 pending)
 - **Deferred from:** P2 (T9 catalog ops)
 - **Target phase:** P3 (Scratch mode + DataGrid)
 - **Reason:** DuckDB doesn't persist `TableOrigin` metadata across reconnects,
@@ -332,17 +333,24 @@ that's modifying it; merge conflicts are signals worth investigating.
   best-effort placeholders. `register_file` produces the correct
   `TableOrigin::File(PathBuf)`. All other paths return `Derived(Sql(""))`
   or hardcoded `"main"`.
-- **What target phase delivers:** either (a) per-engine origin registry
-  (a `__dat0_meta_table_origins` table populated on `create_table` /
-  `register_file` / `attach`-derived tables, queried by `get_tables`), OR
-  (b) explicit `TableOrigin::Unknown` variant added to `types.rs` so the
-  type system surfaces "we don't know" instead of lying. P3 SQL Console
-  surfaces table origins to the user; that's when the placeholder becomes
-  user-visible noise.
+- **What target phase delivers:** per-engine in-memory origin registry
+  (`DuckDBEngine.table_origins: Arc<RwLock<HashMap<String, TableOrigin>>>`)
+  populated on `register_file` (→ `File(path)`) and `create_table`
+  (→ `Derived(Sql(sql))`). `get_tables` (T7) joins `information_schema`
+  rows against this map; untracked tables fall through to the existing
+  `Derived(Sql(""))` placeholder.
+- **P4 remainder (attach):** `attach` does not enumerate the tables inside the
+  attached database, so `TableOrigin::Attached { alias, source }` entries are
+  not recorded per table. Per-table attach origin tracking deferred to P4.
+  See TODO comment in `duckdb_engine.rs` `attach` impl.
+- **T6 state (2026-05-16):** `DuckDBEngine.table_origins` field added;
+  write sites wired for `register_file` and `create_table`; `pub(crate)`
+  accessor `table_origin(&str) -> Option<TableOrigin>` added. `get_tables`
+  still returns placeholder (T7 pending).
 - **Originating doc:** `docs/plans/2026-04-27-dat0-p2-engine-plan.md` T9 +
   T9 review notes; `docs/plans/2026-04-27-dat0-p2-retro.md` § "Reviewer-
   flagged minor follow-ups".
-- **Last touched:** 2026-04-28
+- **Last touched:** 2026-05-16
 
 ### D-013 — Self-hosted macOS CI runner (cut hosted macos-14 10× billing)
 
@@ -625,6 +633,25 @@ that's modifying it; merge conflicts are signals worth investigating.
 - **Originating doc:** `docs/plans/2026-05-14-dat0-p3a-plan.md` T2 Steps 3–4
   code blocks.
 - **Closed by:** P3a T2 commit on branch `p3a-hot-path`.
+- **Last touched:** 2026-05-16
+
+---
+
+### PD-009 — P3a plan T6 test snippet calls non-existent `engine.catalog().get_tables()`
+
+- **Status:** closed
+- **Severity:** trivial (compile-time failure, mechanical fix)
+- **Affected files:** `crates/dat0-engine/tests/catalog_origin.rs`
+- **Symptom:** Plan T6 Step 3 test snippet calls `engine.catalog().get_tables()`
+  to retrieve the table list. `DuckDBEngine` has no `catalog()` method; the
+  correct call is `engine.get_tables().await` via the `QueryEngine` trait,
+  which is the same pattern used in `tests/catalog.rs` and `tests/exit_criteria.rs`.
+- **Fix applied:** Changed `engine.catalog().get_tables().await` →
+  `engine.get_tables().await` in the new test. The semantic intent (list all
+  engine-visible tables and find the just-registered one) is unchanged.
+- **Originating doc:** `docs/plans/2026-05-14-dat0-p3a-plan.md` T6 Step 3
+  code block (lines 979–1005).
+- **Closed by:** P3a T6 commit on branch `p3a-hot-path`.
 - **Last touched:** 2026-05-16
 
 ---

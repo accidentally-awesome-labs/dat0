@@ -1,5 +1,6 @@
 //! `DuckDBEngine` — sole `QueryEngine` impl in v1. Per spec §2.1.
 
+use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex, RwLock};
 
@@ -8,7 +9,7 @@ use tracing::{debug, error, instrument};
 use crate::Result;
 use crate::catalog::quote_ident;
 use crate::error::EngineError;
-use crate::types::{EngineStatus, MemoryBudget};
+use crate::types::{DerivedOrigin, EngineStatus, MemoryBudget, TableOrigin};
 
 pub struct DuckDBEngine {
     pub(crate) conn: Arc<Mutex<duckdb::Connection>>,
@@ -16,6 +17,7 @@ pub struct DuckDBEngine {
     pub(crate) budget: MemoryBudget,
     pub(crate) scratch_path: PathBuf,
     pub(crate) status: Arc<RwLock<EngineStatus>>,
+    pub(crate) table_origins: Arc<RwLock<HashMap<String, TableOrigin>>>,
 }
 
 impl DuckDBEngine {
@@ -31,6 +33,7 @@ impl DuckDBEngine {
             budget,
             scratch_path,
             status: Arc::new(RwLock::new(EngineStatus::Initializing)),
+            table_origins: Arc::new(RwLock::new(HashMap::new())),
         })
     }
 
@@ -192,13 +195,18 @@ impl crate::QueryEngine for DuckDBEngine {
         .await
         .map_err(|e| EngineError::TaskJoin(e.to_string()))??;
 
-        Ok(crate::types::TableInfo {
+        let info = crate::types::TableInfo {
             name: table_name,
             schema: "main".to_string(),
             columns,
             row_count_estimate: None,
-            origin: crate::types::TableOrigin::File(path),
-        })
+            origin: crate::types::TableOrigin::File(path.clone()),
+        };
+        self.table_origins
+            .write()
+            .expect("table_origins poisoned")
+            .insert(info.name.clone(), TableOrigin::File(path));
+        Ok(info)
     }
 
     #[instrument(skip(self), fields(name = name, sql_len = sql.len()))]
@@ -212,12 +220,21 @@ impl crate::QueryEngine for DuckDBEngine {
         let conn = self.conn.clone();
         let name = name.to_owned();
         let sql = sql.to_owned();
-        tokio::task::spawn_blocking(move || -> Result<crate::types::TableInfo> {
-            let conn = conn.lock().map_err(|_| EngineError::EnginePoisoned)?;
-            crate::catalog::create_table(&conn, &name, &sql)
+        let info = tokio::task::spawn_blocking({
+            let name = name.clone();
+            let sql = sql.clone();
+            move || -> Result<crate::types::TableInfo> {
+                let conn = conn.lock().map_err(|_| EngineError::EnginePoisoned)?;
+                crate::catalog::create_table(&conn, &name, &sql)
+            }
         })
         .await
-        .map_err(|e| EngineError::TaskJoin(e.to_string()))?
+        .map_err(|e| EngineError::TaskJoin(e.to_string()))??;
+        self.table_origins
+            .write()
+            .expect("table_origins poisoned")
+            .insert(name, TableOrigin::Derived(DerivedOrigin::Sql(sql)));
+        Ok(info)
     }
 
     #[instrument(skip(self), fields(name = name))]
@@ -355,6 +372,10 @@ impl crate::QueryEngine for DuckDBEngine {
         })
         .await
         .map_err(|e| EngineError::TaskJoin(e.to_string()))?
+        // TODO P4 (D-012 partial): `attach` does not enumerate attached tables,
+        // so per-table `TableOrigin::Attached { alias, source }` entries are not
+        // recorded in `table_origins` here. Enumeration logic belongs in P4;
+        // the map write site will be added at that point.
     }
 
     #[instrument(skip(self), fields(alias))]
@@ -385,5 +406,17 @@ impl DuckDBEngine {
         })
         .await
         .map_err(|e| EngineError::TaskJoin(e.to_string()))?
+    }
+
+    /// Return the recorded `TableOrigin` for `name`, or `None` if not tracked.
+    ///
+    /// T7 (`catalog::get_tables`) consumes this to attach the correct origin to
+    /// each `TableInfo` row returned from `information_schema`.
+    #[allow(dead_code)] // consumed by T7; remove this attr when T7 lands
+    pub(crate) fn table_origin(&self, name: &str) -> Option<TableOrigin> {
+        self.table_origins
+            .read()
+            .ok()
+            .and_then(|m| m.get(name).cloned())
     }
 }
