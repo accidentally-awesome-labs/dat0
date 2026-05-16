@@ -686,6 +686,7 @@ that's modifying it; merge conflicts are signals worth investigating.
     from a futures-compatible channel (e.g. `futures::channel::mpsc`) that the
     tokio handler sends into via `try_send`. The gpui spawn'd future loops on
     the receiver and calls `cx.open_window` on the main thread.
+    The `futures::channel::mpsc` bridge requires capturing the `Sender<Box<dyn FnOnce(&mut App) + Send>>` before `Application::run` begins so the UDS handler closure (running on a tokio task) can post into it; the receiver lives inside a gpui foreground-executor loop registered during app init.
   - **(c) Upstream contribution** — add a `dispatch_to_main_thread` API to
     `gpui` and upstream it.
   - Option (b) is the lowest-friction path: gpui already uses

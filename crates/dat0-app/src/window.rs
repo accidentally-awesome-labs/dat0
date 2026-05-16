@@ -20,6 +20,16 @@
 //!
 //! Cmd-N triggers `menu_macos::NewWindow` action, handled via
 //! `cx.on_action` in the GPUI main thread — fully wired, no deferral.
+//!
+//! # WindowRegistry wiring (T12 follow-up)
+//!
+//! A `WindowRegistry` instance is created in `run_app` before
+//! `Application::new().run(...)`. Both the first-window open path and the
+//! Cmd-N `spawn_window` path call `registry.lock().register(...)` after
+//! each successful `cx.open_window`. The registry is an
+//! `Arc<parking_lot::Mutex<WindowRegistry>>` captured directly into the
+//! `Application::run` closure and passed through to `spawn_window`. T17
+//! will assert `registry.lock().len()` to verify window count.
 
 use anyhow::Result;
 use dat0_i18n::t;
@@ -36,6 +46,7 @@ use crate::app_lock::{AppLock, OpenWindowMessage};
 use crate::file_drop::{DropOutcome, handle_drop};
 use crate::grid::GridDataSource;
 use crate::session::Session;
+use crate::window_registry::{WindowHandle, WindowRegistry};
 
 /// Spawn a new workspace window.
 ///
@@ -43,9 +54,15 @@ use crate::session::Session;
 /// `WorkspaceShell`, and opens a GPUI window. Called both from Cmd-N
 /// (synchronous main thread) and — once PD-010 is resolved — from the
 /// UDS message handler.
-fn spawn_window(cx: &mut App, state_root: &Path) {
-    // Build tokio runtime handle; we are on the GPUI main thread, but
-    // `Session::new` is async so we need to block on it.
+///
+/// `registry` receives a `register` call for the newly opened window so
+/// that T17's window-count assertion can observe it.
+fn spawn_window(cx: &mut App, state_root: &Path, registry: Arc<Mutex<WindowRegistry>>) {
+    // SAFETY: block_on is called from the Cocoa/GPUI main thread (cx.on_action
+    // fires synchronously here), NOT inside a tokio async context. If gpui ever
+    // dispatches actions via tokio::spawn, this becomes a nested-runtime panic;
+    // migrate to tokio::task::block_in_place in that case. See PD-010 for the
+    // related cross-thread bridge work.
     let rt = tokio::runtime::Handle::try_current();
     let session = match rt {
         Ok(handle) => handle.block_on(Session::new(state_root, 1024 * 1024 * 1024)),
@@ -62,6 +79,7 @@ fn spawn_window(cx: &mut App, state_root: &Path) {
         }
     };
 
+    let window_id = session.lock().window_id;
     let bounds = Bounds::centered(None, size(px(1200.), px(800.)), cx);
     cx.open_window(
         WindowOptions {
@@ -78,6 +96,9 @@ fn spawn_window(cx: &mut App, state_root: &Path) {
         },
     )
     .expect("open window");
+
+    registry.lock().register(WindowHandle { window_id });
+    tracing::debug!(%window_id, "spawn_window: window registered in WindowRegistry");
 }
 
 /// Launch the dat0 desktop application.
@@ -118,6 +139,12 @@ pub fn run_app(lock: AppLock, initial_paths: Vec<PathBuf>) -> Result<()> {
         .expect("session");
     let session = Arc::new(Mutex::new(session));
 
+    // In-process registry of open windows. Created here, before
+    // Application::run, so it outlives the event loop and can be inspected
+    // by tests after shutdown. Both the first-window open path and the
+    // Cmd-N spawn_window path call register() after cx.open_window succeeds.
+    let registry = Arc::new(Mutex::new(WindowRegistry::new()));
+
     // Spawn UDS server on the tokio runtime. The handler closure logs each
     // received OpenWindowMessage. Visual window-open from the tokio context
     // is deferred — see module-level doc (PD-010).
@@ -137,6 +164,7 @@ pub fn run_app(lock: AppLock, initial_paths: Vec<PathBuf>) -> Result<()> {
     });
 
     let state_root_for_action = state_root.clone();
+    let registry_for_run = Arc::clone(&registry);
     Application::new().run(move |cx: &mut App| {
         // Required before opening any window: initialises the gpui-component
         // theme, global state, and (in debug builds) the inspector. Without
@@ -164,14 +192,20 @@ pub fn run_app(lock: AppLock, initial_paths: Vec<PathBuf>) -> Result<()> {
         #[cfg(target_os = "macos")]
         {
             let state_root_for_new_window = state_root_for_action.clone();
+            let registry_for_action = Arc::clone(&registry_for_run);
             cx.on_action(
                 move |_action: &crate::menu_macos::NewWindow, cx: &mut App| {
                     tracing::info!("Cmd-N: spawning new window");
-                    spawn_window(cx, &state_root_for_new_window);
+                    spawn_window(
+                        cx,
+                        &state_root_for_new_window,
+                        Arc::clone(&registry_for_action),
+                    );
                 },
             );
         }
 
+        let first_window_id = session.lock().window_id;
         let bounds = Bounds::centered(None, size(px(1200.), px(800.)), cx);
         let session_for_window = Arc::clone(&session);
         let first_window = cx
@@ -193,6 +227,13 @@ pub fn run_app(lock: AppLock, initial_paths: Vec<PathBuf>) -> Result<()> {
                 },
             )
             .expect("open window");
+
+        // Register the first window with the in-process registry so T17 can
+        // assert window count immediately after cold start.
+        registry_for_run.lock().register(WindowHandle {
+            window_id: first_window_id,
+        });
+        tracing::debug!(%first_window_id, "run_app: first window registered in WindowRegistry");
 
         // If CLI paths were supplied on cold start, register them against the
         // first window's session. The WorkspaceShell owns the session, so we
