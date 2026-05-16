@@ -111,3 +111,16 @@ jobs:
     steps:
       - uses: actions/checkout@v5
       - run: ./scripts/i18n-check.sh
+
+  no-standalone-arrow:
+    name: No standalone arrow dep (type-chain protection)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - name: Verify no `arrow = ` workspace/crate dep
+        run: |
+          if grep -rE '^arrow\s*=' Cargo.toml crates/*/Cargo.toml; then
+            echo "::error::Standalone arrow dep would break duckdb::arrow type chain. See P2 retro #2."
+            exit 1
+          fi
+          echo "OK: no standalone arrow dep"
