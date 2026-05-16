@@ -19,7 +19,7 @@ rust-version = "1.85"
 
 [workspace.dependencies]
 # Async + utilities
-tokio = { version = "1", features = ["rt-multi-thread", "macros", "fs", "sync"] }
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "fs", "sync", "net"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 toml = "0.8"
@@ -30,6 +30,19 @@ tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
 notify = "6"
 once_cell = "1"
 dirs = "5"
+
+# P3a: advisory file lock (PID + flock for AppLock singleton).
+fs4 = { version = "0.9", features = ["sync"] }
+
+# P3a: cross-platform IPC. We use the unix-only Unix Domain Socket
+# path; the crate's Windows shim ships separately (P3a is macOS+Linux only).
+interprocess = { version = "2", features = ["tokio"] }
+
+# P3a: UUID v7 (time-ordered) for stable window IDs.
+uuid = { version = "1", features = ["v7"] }
+
+# P3a: LRU cache for paged Arrow batches in GridDataSource.
+lru = "0.12"
 
 # GPUI (verified pins per docs/internal/gpui-api-notes.md, T0 finding 2026-04-26).
 # gpui/gpui-macros are now published to crates.io as of v0.2.0 (PR #39835); v0.2.2 publish

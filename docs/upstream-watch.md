@@ -25,6 +25,10 @@ Verified by phase T0 spikes. GPUI surface verified by P1.T0 on **2026-04-26** (s
 | `gpui` (Zed, via crates.io) | `=0.2.2` | `08d95ad9d31f616a43dacda8416568d658dca6ae` | 2026-04-26 | Publish commit in `zed-industries/zed` ("chore: Bump gpui to 0.2.2 (#40856)", 2025-10-22). Consumed via `cargo` from crates.io, not as a git dep. The `=` prefix is the literal `Cargo.toml` form (exact-version pin), per the policy in the table above. |
 | `gpui-macros` (Zed, via crates.io) | `=0.2.2` | `08d95ad9d31f616a43dacda8416568d658dca6ae` | 2026-04-26 | Companion crate; published from the same Zed commit. Same exact-version pin form as `gpui`. |
 | `duckdb` (duckdb-rs, via crates.io) | `=1.4.4` | `46d2e094ae741a4e7a500ae4389abf2cfd7e1458` | 2026-04-27 | Tag `v1.4.4` in `duckdb/duckdb-rs`, released 2025-01-27. Bundled DuckDB native = `1.4.4`. Features enabled: `bundled`, `json`, `parquet`. `sqlite_scanner` and `motherduck` are runtime-loaded (no Cargo feature exists; D-009 contingency open). Maintenance line `1.4.x` deliberately preferred over CalVer `1.10500.x` line at P2 entry — re-evaluate at P5/P6. |
+| `fs4` (crates.io) | `0.9.1` | n/a | 2026-05-16 | Minor pin (`^0.9`). Advisory file lock for `AppLock` PID guard (P3a T2). Resolved via `Cargo.lock`. |
+| `interprocess` (crates.io) | `2.4.2` | n/a | 2026-05-16 | Minor pin (`^2`), `tokio` feature. Cross-platform UDS for second-launch IPC (P3a T2). Resolved via `Cargo.lock`. |
+| `uuid` (crates.io) | `1.23.1` | n/a | 2026-05-16 | Minor pin (`^1`), `v7` feature. Time-ordered window IDs (P3a T4). Resolved via `Cargo.lock`. |
+| `lru` (crates.io) | `0.12.5` | n/a | 2026-05-16 | Minor pin (`^0.12`). LRU cache for paged Arrow batches in `GridDataSource` (P3a T8). Resolved via `Cargo.lock`. |
 
 > **Mechanism change (since planning snapshot):** `gpui-component` v0.5.1 declares `gpui = "0.2.2"` in its workspace `Cargo.toml`, consuming `gpui` as a published crates.io crate rather than as a git dependency. The pin policy still applies, but dat0 should pin via exact-version semver (`gpui = "=0.2.2"`) plus `Cargo.lock`, and record the publish-commit SHA in `docs/internal/gpui-api-notes.md` for audit.
 

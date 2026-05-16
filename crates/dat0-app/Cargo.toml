@@ -31,6 +31,10 @@ gpui-component = { workspace = true }
 dat0-engine = { workspace = true }
 dat0-i18n = { workspace = true }
 dat0-keychain = { workspace = true }
+fs4 = { workspace = true }
+interprocess = { workspace = true }
+uuid = { workspace = true }
+lru = { workspace = true }
 
 [dev-dependencies]
 tempfile = { workspace = true }
