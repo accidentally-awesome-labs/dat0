@@ -65,6 +65,7 @@ that's modifying it; merge conflicts are signals worth investigating.
 | PD-005 | P2 plan T3 snippet uses `&*conn` triggering clippy explicit-auto-deref | closed | trivial |
 | PD-006 | P2 plan T12 fixtures snippet uses bare `rng.gen::<…>()` — reserved keyword in Rust 2024 | closed | low      |
 | PD-007 | P2 plan T14 snippet calls non-existent `error_ux::banner::push_banner` with mismatched `Banner` shape | closed | low      |
+| PD-008 | P3a plan T2 snippets use wrong import paths for `fs4::FileExt` and `interprocess::local_socket::traits::Stream` | closed | trivial  |
 
 ---
 
@@ -598,6 +599,37 @@ that's modifying it; merge conflicts are signals worth investigating.
   Step 14.2 code block (lines 3775-3796).
 - **Closed by:** P2 T14 commit `9ea964b` on branch `p2-engine`.
 - **Last touched:** 2026-04-28
+
+---
+
+### PD-008 — P3a plan T2 snippets use wrong import paths for `fs4::FileExt` and `interprocess` sync `Stream`
+
+- **Status:** closed
+- **Severity:** trivial (compile-time failure, mechanical fix)
+- **Affected files:** `crates/dat0-app/src/app_lock.rs`
+- **Symptom 1 — fs4:** Plan T2 Step 3 snippet uses `use fs4::FileExt;`. In
+  fs4 0.9.1 the sync `FileExt` trait is not re-exported at the crate root;
+  it lives at `fs4::fs_std::FileExt` (gated behind the `"sync"` feature,
+  which the workspace Cargo.toml already enables). The old path `fs4::FileExt`
+  resolves to `std::os::unix::prelude::FileExt` — a different trait — causing
+  `try_lock_exclusive` not to be found.
+- **Symptom 2 — interprocess sync connect:** Plan T2 Step 4 snippet imports
+  `interprocess::local_socket::traits::Stream` and calls `.connect(name)` on
+  it. In interprocess 2.4.2 `traits::Stream` is a trait (not a type), so
+  `Stream::connect` is not accessible via the trait path. The concrete enum
+  type `interprocess::local_socket::Stream` carries `connect(name)` and is
+  the correct call site. The plan's sync example also omits the `prelude::*`
+  glob that brings `ToFsName` into scope; the real code requires both.
+- **Fix applied:** In `try_acquire`, changed `use fs4::FileExt;` →
+  `use fs4::fs_std::FileExt;`. In `forward_open_window`, replaced the
+  `traits::Stream` import + method path with
+  `use interprocess::local_socket::{GenericFilePath, Stream, prelude::*};`
+  and `Stream::connect(name)`. Both changes are minimal and preserve the
+  intended semantics exactly.
+- **Originating doc:** `docs/plans/2026-05-14-dat0-p3a-plan.md` T2 Steps 3–4
+  code blocks.
+- **Closed by:** P3a T2 commit on branch `p3a-hot-path`.
+- **Last touched:** 2026-05-16
 
 ---
 
