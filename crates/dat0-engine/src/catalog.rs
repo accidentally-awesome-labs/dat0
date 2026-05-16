@@ -81,6 +81,10 @@ pub(crate) fn create_table(conn: &duckdb::Connection, name: &str, sql: &str) -> 
             [name],
             |row| row.get(0),
         )
+        // duckdb-rs collapses both "no rows" and DB errors into a single Err.
+        // For dat0 Scratch mode the only reachable schema is "main", so falling
+        // back to "main" preserves correctness without unwrapping prematurely.
+        // P4 (workspace mode) may need to surface the error case explicitly.
         .unwrap_or_else(|_| "main".to_string());
     let columns = describe_table(conn, name, None)?;
     Ok(TableInfo {

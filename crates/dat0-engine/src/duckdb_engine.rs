@@ -243,12 +243,19 @@ impl crate::QueryEngine for DuckDBEngine {
         let conn = self.conn.clone();
         let name = name.to_owned();
         let schema = schema.map(|s| s.to_owned());
+        let name_for_closure = name.clone();
         tokio::task::spawn_blocking(move || -> Result<()> {
             let conn = conn.lock().map_err(|_| EngineError::EnginePoisoned)?;
-            crate::catalog::drop_table(&conn, &name, schema.as_deref())
+            crate::catalog::drop_table(&conn, &name_for_closure, schema.as_deref())
         })
         .await
-        .map_err(|e| EngineError::TaskJoin(e.to_string()))?
+        .map_err(|e| EngineError::TaskJoin(e.to_string()))??;
+        // Remove origin entry only after the DB op succeeds.
+        self.table_origins
+            .write()
+            .expect("table_origins poisoned")
+            .remove(&name);
+        Ok(())
     }
 
     #[instrument(skip(self), fields(old = old, new = new))]
@@ -258,12 +265,27 @@ impl crate::QueryEngine for DuckDBEngine {
         let old = old.to_owned();
         let new = new.to_owned();
         let schema = schema.map(|s| s.to_owned());
+        let old_for_closure = old.clone();
+        let new_for_closure = new.clone();
         tokio::task::spawn_blocking(move || -> Result<()> {
             let conn = conn.lock().map_err(|_| EngineError::EnginePoisoned)?;
-            crate::catalog::rename_table(&conn, &old, &new, schema.as_deref())
+            crate::catalog::rename_table(
+                &conn,
+                &old_for_closure,
+                &new_for_closure,
+                schema.as_deref(),
+            )
         })
         .await
-        .map_err(|e| EngineError::TaskJoin(e.to_string()))?
+        .map_err(|e| EngineError::TaskJoin(e.to_string()))??;
+        // Atomically rekey origin entry only after the DB op succeeds.
+        // If the old name has no entry (e.g. table created outside register_file /
+        // create_table), do nothing — don't fabricate an entry for the new name.
+        let mut origins = self.table_origins.write().expect("table_origins poisoned");
+        if let Some(origin) = origins.remove(&old) {
+            origins.insert(new, origin);
+        }
+        Ok(())
     }
 
     #[instrument(skip(self), fields(sql_len = sql.len()))]
@@ -416,12 +438,12 @@ impl DuckDBEngine {
     /// Return the recorded `TableOrigin` for `name`, or `None` if not tracked.
     ///
     /// T7 passes the origins map directly to `catalog::get_tables` rather than
-    /// going through this accessor. Available for T8/T9 call sites.
-    #[allow(dead_code)] // available for T8/T9; not consumed by T7
-    pub(crate) fn table_origin(&self, name: &str) -> Option<TableOrigin> {
+    /// going through this accessor. Available for T8/T9 call sites and tests.
+    pub fn table_origin(&self, name: &str) -> Option<TableOrigin> {
         self.table_origins
             .read()
-            .ok()
-            .and_then(|m| m.get(name).cloned())
+            .expect("table_origins poisoned")
+            .get(name)
+            .cloned()
     }
 }
