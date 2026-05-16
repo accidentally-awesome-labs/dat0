@@ -15,17 +15,40 @@ use gpui::{
     WindowOptions, div, prelude::*, px, size,
 };
 use gpui_component::Root;
+use parking_lot::Mutex;
+use std::sync::Arc;
+
+use crate::grid::GridDataSource;
+use crate::session::Session;
 
 /// Launch the dat0 desktop application.
 ///
 /// Blocks the calling thread on the platform event loop until the user
 /// closes the last window (the standard GPUI shutdown path).
 ///
+/// A dedicated `tokio::runtime::Runtime` is created here because `main` is
+/// synchronous. `run_app` is called before any async runtime is active, so
+/// `Handle::current()` would panic. The runtime is kept alive for the full
+/// duration of the app by holding it in a local binding; it is dropped only
+/// after `Application::run` returns (i.e. after the last window closes).
+///
 /// Currently panics via `.expect("open window")` if the platform refuses
 /// to open a window — treated as a fatal startup error in P1. Graceful
 /// handling (propagating through the `Result` return) lands at T17/T21.
 pub fn run_app() -> Result<()> {
-    Application::new().run(|cx: &mut App| {
+    // Build a dedicated tokio runtime for session construction and future
+    // async work (file registration, paged queries). main() is synchronous,
+    // so Handle::current() would panic — we must create our own runtime here.
+    let runtime = tokio::runtime::Runtime::new().expect("tokio runtime");
+
+    let state_root = crate::platform::data_dir().expect("data dir");
+    let budget = 1024 * 1024 * 1024; // 1 GB
+    let session = runtime
+        .block_on(Session::new(&state_root, budget))
+        .expect("session");
+    let session = Arc::new(Mutex::new(session));
+
+    Application::new().run(move |cx: &mut App| {
         // Required before opening any window: initialises the gpui-component
         // theme, global state, and (in debug builds) the inspector. Without
         // this, dialogs/sheets/notifications wired up in later tasks (T17)
@@ -46,6 +69,7 @@ pub fn run_app() -> Result<()> {
         }
 
         let bounds = Bounds::centered(None, size(px(1200.), px(800.)), cx);
+        let session_for_window = Arc::clone(&session);
         cx.open_window(
             WindowOptions {
                 window_bounds: Some(WindowBounds::Windowed(bounds)),
@@ -56,7 +80,7 @@ pub fn run_app() -> Result<()> {
                 ..Default::default()
             },
             |window, cx| {
-                let view = cx.new(|_| EmptyView);
+                let view = cx.new(|_| WorkspaceShell::new(Arc::clone(&session_for_window)));
                 // Per gpui-component v0.5.1, the window's first layer MUST be
                 // a Root: it provides the overlay layer used by Dialog,
                 // Sheet, notifications, etc.
@@ -69,17 +93,48 @@ pub fn run_app() -> Result<()> {
         // hidden behind whatever was focused at launch time (macOS).
         cx.activate(true);
     });
+
+    // runtime drops here, after the event loop exits (last window closed).
+    drop(runtime);
     Ok(())
 }
 
-/// Placeholder root view rendered inside `gpui_component::Root` for T2.
+/// Session-backed workspace shell rendered inside `gpui_component::Root`.
 ///
-/// Subsequent tasks replace this with the real workspace shell (T14 menu,
-/// T16 settings panel, T17 dialogs, etc.).
-struct EmptyView;
+/// Owns the session for this window and an optional data source (set once the
+/// user drops a file or opens a table). When no data source is present,
+/// renders a "Drop a file here" placeholder. When a data source is present,
+/// renders a grid placeholder pending T11+ TableDelegate wiring.
+pub struct WorkspaceShell {
+    session: Arc<Mutex<Session>>,
+    data_source: Option<Arc<GridDataSource>>,
+}
 
-impl Render for EmptyView {
+impl WorkspaceShell {
+    pub fn new(session: Arc<Mutex<Session>>) -> Self {
+        Self {
+            session,
+            data_source: None,
+        }
+    }
+
+    pub fn set_data_source(&mut self, ds: Arc<GridDataSource>) {
+        self.data_source = Some(ds);
+    }
+}
+
+impl Render for WorkspaceShell {
     fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
-        div().size_full()
+        // Suppress unused-field warning for session until T11+ wires queries.
+        let _ = &self.session;
+
+        match self.data_source.as_ref() {
+            Some(_ds) => {
+                // TODO(T11+): mount gpui-component Table widget with
+                // a TableDelegate impl over _ds (paged Arrow batch adapter).
+                div().size_full().child("Grid placeholder — wired in T11+")
+            }
+            None => div().size_full().child("Drop a file here"),
+        }
     }
 }
