@@ -106,6 +106,9 @@ pub fn run_app() -> Result<()> {
 /// renders a "Drop a file here" placeholder. When a data source is present,
 /// renders a grid placeholder pending T11+ TableDelegate wiring.
 pub struct WorkspaceShell {
+    // Held for T11+ which wires the FileDropHandler → register_file →
+    // session mutations + grid mount. Render path doesn't consume it yet.
+    #[allow(dead_code)]
     session: Arc<Mutex<Session>>,
     data_source: Option<Arc<GridDataSource>>,
 }
@@ -125,9 +128,6 @@ impl WorkspaceShell {
 
 impl Render for WorkspaceShell {
     fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
-        // Suppress unused-field warning for session until T11+ wires queries.
-        let _ = &self.session;
-
         match self.data_source.as_ref() {
             Some(_ds) => {
                 // TODO(T11+): mount gpui-component Table widget with
