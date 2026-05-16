@@ -254,7 +254,7 @@ impl<D: TableDelegate> Table<D> {
 
 ### 4.2 Row fetch is synchronous
 
-There is no async method in `TableDelegate`. The `render_td` callback is called synchronously during the GPUI render pass. The `load_more` callback is called via `cx.spawn_in` (which runs on the GPUI executor's background threads), but `load_more` is only for *initiating* a data fetch — the actual cell render (`render_td`) must return data that is already in-memory at render time.
+There is no async method in `TableDelegate`. The `render_td` callback is called synchronously during the GPUI render pass. `cx.spawn_in` schedules a future on the GPUI **main-thread** executor — the future itself runs on the main thread, not a background pool (verified: `gpui-0.2.2/src/app/context.rs:659` doc-comment: "The returned future will be polled on the main thread."). For blocking I/O (e.g., `engine.execute_paged().await`), the `load_more` implementation must dispatch the actual work to a background executor via `cx.background_executor().spawn(...)` (or `smol::Task` / `tokio::task::spawn_blocking` if the consumer manages its own runtime). `load_more` returns `()` synchronously after kicking off the work; results land in the cache via `cx.notify()` from the spawned task. `load_more` is only for *initiating* a data fetch — the actual cell render (`render_td`) must return data that is already in-memory at render time.
 
 **Implication for T8 (`GridDataSource`):** The delegate must maintain an in-memory row cache (a pre-fetched page of `RecordBatch` data). Background loading via `load_more` + `visible_rows_changed` populates that cache; `render_td` reads from it synchronously. A preloader thread / async task is required.
 
@@ -356,7 +356,7 @@ This shows the intended shape of the `GridDataSource` that T8 will implement. It
 use std::{ops::Range, sync::Arc};
 use gpui::{App, IntoElement, Window, div, prelude::*};
 use gpui_component::table::{Column, TableDelegate, TableState};
-use arrow::record_batch::RecordBatch;
+use duckdb::arrow::record_batch::RecordBatch;
 
 /// Page cache entry: one fetched page of Arrow data.
 struct CachedPage {
@@ -367,7 +367,7 @@ struct CachedPage {
 /// The delegate that GridDataSource (T8) will implement.
 pub struct GridDataSource {
     /// Reference to the per-window DuckDB engine.
-    engine: Arc<crate::engine::DuckDBEngine>,
+    engine: Arc<dat0_engine::DuckDBEngine>,
     /// The DuckDB table or view name being displayed.
     table_name: String,
     /// Schema: column definitions derived from the Arrow schema.
@@ -419,6 +419,7 @@ impl TableDelegate for GridDataSource {
             .unwrap_or(0);
 
         // Spawn a background task; update state on completion.
+        // spawn_in runs on the main thread — wrap blocking work in cx.background_executor().spawn(...)
         cx.spawn_in(window, async move |view, window| {
             // engine.execute_paged(...) is async — call it here.
             // On result, view.update_in(window, |delegate, _, cx| { ... }) to store batch.
