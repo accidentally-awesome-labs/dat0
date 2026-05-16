@@ -253,6 +253,46 @@ async fn build_engine(scratch_dir: &Path, budget_bytes: u64) -> Result<DuckDBEng
 }
 
 // ---------------------------------------------------------------------------
+// Orphan scratch-dir scan (relaunch recovery)
+// ---------------------------------------------------------------------------
+
+/// Scan `$state_root/scratch/*` for dirs not represented in the live set.
+/// Returns the orphaned dirs; caller decides whether to recover or discard.
+///
+/// Non-UUID directory names are ignored (defensive against manual `mkdir`).
+/// `.wal` siblings of `scratch.duckdb` are NOT separate orphan dirs because
+/// the scan only enumerates directories under `scratch/`.
+pub fn scan_orphans(state_root: &Path, live: &[Uuid]) -> Result<Vec<PathBuf>> {
+    let scratch_root = state_root.join("scratch");
+    if !scratch_root.exists() {
+        return Ok(Vec::new());
+    }
+    let live: std::collections::HashSet<Uuid> = live.iter().copied().collect();
+    let mut orphans = Vec::new();
+    for entry in std::fs::read_dir(&scratch_root)
+        .with_context(|| format!("read_dir {}", scratch_root.display()))?
+    {
+        let entry = entry?;
+        if !entry.file_type()?.is_dir() {
+            continue;
+        }
+        let name = entry.file_name();
+        let name_str = match name.to_str() {
+            Some(s) => s,
+            None => continue,
+        };
+        let id = match Uuid::parse_str(name_str) {
+            Ok(id) => id,
+            Err(_) => continue,
+        };
+        if !live.contains(&id) {
+            orphans.push(entry.path());
+        }
+    }
+    Ok(orphans)
+}
+
+// ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------
 
@@ -355,5 +395,21 @@ mod tests {
             !tmp_path.exists(),
             "session.json.tmp should not exist after successful persist"
         );
+    }
+
+    #[tokio::test]
+    async fn scan_orphans_finds_dir_not_in_live_set() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let orphan_id = Uuid::now_v7();
+        let orphan_dir = tmp.path().join("scratch").join(orphan_id.to_string());
+        std::fs::create_dir_all(&orphan_dir).unwrap();
+        std::fs::write(orphan_dir.join("session.json"), "{}").unwrap();
+
+        let found = scan_orphans(tmp.path(), &[]).unwrap();
+        assert_eq!(found.len(), 1);
+        assert_eq!(found[0], orphan_dir);
+
+        let found = scan_orphans(tmp.path(), &[orphan_id]).unwrap();
+        assert!(found.is_empty());
     }
 }

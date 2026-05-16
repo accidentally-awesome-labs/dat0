@@ -235,6 +235,30 @@ pub fn run_app(lock: AppLock, initial_paths: Vec<PathBuf>) -> Result<()> {
         });
         tracing::debug!(%first_window_id, "run_app: first window registered in WindowRegistry");
 
+        // Scan `$state_root/scratch/*` for orphaned dirs (sessions that didn't
+        // exit cleanly). Per-orphan Banner is emitted; user-facing
+        // Open/Discard UX is P3b (structured Banner refactor). Crash-recovery
+        // banner content + actions are part of spec §11 exit criterion #4.
+        match crate::session::scan_orphans(&state_root_for_action, &[first_window_id]) {
+            Ok(orphans) => {
+                if !orphans.is_empty() {
+                    tracing::info!(
+                        count = orphans.len(),
+                        "orphan scratch dirs detected on cold start"
+                    );
+                    for path in &orphans {
+                        crate::error_ux::banner::push_warning_message(format!(
+                            "Recovered previous session: {}",
+                            path.display()
+                        ));
+                    }
+                }
+            }
+            Err(e) => {
+                tracing::warn!(error = %e, "orphan scratch-dir scan failed");
+            }
+        }
+
         // If CLI paths were supplied on cold start, register them against the
         // first window's session. The WorkspaceShell owns the session, so we
         // spawn a task bound to that window entity.

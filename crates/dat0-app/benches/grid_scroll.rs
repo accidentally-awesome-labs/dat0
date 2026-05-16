@@ -1,10 +1,10 @@
 //! 1M-row virtualized-scroll bench.
 //!
-//! Generates a synthetic Arrow batch (int + float + string + bigint
-//! + nullable), drives the same `render_cell` dispatch the live grid
-//! uses over the full row range, samples frame time. The bench is GPU
-//! kernel-independent — it measures the cost of the per-cell render
-//! decision + Arrow column access path that dominates real-world
+//! Generates a synthetic Arrow batch (Int64, Float64, Utf8, UInt64; 1%
+//! nulls), drives the same `render_cell` dispatch the live grid uses
+//! over the full row range, and samples frame time. The bench is
+//! GPU-kernel-independent: it measures the cost of the per-cell render
+//! decision plus Arrow column access — the path that dominates real-world
 //! scroll frames once the widget reaches steady state. Real GPU
 //! frame-pacing is verified at P10 on the provisioned self-hosted GPU
 //! runner; P3a's metric is an *engine + cell-render* upper bound.
