@@ -20,6 +20,9 @@ pub struct OpenWindowMessage {
 }
 
 pub struct AppLock {
+    /// RAII guard for the advisory flock. The file handle is kept alive for
+    /// the lifetime of the `AppLock`; closing it (in `Drop`) releases the
+    /// flock automatically.
     // Held for its flock RAII lifetime; the OS releases the advisory lock when
     // this File handle is closed on Drop.
     #[expect(dead_code, reason = "held for RAII flock lifetime, not read directly")]
@@ -67,6 +70,19 @@ impl AppLock {
 
     /// Forward an `OpenWindowMessage` to the running instance over UDS.
     /// Used by the second-launch path before `exit(0)`.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the UDS connection cannot be established or the
+    /// message cannot be written. The caller may distinguish two cases by
+    /// downcasting to [`std::io::Error`] and inspecting `kind()`:
+    ///
+    /// - [`std::io::ErrorKind::NotFound`] — the running instance has not yet
+    ///   bound `dat0.sock`. Caller treats as a race; brief retry may succeed.
+    /// - [`std::io::ErrorKind::ConnectionRefused`] — the socket exists but no
+    ///   listener is accepting. Caller treats as an unresponsive running
+    ///   instance and surfaces the spec §6 "already running but unresponsive"
+    ///   path (stderr + exit 1).
     pub fn forward_open_window(state_dir: &Path, msg: OpenWindowMessage) -> Result<()> {
         use interprocess::local_socket::{GenericFilePath, Stream, prelude::*};
         let sock_path = state_dir.join("dat0.sock");
@@ -77,13 +93,24 @@ impl AppLock {
         let mut stream = Stream::connect(name).context("connect to running dat0 instance")?;
         let line = serde_json::to_string(&msg).context("serialize message")?;
         std::io::Write::write_all(&mut stream, line.as_bytes()).context("write to UDS")?;
-        std::io::Write::write_all(&mut stream, b"\n")?;
+        std::io::Write::write_all(&mut stream, b"\n").context("write newline to UDS")?;
         Ok(())
     }
 
     /// Block-and-serve UDS messages. Each line is one `OpenWindowMessage`.
     /// Calls `handler` for every received message. Runs on a dedicated
     /// tokio task (caller spawns it).
+    ///
+    /// # Borrow contract
+    ///
+    /// The `&self` borrow ties the spawned task's lifetime to the original
+    /// `AppLock` binding. The caller (T12) must own an `AppLock` value
+    /// outside of any `Arc`, move it into the spawned task via
+    /// `tokio::spawn(async move { lock.serve(...).await })`, and keep no
+    /// other handle to the lock. If shared ownership is needed later,
+    /// change this signature to `serve(self, ...)` and re-evaluate the
+    /// `Drop` order (file cleanup runs when the moved `AppLock` is dropped
+    /// inside the task, which is fine).
     pub async fn serve(
         &self,
         handler: impl Fn(OpenWindowMessage) + Send + Sync + 'static,
@@ -110,7 +137,7 @@ impl AppLock {
             let stream = match listener.accept().await {
                 Ok(s) => s,
                 Err(e) => {
-                    tracing::warn!("UDS accept failed: {}", e);
+                    tracing::warn!(error = %e, "UDS accept failed");
                     continue;
                 }
             };
@@ -120,7 +147,7 @@ impl AppLock {
                 while let Ok(Some(line)) = lines.next_line().await {
                     match serde_json::from_str::<OpenWindowMessage>(&line) {
                         Ok(msg) => h(msg),
-                        Err(e) => tracing::warn!("UDS bad message: {}", e),
+                        Err(e) => tracing::warn!(error = %e, "UDS bad message"),
                     }
                 }
             });
@@ -135,10 +162,10 @@ impl Drop for AppLock {
         // launcher; if removal fails (other process moved them, etc.) we log
         // and proceed.
         if let Err(e) = std::fs::remove_file(&self.pid_path) {
-            tracing::debug!("remove pid file: {}", e);
+            tracing::debug!(error = %e, "remove pid file");
         }
         if let Err(e) = std::fs::remove_file(&self.sock_path) {
-            tracing::debug!("remove sock file: {}", e);
+            tracing::debug!(error = %e, "remove sock file");
         }
     }
 }
