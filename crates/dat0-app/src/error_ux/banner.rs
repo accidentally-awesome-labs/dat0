@@ -39,6 +39,11 @@ impl Banner {
     }
 }
 
+/// Convenience: push a warning-severity banner with a plain string message.
+pub fn push_warning_message(msg: impl Into<String>) {
+    push(Banner::warning(msg));
+}
+
 static PENDING: Lazy<Mutex<Vec<Banner>>> = Lazy::new(|| Mutex::new(Vec::new()));
 
 /// Stash a banner produced before any window exists. Render code drains

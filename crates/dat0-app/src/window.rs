@@ -11,13 +11,14 @@
 use anyhow::Result;
 use dat0_i18n::t;
 use gpui::{
-    App, Application, Bounds, Context, IntoElement, Render, TitlebarOptions, Window, WindowBounds,
-    WindowOptions, div, prelude::*, px, size,
+    App, Application, Bounds, Context, ExternalPaths, IntoElement, Render, TitlebarOptions, Window,
+    WindowBounds, WindowOptions, div, prelude::*, px, size,
 };
 use gpui_component::Root;
 use parking_lot::Mutex;
 use std::sync::Arc;
 
+use crate::file_drop::{DropOutcome, handle_drop};
 use crate::grid::GridDataSource;
 use crate::session::Session;
 
@@ -106,9 +107,6 @@ pub fn run_app() -> Result<()> {
 /// renders a "Drop a file here" placeholder. When a data source is present,
 /// renders a grid placeholder pending T11+ TableDelegate wiring.
 pub struct WorkspaceShell {
-    // Held for T11+ which wires the FileDropHandler → register_file →
-    // session mutations + grid mount. Render path doesn't consume it yet.
-    #[allow(dead_code)]
     session: Arc<Mutex<Session>>,
     data_source: Option<Arc<GridDataSource>>,
 }
@@ -127,14 +125,73 @@ impl WorkspaceShell {
 }
 
 impl Render for WorkspaceShell {
-    fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let session = Arc::clone(&self.session);
+
+        let drop_listener = cx.listener(move |_view, paths: &ExternalPaths, _window, cx| {
+            let paths_vec: Vec<std::path::PathBuf> = paths.paths().to_vec();
+            let session = Arc::clone(&session);
+            cx.spawn(
+                async move |weak_shell: gpui::WeakEntity<WorkspaceShell>, async_cx| {
+                    let outcomes = handle_drop(paths_vec, session).await;
+
+                    // Per spec §3.5: the last successfully-registered file
+                    // becomes the active tab. Iterate all outcomes and keep
+                    // the last Registered one.
+                    let last_registered = outcomes.into_iter().rev().find_map(|o| match o {
+                        DropOutcome::Registered { table_name, .. } => Some(table_name),
+                        _ => None,
+                    });
+
+                    if let Some(table_name) = last_registered {
+                        // Obtain the engine Arc from the session via a sync update call.
+                        let engine = async_cx
+                            .update(|app_cx| {
+                                weak_shell
+                                    .update(app_cx, |view, _cx| view.session.lock().engine.clone())
+                                    .ok()
+                            })
+                            .ok()
+                            .flatten();
+
+                        if let Some(engine) = engine {
+                            match GridDataSource::new(engine, table_name).await {
+                                Ok(ds) => {
+                                    let _ = async_cx.update(|app_cx| {
+                                        let _ = weak_shell.update(app_cx, |view, cx| {
+                                            view.set_data_source(Arc::new(ds));
+                                            cx.notify();
+                                        });
+                                    });
+                                }
+                                Err(e) => {
+                                    tracing::warn!(
+                                        "WorkspaceShell: GridDataSource::new failed: {e}"
+                                    );
+                                }
+                            }
+                        }
+                    }
+                },
+            )
+            .detach();
+        });
+
         match self.data_source.as_ref() {
             Some(_ds) => {
                 // TODO(T11+): mount gpui-component Table widget with
                 // a TableDelegate impl over _ds (paged Arrow batch adapter).
-                div().size_full().child("Grid placeholder — wired in T11+")
+                div()
+                    .size_full()
+                    .drag_over::<ExternalPaths>(|style, _, _, _| style.bg(gpui::rgba(0x0088_ff22)))
+                    .on_drop::<ExternalPaths>(drop_listener)
+                    .child("Grid placeholder — wired in T11+")
             }
-            None => div().size_full().child("Drop a file here"),
+            None => div()
+                .size_full()
+                .drag_over::<ExternalPaths>(|style, _, _, _| style.bg(gpui::rgba(0x0088_ff22)))
+                .on_drop::<ExternalPaths>(drop_listener)
+                .child("Drop a file here"),
         }
     }
 }
