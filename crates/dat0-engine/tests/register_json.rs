@@ -1,8 +1,18 @@
-#![allow(deprecated)] // __debug_query_scalar is intentionally test-only
-
 use std::path::PathBuf;
 
 use dat0_engine::{DuckDBEngine, MemoryBudget, QueryEngine, RegisterOpts};
+
+/// Extract the first column, first row as a String from a one-cell query.
+async fn scalar(engine: &DuckDBEngine, sql: &str) -> String {
+    let res = engine.execute(sql).await.expect("execute");
+    let batch = res.batches.first().expect("at least one batch");
+    let col = batch.column(0);
+    let arr = col
+        .as_any()
+        .downcast_ref::<duckdb::arrow::array::StringArray>()
+        .expect("StringArray");
+    arr.value(0).to_string()
+}
 
 fn budget() -> MemoryBudget {
     MemoryBudget {
@@ -29,10 +39,11 @@ async fn register_json_array() {
         .register_file(&fixture("simple.json"), RegisterOpts::default())
         .await
         .unwrap();
-    let v = engine
-        .__debug_query_scalar(&format!("SELECT COUNT(*)::TEXT FROM \"{}\"", info.name))
-        .await
-        .unwrap();
+    let v = scalar(
+        &engine,
+        &format!("SELECT COUNT(*)::TEXT FROM \"{}\"", info.name),
+    )
+    .await;
     assert_eq!(v, "3");
     engine.close().await.unwrap();
 }
@@ -46,10 +57,11 @@ async fn register_jsonl() {
         .register_file(&fixture("simple.jsonl"), RegisterOpts::default())
         .await
         .unwrap();
-    let v = engine
-        .__debug_query_scalar(&format!("SELECT COUNT(*)::TEXT FROM \"{}\"", info.name))
-        .await
-        .unwrap();
+    let v = scalar(
+        &engine,
+        &format!("SELECT COUNT(*)::TEXT FROM \"{}\"", info.name),
+    )
+    .await;
     assert_eq!(v, "3");
     engine.close().await.unwrap();
 }
@@ -63,10 +75,11 @@ async fn register_ndjson() {
         .register_file(&fixture("simple.ndjson"), RegisterOpts::default())
         .await
         .unwrap();
-    let v = engine
-        .__debug_query_scalar(&format!("SELECT COUNT(*)::TEXT FROM \"{}\"", info.name))
-        .await
-        .unwrap();
+    let v = scalar(
+        &engine,
+        &format!("SELECT COUNT(*)::TEXT FROM \"{}\"", info.name),
+    )
+    .await;
     assert_eq!(v, "3");
     engine.close().await.unwrap();
 }

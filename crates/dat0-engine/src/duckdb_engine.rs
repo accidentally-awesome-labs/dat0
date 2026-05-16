@@ -40,22 +40,6 @@ impl DuckDBEngine {
         self.interrupt.interrupt();
     }
 
-    /// Test-only scalar probe. T7 replaces in tests with `execute()`.
-    #[doc(hidden)]
-    #[deprecated(note = "test-only; will be replaced by execute() in T7")]
-    pub async fn __debug_query_scalar(&self, sql: &str) -> Result<String> {
-        self.assert_open()?;
-        let conn = self.conn.clone();
-        let sql = sql.to_owned();
-        tokio::task::spawn_blocking(move || -> Result<String> {
-            let conn = conn.lock().map_err(|_| EngineError::EnginePoisoned)?;
-            let v: String = conn.query_row(&sql, [], |r| r.get(0))?;
-            Ok(v)
-        })
-        .await
-        .map_err(|e| EngineError::TaskJoin(e.to_string()))?
-    }
-
     fn assert_open(&self) -> Result<()> {
         let status = self
             .status
