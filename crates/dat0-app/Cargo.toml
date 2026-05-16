@@ -29,6 +29,7 @@ ureq = { workspace = true }
 gpui = { workspace = true }
 gpui-component = { workspace = true }
 dat0-engine = { workspace = true }
+duckdb = { workspace = true }
 dat0-i18n = { workspace = true }
 dat0-keychain = { workspace = true }
 fs4 = { workspace = true }

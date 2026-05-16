@@ -3,6 +3,7 @@
 pub mod app_lock;
 pub mod boot;
 pub mod error_ux;
+pub mod grid;
 pub mod menu_macos;
 pub mod platform;
 pub mod recents;
