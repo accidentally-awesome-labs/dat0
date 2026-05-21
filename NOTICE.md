@@ -24,6 +24,11 @@ Used by:
 - enum-iterator-derive 1.5.0 — https://github.com/stephaneyfx/enum-iterator.git
 - enum-iterator 2.3.0 — https://github.com/stephaneyfx/enum-iterator.git
 
+## BSD Zero Clause License (SPDX: 0BSD)
+
+Used by:
+- doctest-file 1.1.1 — https://codeberg.org/Goat7658/doctest-file
+
 ## Apache License 2.0 (SPDX: Apache-2.0)
 
 Used by:
@@ -51,6 +56,17 @@ Used by:
 ## Apache License 2.0 (SPDX: Apache-2.0)
 
 Used by:
+- arrow-arith 56.2.0 — https://github.com/apache/arrow-rs
+- arrow-array 56.2.0 — https://github.com/apache/arrow-rs
+- arrow-buffer 56.2.0 — https://github.com/apache/arrow-rs
+- arrow-cast 56.2.0 — https://github.com/apache/arrow-rs
+- arrow-data 56.2.0 — https://github.com/apache/arrow-rs
+- arrow-ord 56.2.0 — https://github.com/apache/arrow-rs
+- arrow-row 56.2.0 — https://github.com/apache/arrow-rs
+- arrow-schema 56.2.0 — https://github.com/apache/arrow-rs
+- arrow-select 56.2.0 — https://github.com/apache/arrow-rs
+- arrow-string 56.2.0 — https://github.com/apache/arrow-rs
+- arrow 56.2.0 — https://github.com/apache/arrow-rs
 - as-raw-xcb-connection 1.0.1 — https://github.com/psychon/as-raw-xcb-connection
 - encoding_rs 0.8.35 — https://github.com/hsivonen/encoding_rs
 - iri-string 0.7.12 — https://github.com/lo48576/iri-string
@@ -121,12 +137,24 @@ Used by:
 ## Apache License 2.0 (SPDX: Apache-2.0)
 
 Used by:
+- anstream 1.0.0 — https://github.com/rust-cli/anstyle.git
+- anstyle-parse 1.0.0 — https://github.com/rust-cli/anstyle.git
+- anstyle-query 1.1.5 — https://github.com/rust-cli/anstyle.git
+- anstyle 1.0.14 — https://github.com/rust-cli/anstyle.git
+- clap 4.6.1 — https://github.com/clap-rs/clap
+- clap_builder 4.6.0 — https://github.com/clap-rs/clap
+- clap_derive 4.6.1 — https://github.com/clap-rs/clap
+- clap_lex 1.1.0 — https://github.com/clap-rs/clap
+- colorchoice 1.0.5 — https://github.com/rust-cli/anstyle.git
 - crc32fast 1.5.0 — https://github.com/srijs/rust-crc32fast
+- fallible-iterator 0.3.0 — https://github.com/sfackler/rust-fallible-iterator
+- fallible-streaming-iterator 0.1.9 — https://github.com/sfackler/fallible-streaming-iterator
 - float-ord 0.3.2 — https://github.com/notriddle/rust-float-ord
 - foreign-types-macros 0.2.3 — https://github.com/sfackler/foreign-types
 - foreign-types-shared 0.3.1 — https://github.com/sfackler/foreign-types
 - foreign-types 0.5.0 — https://github.com/sfackler/foreign-types
 - hex 0.4.3 — https://github.com/KokaKiwi/rust-hex
+- is_terminal_polyfill 1.70.2 — https://github.com/polyfill-rs/is_terminal_polyfill
 - no_std_io2 0.9.3 — https://github.com/wcampbell0x2a/no-std-io2
 - quick-error 2.0.1 — http://github.com/tailhook/quick-error
 - serde_spanned 0.6.9 — https://github.com/toml-rs/toml
@@ -261,6 +289,7 @@ Used by:
 - bitstream-io 4.10.0 — https://github.com/tuffy/bitstream-io
 - blocking 1.6.2 — https://github.com/smol-rs/blocking
 - bstr 1.12.1 — https://github.com/BurntSushi/bstr
+- cast 0.3.0 — https://github.com/japaric/cast.rs
 - cfg-if 1.0.4 — https://github.com/rust-lang/cfg-if
 - cgl 0.3.2 — https://github.com/servo/cgl-rs
 - cocoa-foundation 0.1.2 — https://github.com/servo/core-foundation-rs
@@ -303,6 +332,7 @@ Used by:
 - flate2 1.1.9 — https://github.com/rust-lang/flate2-rs
 - fnv 1.0.7 — https://github.com/servo/rust-fnv
 - form_urlencoded 1.2.2 — https://github.com/servo/rust-url
+- fs4 0.9.1 — https://github.com/al8n/fs4-rs
 - futf 0.1.5 — https://github.com/servo/futf
 - futures-lite 1.13.0 — https://github.com/smol-rs/futures-lite
 - futures-lite 2.6.1 — https://github.com/smol-rs/futures-lite
@@ -311,6 +341,7 @@ Used by:
 - glob 0.3.3 — https://github.com/rust-lang/glob
 - hashbrown 0.14.5 — https://github.com/rust-lang/hashbrown
 - hashbrown 0.15.5 — https://github.com/rust-lang/hashbrown
+- hashbrown 0.16.1 — https://github.com/rust-lang/hashbrown
 - hashbrown 0.17.0 — https://github.com/rust-lang/hashbrown
 - heck 0.5.0 — https://github.com/withoutboats/heck
 - html5ever 0.27.0 — https://github.com/servo/html5ever
@@ -420,9 +451,21 @@ Used by:
 ## Apache License 2.0 (SPDX: Apache-2.0)
 
 Used by:
+- hashlink 0.10.0 — https://github.com/kyren/hashlink
+- hashlink 0.9.1 — https://github.com/kyren/hashlink
+
+## Apache License 2.0 (SPDX: Apache-2.0)
+
+Used by:
 - bit-set 0.8.0 — https://github.com/contain-rs/bit-set
 - bit-vec 0.8.0 — https://github.com/contain-rs/bit-vec
 - downcast-rs 1.2.1 — https://github.com/marcianx/downcast-rs
+- lexical-core 1.0.6 — https://github.com/Alexhuszagh/rust-lexical
+- lexical-parse-float 1.0.6 — https://github.com/Alexhuszagh/rust-lexical
+- lexical-parse-integer 1.0.6 — https://github.com/Alexhuszagh/rust-lexical
+- lexical-util 1.0.7 — https://github.com/Alexhuszagh/rust-lexical
+- lexical-write-float 1.0.6 — https://github.com/Alexhuszagh/rust-lexical
+- lexical-write-integer 1.0.6 — https://github.com/Alexhuszagh/rust-lexical
 - qoi 0.4.1 — https://github.com/aldanor/qoi-rust
 
 ## Apache License 2.0 (SPDX: Apache-2.0)
@@ -550,9 +593,11 @@ Used by:
 Used by:
 - dat0-app 0.1.0 — https://github.com/accidentally-awesome-labs/dat0
 - dat0-engine 0.1.0 — https://github.com/accidentally-awesome-labs/dat0
+- dat0-fixtures 0.1.0 — https://github.com/accidentally-awesome-labs/dat0
 - dat0-format 0.1.0 — https://github.com/accidentally-awesome-labs/dat0
 - dat0-i18n 0.1.0 — https://github.com/accidentally-awesome-labs/dat0
 - dat0-keychain 0.1.0 — https://github.com/accidentally-awesome-labs/dat0
+- allocator-api2 0.2.21 — https://github.com/zakarumych/allocator-api2
 - anyhow 1.0.102 — https://github.com/dtolnay/anyhow
 - async-trait 0.1.89 — https://github.com/dtolnay/async-trait
 - dirs-sys 0.3.7 — https://github.com/dirs-dev/dirs-sys-rs
@@ -572,6 +617,7 @@ Used by:
 - half 2.7.1 — https://github.com/VoidStarKat/half-rs
 - image-webp 0.2.4 — https://github.com/image-rs/image-webp
 - image 0.25.10 — https://github.com/image-rs/image
+- interprocess 2.4.2 — https://github.com/kotauskas/interprocess
 - inventory 0.3.24 — https://github.com/dtolnay/inventory
 - itoa 1.0.18 — https://github.com/dtolnay/itoa
 - leak 0.1.2 — https://github.com/jmesmon/leak.git
@@ -639,6 +685,7 @@ Used by:
 - unicode-ident 1.0.24 — https://github.com/dtolnay/unicode-ident
 - usvg 0.45.1 — https://github.com/linebender/resvg
 - utf-8 0.7.6 — https://github.com/SimonSapin/rust-utf8
+- utf8parse 0.2.2 — https://github.com/alacritty/vte
 - zune-inflate 0.2.54
 
 ## Apache License 2.0 (SPDX: Apache-2.0)
@@ -815,6 +862,12 @@ Used by:
 ## MIT License (SPDX: MIT)
 
 Used by:
+- libsqlite3-sys 0.28.0 — https://github.com/rusqlite/rusqlite
+- rusqlite 0.31.0 — https://github.com/rusqlite/rusqlite
+
+## MIT License (SPDX: MIT)
+
+Used by:
 - hyper 1.9.0 — https://github.com/hyperium/hyper
 
 ## MIT License (SPDX: MIT)
@@ -971,6 +1024,26 @@ Used by:
 ## MIT License (SPDX: MIT)
 
 Used by:
+- libduckdb-sys 1.4.4 — https://github.com/duckdb/duckdb-rs
+
+## MIT License (SPDX: MIT)
+
+Used by:
+- lru 0.12.5 — https://github.com/jeromefroe/lru-rs.git
+
+## MIT License (SPDX: MIT)
+
+Used by:
+- rust_decimal 1.41.0 — https://github.com/paupino/rust-decimal
+
+## MIT License (SPDX: MIT)
+
+Used by:
+- atoi 2.0.0 — https://github.com/pacman82/atoi-rs
+
+## MIT License (SPDX: MIT)
+
+Used by:
 - mint 0.5.9 — https://github.com/kvark/mint
 
 ## MIT License (SPDX: MIT)
@@ -997,6 +1070,11 @@ Used by:
 
 Used by:
 - tokio-socks 0.5.2 — https://github.com/sticnarf/tokio-socks
+
+## MIT License (SPDX: MIT)
+
+Used by:
+- comfy-table 7.1.2 — https://github.com/nukesor/comfy-table
 
 ## MIT License (SPDX: MIT)
 
@@ -1114,6 +1192,7 @@ Used by:
 - block2 0.6.2 — https://github.com/madsmtm/objc2
 - block 0.1.6 — http://github.com/SSheldon/rust-block
 - convert_case 0.4.0 — https://github.com/rutrum/convert-case
+- duckdb 1.4.4 — https://github.com/duckdb/duckdb-rs
 - fax 0.2.6 — https://github.com/pdf-rs/fax
 - fax_derive 0.2.0 — https://github.com/pdf-rs/fax
 - libm 0.2.16 — https://github.com/rust-lang/compiler-builtins
@@ -1229,6 +1308,11 @@ Used by:
 Used by:
 - nix 0.29.0 — https://github.com/nix-rust/nix
 - nix 0.31.2 — https://github.com/nix-rust/nix
+
+## MIT License (SPDX: MIT)
+
+Used by:
+- strsim 0.11.1 — https://github.com/rapidfuzz/strsim-rs
 
 ## MIT License (SPDX: MIT)
 
