@@ -2,13 +2,23 @@
 //! `cargo test -- --include-ignored` after `dat0-fixtures` has populated
 //! the directory.
 
-#![allow(deprecated)]
-
 use std::path::PathBuf;
 
 use dat0_engine::extension_bootstrap::__test_install_sqlite_scanner;
 use dat0_engine::{AttachOpts, DuckDBEngine, MemoryBudget, QueryEngine, RegisterOpts};
 use futures::StreamExt;
+
+/// Extract the first column, first row as a String from a one-cell query.
+async fn scalar(engine: &DuckDBEngine, sql: &str) -> String {
+    let res = engine.execute(sql).await.expect("execute");
+    let batch = res.batches.first().expect("at least one batch");
+    let col = batch.column(0);
+    let arr = col
+        .as_any()
+        .downcast_ref::<duckdb::arrow::array::StringArray>()
+        .expect("StringArray");
+    arr.value(0).to_string()
+}
 
 fn budget() -> MemoryBudget {
     MemoryBudget {
@@ -124,10 +134,7 @@ async fn one_hundred_mb_sqlite_attach() {
         )
         .await
         .unwrap();
-    let v = engine
-        .__debug_query_scalar("SELECT COUNT(*)::TEXT FROM sq.items")
-        .await
-        .unwrap();
+    let v = scalar(&engine, "SELECT COUNT(*)::TEXT FROM sq.items").await;
     let n: u64 = v.parse().unwrap();
     assert!(
         n > 100_000,

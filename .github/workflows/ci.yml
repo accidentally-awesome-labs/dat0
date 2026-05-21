@@ -105,9 +105,49 @@ jobs:
         # (1 GB CSV / 500 MB Parquet / 100 MB SQLite) run nightly via
         # heavy.yml. PR-time validation runs the fast suite only.
         run: cargo test --workspace --target ${{ matrix.target.triple }}
+      # Bench is macOS-only (single host class — variance across runners
+      # makes cross-OS comparison meaningless). Artifact-only at P3a; spec
+      # line 819 defers the merge-gate threshold to P10.
+      - name: Bench — grid scroll (macOS only)
+        if: runner.os == 'macOS'
+        run: |
+          cargo bench -p dat0-app --bench grid_scroll -- --output-format=bencher | tee bench.txt
+      - name: Upload bench artifact
+        if: runner.os == 'macOS'
+        uses: actions/upload-artifact@v4
+        with:
+          name: grid-scroll-bench-${{ github.sha }}
+          path: bench.txt
+          retention-days: 14
 
   i18n-check:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
       - run: ./scripts/i18n-check.sh
+
+  no-standalone-arrow:
+    name: No standalone arrow dep (type-chain protection)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - name: Verify no `arrow = ` workspace/crate dep
+        run: |
+          if grep -rE '^arrow\s*=' Cargo.toml crates/*/Cargo.toml; then
+            echo "::error::Standalone arrow dep would break duckdb::arrow type chain. See P2 retro #2."
+            exit 1
+          fi
+          echo "OK: no standalone arrow dep"
+
+  no-debug-query-scalar:
+    name: No __debug_query_scalar references (D-011 closure)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - name: Verify no `__debug_query_scalar` references
+        run: |
+          if grep -rE '__debug_query_scalar' crates/ 2>/dev/null; then
+            echo "::error::__debug_query_scalar was removed in P3a T5 (D-011). Use execute_paged instead."
+            exit 1
+          fi
+          echo "OK: no __debug_query_scalar references"

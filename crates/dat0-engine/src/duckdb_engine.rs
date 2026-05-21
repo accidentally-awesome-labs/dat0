@@ -1,5 +1,6 @@
 //! `DuckDBEngine` — sole `QueryEngine` impl in v1. Per spec §2.1.
 
+use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex, RwLock};
 
@@ -8,7 +9,7 @@ use tracing::{debug, error, instrument};
 use crate::Result;
 use crate::catalog::quote_ident;
 use crate::error::EngineError;
-use crate::types::{EngineStatus, MemoryBudget};
+use crate::types::{DerivedOrigin, EngineStatus, MemoryBudget, TableOrigin};
 
 pub struct DuckDBEngine {
     pub(crate) conn: Arc<Mutex<duckdb::Connection>>,
@@ -16,6 +17,7 @@ pub struct DuckDBEngine {
     pub(crate) budget: MemoryBudget,
     pub(crate) scratch_path: PathBuf,
     pub(crate) status: Arc<RwLock<EngineStatus>>,
+    pub(crate) table_origins: Arc<RwLock<HashMap<String, TableOrigin>>>,
 }
 
 impl DuckDBEngine {
@@ -31,6 +33,7 @@ impl DuckDBEngine {
             budget,
             scratch_path,
             status: Arc::new(RwLock::new(EngineStatus::Initializing)),
+            table_origins: Arc::new(RwLock::new(HashMap::new())),
         })
     }
 
@@ -38,22 +41,6 @@ impl DuckDBEngine {
     /// query returns `EngineError::Interrupted` from spawn_blocking on next yield.
     pub fn interrupt(&self) {
         self.interrupt.interrupt();
-    }
-
-    /// Test-only scalar probe. T7 replaces in tests with `execute()`.
-    #[doc(hidden)]
-    #[deprecated(note = "test-only; will be replaced by execute() in T7")]
-    pub async fn __debug_query_scalar(&self, sql: &str) -> Result<String> {
-        self.assert_open()?;
-        let conn = self.conn.clone();
-        let sql = sql.to_owned();
-        tokio::task::spawn_blocking(move || -> Result<String> {
-            let conn = conn.lock().map_err(|_| EngineError::EnginePoisoned)?;
-            let v: String = conn.query_row(&sql, [], |r| r.get(0))?;
-            Ok(v)
-        })
-        .await
-        .map_err(|e| EngineError::TaskJoin(e.to_string()))?
     }
 
     fn assert_open(&self) -> Result<()> {
@@ -208,13 +195,18 @@ impl crate::QueryEngine for DuckDBEngine {
         .await
         .map_err(|e| EngineError::TaskJoin(e.to_string()))??;
 
-        Ok(crate::types::TableInfo {
+        let info = crate::types::TableInfo {
             name: table_name,
             schema: "main".to_string(),
             columns,
             row_count_estimate: None,
-            origin: crate::types::TableOrigin::File(path),
-        })
+            origin: crate::types::TableOrigin::File(path.clone()),
+        };
+        self.table_origins
+            .write()
+            .expect("table_origins poisoned")
+            .insert(info.name.clone(), TableOrigin::File(path));
+        Ok(info)
     }
 
     #[instrument(skip(self), fields(name = name, sql_len = sql.len()))]
@@ -228,12 +220,21 @@ impl crate::QueryEngine for DuckDBEngine {
         let conn = self.conn.clone();
         let name = name.to_owned();
         let sql = sql.to_owned();
-        tokio::task::spawn_blocking(move || -> Result<crate::types::TableInfo> {
-            let conn = conn.lock().map_err(|_| EngineError::EnginePoisoned)?;
-            crate::catalog::create_table(&conn, &name, &sql)
+        let info = tokio::task::spawn_blocking({
+            let name = name.clone();
+            let sql = sql.clone();
+            move || -> Result<crate::types::TableInfo> {
+                let conn = conn.lock().map_err(|_| EngineError::EnginePoisoned)?;
+                crate::catalog::create_table(&conn, &name, &sql)
+            }
         })
         .await
-        .map_err(|e| EngineError::TaskJoin(e.to_string()))?
+        .map_err(|e| EngineError::TaskJoin(e.to_string()))??;
+        self.table_origins
+            .write()
+            .expect("table_origins poisoned")
+            .insert(name, TableOrigin::Derived(DerivedOrigin::Sql(sql)));
+        Ok(info)
     }
 
     #[instrument(skip(self), fields(name = name))]
@@ -242,12 +243,19 @@ impl crate::QueryEngine for DuckDBEngine {
         let conn = self.conn.clone();
         let name = name.to_owned();
         let schema = schema.map(|s| s.to_owned());
+        let name_for_closure = name.clone();
         tokio::task::spawn_blocking(move || -> Result<()> {
             let conn = conn.lock().map_err(|_| EngineError::EnginePoisoned)?;
-            crate::catalog::drop_table(&conn, &name, schema.as_deref())
+            crate::catalog::drop_table(&conn, &name_for_closure, schema.as_deref())
         })
         .await
-        .map_err(|e| EngineError::TaskJoin(e.to_string()))?
+        .map_err(|e| EngineError::TaskJoin(e.to_string()))??;
+        // Remove origin entry only after the DB op succeeds.
+        self.table_origins
+            .write()
+            .expect("table_origins poisoned")
+            .remove(&name);
+        Ok(())
     }
 
     #[instrument(skip(self), fields(old = old, new = new))]
@@ -257,12 +265,27 @@ impl crate::QueryEngine for DuckDBEngine {
         let old = old.to_owned();
         let new = new.to_owned();
         let schema = schema.map(|s| s.to_owned());
+        let old_for_closure = old.clone();
+        let new_for_closure = new.clone();
         tokio::task::spawn_blocking(move || -> Result<()> {
             let conn = conn.lock().map_err(|_| EngineError::EnginePoisoned)?;
-            crate::catalog::rename_table(&conn, &old, &new, schema.as_deref())
+            crate::catalog::rename_table(
+                &conn,
+                &old_for_closure,
+                &new_for_closure,
+                schema.as_deref(),
+            )
         })
         .await
-        .map_err(|e| EngineError::TaskJoin(e.to_string()))?
+        .map_err(|e| EngineError::TaskJoin(e.to_string()))??;
+        // Atomically rekey origin entry only after the DB op succeeds.
+        // If the old name has no entry (e.g. table created outside register_file /
+        // create_table), do nothing — don't fabricate an entry for the new name.
+        let mut origins = self.table_origins.write().expect("table_origins poisoned");
+        if let Some(origin) = origins.remove(&old) {
+            origins.insert(new, origin);
+        }
+        Ok(())
     }
 
     #[instrument(skip(self), fields(sql_len = sql.len()))]
@@ -324,9 +347,14 @@ impl crate::QueryEngine for DuckDBEngine {
     async fn get_tables(&self) -> Result<Vec<crate::types::TableInfo>> {
         self.assert_open()?;
         let conn = self.conn.clone();
+        let origins = self
+            .table_origins
+            .read()
+            .expect("table_origins poisoned")
+            .clone();
         tokio::task::spawn_blocking(move || -> Result<Vec<crate::types::TableInfo>> {
             let conn = conn.lock().map_err(|_| EngineError::EnginePoisoned)?;
-            crate::catalog::get_tables(&conn)
+            crate::catalog::get_tables(&conn, &origins)
         })
         .await
         .map_err(|e| EngineError::TaskJoin(e.to_string()))?
@@ -371,6 +399,10 @@ impl crate::QueryEngine for DuckDBEngine {
         })
         .await
         .map_err(|e| EngineError::TaskJoin(e.to_string()))?
+        // TODO P4 (D-012 partial): `attach` does not enumerate attached tables,
+        // so per-table `TableOrigin::Attached { alias, source }` entries are not
+        // recorded in `table_origins` here. Enumeration logic belongs in P4;
+        // the map write site will be added at that point.
     }
 
     #[instrument(skip(self), fields(alias))]
@@ -401,5 +433,17 @@ impl DuckDBEngine {
         })
         .await
         .map_err(|e| EngineError::TaskJoin(e.to_string()))?
+    }
+
+    /// Return the recorded `TableOrigin` for `name`, or `None` if not tracked.
+    ///
+    /// T7 passes the origins map directly to `catalog::get_tables` rather than
+    /// going through this accessor. Available for T8/T9 call sites and tests.
+    pub fn table_origin(&self, name: &str) -> Option<TableOrigin> {
+        self.table_origins
+            .read()
+            .expect("table_origins poisoned")
+            .get(name)
+            .cloned()
     }
 }

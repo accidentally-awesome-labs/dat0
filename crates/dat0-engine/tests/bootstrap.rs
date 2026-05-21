@@ -1,8 +1,18 @@
-#![allow(deprecated)] // __debug_query_scalar is intentionally test-only
-
 use std::time::Duration;
 
 use dat0_engine::{DuckDBEngine, EngineStatus, MemoryBudget, QueryEngine};
+
+/// Extract the first column, first row as a String from a one-cell query.
+async fn scalar(engine: &DuckDBEngine, sql: &str) -> String {
+    let res = engine.execute(sql).await.expect("execute");
+    let batch = res.batches.first().expect("at least one batch");
+    let col = batch.column(0);
+    let arr = col
+        .as_any()
+        .downcast_ref::<duckdb::arrow::array::StringArray>()
+        .expect("StringArray");
+    arr.value(0).to_string()
+}
 
 fn budget_512mb() -> MemoryBudget {
     MemoryBudget {
@@ -32,11 +42,7 @@ async fn engine_init_applies_memory_pragma() {
     let engine = DuckDBEngine::new(scratch.clone(), budget).unwrap();
     engine.init().await.unwrap();
 
-    // Probe via execute() once T7 lands. For T2 we expose a debug helper.
-    let limit = engine
-        .__debug_query_scalar("SELECT current_setting('memory_limit')")
-        .await
-        .unwrap();
+    let limit = scalar(&engine, "SELECT current_setting('memory_limit')").await;
     // DuckDB normalizes; expect "1.0 GiB" or similar.
     assert!(limit.contains("GiB") || limit.contains("MiB"));
     engine.close().await.unwrap();
@@ -50,7 +56,7 @@ async fn engine_rejects_ops_after_close() {
     engine.init().await.unwrap();
     engine.close().await.unwrap();
     let err = engine
-        .__debug_query_scalar("SELECT 1")
+        .execute("SELECT 1")
         .await
         .expect_err("must reject ops after close");
     assert!(matches!(err, dat0_engine::EngineError::EngineClosed));

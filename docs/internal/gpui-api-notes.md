@@ -702,3 +702,157 @@ When bumping either pin:
 3. Re-fetch `crates/gpui/src/{app,window,element,platform/app_menu}.rs` and re-verify the API signatures in §0.2-§0.4.
 4. Update §0.6 if any new gotcha appears or any existing one is resolved upstream.
 5. Mirror the new SHAs into `docs/upstream-watch.md` "Current verified pins" subsection.
+
+---
+
+## 0.9 File drop events (v0.2.2)
+
+- **Verification date:** 2026-05-16
+- **Verifier:** P3a.T0 spike (read-only inspection of `~/.cargo/registry/src/index.crates.io-*/gpui-0.2.2/src/`)
+- **Source files inspected:** `interactive.rs` (ExternalPaths, FileDropEvent), `window.rs` (dispatch_event), `platform/mac/window.rs` (Cocoa drag callbacks)
+
+### `ExternalPaths` — the file payload type (verbatim, `interactive.rs:496`)
+
+```rust
+/// A collection of paths from the platform, such as from a file drop.
+#[derive(Debug, Clone, Default)]
+pub struct ExternalPaths(pub(crate) SmallVec<[PathBuf; 2]>);
+
+impl ExternalPaths {
+    /// Convert this collection of paths into a slice.
+    pub fn paths(&self) -> &[PathBuf] {
+        &self.0
+    }
+}
+```
+
+`ExternalPaths` is **not** `Vec<PathBuf>` directly. The inner field is `pub(crate)` — callers must use `.paths()` to get a `&[PathBuf]` slice.
+
+### `FileDropEvent` enum (verbatim, `interactive.rs:515`)
+
+```rust
+/// A file drop event from the platform, generated when files are dragged and dropped onto the window.
+#[derive(Debug, Clone)]
+pub enum FileDropEvent {
+    /// The files have entered the window.
+    Entered {
+        position: Point<Pixels>,
+        paths: ExternalPaths,
+    },
+    /// The files are being dragged over the window.
+    Pending {
+        position: Point<Pixels>,
+    },
+    /// The files have been dropped onto the window.
+    Submit {
+        position: Point<Pixels>,
+    },
+    /// The user has stopped dragging the files over the window.
+    Exited,
+}
+```
+
+`FileDropEvent` implements `InputEvent` and `MouseEvent`:
+
+```rust
+impl InputEvent for FileDropEvent {
+    fn to_platform_input(self) -> PlatformInput {
+        PlatformInput::FileDrop(self)
+    }
+}
+impl MouseEvent for FileDropEvent {}
+```
+
+### How GPUI v0.2.2 translates file drop to drag-and-drop (verbatim, `window.rs:3622`)
+
+```rust
+// Translate dragging and dropping of external files from the operating system
+// to internal drag and drop events.
+PlatformInput::FileDrop(file_drop) => match file_drop {
+    FileDropEvent::Entered { position, paths } => {
+        self.mouse_position = position;
+        if cx.active_drag.is_none() {
+            cx.active_drag = Some(AnyDrag {
+                value: Arc::new(paths.clone()),
+                view: cx.new(|_| paths).into(),
+                cursor_offset: position,
+                cursor_style: None,
+            });
+        }
+        PlatformInput::MouseMove(MouseMoveEvent { ... })
+    }
+    FileDropEvent::Pending { position } => {
+        PlatformInput::MouseMove(MouseMoveEvent { ... })
+    }
+    FileDropEvent::Submit { position } => {
+        cx.activate(true);
+        PlatformInput::MouseUp(MouseUpEvent { button: MouseButton::Left, ... })
+    }
+    FileDropEvent::Exited => {
+        cx.active_drag.take();
+        PlatformInput::FileDrop(FileDropEvent::Exited)
+    }
+}
+```
+
+**Key finding:** GPUI v0.2.2 translates `FileDropEvent::Entered` into a `MouseMove` event with the `ExternalPaths` value stored as `cx.active_drag`. `FileDropEvent::Submit` becomes a `MouseUp` (Left button). The framework thus reuses the **drag-and-drop element API** (`on_drop<T>`) for file drops — there is no separate "on_file_drop" window-level handler.
+
+### Consumer pattern — `on_drop<ExternalPaths>` on a `div`
+
+To receive dropped files, attach `.on_drop::<ExternalPaths>(...)` to any element that should be a drop target. The callback signature (from `div.rs:462`):
+
+```rust
+pub fn on_drop<T: 'static>(
+    &mut self,
+    listener: impl Fn(&T, &mut Window, &mut App) + 'static,
+)
+```
+
+In dat0's context, using the fluent `InteractiveElement::on_drop` form (from `div.rs:976`):
+
+```rust
+fn on_drop<T: 'static>(
+    mut self,
+    listener: impl Fn(&T, &mut Window, &mut App) + 'static,
+) -> Self
+```
+
+Example wiring inside a `Render` impl (illustrative, not in a `.rs` file):
+
+```rust
+div()
+    .size_full()
+    .drag_over::<ExternalPaths>(|style, _, _, _| style.bg(gpui::rgba(0x00_88_ff_22)))
+    .on_drop::<ExternalPaths>(cx.listener(|view, paths: &ExternalPaths, _window, cx| {
+        for path in paths.paths() {
+            view.handle_dropped_file(path.clone(), cx);
+        }
+    }))
+```
+
+`cx.listener` (from `Context::listener`) binds `&mut Self` into the closure. The `drag_over` call provides a hover-highlight while files are dragged over the target.
+
+### Extracting paths from `ExternalPaths`
+
+`ExternalPaths.paths()` returns `&[PathBuf]`. There is no `into_vec()` method; clone each `PathBuf` if ownership is needed:
+
+```rust
+let owned: Vec<PathBuf> = paths.paths().to_vec();
+```
+
+### Drop handler thread — confirmed main thread
+
+On macOS, `FileDropEvent` originates from Cocoa's `NSDraggingDestination` protocol methods (`draggingEntered`, `draggingUpdated`, `performDragOperation`, etc.) in `platform/mac/window.rs`. These callbacks dispatch via `send_new_event` which calls the window's `event_callback` directly on the calling thread — the macOS App Kit main thread.
+
+GPUI's `Window::dispatch_event` (the function that translates `FileDrop` to internal drag events) is always called on the main thread. The `on_drop` callback therefore runs on **the GPUI main thread** — the same thread where all rendering and `Context`/`Window` mutation happen. No cross-thread synchronization is needed inside the callback.
+
+### Summary for P3a T5 (`FileDropHandler`)
+
+| Question | Answer |
+|---|---|
+| API entry point | `div().on_drop::<ExternalPaths>(...)` |
+| Paths accessor | `ExternalPaths::paths() -> &[PathBuf]` |
+| Payload type | `ExternalPaths` (wraps `SmallVec<[PathBuf; 2]>`), NOT `Vec<PathBuf>` |
+| Handler thread | GPUI main thread (confirmed — Cocoa callbacks are main-thread) |
+| Hover-highlight | `div().drag_over::<ExternalPaths>(...)` |
+| Requires `Root` wrapper? | No — file drop is pure element-level, no overlay layer needed |

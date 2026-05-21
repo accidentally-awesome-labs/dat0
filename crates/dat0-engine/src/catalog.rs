@@ -1,5 +1,7 @@
 //! Catalog ops: describe, list, create, drop, rename.
 
+use std::collections::HashMap;
+
 use crate::Result;
 use crate::types::{ColumnInfo, DerivedOrigin, TableInfo, TableOrigin};
 
@@ -34,7 +36,10 @@ pub(crate) fn describe_table(
     Ok(cols)
 }
 
-pub(crate) fn get_tables(conn: &duckdb::Connection) -> Result<Vec<TableInfo>> {
+pub(crate) fn get_tables(
+    conn: &duckdb::Connection,
+    origins: &HashMap<String, TableOrigin>,
+) -> Result<Vec<TableInfo>> {
     // Use information_schema for portability; columns: table_schema, table_name.
     let mut stmt = conn.prepare(
         "SELECT table_schema, table_name
@@ -52,12 +57,16 @@ pub(crate) fn get_tables(conn: &duckdb::Connection) -> Result<Vec<TableInfo>> {
     let mut tables = Vec::with_capacity(rows.len());
     for (schema, name) in rows {
         let cols = describe_table(conn, &name, Some(&schema))?;
+        let origin = origins
+            .get(&name)
+            .cloned()
+            .unwrap_or(TableOrigin::Derived(DerivedOrigin::Sql(String::new())));
         tables.push(TableInfo {
             name,
             schema,
             columns: cols,
             row_count_estimate: None,
-            origin: TableOrigin::Derived(DerivedOrigin::Sql(String::new())),
+            origin,
         });
     }
     Ok(tables)
@@ -66,10 +75,21 @@ pub(crate) fn get_tables(conn: &duckdb::Connection) -> Result<Vec<TableInfo>> {
 pub(crate) fn create_table(conn: &duckdb::Connection, name: &str, sql: &str) -> Result<TableInfo> {
     let create_sql = format!("CREATE TABLE {} AS {}", quote_ident(name), sql);
     conn.execute_batch(&create_sql)?;
+    let resolved_schema: String = conn
+        .query_row(
+            "SELECT table_schema FROM information_schema.tables WHERE table_name = ?1 LIMIT 1",
+            [name],
+            |row| row.get(0),
+        )
+        // duckdb-rs collapses both "no rows" and DB errors into a single Err.
+        // For dat0 Scratch mode the only reachable schema is "main", so falling
+        // back to "main" preserves correctness without unwrapping prematurely.
+        // P4 (workspace mode) may need to surface the error case explicitly.
+        .unwrap_or_else(|_| "main".to_string());
     let columns = describe_table(conn, name, None)?;
     Ok(TableInfo {
         name: name.to_string(),
-        schema: "main".to_string(),
+        schema: resolved_schema,
         columns,
         row_count_estimate: None,
         origin: TableOrigin::Derived(DerivedOrigin::Sql(sql.to_string())),

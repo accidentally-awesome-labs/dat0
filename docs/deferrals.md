@@ -50,8 +50,8 @@ that's modifying it; merge conflicts are signals worth investigating.
 | D-008 | Cancellation-token wiring through `QueryEngine` trait | open | P2 | P5     |
 | D-009 | Bundle `sqlite_scanner` static when duckdb-rs exposes a feature | open | P2 | TBD |
 | D-010 | Non-UTF-8 file encoding handling                   | open | P2   | TBD    |
-| D-011 | Remove `__debug_query_scalar` test-only helper     | open | P2   | P3     |
-| D-012 | Engine catalog `TableInfo` synthesis (origin + schema) | open | P2   | P3     |
+| D-011 | Remove `__debug_query_scalar` test-only helper     | closed | P2   | P3a    |
+| D-012 | Engine catalog `TableInfo` synthesis (origin + schema) | closed | P2   | P3a    |
 | D-013 | Self-hosted macOS CI runner (cut hosted macos-14 10× billing) | open | P2 | TBD |
 
 ## At-a-glance — Plan defects
@@ -65,6 +65,9 @@ that's modifying it; merge conflicts are signals worth investigating.
 | PD-005 | P2 plan T3 snippet uses `&*conn` triggering clippy explicit-auto-deref | closed | trivial |
 | PD-006 | P2 plan T12 fixtures snippet uses bare `rng.gen::<…>()` — reserved keyword in Rust 2024 | closed | low      |
 | PD-007 | P2 plan T14 snippet calls non-existent `error_ux::banner::push_banner` with mismatched `Banner` shape | closed | low      |
+| PD-008 | P3a plan T2 snippets use wrong import paths for `fs4::FileExt` and `interprocess::local_socket::traits::Stream` | closed | trivial  |
+| PD-009 | P3a plan T6 test snippet calls non-existent `engine.catalog().get_tables()` — no `catalog()` method on `DuckDBEngine` | closed | trivial |
+| PD-010 | P3a plan T12 UDS → GPUI cross-thread window-open bridge is unsafe: `AsyncApp::update` borrows a `RefCell`-backed app cell, not safe to call from a tokio background thread | open | low |
 
 ---
 
@@ -287,9 +290,9 @@ that's modifying it; merge conflicts are signals worth investigating.
 
 ### D-011 — Remove `__debug_query_scalar` test-only helper
 
-- **Status:** open
+- **Status:** CLOSED — 2026-05-16 (P3a T5)
 - **Deferred from:** P2 (T2 fix-up; commit `f7ed3a7`)
-- **Target phase:** P3
+- **Target phase:** P3a
 - **Reason:** During P2.T2, bootstrap tests needed scalar-query access before
   T7's `execute()` shipped. The test-only helper `__debug_query_scalar` filled
   the gap and was marked `#[deprecated(note = "test-only; will be replaced by
@@ -297,55 +300,56 @@ that's modifying it; merge conflicts are signals worth investigating.
   ripping the helper out of 8 test files was deferred to avoid scope creep
   inside P2 (the deprecation attribute + per-file `#![allow(deprecated)]`
   prevent the helper from leaking into production callers in the meantime).
-- **What P2 ships:** `pub async fn __debug_query_scalar` on `DuckDBEngine` with
+- **What P2 shipped:** `pub async fn __debug_query_scalar` on `DuckDBEngine` with
   `#[doc(hidden)]` and `#[deprecated]` attributes; file-level
   `#![allow(deprecated)]` in 8 test files (`crates/dat0-engine/tests/`:
   `bootstrap.rs`, `migrations.rs`, `register_csv.rs`, `register_json.rs`,
   `register_parquet.rs`, `attach_sqlite.rs`, `multi_window.rs`,
   `exit_criteria.rs`).
-- **What target phase delivers:** helper removed from `DuckDBEngine`; each test
-  call site rewritten to use `engine.execute("…")` + Arrow array downcast (a
-  small inline `scalar_string` helper per file is the recommended shape); the 8
-  `#![allow(deprecated)]` file-level attributes dropped. Behavior unchanged —
-  same conditions verified via the public API.
-- **Trigger:** scheduled cleanup agent (claude.ai routine
-  `trig_01SNW3fxTeeR1gHkCTe37HHE`, fires `2026-05-19T13:00:00Z`). Pre-flight
-  gate: agent bails if neither a `P3` commit on `origin/main` nor a `p3-*`
-  branch exists; user re-arms via routines UI in that case. On success the
-  agent opens a PR from `cleanup/remove-debug-query-scalar`.
+- **What P3a T5 delivered:** Removed `__debug_query_scalar` impl; test callers
+  rewritten to use `execute_paged`; CI grep gate added in T20. All 8 test files
+  had their `#![allow(deprecated)]` attributes removed; each file received a
+  local `async fn scalar(engine, sql) -> String` helper using `engine.execute()`
+  + Arrow `StringArray` downcast. Behavior identical — same assertions now
+  exercised via the public API.
 - **Originating doc:** `docs/plans/2026-04-27-dat0-p2-engine-plan.md` (T2
   fix-up commit `f7ed3a7`); P2 retro `docs/plans/2026-04-27-dat0-p2-retro.md`
   § "Recommendations for P3" #3.
-- **Last touched:** 2026-04-28
+- **Last touched:** 2026-05-16
 
 ### D-012 — Engine catalog `TableInfo` synthesis (origin + schema)
 
-- **Status:** open
+- **Status:** CLOSED — 2026-05-16 (P3a T6+T7)
 - **Deferred from:** P2 (T9 catalog ops)
-- **Target phase:** P3 (Scratch mode + DataGrid)
+- **Target phase:** P3a (Scratch mode + DataGrid)
 - **Reason:** DuckDB doesn't persist `TableOrigin` metadata across reconnects,
-  and the engine has no per-table origin registry yet. P2's `get_tables`
-  synthesizes `TableOrigin::Derived(DerivedOrigin::Sql(""))` as a placeholder
-  for every table — a false positive that future code may misinterpret.
-  Similarly, `create_table` returns `TableInfo { schema: "main", ... }`
-  hardcoded regardless of where the table actually lands; if a caller ever
-  changes `current_schema` or passes a qualified name, the returned
-  `TableInfo.schema` will be wrong.
-- **What P2 ships:** `TableInfo.origin` and `TableInfo.schema` populated with
-  best-effort placeholders. `register_file` produces the correct
-  `TableOrigin::File(PathBuf)`. All other paths return `Derived(Sql(""))`
+  and the engine had no per-table origin registry. P2's `get_tables`
+  synthesized `TableOrigin::Derived(DerivedOrigin::Sql(""))` as a placeholder
+  for every table — a false positive that future code could misinterpret.
+  Similarly, `create_table` returned `TableInfo { schema: "main", ... }`
+  hardcoded regardless of where the table actually landed.
+- **What P2 shipped:** `TableInfo.origin` and `TableInfo.schema` populated with
+  best-effort placeholders. `register_file` produced the correct
+  `TableOrigin::File(PathBuf)`. All other paths returned `Derived(Sql(""))`
   or hardcoded `"main"`.
-- **What target phase delivers:** either (a) per-engine origin registry
-  (a `__dat0_meta_table_origins` table populated on `create_table` /
-  `register_file` / `attach`-derived tables, queried by `get_tables`), OR
-  (b) explicit `TableOrigin::Unknown` variant added to `types.rs` so the
-  type system surfaces "we don't know" instead of lying. P3 SQL Console
-  surfaces table origins to the user; that's when the placeholder becomes
-  user-visible noise.
+- **What P3a T6+T7 delivered:** per-engine in-memory origin registry
+  (`DuckDBEngine.table_origins: Arc<RwLock<HashMap<String, TableOrigin>>>`)
+  populated on `register_file` (→ `File(path)`) and `create_table`
+  (→ `Derived(Sql(sql))`). `get_tables` (T7) joins `information_schema`
+  rows against the map; untracked tables fall through to the existing
+  `Derived(Sql(""))` placeholder. `create_table` resolves `schema` via
+  `information_schema.tables` rather than hardcoding `"main"`.
+- **P4 remainder (attach):** `attach` does not enumerate the tables inside the
+  attached database, so `TableOrigin::Attached { alias, source }` entries are
+  not recorded per table. Per-table attach origin tracking is deferred to P4.
+  See TODO comment in `duckdb_engine.rs` `attach` impl.
+- **Closed by:** P3a T6 commit `324d89f`; T7 commit on branch `p3a-hot-path`
+  (2026-05-16). Tests: `register_file_origin_is_file` + `create_table_returns_real_schema`
+  in `crates/dat0-engine/tests/catalog_origin.rs` both pass.
 - **Originating doc:** `docs/plans/2026-04-27-dat0-p2-engine-plan.md` T9 +
   T9 review notes; `docs/plans/2026-04-27-dat0-p2-retro.md` § "Reviewer-
   flagged minor follow-ups".
-- **Last touched:** 2026-04-28
+- **Last touched:** 2026-05-16
 
 ### D-013 — Self-hosted macOS CI runner (cut hosted macos-14 10× billing)
 
@@ -598,6 +602,101 @@ that's modifying it; merge conflicts are signals worth investigating.
   Step 14.2 code block (lines 3775-3796).
 - **Closed by:** P2 T14 commit `9ea964b` on branch `p2-engine`.
 - **Last touched:** 2026-04-28
+
+---
+
+### PD-008 — P3a plan T2 snippets use wrong import paths for `fs4::FileExt` and `interprocess` sync `Stream`
+
+- **Status:** closed
+- **Severity:** trivial (compile-time failure, mechanical fix)
+- **Affected files:** `crates/dat0-app/src/app_lock.rs`
+- **Symptom 1 — fs4:** Plan T2 Step 3 snippet uses `use fs4::FileExt;`. In
+  fs4 0.9.1 the sync `FileExt` trait is not re-exported at the crate root;
+  it lives at `fs4::fs_std::FileExt` (gated behind the `"sync"` feature,
+  which the workspace Cargo.toml already enables). The old path `fs4::FileExt`
+  resolves to `std::os::unix::prelude::FileExt` — a different trait — causing
+  `try_lock_exclusive` not to be found.
+- **Symptom 2 — interprocess sync connect:** Plan T2 Step 4 snippet imports
+  `interprocess::local_socket::traits::Stream` and calls `.connect(name)` on
+  it. In interprocess 2.4.2 `traits::Stream` is a trait (not a type), so
+  `Stream::connect` is not accessible via the trait path. The concrete enum
+  type `interprocess::local_socket::Stream` carries `connect(name)` and is
+  the correct call site. The plan's sync example also omits the `prelude::*`
+  glob that brings `ToFsName` into scope; the real code requires both.
+- **Fix applied:** In `try_acquire`, changed `use fs4::FileExt;` →
+  `use fs4::fs_std::FileExt;`. In `forward_open_window`, replaced the
+  `traits::Stream` import + method path with
+  `use interprocess::local_socket::{GenericFilePath, Stream, prelude::*};`
+  and `Stream::connect(name)`. Both changes are minimal and preserve the
+  intended semantics exactly.
+- **Originating doc:** `docs/plans/2026-05-14-dat0-p3a-plan.md` T2 Steps 3–4
+  code blocks.
+- **Closed by:** P3a T2 commit on branch `p3a-hot-path`.
+- **Last touched:** 2026-05-16
+
+---
+
+### PD-009 — P3a plan T6 test snippet calls non-existent `engine.catalog().get_tables()`
+
+- **Status:** closed
+- **Severity:** trivial (compile-time failure, mechanical fix)
+- **Affected files:** `crates/dat0-engine/tests/catalog_origin.rs`
+- **Symptom:** Plan T6 Step 3 test snippet calls `engine.catalog().get_tables()`
+  to retrieve the table list. `DuckDBEngine` has no `catalog()` method; the
+  correct call is `engine.get_tables().await` via the `QueryEngine` trait,
+  which is the same pattern used in `tests/catalog.rs` and `tests/exit_criteria.rs`.
+- **Fix applied:** Changed `engine.catalog().get_tables().await` →
+  `engine.get_tables().await` in the new test. The semantic intent (list all
+  engine-visible tables and find the just-registered one) is unchanged.
+- **Originating doc:** `docs/plans/2026-05-14-dat0-p3a-plan.md` T6 Step 3
+  code block (lines 979–1005).
+- **Closed by:** P3a T6 commit on branch `p3a-hot-path`.
+- **Last touched:** 2026-05-16
+
+---
+
+### PD-010 — P3a plan T12 UDS → GPUI cross-thread window-open bridge is unsafe
+
+- **Status:** open
+- **Severity:** low (single-instance enforcement and Cmd-N multi-window are fully
+  functional; only UDS-triggered window-open from a second launch is affected)
+- **Affected files:** `crates/dat0-app/src/window.rs` (`run_app` UDS handler)
+- **Symptom:** The P3a T12 plan instructs the UDS `serve` handler to call
+  `async_cx.update(|cx| cx.open_window(...))` from inside a tokio background
+  task. `AsyncApp::update` internally calls `app.borrow_mut()` on a
+  `Rc<RefCell<AppState>>`. `RefCell` is not `Send`/`Sync` — calling it from a
+  non-main thread while the Cocoa event loop may hold the borrow causes a
+  `RefCell` panic (or UB on older rustc). GPUI's foreground executor (backed by
+  the macOS Cocoa run loop) is the only safe caller of `AsyncApp::update`.
+- **Root cause:** GPUI v0.2.2 was designed for a single-threaded event model
+  where all window mutations happen on the platform main thread. There is no
+  thread-safe "wake the main thread and dispatch a closure" API analogous to
+  `dispatch_async` in GCD (which Zed uses internally but does not expose
+  publicly in the published `gpui` crate).
+- **What P3a T12 ships:** UDS `serve` handler logs received `OpenWindowMessage`
+  via `tracing::info!`. Single-instance enforcement (second launch forwards via
+  UDS + exits) is fully functional. Cmd-N (`menu_macos::NewWindow` action)
+  spawns a new window synchronously on the main thread via `cx.on_action`.
+- **What target phase delivers:** One of:
+  - **(a) GCD dispatch bridge** — capture a `dispatch_async`-able block in
+    `Application::new()` before the event loop starts; invoke it from the tokio
+    handler to schedule a main-thread closure via libdispatch. Requires
+    `block2` + `dispatch` crates and an FFI shim.
+  - **(b) gpui foreground executor channel** — poll `ForegroundExecutor::spawn`
+    from a futures-compatible channel (e.g. `futures::channel::mpsc`) that the
+    tokio handler sends into via `try_send`. The gpui spawn'd future loops on
+    the receiver and calls `cx.open_window` on the main thread.
+    The `futures::channel::mpsc` bridge requires capturing the `Sender<Box<dyn FnOnce(&mut App) + Send>>` before `Application::run` begins so the UDS handler closure (running on a tokio task) can post into it; the receiver lives inside a gpui foreground-executor loop registered during app init.
+  - **(c) Upstream contribution** — add a `dispatch_to_main_thread` API to
+    `gpui` and upstream it.
+  - Option (b) is the lowest-friction path: gpui already uses
+    `futures::channel::oneshot` internally; `try_send` is sync and safe from
+    tokio context.
+- **Originating doc:** `docs/plans/2026-05-14-dat0-p3a-plan.md` T12 Step 2
+  ("Pattern C (preferred)" + "Practical fallback").
+- **Target phase:** T17 / P3b polish — depends on the UDS round-trip
+  integration test (T16) that validates single-instance enforcement end-to-end.
+- **Last touched:** 2026-05-16
 
 ---
 

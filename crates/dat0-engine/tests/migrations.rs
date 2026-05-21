@@ -1,6 +1,16 @@
-#![allow(deprecated)] // __debug_query_scalar is intentionally test-only
-
 use dat0_engine::{DuckDBEngine, MemoryBudget, QueryEngine};
+
+/// Extract the first column, first row as a String from a one-cell query.
+async fn scalar(engine: &DuckDBEngine, sql: &str) -> String {
+    let res = engine.execute(sql).await.expect("execute");
+    let batch = res.batches.first().expect("at least one batch");
+    let col = batch.column(0);
+    let arr = col
+        .as_any()
+        .downcast_ref::<duckdb::arrow::array::StringArray>()
+        .expect("StringArray");
+    arr.value(0).to_string()
+}
 
 fn budget() -> MemoryBudget {
     MemoryBudget {
@@ -15,16 +25,18 @@ async fn migrations_apply_on_fresh_db() {
     let engine = DuckDBEngine::new(scratch.clone(), budget()).unwrap();
     engine.init().await.unwrap();
 
-    let v = engine
-        .__debug_query_scalar("SELECT COALESCE(MAX(version), 0)::TEXT FROM __dat0_meta_migrations")
-        .await
-        .unwrap();
+    let v = scalar(
+        &engine,
+        "SELECT COALESCE(MAX(version), 0)::TEXT FROM __dat0_meta_migrations",
+    )
+    .await;
     assert_eq!(v, "1", "first migration should be applied");
 
-    let workspace_v = engine
-        .__debug_query_scalar("SELECT value FROM __dat0_meta WHERE key = 'dat0_workspace_version'")
-        .await
-        .unwrap();
+    let workspace_v = scalar(
+        &engine,
+        "SELECT value FROM __dat0_meta WHERE key = 'dat0_workspace_version'",
+    )
+    .await;
     assert_eq!(workspace_v, "1");
     engine.close().await.unwrap();
 }
@@ -42,10 +54,7 @@ async fn migrations_idempotent_on_reopen() {
     {
         let engine = DuckDBEngine::new(scratch.clone(), budget()).unwrap();
         engine.init().await.unwrap();
-        let count = engine
-            .__debug_query_scalar("SELECT COUNT(*)::TEXT FROM __dat0_meta_migrations")
-            .await
-            .unwrap();
+        let count = scalar(&engine, "SELECT COUNT(*)::TEXT FROM __dat0_meta_migrations").await;
         assert_eq!(count, "1");
         engine.close().await.unwrap();
     }
