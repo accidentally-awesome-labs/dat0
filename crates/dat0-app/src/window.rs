@@ -164,7 +164,7 @@ pub fn run_app(lock: AppLock, initial_paths: Vec<PathBuf>) -> Result<()> {
         }
     });
 
-    #[cfg(target_os = "macos")]
+    // Used by the orphan scan (all platforms) and the macOS Cmd-N handler.
     let state_root_for_action = state_root.clone();
     let registry_for_run = Arc::clone(&registry);
     Application::new().run(move |cx: &mut App| {
