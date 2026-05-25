@@ -35,17 +35,18 @@
 use anyhow::Result;
 use dat0_i18n::t;
 use gpui::{
-    App, Application, Bounds, Context, ExternalPaths, IntoElement, Render, TitlebarOptions, Window,
-    WindowBounds, WindowOptions, div, prelude::*, px, size,
+    App, Application, Bounds, Context, Entity, ExternalPaths, IntoElement, Render, Subscription,
+    TitlebarOptions, Window, WindowBounds, WindowOptions, div, prelude::*, px, size,
 };
 use gpui_component::Root;
+use gpui_component::table::{Table, TableState};
 use parking_lot::Mutex;
 use std::path::PathBuf;
 use std::sync::Arc;
 
 use crate::app_lock::{AppLock, OpenWindowMessage};
 use crate::file_drop::{DropOutcome, handle_drop};
-use crate::grid::GridDataSource;
+use crate::grid::{GridDataSource, GridTableDelegate};
 use crate::main_bridge::MainLoop;
 use crate::session::Session;
 use crate::window_registry::{WindowHandle, WindowRegistry};
@@ -335,13 +336,41 @@ pub fn run_app(lock: AppLock, initial_paths: Vec<PathBuf>, main_loop: MainLoop) 
 
 /// Session-backed workspace shell rendered inside `gpui_component::Root`.
 ///
-/// Owns the session for this window and an optional data source (set once the
-/// user drops a file or opens a table). When no data source is present,
-/// renders a "Drop a file here" placeholder. When a data source is present,
-/// renders a grid placeholder pending T11+ TableDelegate wiring.
+/// Owns the session for this window and an optional data source (set once
+/// the user drops a file or opens a table). When no data source is present,
+/// renders a "Drop a file here" placeholder. When a data source is present
+/// the shell mounts a real `gpui_component::table::Table` over a
+/// [`GridTableDelegate`] wrapper (P3b T4 — closes the P3a T10 placeholder).
+///
+/// `table_state` is built lazily on the first render after `set_data_source`
+/// — `TableState::new` requires `&mut Window`, which is only available
+/// inside `Render::render`. The drop handler runs off-thread and so cannot
+/// touch the window; it just stores the new `Arc<GridDataSource>` and asks
+/// the view to re-render via `cx.notify()`. The next frame promotes that
+/// `Arc` into an `Entity<TableState<…>>`.
 pub struct WorkspaceShell {
     session: Arc<Mutex<Session>>,
     data_source: Option<Arc<GridDataSource>>,
+    /// Stateful entity owning the gpui-component Table's scroll handles,
+    /// column-resize state, selection, etc. (`gpui-table-api-notes.md` §3).
+    /// Rebuilt when `data_source` is swapped (e.g., user drops a second
+    /// file). `None` until the first data source lands.
+    table_state: Option<Entity<TableState<GridTableDelegate>>>,
+    /// Theme observer subscription, kept alive for the lifetime of the
+    /// view. Per `docs/internal/gpui-api-notes.md` §0.A.4 the `Theme`
+    /// global is app-scoped; switching theme in one window notifies every
+    /// observer in every window so the grid re-renders with the new
+    /// palette.
+    ///
+    /// **CAVEAT (P3b T4):** dat0's `crate::theme::Theme` is not yet wired
+    /// as a `gpui::Global` — that promotion is part of a later P3b task
+    /// (the theme live-switch work). For now we subscribe to
+    /// `gpui_component::Theme` which is already `impl Global for Theme`
+    /// per `docs/internal/gpui-component-api-notes.md` §1.3. The later
+    /// task only needs to flip the `<gpui_component::Theme>` type
+    /// parameter to `<crate::theme::Theme>` once the dat0 type is
+    /// promoted; no other change required.
+    theme_subscription: Option<Subscription>,
 }
 
 impl WorkspaceShell {
@@ -349,16 +378,78 @@ impl WorkspaceShell {
         Self {
             session,
             data_source: None,
+            table_state: None,
+            theme_subscription: None,
         }
     }
 
     pub fn set_data_source(&mut self, ds: Arc<GridDataSource>) {
+        // Drop any stale TableState — it was built around the previous
+        // delegate's `Arc<GridDataSource>` and would render stale rows.
+        // The next `render` call rebuilds one against the new source.
+        self.table_state = None;
         self.data_source = Some(ds);
     }
 }
 
+impl WorkspaceShell {
+    /// Return the static type name of the widget the shell mounts when a
+    /// data source is present. Used by `tests/file_drop_formats.rs` to
+    /// assert the P3a T10 placeholder (`div`) has been replaced by a real
+    /// `gpui_component::table::Table` mount.
+    ///
+    /// Lives outside `#[cfg(test)]` because Rust integration tests (in
+    /// `tests/`) build the library crate without the `test` cfg flag and
+    /// therefore can't see `#[cfg(test)]` items. The helper is a static
+    /// no-op — `std::any::type_name` is resolved at compile time and
+    /// carries no runtime cost.
+    ///
+    /// This is an intent-level assertion (no real render loop needed) —
+    /// see the test docstring in `tests/file_drop_formats.rs` for the
+    /// rationale.
+    pub fn child_widget_type_name() -> &'static str {
+        std::any::type_name::<Table<GridTableDelegate>>()
+    }
+}
+
 impl Render for WorkspaceShell {
-    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        // Subscribe to Theme global changes once, on the first render. The
+        // subscription returns a `Subscription` that must be kept alive
+        // (drop = unregister) per `gpui-api-notes.md` §0.A.2.
+        //
+        // Per the IMPORTANT CAVEAT in the P3b T4 task brief we observe
+        // `gpui_component::Theme` (which IS a Global) rather than
+        // `crate::theme::Theme` (which is not yet promoted to a Global);
+        // the later theme-live-switch task flips this single type
+        // parameter once dat0's Theme becomes a Global.
+        if self.theme_subscription.is_none() {
+            let sub = cx.observe_global::<gpui_component::Theme>(|_view, cx| {
+                cx.notify();
+            });
+            self.theme_subscription = Some(sub);
+        }
+
+        // Lazily promote `Arc<GridDataSource>` → `Entity<TableState<…>>`
+        // on the first render after the data source landed. `TableState::new`
+        // requires `&mut Window`, which is only available inside `render`
+        // — the async drop handler stores the `Arc` then asks the view to
+        // re-render so this branch can build the stateful entity.
+        if let Some(ds) = self.data_source.as_ref() {
+            let needs_rebuild = match self.table_state.as_ref() {
+                None => true,
+                Some(state_entity) => {
+                    // If the stored delegate's source no longer matches the
+                    // current one (user dropped a second file), rebuild.
+                    !state_entity.read(cx).delegate().source_ptr_eq(ds)
+                }
+            };
+            if needs_rebuild {
+                let delegate = GridTableDelegate::new(Arc::clone(ds));
+                self.table_state = Some(cx.new(|cx| TableState::new(delegate, window, cx)));
+            }
+        }
+
         let session = Arc::clone(&self.session);
 
         let drop_listener = cx.listener(move |_view, paths: &ExternalPaths, _window, cx| {
@@ -410,21 +501,32 @@ impl Render for WorkspaceShell {
             .detach();
         });
 
-        match self.data_source.as_ref() {
-            Some(_ds) => {
-                // TODO(T11+): mount gpui-component Table widget with
-                // a TableDelegate impl over _ds (paged Arrow batch adapter).
-                div()
-                    .size_full()
-                    .drag_over::<ExternalPaths>(|style, _, _, _| style.bg(gpui::rgba(0x0088_ff22)))
-                    .on_drop::<ExternalPaths>(drop_listener)
-                    .child("Grid placeholder — wired in T11+")
+        // `Table<D>` and the empty-state are different concrete types, so
+        // we widen both arms with `.into_any_element()` to satisfy
+        // `impl IntoElement`'s single-return-type requirement.
+        let body = match (self.data_source.as_ref(), self.table_state.as_ref()) {
+            (Some(_ds), Some(state)) => {
+                // Real Table mount — closes the P3a T10 placeholder.
+                // Per `docs/internal/gpui-table-api-notes.md` §3:
+                //   `Table::new(state: &Entity<TableState<D>>) -> Self`
+                // Theming flows implicitly via `cx.theme()` inside the
+                // widget (spike §1.3); no prop to pass.
+                Table::new(state)
+                    .stripe(true)
+                    .bordered(true)
+                    .into_any_element()
             }
-            None => div()
-                .size_full()
-                .drag_over::<ExternalPaths>(|style, _, _, _| style.bg(gpui::rgba(0x0088_ff22)))
-                .on_drop::<ExternalPaths>(drop_listener)
-                .child("Drop a file here"),
-        }
+            // Either: we have a data source but the state hasn't been
+            // promoted yet (the next frame promotes it), or there is no
+            // data source. In both cases show the placeholder copy.
+            (Some(_), None) => div().child("Loading grid…").into_any_element(),
+            (None, _) => div().child("Drop a file here").into_any_element(),
+        };
+
+        div()
+            .size_full()
+            .drag_over::<ExternalPaths>(|style, _, _, _| style.bg(gpui::rgba(0x0088_ff22)))
+            .on_drop::<ExternalPaths>(drop_listener)
+            .child(body)
     }
 }

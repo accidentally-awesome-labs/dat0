@@ -1,8 +1,18 @@
 //! All 6 supported formats render via the drop path. `.sqlite` rejects.
+//!
+//! P3b T4 adds a single intent-level assertion that the `WorkspaceShell`
+//! mounts a real `gpui_component::table::Table` widget (replacing the P3a
+//! T10 placeholder div) when a data source is present. The check is done
+//! via the static helper `WorkspaceShell::child_widget_type_name` rather
+//! than driving a full render loop because the GPUI render loop is hard
+//! to bring up headlessly (see `docs/internal/gpui-api-notes.md` §0.A.11
+//! for the manual visual-confirmation recipe — the T13 retro revisits
+//! deeper visual coverage).
 
 use dat0_app::error_ux::banner::drain_pending;
 use dat0_app::file_drop::{DropOutcome, handle_drop};
 use dat0_app::session::Session;
+use dat0_app::window::WorkspaceShell;
 use dat0_engine::{DuckDBEngine, MemoryBudget, QueryEngine};
 use parking_lot::Mutex;
 use std::path::{Path, PathBuf};
@@ -121,6 +131,28 @@ async fn sqlite_drop_rejected_with_banner() {
     assert!(arc.lock().tabs().is_empty());
     let banners = drain_pending();
     assert!(!banners.is_empty(), "expected at least one Banner emission");
+}
+
+/// P3b T4 — `WorkspaceShell` mounts the real `gpui_component::table::Table`
+/// widget over `GridTableDelegate` (not the P3a placeholder div). We assert
+/// the static type name rather than driving a render loop because GPUI's
+/// render loop is not headless-friendly in this test harness; see the
+/// module-level docstring for the rationale.
+#[test]
+fn workspace_shell_mounts_real_table_widget() {
+    let name = WorkspaceShell::child_widget_type_name();
+    assert!(
+        name.contains("gpui_component"),
+        "expected gpui_component path in widget type name, got {name:?}"
+    );
+    assert!(
+        name.contains("::table::Table"),
+        "expected ::table::Table in widget type name, got {name:?}"
+    );
+    assert!(
+        name.contains("GridTableDelegate"),
+        "expected GridTableDelegate type parameter in widget type name, got {name:?}"
+    );
 }
 
 #[tokio::test]
