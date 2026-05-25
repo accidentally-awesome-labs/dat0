@@ -1454,3 +1454,10 @@ a headless gpui seam becomes available upstream, or (b) explicitly accept
 the manual path as the long-term shape for this assertion and move the
 recipe into `docs/ci.md` alongside other manual smokes. Track in the T13
 deliverable as "P3b T1 manual UAT — promote or accept".
+
+- T7 manual UAT: `cargo run -p dat0-app` against an empty `$STATE`
+  (`rm -rf "$HOME/Library/Application Support/dat0"` on macOS) and an
+  empty recents file; verify the two-column empty-state hero ("Drop a
+  file to start" left, samples picker right) appears on the first
+  window. Toggle by registering a recent (drop any CSV) and relaunching
+  — right column should now read "Recents…" instead.

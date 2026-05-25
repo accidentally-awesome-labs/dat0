@@ -45,9 +45,11 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use crate::app_lock::{AppLock, OpenWindowMessage};
+use crate::empty_state::EmptyState;
 use crate::file_drop::{DropOutcome, handle_drop};
 use crate::grid::{GridDataSource, GridTableDelegate};
 use crate::main_bridge::MainLoop;
+use crate::recents::Recents;
 use crate::session::Session;
 use crate::window_registry::{WindowHandle, WindowRegistry};
 
@@ -554,11 +556,19 @@ impl Render for WorkspaceShell {
             .detach();
         });
 
-        // `Table<D>` and the empty-state are different concrete types, so
-        // we widen both arms with `.into_any_element()` to satisfy
-        // `impl IntoElement`'s single-return-type requirement.
+        // `Table<D>` and the empty-state hero are different concrete
+        // types, so we widen every arm with `.into_any_element()` to
+        // satisfy `impl IntoElement`'s single-return-type requirement.
+        //
+        // P3b T7 adds the empty-state hero branch: when no data source is
+        // mounted (or the mounted source is empty), pick between the
+        // "samples picker" hero (recents empty) and the recents-only hero
+        // (recents non-empty). Recents emptiness is read directly from
+        // disk here so the view doesn't need a plumbed-in `Arc<Mutex<Recents>>`
+        // — `Recents::with_path` is a cheap JSON read and the empty-state
+        // render is not on the per-row hot path.
         let body = match (self.data_source.as_ref(), self.table_state.as_ref()) {
-            (Some(_ds), Some(state)) => {
+            (Some(ds), Some(state)) if !ds.is_empty() => {
                 // Real Table mount — closes the P3a T10 placeholder.
                 // Per `docs/internal/gpui-table-api-notes.md` §3:
                 //   `Table::new(state: &Entity<TableState<D>>) -> Self`
@@ -569,11 +579,23 @@ impl Render for WorkspaceShell {
                     .bordered(true)
                     .into_any_element()
             }
-            // Either: we have a data source but the state hasn't been
-            // promoted yet (the next frame promotes it), or there is no
-            // data source. In both cases show the placeholder copy.
-            (Some(_), None) => div().child("Loading grid…").into_any_element(),
-            (None, _) => div().child("Drop a file here").into_any_element(),
+            (Some(_), None) => {
+                // Data source landed but TableState hasn't been promoted
+                // yet (the next frame promotes it). Brief placeholder.
+                div().child("Loading grid…").into_any_element()
+            }
+            // Either no data source, or a data source with zero rows —
+            // both fall back to the empty-state hero. `recents_empty`
+            // toggles the right-column content (samples vs. recents).
+            _ => {
+                let recents_empty = match crate::platform::config_dir() {
+                    Ok(cfg) => Recents::with_path(cfg.join("recents.json"))
+                        .list()
+                        .is_empty(),
+                    Err(_) => true,
+                };
+                EmptyState::new(recents_empty).render(cx).into_any_element()
+            }
         };
 
         div()
