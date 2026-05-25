@@ -2,11 +2,18 @@
 
 use dat0_app::error_ux::banner::drain_pending;
 use dat0_app::session::{Session, Tab, scan_orphans};
+use dat0_app::window::orphan_scan_emit;
 use dat0_engine::QueryEngine;
+use serial_test::serial;
 
 const BUDGET: u64 = 128 * 1024 * 1024;
 
+// Both tests in this file touch the global `error_ux::banner::PENDING`
+// queue (`drain_pending` / `push`). `#[serial]` serialises them so a
+// concurrent drain on one side never empties banners the other side
+// is mid-asserting.
 #[tokio::test]
+#[serial]
 async fn force_quit_then_relaunch_finds_orphan_and_tab_state() {
     let _ = drain_pending();
     let tmp = tempfile::TempDir::new().unwrap();
@@ -44,4 +51,42 @@ async fn force_quit_then_relaunch_finds_orphan_and_tab_state() {
     assert_eq!(recovered.tabs().len(), 1);
     let cat = recovered.engine.get_tables().await.unwrap();
     assert!(cat.iter().any(|t| t.name == recovered.tabs()[0].table_name));
+}
+
+/// P3b T5: multi-orphan scan consolidates into a single count Banner
+/// with a "Review" primary action wired to `recovery.review`. Replaces
+/// the per-orphan loop the P3a T15 path emitted (and the T2 banner-
+/// shape migration carried forward as `push_warning`).
+#[tokio::test]
+#[serial]
+async fn multi_orphan_emits_count_banner() {
+    let _ = drain_pending();
+    let tmp = tempfile::TempDir::new().unwrap();
+    let scratch_root = tmp.path().join("scratch");
+    std::fs::create_dir_all(&scratch_root).unwrap();
+
+    // Two orphan scratch dirs, each with a real (empty) session.json.
+    for i in 0..2 {
+        let dir = scratch_root.join(format!("orphan-{i}"));
+        std::fs::create_dir(&dir).unwrap();
+        std::fs::write(dir.join("session.json"), r#"{"tabs":[],"active_tab":null}"#).unwrap();
+    }
+
+    let banners = orphan_scan_emit(&scratch_root);
+    assert_eq!(banners.len(), 1, "one consolidated banner for N orphans");
+    assert!(
+        banners[0].title.contains("2"),
+        "title carries the count: {}",
+        banners[0].title
+    );
+    assert_eq!(
+        banners[0].primary.as_ref().unwrap().action_id,
+        "recovery.review"
+    );
+
+    // The same banner should also have been pushed onto the global
+    // pending queue (so the boot path picks it up at first-render).
+    let drained = drain_pending();
+    assert_eq!(drained.len(), 1);
+    assert_eq!(drained[0], banners[0]);
 }

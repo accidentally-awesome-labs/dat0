@@ -109,6 +109,47 @@ pub(crate) fn spawn_window(
     tracing::debug!(%window_id, "spawn_window: window registered in WindowRegistry");
 }
 
+/// Scan `scratch_root` for orphan session directories (subdirs containing
+/// a `session.json`) and emit at most ONE consolidated warning Banner
+/// summarising the count, with a `"Review"` primary action wired to
+/// [`crate::actions::builtin::ids::RECOVERY_REVIEW`].
+///
+/// P3a T15's per-orphan loop is replaced by this count-based emission
+/// (P3b T5) so the user sees a single line rather than N near-identical
+/// banners. Returns the banners that were emitted so callers (and tests)
+/// can inspect them without draining the global pending queue.
+///
+/// Non-UUID directory names are tolerated (they count as orphans iff
+/// they contain a `session.json`) — the test harness uses
+/// `session-{i:02}` names to keep `tempdir` paths readable.
+pub fn orphan_scan_emit(scratch_root: &std::path::Path) -> Vec<crate::error_ux::Banner> {
+    let mut count = 0usize;
+    if let Ok(entries) = std::fs::read_dir(scratch_root) {
+        for e in entries.flatten() {
+            if e.path().join("session.json").is_file() {
+                count += 1;
+            }
+        }
+    }
+    let mut banners = vec![];
+    if count > 0 {
+        banners.push(
+            crate::error_ux::Banner::warning_with_body(
+                format!(
+                    "{count} previous session{} found",
+                    if count == 1 { "" } else { "s" }
+                ),
+                "Restore tabs or discard them.".to_string(),
+            )
+            .with_primary("Review", crate::actions::builtin::ids::RECOVERY_REVIEW),
+        );
+    }
+    for b in &banners {
+        crate::error_ux::push(b.clone());
+    }
+    banners
+}
+
 /// Launch the dat0 desktop application.
 ///
 /// Blocks the calling thread on the platform event loop until the user
@@ -276,30 +317,14 @@ pub fn run_app(lock: AppLock, initial_paths: Vec<PathBuf>, main_loop: MainLoop) 
         });
         tracing::debug!(%first_window_id, "run_app: first window registered in WindowRegistry");
 
-        // Scan `$state_root/scratch/*` for orphaned dirs (sessions that didn't
-        // exit cleanly). Per-orphan Banner is emitted; user-facing
-        // Open/Discard UX is P3b (structured Banner refactor). Crash-recovery
-        // banner content + actions are part of spec §11 exit criterion #4.
-        match crate::session::scan_orphans(&state_root_for_action, &[first_window_id]) {
-            Ok(orphans) => {
-                if !orphans.is_empty() {
-                    tracing::info!(
-                        count = orphans.len(),
-                        "orphan scratch dirs detected on cold start"
-                    );
-                    for path in &orphans {
-                        // Banner emitted at orphan scan; T5 will replace with count-based Banner.
-                        crate::error_ux::banner::push_warning(format!(
-                            "Recovered previous session: {}",
-                            path.display()
-                        ));
-                    }
-                }
-            }
-            Err(e) => {
-                tracing::warn!(error = %e, "orphan scratch-dir scan failed");
-            }
-        }
+        // Scan `$state_root/scratch/*` for orphaned dirs (sessions that
+        // didn't exit cleanly) and emit a single count-based Banner with
+        // a "Review" primary action wired to `recovery.review` (T5).
+        // Per spec §11 exit criterion #4. The per-orphan loop introduced
+        // in T2 is replaced by [`orphan_scan_emit`] which consolidates
+        // N orphans into one banner.
+        let scratch_root = state_root_for_action.join("scratch");
+        let _emitted = orphan_scan_emit(&scratch_root);
 
         // If CLI paths were supplied on cold start, register them against the
         // first window's session. The WorkspaceShell owns the session, so we

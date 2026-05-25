@@ -10,6 +10,7 @@ pub mod main_bridge;
 pub mod menu_macos;
 pub mod platform;
 pub mod recents;
+pub mod recovery_panel;
 pub mod session;
 pub mod settings;
 pub mod settings_ui;
@@ -20,19 +21,6 @@ pub mod window;
 pub mod window_registry;
 
 pub use window::run_app;
-
-/// Stub for the recovery-review panel — T5 (P3b) replaces with a real
-/// modal that lists orphan session dirs + Open/Discard actions. Built-in
-/// action `recovery.review` (see [`actions::builtin::ids::RECOVERY_REVIEW`])
-/// dispatches into this module so the registry shape can be exercised
-/// today without blocking on T5.
-pub mod recovery_panel {
-    /// Open the recovery review panel. T3 ships a no-op tracing call;
-    /// T5 wires the real panel.
-    pub fn open(_app: &mut gpui::App) {
-        tracing::info!("recovery_panel::open stub — T5 wires the real panel");
-    }
-}
 
 /// Stub for active-import cancellation — T10 (P3b) replaces with the
 /// real cancel-token + `engine.interrupt(handle)` path driven by the
