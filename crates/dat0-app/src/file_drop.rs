@@ -42,6 +42,10 @@ pub enum DropOutcome {
     /// the wizard owns the eventual `register_file` call after the user
     /// confirms dialect.
     OpenWizard { path: PathBuf, sniff: SniffSummary },
+    /// Import was cancelled mid-flight via `IMPORT_CANCEL`. No tab is
+    /// appended; the warning Banner is emitted by
+    /// `import_progress::cancel_active`. T10 (P3b).
+    Cancelled { path: PathBuf },
 }
 
 async fn handle_one(path: PathBuf, session: &Mutex<Session>) -> DropOutcome {
@@ -115,7 +119,27 @@ async fn handle_one(path: PathBuf, session: &Mutex<Session>) -> DropOutcome {
         ..Default::default()
     };
 
-    match engine.register_file(&path, opts).await {
+    // P3b T10: register one active ImportProgress before `register_file`
+    // so the `IMPORT_CANCEL` action can flip the cancel flag mid-flight.
+    // Determinate byte-progress remains a D-008 follow-up — today we only
+    // observe cancel (engine.interrupt(handle) lands with D-008). We poll
+    // the cancel flag once after `register_file` returns; if set, we drop
+    // the result and emit a `Cancelled` outcome (the warning Banner was
+    // already pushed by `import_progress::cancel_active`).
+    let total = std::fs::metadata(&path).map(|m| m.len()).unwrap_or(0);
+    let progress = crate::import_progress::ImportProgress::new(total);
+    crate::import_progress::set_active(progress.clone());
+
+    let info_result = engine.register_file(&path, opts).await;
+
+    if progress.is_cancelled() {
+        crate::import_progress::clear_active();
+        return DropOutcome::Cancelled { path };
+    }
+
+    crate::import_progress::clear_active();
+
+    match info_result {
         Ok(info) => {
             let mut s = session.lock();
             s.add_tab(Tab {
