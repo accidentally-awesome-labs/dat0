@@ -287,6 +287,34 @@ pub fn run_app(lock: AppLock, initial_paths: Vec<PathBuf>, main_loop: MainLoop) 
             );
         }
 
+        // Wire Cmd-Shift-P (macOS) / Ctrl-Shift-P (Linux) → OpenCommandPalette
+        // action (P3b T6). `bind_keys` registers the keystroke against the
+        // global keymap; `on_action` registers the handler. Both fire the
+        // same `OpenCommandPalette` action so the menu-item click and the
+        // keystroke path converge on `command_palette::open`.
+        //
+        // The Linux menu module doesn't exist yet (the comment above flags
+        // "Linux Cmd-N is P3b"), but `OpenCommandPalette` is declared in
+        // `menu_macos.rs` unconditionally so we can bind it on Linux too —
+        // the handler still resolves and the keystroke fires even without a
+        // visible menu item.
+        {
+            #[cfg(target_os = "macos")]
+            let keystroke = "cmd-shift-p";
+            #[cfg(not(target_os = "macos"))]
+            let keystroke = "ctrl-shift-p";
+            cx.bind_keys([gpui::KeyBinding::new(
+                keystroke,
+                crate::menu_macos::OpenCommandPalette,
+                None,
+            )]);
+            cx.on_action(
+                |_action: &crate::menu_macos::OpenCommandPalette, cx: &mut App| {
+                    crate::command_palette::open(cx);
+                },
+            );
+        }
+
         let first_window_id = session.lock().window_id;
         let bounds = Bounds::centered(None, size(px(1200.), px(800.)), cx);
         let session_for_window = Arc::clone(&session);
