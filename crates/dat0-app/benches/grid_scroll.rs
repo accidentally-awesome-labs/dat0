@@ -8,6 +8,18 @@
 //! scroll frames once the widget reaches steady state. Real GPU
 //! frame-pacing is verified at P10 on the provisioned self-hosted GPU
 //! runner; P3a's metric is an *engine + cell-render* upper bound.
+//!
+//! T13 (P3b) note: T4 mounted the real `gpui_component::Table` widget
+//! against `WorkspaceShell.data_source`, but the Table widget cannot be
+//! exercised headlessly — `TableDelegate::render_td_cell` takes
+//! `&mut Window` and runs inside the GPUI foreground executor + Cocoa
+//! main thread. A non-window test harness has no `Window` to pass.
+//! T13 therefore keeps the existing harness (which measures `render_cell`
+//! over the same in-memory Arrow batch the real `GridTableDelegate` calls
+//! through) as the P3b baseline. Real-Table frame timing is deferred to
+//! the P10 perf-budget runner per spec line 819. See
+//! `docs/internal/p3-bench-baselines.md` for the recorded numbers + the
+//! headless-vs-Table comparison plan.
 
 use criterion::{Criterion, Throughput, black_box, criterion_group, criterion_main};
 use dat0_app::grid::renderers::render_cell;

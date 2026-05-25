@@ -29,10 +29,16 @@ Verified by phase T0 spikes. GPUI surface verified by P1.T0 on **2026-04-26** (s
 | `interprocess` (crates.io) | `2.4.2` | n/a | 2026-05-16 | Minor pin (`^2`), `tokio` feature. Cross-platform UDS for second-launch IPC (P3a T2). Resolved via `Cargo.lock`. |
 | `uuid` (crates.io) | `1.23.1` | n/a | 2026-05-16 | Minor pin (`^1`), `v7` feature. Time-ordered window IDs (P3a T4). Resolved via `Cargo.lock`. |
 | `lru` (crates.io) | `0.12.5` | n/a | 2026-05-16 | Minor pin (`^0.12`). LRU cache for paged Arrow batches in `GridDataSource` (P3a T8). Resolved via `Cargo.lock`. |
+| `reqwest` (crates.io) | `0.12.28` | n/a | 2026-05-25 | Minor pin (`^0.12`), `default-features = false`, features `rustls-tls` + `stream`. Sample-data fetch (`sample_data::fetch_remote`, P3b T8). rustls-only (no openssl) keeps the bundle hermetic. Resolved via `Cargo.lock`. |
+| `sha2` (crates.io) | `0.10.9` | n/a | 2026-05-25 | Minor pin (`^0.10`). SHA-256 verification of remote sample-data downloads (P3b T8). Resolved via `Cargo.lock`. |
+| `futures` (crates.io) | `0.3.32` | n/a | 2026-05-25 | Minor pin (`^0.3`). `futures::channel::mpsc` for `MainThreadDispatcher` (P3b T1, closes PD-010). Resolved via `Cargo.lock`. |
+| `mockito` (crates.io, dev-dep) | `1.7.2` | n/a | 2026-05-25 | Minor pin (`^1`). HTTP mocking for `sample_data_fetch.rs` (P3b T8). Dev-only — excluded from NOTICE.md by `ignore-dev-dependencies = true` in `about.toml`. Resolved via `Cargo.lock`. |
 
 > **Mechanism change (since planning snapshot):** `gpui-component` v0.5.1 declares `gpui = "0.2.2"` in its workspace `Cargo.toml`, consuming `gpui` as a published crates.io crate rather than as a git dependency. The pin policy still applies, but dat0 should pin via exact-version semver (`gpui = "=0.2.2"`) plus `Cargo.lock`, and record the publish-commit SHA in `docs/internal/gpui-api-notes.md` for audit.
 
 **P1 audit closure (2026-04-26):** T23 audit confirmed SHAs above match workspace `Cargo.toml` after T0–T22 implementation. No bumps were required during P1 execution. Next scheduled bump-check: monthly cadence per "Cadence" below.
+
+**P3b audit closure (2026-05-25):** P3b T13 verified the four pre-P3b pins (`gpui-component`, `gpui`, `gpui-macros`, `duckdb`) are unchanged and added four new pins (`reqwest`, `sha2`, `futures`, `mockito`) above. `cargo about generate -c about.toml docs/about-template.hbs` produced byte-identical output to the existing `NOTICE.md` block — no NOTICE regen required this phase.
 
 ## Cadence
 

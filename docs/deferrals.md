@@ -53,6 +53,7 @@ that's modifying it; merge conflicts are signals worth investigating.
 | D-011 | Remove `__debug_query_scalar` test-only helper     | closed | P2   | P3a    |
 | D-012 | Engine catalog `TableInfo` synthesis (origin + schema) | closed | P2   | P3a    |
 | D-013 | Self-hosted macOS CI runner (cut hosted macos-14 10× billing) | open | P2 | TBD |
+| D-014 | Memory Budget Settings section | open | P3b | P3c / P9c |
 
 ## At-a-glance — Plan defects
 
@@ -404,6 +405,28 @@ that's modifying it; merge conflicts are signals worth investigating.
   by the SQLite fixture + heavy-test split. Linux side complete;
   macOS side remains.
 - **Last touched:** 2026-05-14
+
+### D-014 — Memory Budget Settings section
+
+- **Status:** open
+- **Deferred from:** P3b (T11 scope decision)
+- **Target phase:** P3c (if split) or P9c (settings polish)
+- **Reason:** P3b T11 scope locks to D-001 wording (Profile + Theme widgets).
+  Memory Budget requires engine plumbing to re-apply `memory_limit` PRAGMA on
+  change, not in P3b ad-hoc scope. Settings store already persists the value;
+  the missing piece is the engine-side reapply path + a UI surface that does
+  not silently mislead users into thinking a budget change took effect when
+  it actually only applies on next window open.
+- **What P3b ships:** Profile + Theme editable sections (D-001 closed by T11).
+  Memory Budget remains read-only display or absent from the Settings panel
+  surface area depending on which sections the registry exposes.
+- **What target phase delivers:** Slider/number input for `memory_limit`;
+  engine reapplies on change (`PRAGMA memory_limit = 'NMB'` against the live
+  connection per window), or — if reapply-on-live-connection turns out to
+  carry mid-query risk — a footnote "applies next window" tied to the
+  control with a Restart hint.
+- **Originating doc:** `docs/specs/2026-05-25-dat0-p3b-ux-polish-design.md` §7.
+- **Last touched:** 2026-05-25.
 
 ---
 
