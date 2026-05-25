@@ -278,7 +278,8 @@ pub fn run_app(lock: AppLock, initial_paths: Vec<PathBuf>, main_loop: MainLoop) 
                         "orphan scratch dirs detected on cold start"
                     );
                     for path in &orphans {
-                        crate::error_ux::banner::push_warning_message(format!(
+                        // Banner emitted at orphan scan; T5 will replace with count-based Banner.
+                        crate::error_ux::banner::push_warning(format!(
                             "Recovered previous session: {}",
                             path.display()
                         ));

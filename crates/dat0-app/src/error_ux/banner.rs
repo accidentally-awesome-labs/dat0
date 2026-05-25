@@ -1,60 +1,132 @@
-//! Banner (persistent inline notice) state primitive.
+//! Banner (persistent inline notice) — structured shape (P3b T2).
 //!
-//! Banner is a pure-data type. Boot-time call sites (P2 T14) need a way to
-//! stash banners produced before any window exists; the render layer drains
-//! the queue when it wires up notification surfaces. The minimal in-process
-//! registry below provides `push` / `drain` for that flow without dictating
-//! a render strategy.
+//! Previous P3a shape (`message: String + action_label: Option<String>`)
+//! is replaced with a typed two-action shape so the recovery flow
+//! (T5), import wizard (T9), and fetch-failed UX (T8) can wire
+//! discoverable buttons. The boot-time push / drain primitive is
+//! preserved.
 
 use std::sync::Mutex;
 
 use once_cell::sync::Lazy;
+use serde::{Deserialize, Serialize};
 
-#[derive(Debug, Clone, Copy)]
-#[allow(dead_code)] // Info/Error reserved for future call sites; full API surface.
-pub enum BannerSeverity {
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+pub enum BannerKind {
     Info,
     Warning,
     Error,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct BannerLink {
+    pub label: String,
+    pub url: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct BannerAction {
+    pub label: String,
+    /// Stable action id; resolved by `ActionRegistry` (T3).
+    pub action_id: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct Banner {
-    pub message: String,
-    pub severity: BannerSeverity,
+    pub title: String,
+    pub body: String,
+    pub link: Option<BannerLink>,
+    pub primary: Option<BannerAction>,
+    pub secondary: Option<BannerAction>,
+    pub kind: BannerKind,
     pub dismissible: bool,
-    /// Reserved for future use (action button label). Unread today.
-    #[allow(dead_code)]
-    pub action_label: Option<String>,
 }
 
 impl Banner {
-    pub fn warning(message: impl Into<String>) -> Self {
+    pub fn info(title: impl Into<String>) -> Self {
         Self {
-            message: message.into(),
-            severity: BannerSeverity::Warning,
+            title: title.into(),
+            body: String::new(),
+            link: None,
+            primary: None,
+            secondary: None,
+            kind: BannerKind::Info,
             dismissible: true,
-            action_label: None,
         }
+    }
+
+    pub fn warning(title: impl Into<String>) -> Self {
+        Self {
+            title: title.into(),
+            body: String::new(),
+            link: None,
+            primary: None,
+            secondary: None,
+            kind: BannerKind::Warning,
+            dismissible: true,
+        }
+    }
+
+    pub fn warning_with_body(title: impl Into<String>, body: impl Into<String>) -> Self {
+        Self {
+            title: title.into(),
+            body: body.into(),
+            link: None,
+            primary: None,
+            secondary: None,
+            kind: BannerKind::Warning,
+            dismissible: true,
+        }
+    }
+
+    pub fn error(title: impl Into<String>, body: impl Into<String>) -> Self {
+        Self {
+            title: title.into(),
+            body: body.into(),
+            link: None,
+            primary: None,
+            secondary: None,
+            kind: BannerKind::Error,
+            dismissible: true,
+        }
+    }
+
+    pub fn with_primary(mut self, label: impl Into<String>, action_id: impl Into<String>) -> Self {
+        self.primary = Some(BannerAction {
+            label: label.into(),
+            action_id: action_id.into(),
+        });
+        self
+    }
+
+    pub fn with_secondary(
+        mut self,
+        label: impl Into<String>,
+        action_id: impl Into<String>,
+    ) -> Self {
+        self.secondary = Some(BannerAction {
+            label: label.into(),
+            action_id: action_id.into(),
+        });
+        self
+    }
+
+    pub fn with_link(mut self, label: impl Into<String>, url: impl Into<String>) -> Self {
+        self.link = Some(BannerLink {
+            label: label.into(),
+            url: url.into(),
+        });
+        self
     }
 }
 
-/// Convenience: push a warning-severity banner with a plain string message.
-pub fn push_warning_message(msg: impl Into<String>) {
-    push(Banner::warning(msg));
-}
-
+/// Boot-time stash for banners produced before any window exists.
 static PENDING: Lazy<Mutex<Vec<Banner>>> = Lazy::new(|| Mutex::new(Vec::new()));
 
-/// Stash a banner produced before any window exists. Render code drains
-/// via [`drain_pending`] when notification surfaces come online.
 pub fn push(banner: Banner) {
     match PENDING.lock() {
         Ok(mut q) => q.push(banner),
         Err(poisoned) => {
-            // Recover from a poisoned mutex rather than panicking — banner
-            // delivery is best-effort and a panic here would mask the
-            // underlying error the caller was trying to surface.
             tracing::warn!("error_ux::banner pending queue mutex poisoned; recovering");
             let mut q = poisoned.into_inner();
             q.push(banner);
@@ -62,8 +134,12 @@ pub fn push(banner: Banner) {
     }
 }
 
-/// Drain all pending banners. Returns them in push order; the queue is
-/// empty after this call.
+/// Convenience for migrating call sites that just want a warning with a
+/// single-line title.
+pub fn push_warning(title: impl Into<String>) {
+    push(Banner::warning(title));
+}
+
 pub fn drain_pending() -> Vec<Banner> {
     match PENDING.lock() {
         Ok(mut q) => std::mem::take(&mut *q),
@@ -79,21 +155,15 @@ pub fn drain_pending() -> Vec<Banner> {
 mod tests {
     use super::*;
 
-    /// `push` then `drain_pending` returns banners in FIFO order; subsequent
-    /// drain returns empty. The queue is process-global so this test owns
-    /// the queue for its duration — drain at the start to clear any state.
     #[test]
     fn push_drain_round_trip() {
-        let _ = drain_pending(); // clear any queued banners from prior tests
+        let _ = drain_pending();
         push(Banner::warning("first"));
         push(Banner::warning("second"));
-
         let drained = drain_pending();
         assert_eq!(drained.len(), 2);
-        assert_eq!(drained[0].message, "first");
-        assert_eq!(drained[1].message, "second");
-
-        let empty = drain_pending();
-        assert!(empty.is_empty());
+        assert_eq!(drained[0].title, "first");
+        assert_eq!(drained[1].title, "second");
+        assert!(drain_pending().is_empty());
     }
 }

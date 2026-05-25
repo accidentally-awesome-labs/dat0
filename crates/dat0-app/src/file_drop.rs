@@ -46,7 +46,7 @@ async fn handle_one(path: PathBuf, session: &Mutex<Session>) -> DropOutcome {
                 .and_then(|s| s.to_str())
                 .map(|s| s.to_string());
             let label = ext.clone().unwrap_or_else(|| "(no extension)".to_string());
-            banner::push_warning_message(format!("Unsupported file type: {label}"));
+            banner::push_warning(format!("Unsupported file type: {label}"));
             return DropOutcome::Unsupported {
                 path,
                 extension: ext,
@@ -80,7 +80,7 @@ async fn handle_one(path: PathBuf, session: &Mutex<Session>) -> DropOutcome {
         }
         Err(e) => {
             let msg = format!("{}: {e}", path.display());
-            banner::push_warning_message(msg.clone());
+            banner::push_warning(msg.clone());
             DropOutcome::EngineError { path, error: msg }
         }
     }
@@ -121,8 +121,8 @@ mod tests {
         let banners = drain_pending();
         assert_eq!(banners.len(), 1);
         assert!(
-            banners[0].message.contains("Unsupported"),
-            "banner message should mention 'Unsupported'"
+            banners[0].title.contains("Unsupported"),
+            "banner title should mention 'Unsupported'"
         );
     }
 
