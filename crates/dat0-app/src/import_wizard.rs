@@ -77,6 +77,10 @@ pub fn should_show_wizard(s: &SniffSummary) -> bool {
 /// Returns an `Err` if duckdb can't open or sniff the file at all. Callers
 /// (see `file_drop`) should treat that as "assume confident, log warn" rather
 /// than blocking the drop.
+///
+/// Synchronous / blocking — opens an in-memory duckdb connection, runs two
+/// `sniff_csv` passes, and reads the first 8 KB of the file. Callers on the
+/// tokio runtime should wrap in `tokio::task::spawn_blocking`.
 pub fn sniff(path: &Path) -> anyhow::Result<SniffSummary> {
     // 1. Encoding heuristic: first 8 KB UTF-8 check. We do this BEFORE the
     //    sniff_csv calls because DuckDB's CSV reader errors hard on non-UTF-8

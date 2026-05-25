@@ -514,13 +514,36 @@ impl Render for WorkspaceShell {
                 async move |weak_shell: gpui::WeakEntity<WorkspaceShell>, async_cx| {
                     let outcomes = handle_drop(paths_vec, session).await;
 
+                    // Route any `OpenWizard` outcomes to `import_wizard::open`
+                    // so T10/T11 implementers can light up the drawer view
+                    // through the existing seam. The current `open()` is a
+                    // stub that logs, so this is wiring-only — no behaviour
+                    // change for users until the drawer lands.
+                    //
                     // Per spec §3.5: the last successfully-registered file
-                    // becomes the active tab. Iterate all outcomes and keep
-                    // the last Registered one.
-                    let last_registered = outcomes.into_iter().rev().find_map(|o| match o {
-                        DropOutcome::Registered { table_name, .. } => Some(table_name),
-                        _ => None,
-                    });
+                    // becomes the active tab. Partition outcomes into wizard
+                    // requests and registered tables in one pass.
+                    let mut wizard_requests: Vec<(
+                        std::path::PathBuf,
+                        crate::import_wizard::SniffSummary,
+                    )> = Vec::new();
+                    let mut last_registered: Option<String> = None;
+                    for o in outcomes {
+                        match o {
+                            DropOutcome::Registered { table_name, .. } => {
+                                last_registered = Some(table_name);
+                            }
+                            DropOutcome::OpenWizard { path, sniff } => {
+                                wizard_requests.push((path, sniff));
+                            }
+                            _ => {}
+                        }
+                    }
+                    for (path, sniff) in wizard_requests {
+                        let _ = async_cx.update(|app_cx| {
+                            crate::import_wizard::open(app_cx, &path, sniff);
+                        });
+                    }
 
                     if let Some(table_name) = last_registered {
                         // Obtain the engine Arc from the session via a sync update call.
