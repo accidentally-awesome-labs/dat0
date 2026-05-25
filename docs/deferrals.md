@@ -62,13 +62,18 @@ that's modifying it; merge conflicts are signals worth investigating.
 | PD-002 | Settings store atomic-write missing `fsync` before rename          | open   | low      |
 | PD-003 | cargo-about NOTICE output not deterministic across host platforms  | open   | low      |
 | PD-004 | Linux Secret Service backend not reachable from CI keychain tests  | open   | low      |
+| PD-011 | P3b plan §3.7 ambiguity rule references sniff outputs that don't exist: no candidate-delimiter scores, no encoding column, no per-column confidence in `sniff_csv` | open | low |
+
+## At-a-glance — Closed plan defects
+
+| ID     | Title                                                              | Status | Severity |
+|--------|--------------------------------------------------------------------|--------|----------|
 | PD-005 | P2 plan T3 snippet uses `&*conn` triggering clippy explicit-auto-deref | closed | trivial |
 | PD-006 | P2 plan T12 fixtures snippet uses bare `rng.gen::<…>()` — reserved keyword in Rust 2024 | closed | low      |
 | PD-007 | P2 plan T14 snippet calls non-existent `error_ux::banner::push_banner` with mismatched `Banner` shape | closed | low      |
 | PD-008 | P3a plan T2 snippets use wrong import paths for `fs4::FileExt` and `interprocess::local_socket::traits::Stream` | closed | trivial  |
 | PD-009 | P3a plan T6 test snippet calls non-existent `engine.catalog().get_tables()` — no `catalog()` method on `DuckDBEngine` | closed | trivial |
 | PD-010 | P3a plan T12 UDS → GPUI cross-thread window-open bridge is unsafe: `AsyncApp::update` borrows a `RefCell`-backed app cell, not safe to call from a tokio background thread | closed | low |
-| PD-011 | P3b plan §3.7 ambiguity rule references sniff outputs that don't exist: no candidate-delimiter scores, no encoding column, no per-column confidence in `sniff_csv` | open | low |
 
 ---
 

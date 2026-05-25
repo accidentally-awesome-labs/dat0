@@ -1371,3 +1371,86 @@ with `TestAppContext::single()`.
 | Step 6.2: `cx.update` panic from non-main? | Yes — `AsyncApp::update` calls `app.borrow_mut()` on `RefCell<App>`; `AppCell = RefCell<App>` (`app.rs:61`); `Weak<AppCell>` is `!Send` so the panic is normally prevented by the type system, but `unsafe`-ly sending a clone triggers `RefCell::borrow_mut` panic from off-main | `async_context.rs:142-146`; `app.rs:61-95` |
 | Step 6.3: sender drop → receiver exits? | Yes — `Drop for {Unbounded,Bounded}SenderInner` decrements `num_senders`; at zero calls `close_channel`; `Receiver::next_message` then returns `Poll::Ready(None)` | `futures-channel-0.3.32/src/mpsc/mod.rs:969-988, 1283-1289, 1320-1330` |
 | Step 6.4: safe `&mut App` test seam? | **PARTIAL** — `gpui::TestAppContext::single()` exists, gated by `cfg(any(test, feature = "test-support"))`; dat0 must opt into `gpui/test-support` as a dev-dep feature | `app.rs:30-31`; `app/test_context.rs:122-149` |
+
+### 0.A.11 — T1 manual UAT path for visual second-launch
+
+Cross-references: PD-010 (closed by T1), §0.A.7 (the `RefCell`/`!Send`
+diagnosis), §0.A.9 (`TestAppContext` safe seam). This subsection documents
+the **manual** UAT recipe the `#[ignore]`d integration test points to.
+
+**Why one of the T1 integration tests is `#[ignore]`d.** The visual
+second-launch assertion — "second `cargo run -p dat0-app` invocation makes
+a new window appear in the running instance" — needs a live GPUI event
+loop pinned to the platform main thread (Cocoa `NSApplication`, X11/Wayland
+connection, etc.). `cargo test` runs each `#[test]` (and `#[tokio::test]`)
+on a worker thread the harness chose, *not* on the process's platform
+main thread, and gpui's `Application::run` is not safe to start from a
+worker thread inside a `#[tokio::test]` harness:
+
+- `Application::run` takes over the calling thread for the platform event
+  loop (it never returns until the app quits — `app.rs:174` and per §0.2).
+- gpui 0.2.2 has no headless / no-window variant of `Application::run`;
+  the only off-thread seam is `TestAppContext::single()` (§0.A.9), which
+  supplies a `&mut App` but no event loop and no window backend.
+- Even if the event loop were started on a worker, the `RefCell<App>`
+  borrow rules (§0.A.7) make it racy to drive UI work from outside that
+  thread.
+
+The integration test `second_launch_spawns_visual_window` in
+`crates/dat0-app/tests/single_instance.rs` is therefore marked
+`#[ignore]` with a reason string and a body that
+`unimplemented!()`s — its purpose is to be a discoverable anchor for the
+manual UAT recipe below, not to run under `cargo test`.
+
+**Compensating automated coverage.** The same UDS → dispatcher → main-thread
+plumbing is exercised by the sibling test
+`second_launch_forwards_and_dispatches_to_main_thread` in the same file.
+That test substitutes an `AtomicUsize` increment for the
+`WindowRegistry::open()` call inside the dispatched closure, then drives
+the dispatcher's drain against a real `&mut gpui::App` supplied by
+`TestAppContext::single()` (the safe seam established in §0.A.9). The
+assertion "closure ran exactly once after the UDS forward" is the same
+shape as "window count grew by one after the UDS forward" — the only
+delta is what the closure does once it's on the main thread, which is the
+piece the manual UAT verifies visually.
+
+**Manual UAT recipe (visual second-launch).** Run from two separate
+shells with the workspace as cwd:
+
+```bash
+# Terminal A — start the first instance
+cargo run -p dat0-app
+# (leave it running; a window appears)
+
+# Terminal B — simulate a second launch
+cargo run -p dat0-app
+# (this process must exit ~immediately after forwarding via UDS;
+#  it must NOT open its own window)
+```
+
+Pass criteria:
+
+1. Terminal A's existing instance grows from one window to two visible
+   windows. The new window is empty (no file paths were forwarded) and
+   focusable independently of the first.
+2. Terminal B's process exits with status 0 within ~1 s of launch.
+3. Terminal A's logs (with `RUST_LOG=dat0=debug`) show a
+   `single_instance: forwarded open-window message` line followed by a
+   `window_registry: opened window` line on the main thread.
+
+Failure modes to watch for:
+
+- Terminal B spawns its own window (single-instance check broke).
+- Terminal A panics with a `BorrowMutError` (PD-010 regression — the
+  dispatcher is being bypassed and `AsyncApp::update` is being called
+  off-main).
+- Second window never appears but no panic (UDS message reached the
+  handler but the dispatcher closure never drained — likely the
+  `MainThreadDispatcher` global wasn't installed in `main.rs`).
+
+**Revisit in T13 retro.** T13 (post-implementation retrospective) should
+either (a) replace this manual UAT with an automated end-to-end test if
+a headless gpui seam becomes available upstream, or (b) explicitly accept
+the manual path as the long-term shape for this assertion and move the
+recipe into `docs/ci.md` alongside other manual smokes. Track in the T13
+deliverable as "P3b T1 manual UAT — promote or accept".

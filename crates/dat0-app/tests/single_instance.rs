@@ -124,6 +124,7 @@ async fn second_launch_forwards_and_dispatches_to_main_thread() {
 /// second invocation must spawn a visible window in the first instance,
 /// then exit. Window-count is observable via `WindowRegistry::len()` at
 /// shutdown logs.
+// See docs/internal/gpui-api-notes.md §0.A.11 for the manual UAT path.
 #[test]
 #[ignore = "requires a running GPUI event loop on the platform main thread; see manual UAT in test docstring"]
 fn second_launch_spawns_visual_window() {
