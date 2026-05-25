@@ -245,6 +245,27 @@ pub fn run_app(lock: AppLock, initial_paths: Vec<PathBuf>, main_loop: MainLoop) 
         // will fail silently.
         gpui_component::init(cx);
 
+        // P3b T12 (D-002 closure): promote dat0's own `crate::theme::Theme`
+        // to a `gpui::Global` for the lifetime of the app. The initial id
+        // is read from `theme.id` in the persisted settings file (the same
+        // path AppContext::boot writes), with `"dark"` as the fallback for
+        // missing / unknown ids. Subscribers register via
+        // `cx.observe_global::<crate::theme::Theme>` (see
+        // `WorkspaceShell::render`); the Settings theme dropdown's
+        // `on_theme_change` calls `Theme::switch` to fan out to every
+        // subscriber on the next tick.
+        if let Ok(cfg_dir) = crate::platform::config_dir() {
+            let settings_path = cfg_dir.join("settings.toml");
+            let store = crate::settings::store::SettingsStore::with_path(settings_path);
+            crate::theme::Theme::install(cx, &store);
+        } else {
+            // Without a config dir we still want subscribers to find a
+            // global (`cx.global::<Theme>` panics otherwise). Install the
+            // built-in default directly — same shape as the fallback path
+            // in `Theme::install`.
+            cx.set_global(crate::theme::Theme::load_builtin_or_default("dark"));
+        }
+
         // PD-010 closure: drive the MainThreadDispatcher receiver loop from
         // a foreground-executor task so each posted closure runs on the
         // GPUI main thread via `cx.update`. The loop terminates when every
@@ -417,14 +438,10 @@ pub struct WorkspaceShell {
     /// observer in every window so the grid re-renders with the new
     /// palette.
     ///
-    /// **CAVEAT (P3b T4):** dat0's `crate::theme::Theme` is not yet wired
-    /// as a `gpui::Global` — that promotion is part of a later P3b task
-    /// (the theme live-switch work). For now we subscribe to
-    /// `gpui_component::Theme` which is already `impl Global for Theme`
-    /// per `docs/internal/gpui-component-api-notes.md` §1.3. The later
-    /// task only needs to flip the `<gpui_component::Theme>` type
-    /// parameter to `<crate::theme::Theme>` once the dat0 type is
-    /// promoted; no other change required.
+    /// As of P3b T12 (D-002 closure) we subscribe to
+    /// `crate::theme::Theme` — dat0's own theme type was promoted to a
+    /// `gpui::Global` in `crates/dat0-app/src/theme/mod.rs`, replacing
+    /// the T4 placeholder subscription against `gpui_component::Theme`.
     theme_subscription: Option<Subscription>,
 }
 
@@ -473,13 +490,12 @@ impl Render for WorkspaceShell {
         // subscription returns a `Subscription` that must be kept alive
         // (drop = unregister) per `gpui-api-notes.md` §0.A.2.
         //
-        // Per the IMPORTANT CAVEAT in the P3b T4 task brief we observe
-        // `gpui_component::Theme` (which IS a Global) rather than
-        // `crate::theme::Theme` (which is not yet promoted to a Global);
-        // the later theme-live-switch task flips this single type
-        // parameter once dat0's Theme becomes a Global.
+        // P3b T12 flipped the type parameter from the T4 placeholder
+        // `gpui_component::Theme` to `crate::theme::Theme` — dat0's own
+        // theme type is now a `gpui::Global` (see `theme/mod.rs`), so the
+        // Settings dropdown's `Theme::switch` fans out here.
         if self.theme_subscription.is_none() {
-            let sub = cx.observe_global::<gpui_component::Theme>(|_view, cx| {
+            let sub = cx.observe_global::<crate::theme::Theme>(|_view, cx| {
                 cx.notify();
             });
             self.theme_subscription = Some(sub);

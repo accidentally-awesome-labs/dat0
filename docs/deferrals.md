@@ -41,7 +41,7 @@ that's modifying it; merge conflicts are signals worth investigating.
 | ID    | Title                                              | Status | From | Target |
 |-------|----------------------------------------------------|--------|------|--------|
 | D-001 | Editable Settings widgets (author identity + theme dropdown) | closed | P1 | P3 |
-| D-002 | Theme live-switch through running window           | open | P1   | P3     |
+| D-002 | Theme live-switch through running window           | closed | P1   | P3     |
 | D-003 | Sparkle Objective-C `SUUpdater` bridge             | open | P1   | P10    |
 | D-004 | AppImageUpdate subprocess invocation               | open | P1   | P10    |
 | D-005 | Linux Secret Service "setup banner" UX             | open | P1   | TBD    |
@@ -111,7 +111,7 @@ that's modifying it; merge conflicts are signals worth investigating.
 
 ### D-002 — Theme live-switch through running window
 
-- **Status:** open
+- **Status:** closed
 - **Deferred from:** P1 (T10)
 - **Target phase:** P3
 - **Reason:** Live theme application requires the running UI surfaces to consume
@@ -123,7 +123,8 @@ that's modifying it; merge conflicts are signals worth investigating.
   re-renders on theme change without restart.
 - **Originating doc:** `docs/plans/2026-04-26-dat0-p1-foundation-plan.md` §"Risks & Caveats"
 - **Closes:** spec §21.2 P1 exit — "Theme switch (default ↔ alternate) works without restart"
-- **Last touched:** 2026-04-28
+- **Last touched:** 2026-05-25
+- **Closed by:** T12 (`crates/dat0-app/src/theme/mod.rs` Theme::install + Theme::switch + observe_global audit); P3b plan T12. cx.set_global + cx.observe_global propagation; Theme dropdown change in Settings updates the global; subscribed views re-render in the same tick. Cross-window propagation automatic via app-scoped global.
 
 ### D-003 — Sparkle Objective-C `SUUpdater` bridge
 
