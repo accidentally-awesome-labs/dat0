@@ -40,7 +40,7 @@ that's modifying it; merge conflicts are signals worth investigating.
 
 | ID    | Title                                              | Status | From | Target |
 |-------|----------------------------------------------------|--------|------|--------|
-| D-001 | Editable Settings widgets (author identity + theme dropdown) | open | P1 | P3 |
+| D-001 | Editable Settings widgets (author identity + theme dropdown) | closed | P1 | P3 |
 | D-002 | Theme live-switch through running window           | open | P1   | P3     |
 | D-003 | Sparkle Objective-C `SUUpdater` bridge             | open | P1   | P10    |
 | D-004 | AppImageUpdate subprocess invocation               | open | P1   | P10    |
@@ -82,7 +82,7 @@ that's modifying it; merge conflicts are signals worth investigating.
 
 ### D-001 — Editable Settings widgets (author identity + theme dropdown)
 
-- **Status:** open
+- **Status:** closed
 - **Deferred from:** P1 (T7 schema, T16 settings UI)
 - **Target phase:** P3
 - **Reason:** Depends on form-input primitives (text input, select dropdown) from
@@ -94,7 +94,20 @@ that's modifying it; merge conflicts are signals worth investigating.
   bound to the existing `SettingsStore`.
 - **Originating doc:** `docs/plans/2026-04-26-dat0-p1-foundation-plan.md` §"Risks & Caveats"
 - **Closes:** spec §21.2 P1 exit — "Settings panel opens; changes persist across launches" (full editability)
-- **Last touched:** 2026-04-28
+- **Last touched:** 2026-05-25
+- **Closed by:** T11 (`crates/dat0-app/src/settings_ui/sections/{profile,theme}.rs`
+  + `crates/dat0-app/src/settings/store.rs`); P3b plan T11. The plan-verbatim
+  KV facade (`SettingsStore::open_in_memory`, `set`, `get_string`) lands on
+  top of the P1 TOML store — `author.name`, `author.email`, `theme.id`
+  round-trip via the same atomic-write path P1 already uses, and the on-change
+  closures (`ProfileSection::on_name_change` / `on_email_change`,
+  `ThemeSection::on_theme_change`) carry the live wiring shape. The visible
+  view stayed stubbed because the gpui-component `Input` + `Select` mount
+  rides on the T13 follow-up that opens the real settings window
+  (see T0 spike §3 + §3.6 in `docs/internal/gpui-component-api-notes.md`);
+  SettingsStore round-trip is live + tested (7 tests in
+  `crates/dat0-app/tests/settings_ui.rs`). T12 reads `theme.id` for the
+  `Theme::switch` fan-out via the same facade.
 
 ### D-002 — Theme live-switch through running window
 
