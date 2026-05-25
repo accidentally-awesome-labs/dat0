@@ -41,6 +41,14 @@ impl Default for SettingsView {
     }
 }
 
+/// Open the settings panel as a dedicated window. T3 (P3b) ships a
+/// tracing stub so the `settings.open` built-in action (see
+/// [`crate::actions::builtin::ids::SETTINGS_OPEN`]) can resolve today;
+/// T13 (D-001 + D-002 follow-up) wires the real window-open path.
+pub fn open_settings_window(_app: &mut gpui::App) {
+    tracing::info!("settings_ui::open_settings_window stub — T13 wires the real window");
+}
+
 impl Render for SettingsView {
     fn render(
         &mut self,

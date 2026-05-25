@@ -23,6 +23,16 @@ fn main() -> Result<()> {
     let (dispatcher, main_loop) = MainThreadDispatcher::new();
     dat0_app::window_registry::install_dispatcher(dispatcher);
 
+    // P3b T3: build and publish the `ActionRegistry` singleton with all
+    // seven built-in actions so the command palette (T6), Banner action
+    // resolution (T2), and built-in dispatch closures can look up by
+    // stable id. Built-ins that depend on `state_root` / `WindowRegistry`
+    // resolve those via singletons installed inside `run_app`.
+    let registry = dat0_app::actions::registry::ActionRegistry::new();
+    dat0_app::actions::builtin::register_all(&registry)
+        .expect("built-in actions must register without conflict");
+    dat0_app::window_registry::install_action_registry(registry);
+
     tracing::info!("dat0 starting");
     dat0_app::run_app(lock, cli_paths, main_loop)
 }

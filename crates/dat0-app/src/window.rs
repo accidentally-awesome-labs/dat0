@@ -152,6 +152,15 @@ pub fn run_app(lock: AppLock, initial_paths: Vec<PathBuf>, main_loop: MainLoop) 
     // Cmd-N spawn_window path call register() after cx.open_window succeeds.
     let registry = Arc::new(Mutex::new(WindowRegistry::new()));
 
+    // P3b T3: publish `state_root` + the `WindowRegistry` handle as
+    // process-wide singletons so the built-in `window.new` action
+    // (registered in `main.rs`) can call `spawn_window` with the same
+    // arguments the cold-start / Cmd-N paths use. Both setters are
+    // idempotent (`OnceCell::set`), so a re-entry during tests is a
+    // no-op rather than a panic.
+    crate::window_registry::install_state_root(state_root.clone());
+    crate::window_registry::install_window_registry(Arc::clone(&registry));
+
     // Spawn UDS server on the tokio runtime. Each received OpenWindowMessage
     // dispatches a visual-spawn closure onto the GPUI main thread via the
     // process-wide MainThreadDispatcher installed in main.rs — closes PD-010.
