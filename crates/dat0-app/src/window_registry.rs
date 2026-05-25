@@ -9,8 +9,30 @@
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Arc;
+
+use once_cell::sync::OnceCell;
 use tokio::sync::Mutex;
 use uuid::Uuid;
+
+use crate::main_bridge::MainThreadDispatcher;
+
+/// Process-wide dispatcher slot. Set exactly once, before `Application::run`
+/// (see `main.rs`). Used by the UDS handler and any tokio task that needs to
+/// post closures onto the GPUI main thread. Closes PD-010.
+static DISPATCHER: OnceCell<MainThreadDispatcher> = OnceCell::new();
+
+/// Install the dispatcher for process-wide access. Idempotent: a second
+/// call is a no-op (subsequent attempts simply drop the new dispatcher).
+pub fn install_dispatcher(d: MainThreadDispatcher) {
+    let _ = DISPATCHER.set(d);
+}
+
+/// Access the installed dispatcher. Returns `None` only if
+/// [`install_dispatcher`] has not yet been called (e.g., very early during
+/// boot, or in tests that exercise sub-modules in isolation).
+pub fn dispatcher() -> Option<&'static MainThreadDispatcher> {
+    DISPATCHER.get()
+}
 
 #[derive(Debug, Clone)]
 pub struct WindowHandle {

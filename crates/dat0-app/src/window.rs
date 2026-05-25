@@ -8,15 +8,16 @@
 //! run once before any window opens, otherwise dialogs / sheets /
 //! notifications silently fail to render later (T17 depends on this).
 //!
-//! # Single-instance & multi-window (T12)
+//! # Single-instance & multi-window (T12 + P3b T1)
 //!
 //! `run_app` receives the `AppLock` singleton (already acquired in `main`)
 //! and a list of CLI paths for the initial window. After the first window
 //! opens, a tokio task is spawned to run the UDS server via
-//! `AppLock::serve`. UDS-received `OpenWindowMessage`s are logged; the
-//! visual cross-thread bridge to open a second GPUI window from a tokio task
-//! is deferred (see `docs/deferrals.md` PD-010): `AsyncApp::update` is not
-//! safe to call from a non-main thread (gpui uses `RefCell` for app state).
+//! `AppLock::serve`. P3b T1 closes PD-010: each UDS-received
+//! `OpenWindowMessage` posts a visual-spawn closure through the
+//! [`crate::main_bridge::MainThreadDispatcher`] global; the closure runs
+//! on the GPUI main thread inside `MainLoop::consume` (a `cx.spawn`'d
+//! receiver loop registered during app init).
 //!
 //! Cmd-N triggers `menu_macos::NewWindow` action, handled via
 //! `cx.on_action` in the GPUI main thread — fully wired, no deferral.
@@ -45,6 +46,7 @@ use std::sync::Arc;
 use crate::app_lock::{AppLock, OpenWindowMessage};
 use crate::file_drop::{DropOutcome, handle_drop};
 use crate::grid::GridDataSource;
+use crate::main_bridge::MainLoop;
 use crate::session::Session;
 use crate::window_registry::{WindowHandle, WindowRegistry};
 
@@ -52,13 +54,17 @@ use crate::window_registry::{WindowHandle, WindowRegistry};
 ///
 /// Creates a fresh [`Session`] under `state_root`, wraps it in a
 /// `WorkspaceShell`, and opens a GPUI window. Called both from Cmd-N
-/// (synchronous main thread) and — once PD-010 is resolved — from the
-/// UDS message handler.
+/// (synchronous main thread, macOS only) and — as of P3b T1 (closes
+/// PD-010) — from the UDS message handler on all platforms via the
+/// [`crate::main_bridge::MainThreadDispatcher`] bridge.
 ///
 /// `registry` receives a `register` call for the newly opened window so
-/// that T17's window-count assertion can observe it.
-#[cfg(target_os = "macos")]
-fn spawn_window(cx: &mut App, state_root: &std::path::Path, registry: Arc<Mutex<WindowRegistry>>) {
+/// the window-count assertion in `tests/single_instance.rs` can observe it.
+pub(crate) fn spawn_window(
+    cx: &mut App,
+    state_root: &std::path::Path,
+    registry: Arc<Mutex<WindowRegistry>>,
+) {
     // SAFETY: block_on is called from the Cocoa/GPUI main thread (cx.on_action
     // fires synchronously here), NOT inside a tokio async context. If gpui ever
     // dispatches actions via tokio::spawn, this becomes a nested-runtime panic;
@@ -113,21 +119,21 @@ fn spawn_window(cx: &mut App, state_root: &std::path::Path, registry: Arc<Mutex<
 /// open, a tokio task is spawned to run `lock.serve(handler)`, which listens
 /// on `dat0.sock` for `OpenWindowMessage`s from subsequent launches.
 ///
-/// # UDS → GPUI bridge (PD-010)
+/// # UDS → GPUI bridge (closes PD-010)
 ///
 /// Opening a GPUI window from a tokio task requires calling
 /// `AsyncApp::update`, which internally borrows a `RefCell<AppState>`. That
-/// borrow is not safe to acquire from a non-main thread while the Cocoa
-/// event loop may hold it. For now the UDS handler only logs the received
-/// message; the visual cross-thread bridge is deferred to PD-010 (target
-/// T17 / P3b). Single-instance enforcement (second launch forwards + exits)
-/// is fully functional. Cmd-N spawns new windows synchronously.
+/// borrow is not safe to acquire from a non-main thread. P3b T1 closes
+/// PD-010 via [`crate::main_bridge::MainThreadDispatcher`]: the UDS handler
+/// posts a closure into a `futures::channel::mpsc` channel; the receiver
+/// (`MainLoop::consume`) runs inside `cx.spawn` on the foreground executor
+/// and therefore calls `cx.update` on the main thread.
 ///
 /// # initial_paths
 ///
 /// If non-empty on cold start, `handle_drop` is called against the first
 /// window's session so CLI-supplied files are registered immediately.
-pub fn run_app(lock: AppLock, initial_paths: Vec<PathBuf>) -> Result<()> {
+pub fn run_app(lock: AppLock, initial_paths: Vec<PathBuf>, main_loop: MainLoop) -> Result<()> {
     // Build a dedicated tokio runtime for session construction and future
     // async work (file registration, paged queries). main() is synchronous,
     // so Handle::current() would panic — we must create our own runtime here.
@@ -146,17 +152,29 @@ pub fn run_app(lock: AppLock, initial_paths: Vec<PathBuf>) -> Result<()> {
     // Cmd-N spawn_window path call register() after cx.open_window succeeds.
     let registry = Arc::new(Mutex::new(WindowRegistry::new()));
 
-    // Spawn UDS server on the tokio runtime. The handler closure logs each
-    // received OpenWindowMessage. Visual window-open from the tokio context
-    // is deferred — see module-level doc (PD-010).
+    // Spawn UDS server on the tokio runtime. Each received OpenWindowMessage
+    // dispatches a visual-spawn closure onto the GPUI main thread via the
+    // process-wide MainThreadDispatcher installed in main.rs — closes PD-010.
+    let state_root_for_uds = state_root.clone();
+    let registry_for_uds = Arc::clone(&registry);
     runtime.spawn(async move {
         let result = lock
-            .serve(|msg: OpenWindowMessage| {
+            .serve(move |msg: OpenWindowMessage| {
                 tracing::info!(
                     paths = ?msg.paths,
-                    "UDS: received open-window request from second instance \
-                     (visual window spawn deferred — PD-010)"
+                    "UDS: received open-window request from second instance"
                 );
+                let Some(d) = crate::window_registry::dispatcher() else {
+                    tracing::warn!("PD-010: dispatcher not installed; dropping UDS open-window");
+                    return;
+                };
+                let state_root = state_root_for_uds.clone();
+                let registry = Arc::clone(&registry_for_uds);
+                if let Err(e) = d.dispatch(move |cx| {
+                    spawn_window(cx, &state_root, registry);
+                }) {
+                    tracing::warn!(error = %e, "UDS: main-thread dispatch failed");
+                }
             })
             .await;
         if let Err(e) = result {
@@ -173,6 +191,17 @@ pub fn run_app(lock: AppLock, initial_paths: Vec<PathBuf>) -> Result<()> {
         // this, dialogs/sheets/notifications wired up in later tasks (T17)
         // will fail silently.
         gpui_component::init(cx);
+
+        // PD-010 closure: drive the MainThreadDispatcher receiver loop from
+        // a foreground-executor task so each posted closure runs on the
+        // GPUI main thread via `cx.update`. The loop terminates when every
+        // dispatcher clone is dropped (see main_bridge.rs).
+        cx.spawn(async move |cx| {
+            if let Err(e) = main_loop.consume(cx).await {
+                tracing::warn!(error = %e, "MainLoop::consume exited with error");
+            }
+        })
+        .detach();
 
         // Install the macOS native menu bar (P1.T14). On non-macOS targets
         // `build_menus` returns an empty Vec, so this is a no-op.

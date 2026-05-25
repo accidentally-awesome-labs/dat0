@@ -5,6 +5,7 @@ pub mod boot;
 pub mod error_ux;
 pub mod file_drop;
 pub mod grid;
+pub mod main_bridge;
 pub mod menu_macos;
 pub mod platform;
 pub mod recents;

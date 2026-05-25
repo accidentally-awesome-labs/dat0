@@ -67,7 +67,7 @@ that's modifying it; merge conflicts are signals worth investigating.
 | PD-007 | P2 plan T14 snippet calls non-existent `error_ux::banner::push_banner` with mismatched `Banner` shape | closed | low      |
 | PD-008 | P3a plan T2 snippets use wrong import paths for `fs4::FileExt` and `interprocess::local_socket::traits::Stream` | closed | trivial  |
 | PD-009 | P3a plan T6 test snippet calls non-existent `engine.catalog().get_tables()` — no `catalog()` method on `DuckDBEngine` | closed | trivial |
-| PD-010 | P3a plan T12 UDS → GPUI cross-thread window-open bridge is unsafe: `AsyncApp::update` borrows a `RefCell`-backed app cell, not safe to call from a tokio background thread | open | low |
+| PD-010 | P3a plan T12 UDS → GPUI cross-thread window-open bridge is unsafe: `AsyncApp::update` borrows a `RefCell`-backed app cell, not safe to call from a tokio background thread | closed | low |
 | PD-011 | P3b plan §3.7 ambiguity rule references sniff outputs that don't exist: no candidate-delimiter scores, no encoding column, no per-column confidence in `sniff_csv` | open | low |
 
 ---
@@ -658,7 +658,7 @@ that's modifying it; merge conflicts are signals worth investigating.
 
 ### PD-010 — P3a plan T12 UDS → GPUI cross-thread window-open bridge is unsafe
 
-- **Status:** open
+- **Status:** closed
 - **Severity:** low (single-instance enforcement and Cmd-N multi-window are fully
   functional; only UDS-triggered window-open from a second launch is affected)
 - **Affected files:** `crates/dat0-app/src/window.rs` (`run_app` UDS handler)
@@ -697,7 +697,8 @@ that's modifying it; merge conflicts are signals worth investigating.
   ("Pattern C (preferred)" + "Practical fallback").
 - **Target phase:** T17 / P3b polish — depends on the UDS round-trip
   integration test (T16) that validates single-instance enforcement end-to-end.
-- **Last touched:** 2026-05-16
+- **Closed by:** T1 (`crates/dat0-app/src/main_bridge.rs` + UDS handler rewire + `tests/main_thread_dispatcher.rs`); P3b plan T1. The futures-mpsc dispatcher (option (b)) is captured before `Application::run`; the UDS handler posts visual-spawn closures through it. P3a partial exit #5 now PASS.
+- **Last touched:** 2026-05-25
 
 ---
 
