@@ -68,6 +68,7 @@ that's modifying it; merge conflicts are signals worth investigating.
 | PD-008 | P3a plan T2 snippets use wrong import paths for `fs4::FileExt` and `interprocess::local_socket::traits::Stream` | closed | trivial  |
 | PD-009 | P3a plan T6 test snippet calls non-existent `engine.catalog().get_tables()` — no `catalog()` method on `DuckDBEngine` | closed | trivial |
 | PD-010 | P3a plan T12 UDS → GPUI cross-thread window-open bridge is unsafe: `AsyncApp::update` borrows a `RefCell`-backed app cell, not safe to call from a tokio background thread | open | low |
+| PD-011 | P3b plan §3.7 ambiguity rule references sniff outputs that don't exist: no candidate-delimiter scores, no encoding column, no per-column confidence in `sniff_csv` | open | low |
 
 ---
 
@@ -697,6 +698,60 @@ that's modifying it; merge conflicts are signals worth investigating.
 - **Target phase:** T17 / P3b polish — depends on the UDS round-trip
   integration test (T16) that validates single-instance enforcement end-to-end.
 - **Last touched:** 2026-05-16
+
+---
+
+### PD-011 — P3b plan §3.7 ambiguity rule references sniff outputs that don't exist
+
+- **Status:** open
+- **Severity:** low (the import wizard still ships; only the trigger heuristic
+  changes shape)
+- **Affected files:** `docs/plans/2026-05-25-dat0-p3b-plan.md` T9 task description
+  (the three-clause ambiguity rule); `docs/specs/2026-05-25-dat0-p3b-ux-polish-design.md`
+  §3.7 (mirrors the same rule)
+- **Symptom:** P3b spec §3.7 and the plan's T9 description specify a three-clause
+  ambiguity rule for triggering the import wizard:
+  (a) "more than one candidate delimiter scored within 5% of the top",
+  (b) "sniff returns a non-UTF-8 encoding marker",
+  (c) "type-inference flags any column with confidence below the sniff's
+  reported threshold."
+  None of these three clauses match the actual `sniff_csv` output shape
+  documented at <https://duckdb.org/docs/stable/data/csv/auto_detection#sniff_csv-function>:
+  - (a) `sniff_csv` returns only the winner delimiter; there is no candidate
+    list and no scores.
+  - (b) There is no encoding column in the output. The CSV reader auto-detects
+    UTF-8 vs Latin-1 internally but does not surface that choice.
+  - (c) The `Columns` STRUCT array has `(name, type)` pairs only — no
+    per-column confidence value.
+  Cited verification: P3b.T0 spike doc
+  `docs/internal/duckdb-arrow-api-notes.md` §SniffCsv (2026-05-25 entry).
+- **Root cause:** Plan drafted from spec memory of "sniff returns rich
+  metadata" assumption. The real DuckDB sniff is dialect-focused, not
+  uncertainty-focused. duckdb-rs 1.4.4 has no typed Rust wrapper for
+  `sniff_csv` either; it is SQL-only, so the plan also can't lean on a Rust
+  return-type signature.
+- **What P3b T9 must do instead:** Replace the three-clause rule with a
+  spec-compatible substitute grounded in actual sniff output. Recommended
+  shape (see `duckdb-arrow-api-notes.md` §SniffCsv #5):
+  1. **Delimiter check via dual-sniff:** run `sniff_csv` twice with two
+     `sample_size` values (e.g., 4096 and 65536); if the inferred `Delimiter`
+     differs between runs, treat the file as ambiguous.
+  2. **Encoding heuristic:** read the first 8 KB of the file with
+     `std::str::from_utf8`; on decode error, treat as ambiguous and default
+     the wizard to Latin-1.
+  3. **(Optional) Type stability:** compare `Columns[*].type` between the
+     same two sample sizes; if any column type differs, treat as ambiguous.
+- **What target phase delivers:** Plan + spec §3.7 amended to drop (a), (c)
+  as written and substitute the dual-sniff + UTF-8-heuristic rule. T9 plan
+  step list updates to call the new shape. Spec §3.7 wording remains
+  conceptually accurate ("ambiguous → drawer, confident → bypass") so the
+  amendment is mechanical.
+- **Originating doc:** `docs/specs/2026-05-25-dat0-p3b-ux-polish-design.md`
+  §3.7 + `docs/plans/2026-05-25-dat0-p3b-plan.md` T9 (the spike-source
+  references at the bottom of each).
+- **Target phase:** P3b T9 (no separate target phase — this defect is
+  surfaced by T0 and consumed by T9 before T9 begins implementation).
+- **Last touched:** 2026-05-25
 
 ---
 
