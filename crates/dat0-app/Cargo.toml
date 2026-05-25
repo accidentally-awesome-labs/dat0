@@ -38,6 +38,8 @@ interprocess = { workspace = true }
 uuid = { workspace = true }
 lru = { workspace = true }
 futures = { workspace = true }
+reqwest = { workspace = true }
+sha2 = { workspace = true }
 
 [dev-dependencies]
 tempfile = { workspace = true }
@@ -47,6 +49,8 @@ serial_test = { workspace = true }
 # on gpui (see docs/internal/gpui-api-notes.md §0.A.9). Required by the
 # main-thread-dispatcher integration test.
 gpui = { workspace = true, features = ["test-support"] }
+# T8 (P3b): in-process HTTP mock for sample_data::fetch_remote tests.
+mockito = { workspace = true }
 
 [[bench]]
 name = "engine_smoke"

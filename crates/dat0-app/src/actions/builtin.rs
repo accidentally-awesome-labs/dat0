@@ -13,6 +13,7 @@
 //! - `recents.show` — T7 (recents drawer)
 //! - `recovery.review` — T5 (recovery panel)
 //! - `import.cancel` — T10 (import wizard cancel button)
+//! - `sample_data.retry_taxi` — T8 (empty-state hero re-fires fetch_remote)
 
 use std::sync::Arc;
 
@@ -28,6 +29,7 @@ pub mod ids {
     pub const RECENTS_SHOW: &str = "recents.show";
     pub const RECOVERY_REVIEW: &str = "recovery.review";
     pub const IMPORT_CANCEL: &str = "import.cancel";
+    pub const SAMPLE_DATA_RETRY_TAXI: &str = "sample_data.retry_taxi";
 }
 
 /// Register every built-in action onto `reg`. Returns an error if any id
@@ -126,6 +128,24 @@ pub fn register_all(reg: &ActionRegistry) -> Result<(), RegisterError> {
         keybinding: None,
         dispatch: Arc::new(|app| {
             crate::import_progress::cancel_active(app);
+        }),
+    })?;
+
+    reg.register(ActionDescriptor {
+        id: ActionId::from(ids::SAMPLE_DATA_RETRY_TAXI),
+        title: "Retry NYC Taxi download".into(),
+        group: ActionGroup::File,
+        keybinding: None,
+        dispatch: Arc::new(|app| {
+            // T8 leaves dispatch as a tracing breadcrumb; the empty-state
+            // hero "Try this sample" button (T7) owns the actual
+            // re-fire of `sample_data::fetch_remote`. Banner-button
+            // routing into the hero handler lands as a T7 follow-up
+            // once the hero exposes a stable retry entrypoint.
+            let _ = app;
+            tracing::info!(
+                "action: sample_data.retry_taxi dispatched (stub — T7 follow-up wires re-fetch)"
+            );
         }),
     })?;
 

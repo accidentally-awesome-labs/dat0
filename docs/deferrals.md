@@ -63,6 +63,7 @@ that's modifying it; merge conflicts are signals worth investigating.
 | PD-003 | cargo-about NOTICE output not deterministic across host platforms  | open   | low      |
 | PD-004 | Linux Secret Service backend not reachable from CI keychain tests  | open   | low      |
 | PD-011 | P3b plan §3.7 ambiguity rule references sniff outputs that don't exist: no candidate-delimiter scores, no encoding column, no per-column confidence in `sniff_csv` | open | low |
+| PD-012 | `NYC_TAXI_SHA256 = "FILL_AT_T8"` — release asset not yet uploaded, so the fetch path always fails the checksum check at runtime | open | low |
 
 ## At-a-glance — Closed plan defects
 
@@ -757,6 +758,46 @@ that's modifying it; merge conflicts are signals worth investigating.
   references at the bottom of each).
 - **Target phase:** P3b T9 (no separate target phase — this defect is
   surfaced by T0 and consumed by T9 before T9 begins implementation).
+- **Last touched:** 2026-05-25
+
+---
+
+### PD-012 — `NYC_TAXI_SHA256` placeholder until release asset upload
+
+- **Status:** open
+- **Severity:** low (the fetch path is wired + fully tested via mockito; only
+  the production NYC-taxi sample is unavailable until the asset upload)
+- **Affected files:** `crates/dat0-app/src/sample_data.rs`
+  (`NYC_TAXI_SHA256` constant)
+- **Symptom:** `NYC_TAXI_SHA256` is currently `"FILL_AT_T8"`. If the
+  empty-state hero (T7) dispatches the NYC taxi sample, `fetch_remote`
+  downloads the body from `NYC_TAXI_URL` and then fails the SHA-256
+  compare ("checksum mismatch: expected fill_at_t8 got <real>"). The
+  failure path is correct UX — the T8 banner shows
+  "Sample data download failed: Couldn't download from <url>: checksum
+  mismatch…" with a Retry button — but the user can never successfully
+  pull the asset until this placeholder is replaced with the real hash.
+- **Discovered:** P3b T8 implementation (2026-05-25). The plan explicitly
+  scoped this as maintainer work: T8 wires + tests the fetch path; the
+  asset upload + hash compute is owned outside the implementer's
+  worktree.
+- **What T8 ships:** Async `fetch_remote(url, expected_sha, …)` with
+  rustls-only reqwest, SHA-256 verify, atomic-write cache. mockito tests
+  cover happy-path / checksum-mismatch / 404 / cache-hit. Banner
+  `fetch_failed_banner` + `sample_data.retry_taxi` action descriptor for
+  the offline UX. `NYC_TAXI_URL` points at the
+  `accidentally-awesome-labs/dat0` GitHub Release tag `sample-data-v1`
+  with asset name `nyc_taxi.parquet`.
+- **What target phase delivers:** Maintainer uploads `nyc_taxi.parquet`
+  to the `sample-data-v1` release, computes the SHA-256
+  (`shasum -a 256 nyc_taxi.parquet`), replaces `"FILL_AT_T8"` in
+  `sample_data.rs` with the real lowercase hex, and lands a one-line
+  commit. No code paths change. The fetch path then succeeds end-to-end
+  on first hero click.
+- **Target phase:** P3b T13 retro, or P3b follow-up commit if the asset
+  upload lands before retro.
+- **Originating doc:** `docs/plans/2026-05-25-dat0-p3b-plan.md` T8 ("External
+  work (defer to maintainer)").
 - **Last touched:** 2026-05-25
 
 ---

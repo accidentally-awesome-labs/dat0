@@ -1,7 +1,9 @@
-//! `ActionRegistry` + built-in action descriptors (P3b T3).
+//! `ActionRegistry` + built-in action descriptors (P3b T3 + T8).
 //!
-//! Verifies the registry shape and the seven baseline `register_all`
-//! built-ins. Banner action_ids (T2) reference these stable strings.
+//! Verifies the registry shape and the baseline `register_all` built-ins.
+//! T3 shipped seven descriptors; T8 added `sample_data.retry_taxi` (banner
+//! Retry button for the offline fetch-failed UX), bringing the count to
+//! eight. Banner action_ids (T2) reference these stable strings.
 //! Downstream tasks (T5 recovery panel, T7 empty-state hero,
 //! T10 import cancel, T11 file dialog, T12 theme toggle) will replace
 //! stub dispatch bodies with real wiring — registry shape itself is
@@ -67,11 +69,12 @@ fn lookup_returns_descriptor() {
 }
 
 #[test]
-fn builtins_register_seven() {
+fn builtins_register_eight() {
     let reg = ActionRegistry::new();
     dat0_app::actions::builtin::register_all(&reg).unwrap();
-    assert_eq!(reg.count(), 7);
+    assert_eq!(reg.count(), 8);
     let titles: Vec<String> = reg.iter().map(|d| d.title).collect();
     assert!(titles.contains(&"New Window".to_string()));
     assert!(titles.contains(&"Open Settings".to_string()));
+    assert!(titles.contains(&"Retry NYC Taxi download".to_string()));
 }
