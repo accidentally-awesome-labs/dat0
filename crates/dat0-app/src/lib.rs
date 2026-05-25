@@ -8,6 +8,7 @@ pub mod empty_state;
 pub mod error_ux;
 pub mod file_drop;
 pub mod grid;
+pub mod import_wizard;
 pub mod main_bridge;
 pub mod menu_macos;
 pub mod platform;

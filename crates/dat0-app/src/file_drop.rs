@@ -9,6 +9,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use crate::error_ux::banner;
+use crate::import_wizard::{self, SniffSummary, should_show_wizard};
 use crate::session::{Session, Tab};
 
 /// Handle a batch of dropped paths. Returns one [`DropOutcome`] per path, in order.
@@ -35,6 +36,12 @@ pub enum DropOutcome {
     },
     /// The engine returned an error during `register_file`.
     EngineError { path: PathBuf, error: String },
+    /// CSV/TSV sniff was ambiguous (PD-011 substitute heuristic). The UI
+    /// layer routes this to `import_wizard::open(app, path, sniff)`; tests
+    /// can match the variant directly. No tab is appended at this stage —
+    /// the wizard owns the eventual `register_file` call after the user
+    /// confirms dialect.
+    OpenWizard { path: PathBuf, sniff: SniffSummary },
 }
 
 async fn handle_one(path: PathBuf, session: &Mutex<Session>) -> DropOutcome {
@@ -53,6 +60,49 @@ async fn handle_one(path: PathBuf, session: &Mutex<Session>) -> DropOutcome {
             };
         }
     };
+
+    // P3b T9: CSV/TSV go through the sniff-ambiguity branch first. If the
+    // sniff is ambiguous (PD-011 substitute: dual-sniff delimiter disagreement
+    // OR non-UTF-8 head), short-circuit to `OpenWizard` and let the UI layer
+    // route to `import_wizard::open`. Sniff failures fall through to the
+    // confident path with a warn log — don't block drops on a sniff error.
+    if matches!(fmt, FileFormat::Csv | FileFormat::Tsv) {
+        let path_for_sniff = path.clone();
+        let sniff_result =
+            tokio::task::spawn_blocking(move || import_wizard::sniff(&path_for_sniff))
+                .await
+                .map_err(|e| e.to_string());
+        match sniff_result {
+            Ok(Ok(summary)) => {
+                if should_show_wizard(&summary) {
+                    tracing::info!(
+                        path = %path.display(),
+                        delimiter = %summary.top_delimiter,
+                        encoding_supported = summary.encoding_supported,
+                        "sniff ambiguous — routing to import wizard",
+                    );
+                    return DropOutcome::OpenWizard {
+                        path,
+                        sniff: summary,
+                    };
+                }
+            }
+            Ok(Err(e)) => {
+                tracing::warn!(
+                    path = %path.display(),
+                    error = %e,
+                    "sniff_csv failed; assuming confident and proceeding with register_file",
+                );
+            }
+            Err(e) => {
+                tracing::warn!(
+                    path = %path.display(),
+                    error = %e,
+                    "sniff task join failed; assuming confident and proceeding with register_file",
+                );
+            }
+        }
+    }
 
     // Clone the engine Arc and immediately release the session lock before
     // the async `register_file` call. Holding a parking_lot mutex lock across
