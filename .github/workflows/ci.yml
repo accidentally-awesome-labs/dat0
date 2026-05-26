@@ -42,7 +42,11 @@ jobs:
         # label set. `runs-on: ${{ fromJSON(...) }}` AND-matches all labels.
         target:
           - { labels: '["macos-14"]',                              triple: aarch64-apple-darwin,     name: macos-arm64  }
-          - { labels: '["self-hosted", "Linux", "runnerkit"]',     triple: x86_64-unknown-linux-gnu, name: linux-x86_64 }
+          # Temporarily routed back to ubuntu-latest while runnerkit host
+          # is recovered (disk exhaustion 2026-05-26 on PR #5). Re-route to
+          # runnerkit labels once host is restored. Billing impact: Linux
+          # = 1x multiplier, ~1h per PR — manageable short-term.
+          - { labels: '["ubuntu-latest"]',                         triple: x86_64-unknown-linux-gnu, name: linux-x86_64 }
     runs-on: ${{ fromJSON(matrix.target.labels) }}
     env:
       DAT0_SPARKLE_APPCAST_URL: https://dat0.dev/appcast.xml
