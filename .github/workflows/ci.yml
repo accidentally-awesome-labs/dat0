@@ -124,6 +124,14 @@ jobs:
         # `--include-ignored` deliberately omitted. Heavy exit_criteria tests
         # (1 GB CSV / 500 MB Parquet / 100 MB SQLite) run nightly via
         # heavy.yml. PR-time validation runs the fast suite only.
+        #
+        # CARGO_BUILD_JOBS caps concurrent rustc/link processes on hosted
+        # Linux: ubuntu-latest has 4 vCPU + 16 GB RAM, and the dev-profile
+        # link of dat0's test binary set (duckdb + arrow + gpui + sentry
+        # rlib chain) OOM-kills `ld` (signal 7 Bus error) at default
+        # parallelism. See docs/ci.md "OOM mitigations" §2.
+        env:
+          CARGO_BUILD_JOBS: ${{ (runner.os == 'Linux' && runner.environment == 'github-hosted') && '2' || '' }}
         run: cargo test --workspace --target ${{ matrix.target.triple }}
       # Bench is macOS-only (single host class — variance across runners
       # makes cross-OS comparison meaningless). Artifact-only at P3a; spec
