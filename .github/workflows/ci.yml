@@ -53,6 +53,22 @@ jobs:
       DAT0_GLITCHTIP_DSN_PUBLIC: ${{ secrets.GLITCHTIP_DSN_PUBLIC }}
     steps:
       - uses: actions/checkout@v5
+      # GitHub-hosted ubuntu-latest ships ~14 GB free disk by default;
+      # dat0's debug-profile cargo test --workspace blows past that
+      # (duckdb + arrow + gpui + sentry rlib chain). Free ~30 GB by
+      # removing preinstalled language tooling we don't use.
+      # See docs/ci-mac-vm-runner.md / docs/ci.md for the wider disk
+      # story. Skipped on self-hosted (operator manages disk there).
+      - name: Free disk space (hosted Linux only)
+        if: runner.os == 'Linux' && runner.environment == 'github-hosted'
+        uses: jlumbroso/free-disk-space@v1.3.1
+        with:
+          tool-cache: true
+          android: true
+          dotnet: true
+          haskell: true
+          large-packages: false
+          swap-storage: true
       - uses: dtolnay/rust-toolchain@stable
         with:
           targets: ${{ matrix.target.triple }}
