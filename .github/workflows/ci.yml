@@ -131,7 +131,10 @@ jobs:
         # rlib chain) OOM-kills `ld` (signal 7 Bus error) at default
         # parallelism. See docs/ci.md "OOM mitigations" §2.
         env:
-          CARGO_BUILD_JOBS: ${{ (runner.os == 'Linux' && runner.environment == 'github-hosted') && '2' || '' }}
+          # Empty-string fallback would be re-read by cargo and rejected
+          # ("could not parse ``"). Use the literal "default" for the
+          # non-Linux branch so cargo treats it as the unset semantics.
+          CARGO_BUILD_JOBS: ${{ (runner.os == 'Linux' && runner.environment == 'github-hosted') && '2' || 'default' }}
         run: cargo test --workspace --target ${{ matrix.target.triple }}
       # Bench is macOS-only (single host class — variance across runners
       # makes cross-OS comparison meaningless). Artifact-only at P3a; spec
