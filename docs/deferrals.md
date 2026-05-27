@@ -65,6 +65,7 @@ that's modifying it; merge conflicts are signals worth investigating.
 | PD-004 | Linux Secret Service backend not reachable from CI keychain tests  | open   | low      |
 | PD-011 | P3b plan §3.7 ambiguity rule references sniff outputs that don't exist: no candidate-delimiter scores, no encoding column, no per-column confidence in `sniff_csv` | open | low |
 | PD-012 | `NYC_TAXI_SHA256 = "FILL_AT_T8"` — release asset not yet uploaded, so the fetch path always fails the checksum check at runtime | open | low |
+| PD-013 | P4a T0 plan-snippet drifts: `dat0-fixtures` assumed to be a lib crate; `dat0-engine` assumed to have a `benches/` dir + criterion dev-dep; plan snippet pinned `criterion = "0.5"` instead of using workspace inheritance | open | low |
 
 ## At-a-glance — Closed plan defects
 
@@ -836,6 +837,59 @@ that's modifying it; merge conflicts are signals worth investigating.
 - **Originating doc:** `docs/plans/2026-05-25-dat0-p3b-plan.md` T8 ("External
   work (defer to maintainer)").
 - **Last touched:** 2026-05-25
+
+---
+
+---
+
+### PD-013 — P4a T0 plan-snippet drifts: fixtures lib + engine bench setup + criterion workspace inheritance
+
+- **Status:** open
+- **Severity:** low (build-time failures; mechanical fixes applied in T0)
+- **Affected files:**
+  - `docs/plans/2026-05-27-dat0-p4a-plan.md` T0 Steps 3, 5 code snippets
+  - `crates/dat0-fixtures/Cargo.toml` + `src/lib.rs`
+  - `crates/dat0-engine/Cargo.toml` + `benches/`
+  - `Cargo.toml` (workspace) — criterion feature set
+- **Symptoms (three related drifts):**
+
+  **Drift 1 — `dat0-fixtures` is binary-only.**
+  Plan T0 Step 3 instructs "Append to `crates/dat0-fixtures/src/lib.rs`: `pub mod filter;`"
+  as if `dat0-fixtures` already had a lib target. At T0 execution, the crate was
+  binary-only: `[[bin]] name = "dat0-fixtures" path = "src/main.rs"` with no `[lib]`
+  section and no `src/lib.rs`. The plan step fails at the first `pub mod filter;`
+  reference from the bench.
+
+  **Drift 2 — `dat0-engine` has no `benches/` dir or criterion dev-dep.**
+  Plan T0 Step 5 hint "matches what `grid_scroll` bench uses" is misleading —
+  `grid_scroll` lives in `crates/dat0-app/benches/`, not engine. At T0 execution,
+  `crates/dat0-engine/Cargo.toml` had no `[[bench]]` entry, no `benches/` directory,
+  and no `criterion` in `[dev-dependencies]`.
+
+  **Drift 3 — Plan Step 5 pins `criterion = "0.5"` verbatim.**
+  The plan snippet provides `criterion = { version = "0.5", default-features = false,
+  features = ["cargo_bench_support"] }` — a version-pinned form that diverges from
+  the project's workspace-inheritance convention and omits the `async_tokio` feature
+  required by `b.to_async(&rt)` in the bench body.
+
+- **Discovered:** T0 execution (2026-05-27) — pre-T0 gap analysis documented
+  in the task prompt; fixes applied in place per the "Plan-snippet drift
+  recurrence" rule in `docs/plans/2026-05-27-dat0-p4a-plan.md` §"Phase context".
+- **Fix applied:**
+  1. Added `[lib] path = "src/lib.rs"` to `crates/dat0-fixtures/Cargo.toml`
+     (bin + lib coexist; `main.rs` unchanged). Created `src/lib.rs` containing
+     only `pub mod filter;`. Created `src/filter.rs` with the fixture generator.
+  2. Created `crates/dat0-engine/benches/` directory. Added to
+     `crates/dat0-engine/Cargo.toml`: `criterion = { workspace = true }`,
+     `dat0-fixtures = { path = "../dat0-fixtures" }`,
+     `tempfile = { workspace = true }` under `[dev-dependencies]`, and
+     `[[bench]] name = "view_regen" harness = false`.
+  3. Added `async_tokio` feature to the workspace `criterion` entry
+     (`Cargo.toml` line 82) so `b.to_async(&rt)` compiles. The `html_reports`
+     feature already present is retained; the addition is purely additive.
+- **Originating doc:** `docs/plans/2026-05-27-dat0-p4a-plan.md` T0 Steps 3
+  and 5; §"Phase context" "Plan-snippet drift recurrence" rule.
+- **Last touched:** 2026-05-27
 
 ---
 

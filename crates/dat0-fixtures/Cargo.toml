@@ -11,6 +11,9 @@ rust-version.workspace = true
 name = "dat0-fixtures"
 path = "src/main.rs"
 
+[lib]
+path = "src/lib.rs"
+
 [dependencies]
 clap.workspace = true
 rand.workspace = true

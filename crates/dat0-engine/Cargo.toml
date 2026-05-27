@@ -23,3 +23,10 @@ tempfile.workspace = true
 
 [dev-dependencies]
 tokio = { workspace = true, features = ["rt-multi-thread", "macros", "fs", "sync", "time"] }
+criterion = { workspace = true }
+dat0-fixtures = { path = "../dat0-fixtures" }
+tempfile = { workspace = true }
+
+[[bench]]
+name = "view_regen"
+harness = false
