@@ -840,8 +840,6 @@ that's modifying it; merge conflicts are signals worth investigating.
 
 ---
 
----
-
 ### PD-013 — P4a T0 plan-snippet drifts: fixtures lib + engine bench setup + criterion workspace inheritance
 
 - **Status:** open

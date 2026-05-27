@@ -29,6 +29,9 @@ fn bench_view_regen(c: &mut Criterion) {
     let engine = rt.block_on(async {
         let e = DuckDBEngine::new(
             tmp.path().join("scratch.duckdb"),
+            // TODO(P4a T15): lower MemoryBudget to production default (1 GB) before this
+            // bench moves under heavy.yml. The spike uses 4 GB for headroom on a quiet dev
+            // machine; CI runners cannot afford that under concurrent build/test load.
             MemoryBudget {
                 bytes: 4 * 1024 * 1024 * 1024, // 4 GB headroom for the spike
             },
@@ -45,7 +48,7 @@ fn bench_view_regen(c: &mut Criterion) {
 
     // t1 + t2 — hot-path metric
     let mut group = c.benchmark_group("view_regen");
-    group.sample_size(20); // 20 samples; ~10 minutes total
+    group.sample_size(20); // 20 samples; ~1-2 minutes total per platform
     group.measurement_time(std::time::Duration::from_secs(30));
 
     group.bench_function("t1_create_view_plus_t2_first_page", |b| {

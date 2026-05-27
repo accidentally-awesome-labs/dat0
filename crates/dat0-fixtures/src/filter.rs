@@ -112,4 +112,11 @@ mod tests {
         let row_lines = content.lines().count() - 1; // minus header
         assert_eq!(row_lines, 5000);
     }
+
+    #[test]
+    fn leap_day_formats_correctly() {
+        // 2020-02-29 = Unix day 18321; assert the date prefix round-trips.
+        let ts = chrono_naive_string(18321 * 86_400 + 43_200); // noon UTC
+        assert_eq!(&ts[..10], "2020-02-29");
+    }
 }
