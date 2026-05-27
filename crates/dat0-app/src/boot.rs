@@ -115,6 +115,6 @@ fn install_sqlite_scanner(data_dir: &std::path::Path) {
         // can drain and display it once notification surfaces are wired up.
         let title = dat0_i18n::t("boot.sqlite_scanner_install_failed.title");
         let body = dat0_i18n::t("boot.sqlite_scanner_install_failed.body");
-        banner::push(Banner::warning(format!("{title}: {body}")));
+        banner::push(Banner::warning_with_body(title, body));
     }
 }

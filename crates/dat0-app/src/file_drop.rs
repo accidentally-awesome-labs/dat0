@@ -9,6 +9,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use crate::error_ux::banner;
+use crate::import_wizard::{self, SniffSummary, should_show_wizard};
 use crate::session::{Session, Tab};
 
 /// Handle a batch of dropped paths. Returns one [`DropOutcome`] per path, in order.
@@ -35,6 +36,16 @@ pub enum DropOutcome {
     },
     /// The engine returned an error during `register_file`.
     EngineError { path: PathBuf, error: String },
+    /// CSV/TSV sniff was ambiguous (PD-011 substitute heuristic). The UI
+    /// layer routes this to `import_wizard::open(app, path, sniff)`; tests
+    /// can match the variant directly. No tab is appended at this stage —
+    /// the wizard owns the eventual `register_file` call after the user
+    /// confirms dialect.
+    OpenWizard { path: PathBuf, sniff: SniffSummary },
+    /// Import was cancelled mid-flight via `IMPORT_CANCEL`. No tab is
+    /// appended; the warning Banner is emitted by
+    /// `import_progress::cancel_active`. T10 (P3b).
+    Cancelled { path: PathBuf },
 }
 
 async fn handle_one(path: PathBuf, session: &Mutex<Session>) -> DropOutcome {
@@ -46,13 +57,56 @@ async fn handle_one(path: PathBuf, session: &Mutex<Session>) -> DropOutcome {
                 .and_then(|s| s.to_str())
                 .map(|s| s.to_string());
             let label = ext.clone().unwrap_or_else(|| "(no extension)".to_string());
-            banner::push_warning_message(format!("Unsupported file type: {label}"));
+            banner::push_warning(format!("Unsupported file type: {label}"));
             return DropOutcome::Unsupported {
                 path,
                 extension: ext,
             };
         }
     };
+
+    // P3b T9: CSV/TSV go through the sniff-ambiguity branch first. If the
+    // sniff is ambiguous (PD-011 substitute: dual-sniff delimiter disagreement
+    // OR non-UTF-8 head), short-circuit to `OpenWizard` and let the UI layer
+    // route to `import_wizard::open`. Sniff failures fall through to the
+    // confident path with a warn log — don't block drops on a sniff error.
+    if matches!(fmt, FileFormat::Csv | FileFormat::Tsv) {
+        let path_for_sniff = path.clone();
+        let sniff_result =
+            tokio::task::spawn_blocking(move || import_wizard::sniff(&path_for_sniff))
+                .await
+                .map_err(|e| e.to_string());
+        match sniff_result {
+            Ok(Ok(summary)) => {
+                if should_show_wizard(&summary) {
+                    tracing::info!(
+                        path = %path.display(),
+                        delimiter = %summary.top_delimiter,
+                        encoding_supported = summary.encoding_supported,
+                        "sniff ambiguous — routing to import wizard",
+                    );
+                    return DropOutcome::OpenWizard {
+                        path,
+                        sniff: summary,
+                    };
+                }
+            }
+            Ok(Err(e)) => {
+                tracing::warn!(
+                    path = %path.display(),
+                    error = %e,
+                    "sniff_csv failed; assuming confident and proceeding with register_file",
+                );
+            }
+            Err(e) => {
+                tracing::warn!(
+                    path = %path.display(),
+                    error = %e,
+                    "sniff task join failed; assuming confident and proceeding with register_file",
+                );
+            }
+        }
+    }
 
     // Clone the engine Arc and immediately release the session lock before
     // the async `register_file` call. Holding a parking_lot mutex lock across
@@ -65,7 +119,27 @@ async fn handle_one(path: PathBuf, session: &Mutex<Session>) -> DropOutcome {
         ..Default::default()
     };
 
-    match engine.register_file(&path, opts).await {
+    // P3b T10: register one active ImportProgress before `register_file`
+    // so the `IMPORT_CANCEL` action can flip the cancel flag mid-flight.
+    // Determinate byte-progress remains a D-008 follow-up — today we only
+    // observe cancel (engine.interrupt(handle) lands with D-008). We poll
+    // the cancel flag once after `register_file` returns; if set, we drop
+    // the result and emit a `Cancelled` outcome (the warning Banner was
+    // already pushed by `import_progress::cancel_active`).
+    let total = std::fs::metadata(&path).map(|m| m.len()).unwrap_or(0);
+    let progress = crate::import_progress::ImportProgress::new(total);
+    crate::import_progress::set_active(progress.clone());
+
+    let info_result = engine.register_file(&path, opts).await;
+
+    if progress.is_cancelled() {
+        crate::import_progress::clear_active();
+        return DropOutcome::Cancelled { path };
+    }
+
+    crate::import_progress::clear_active();
+
+    match info_result {
         Ok(info) => {
             let mut s = session.lock();
             s.add_tab(Tab {
@@ -80,7 +154,7 @@ async fn handle_one(path: PathBuf, session: &Mutex<Session>) -> DropOutcome {
         }
         Err(e) => {
             let msg = format!("{}: {e}", path.display());
-            banner::push_warning_message(msg.clone());
+            banner::push_warning(msg.clone());
             DropOutcome::EngineError { path, error: msg }
         }
     }
@@ -121,8 +195,8 @@ mod tests {
         let banners = drain_pending();
         assert_eq!(banners.len(), 1);
         assert!(
-            banners[0].message.contains("Unsupported"),
-            "banner message should mention 'Unsupported'"
+            banners[0].title.contains("Unsupported"),
+            "banner title should mention 'Unsupported'"
         );
     }
 

@@ -8,6 +8,6 @@ pub mod banner;
 pub mod modal;
 pub mod toast;
 
-pub use banner::{Banner, BannerSeverity};
+pub use banner::{Banner, BannerAction, BannerKind, BannerLink, drain_pending, push, push_warning};
 pub use modal::Modal;
 pub use toast::{Toast, ToastSeverity};

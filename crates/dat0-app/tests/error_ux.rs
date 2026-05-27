@@ -1,4 +1,4 @@
-use dat0_app::error_ux::{Banner, BannerSeverity, Modal, Toast, ToastSeverity};
+use dat0_app::error_ux::{Banner, BannerKind, Modal, Toast, ToastSeverity};
 
 #[test]
 fn modal_builder_round_trip() {
@@ -26,6 +26,6 @@ fn toast_error_no_auto_dismiss() {
 #[test]
 fn banner_warning_dismissible() {
     let b = Banner::warning("careful");
-    assert!(matches!(b.severity, BannerSeverity::Warning));
+    assert!(matches!(b.kind, BannerKind::Warning));
     assert!(b.dismissible);
 }

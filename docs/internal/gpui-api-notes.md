@@ -856,3 +856,608 @@ GPUI's `Window::dispatch_event` (the function that translates `FileDrop` to inte
 | Handler thread | GPUI main thread (confirmed — Cocoa callbacks are main-thread) |
 | Hover-highlight | `div().drag_over::<ExternalPaths>(...)` |
 | Requires `Root` wrapper? | No — file drop is pure element-level, no overlay layer needed |
+
+---
+
+## 0.A Globals + cross-thread dispatch (v0.2.2)
+
+- **Verification date:** 2026-05-25
+- **Verifier:** P3b.T0 spike (read-only inspection of
+  `~/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/gpui-0.2.2/src/`)
+- **Source files inspected:** `global.rs`, `app.rs`, `gpui.rs` (`BorrowAppContext`),
+  `app/async_context.rs`, `app/test_context.rs`,
+  `~/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/futures-channel-0.3.32/src/mpsc/mod.rs`.
+- **Why:** P3b §3.1 `MainThreadDispatcher` (closes PD-010) is a futures-mpsc →
+  `cx.spawn` bridge, and P3b §3.12 theme live-switch reads `Theme: Global`.
+  Both surfaces must be verified before T1 / T13 / T7 code lands.
+
+### 0.A.1 `Global` trait (verbatim, `global.rs:22`)
+
+```rust
+/// A marker trait for types that can be stored in GPUI's global state.
+pub trait Global: 'static {
+    // This trait is intentionally left empty, by virtue of being a marker trait.
+}
+```
+
+**The only bound is `'static`. No `Send`, no `Sync`, no `Default`.** Required
+derives: none for the trait itself, though `Theme` derives `Debug + Clone +
+Serialize + Deserialize + JsonSchema` (gpui-component side, not a GPUI
+requirement). `set_global` consumes the value by move, so the implementor
+chooses what derives suit storage.
+
+Convenience traits also in `global.rs`:
+
+```rust
+// global.rs:30
+pub trait ReadGlobal { fn global(cx: &App) -> &Self; }
+impl<T: Global> ReadGlobal for T { ... }
+
+// global.rs:44
+pub trait UpdateGlobal {
+    fn update_global<C, F, R>(cx: &mut C, update: F) -> R
+    where C: BorrowAppContext, F: FnOnce(&mut Self, &mut C) -> R;
+
+    fn set_global<C>(cx: &mut C, global: Self)
+    where C: BorrowAppContext;
+}
+impl<T: Global> UpdateGlobal for T { ... }
+```
+
+### 0.A.2 `App` accessors (verbatim, `app.rs`)
+
+```rust
+// app.rs:1450 — does a global of this type exist?
+pub fn has_global<G: Global>(&self) -> bool
+
+// app.rs:1455 — read-only; PANICS if missing
+#[track_caller]
+pub fn global<G: Global>(&self) -> &G
+
+// app.rs:1465 — read-only; None if missing
+pub fn try_global<G: Global>(&self) -> Option<&G>
+
+// app.rs:1472 — mutable ref; pushes a NotifyGlobalObservers effect; PANICS if missing
+#[track_caller]
+pub fn global_mut<G: Global>(&mut self) -> &mut G
+
+// app.rs:1486 — like global_mut but creates a default value if missing (G: Default required)
+pub fn default_global<G: Global + Default>(&mut self) -> &mut G
+
+// app.rs:1497 — set or replace; pushes a NotifyGlobalObservers effect
+pub fn set_global<G: Global>(&mut self, global: G)
+
+// app.rs:1510 — remove and return; pushes a NotifyGlobalObservers effect; PANICS if missing
+pub fn remove_global<G: Global>(&mut self) -> G
+
+// app.rs:1522 — subscribe to changes; returns Subscription that must be kept alive
+pub fn observe_global<G: Global>(
+    &mut self,
+    mut f: impl FnMut(&mut Self) + 'static,
+) -> Subscription
+```
+
+`observe_global` callback signature is `FnMut(&mut App) + 'static`. The
+`Subscription` returned must be stored (typically as a field on the observing
+view) — drop it and the observer is unregistered.
+
+### 0.A.3 `BorrowAppContext::update_global` (verbatim, `gpui.rs:241`)
+
+```rust
+pub trait BorrowAppContext {
+    fn set_global<T: Global>(&mut self, global: T);
+    fn update_global<G, R>(&mut self, f: impl FnOnce(&mut G, &mut Self) -> R) -> R
+    where G: Global;
+    fn update_default_global<G, R>(&mut self, f: impl FnOnce(&mut G, &mut Self) -> R) -> R
+    where G: Global + Default;
+}
+
+impl<C> BorrowAppContext for C where C: BorrowMut<App> {
+    fn set_global<G: Global>(&mut self, global: G) {
+        self.borrow_mut().set_global(global)
+    }
+    #[track_caller]
+    fn update_global<G, R>(&mut self, f: impl FnOnce(&mut G, &mut Self) -> R) -> R
+    where G: Global,
+    {
+        let mut global = self.borrow_mut().lease_global::<G>();   // moves out of map
+        let result = f(&mut global, self);
+        self.borrow_mut().end_global_lease(global);              // moves back; pushes NotifyGlobalObservers
+        result
+    }
+    fn update_default_global<G, R>(&mut self, f: impl FnOnce(&mut G, &mut Self) -> R) -> R
+    where G: Global + Default,
+    {
+        self.borrow_mut().default_global::<G>();
+        self.update_global(f)
+    }
+}
+```
+
+`update_global` works by **leasing the global onto the stack**, running `f`
+with the leased value + `&mut C`, then putting it back via `end_global_lease`
+(which pushes `Effect::NotifyGlobalObservers`). Inside `f` the global is **not
+in the map** — a second `update_global<G, _>` for the same type during `f`
+will panic in `lease_global` with "no global registered of type ..." (see
+`app.rs:1538`). T13 must not recursively update the `Theme` global.
+
+### 0.A.4 Storage scope — app-scoped (NOT window-scoped)
+
+Source: `app.rs:552`:
+
+```rust
+pub(crate) globals_by_type: FxHashMap<TypeId, Box<dyn Any>>,
+```
+
+The map lives on `App`, which is the application-wide context. **One global
+per `(App, TypeId)`** — shared across every window opened by that `App`.
+
+Confirmation: there is no `globals_by_type` field on `Window`. Grepped
+`gpui-0.2.2/src/window.rs` — no occurrence of `globals_by_type` outside `app.rs`.
+
+For dat0:
+- **`Theme: Global`** is shared across all windows in one `App`. Switching
+  theme in one window (via `cx.update_global::<Theme, _>(...)`) immediately
+  notifies observers in **every** window. Spec §3.12 "Theme live-switch" is
+  correct in assuming this propagation.
+- **`MainThreadDispatcher` (spec §3.1)** if registered as a `Global`, is also
+  app-scoped — one dispatcher per `App`, used by every window. The plan
+  registers it once in `crates/dat0-app/src/main.rs` before `Application::run`
+  returns; consistent.
+
+### 0.A.5 Notification semantics — automatic, deferred, deduplicated
+
+Source: `app.rs:1180-1196`:
+
+```rust
+pub(crate) fn push_effect(&mut self, effect: Effect) {
+    match &effect {
+        Effect::Notify { emitter } => {
+            if !self.pending_notifications.insert(*emitter) { return; }
+        }
+        Effect::NotifyGlobalObservers { global_type } => {
+            if !self.pending_global_notifications.insert(*global_type) { return; }
+        }
+        _ => {}
+    };
+    self.pending_effects.push_back(effect);
+}
+```
+
+Effects are deduplicated by type during one update cycle. The flush itself
+runs at the end of every `App::update` (`app.rs:770-777`):
+
+```rust
+pub(crate) fn finish_update(&mut self) {
+    if !self.flushing_effects && self.pending_updates == 1 {
+        self.flushing_effects = true;
+        self.flush_effects();
+        self.flushing_effects = false;
+    }
+    self.pending_updates -= 1;
+}
+```
+
+And the global-observer call site (`app.rs:1330-1335`):
+
+```rust
+fn apply_notify_global_observers_effect(&mut self, type_id: TypeId) {
+    self.pending_global_notifications.remove(&type_id);
+    self.global_observers
+        .clone()
+        .retain(&type_id, |observer| observer(self));
+}
+```
+
+**Answer to plan question Step 5.4:** `update_global` / `set_global` /
+`global_mut` / `remove_global` / `default_global` all push
+`Effect::NotifyGlobalObservers`. **No explicit `cx.notify()` call is required.**
+The flush runs automatically at the end of the surrounding `App::update`
+(typically the closure passed to `App::spawn`, `Window::update`, or any of the
+`Context::update_entity` family — all of these wrap in `start_update` /
+`finish_update`). Observers registered via `observe_global<G>` fire on the
+same tick.
+
+**Implication for T13 (theme live-switch):** writing
+`cx.update_global::<Theme, _>(|theme, _| { theme.mode = new_mode; })` is
+sufficient. No extra `cx.notify()`, no manual refresh — the
+`observe_global<Theme>` subscriptions inside every widget that depends on the
+theme fire automatically, and every dirty window re-renders.
+
+### 0.A.6 `cx.spawn` — exact closure shape (verbatim, `app.rs:1417`)
+
+```rust
+#[track_caller]
+pub fn spawn<AsyncFn, R>(&self, f: AsyncFn) -> Task<R>
+where
+    AsyncFn: AsyncFnOnce(&mut AsyncApp) -> R + 'static,
+    R: 'static,
+{
+    if self.quitting {
+        debug_panic!("Can't spawn on main thread after on_app_quit")
+    };
+    let mut cx = self.to_async();
+    self.foreground_executor.spawn(async move { f(&mut cx).await })
+}
+```
+
+The bound is **`AsyncFnOnce(&mut AsyncApp) -> R`** — Rust's "async closure"
+trait (stable since edition 2024). The verified call shape (from
+`crates/gpui-component/examples/hello_world/src/main.rs:30-39`):
+
+```rust
+cx.spawn(async move |cx| {
+    cx.open_window(WindowOptions::default(), |window, cx| {
+        let view = cx.new(|_| Example);
+        cx.new(|cx| Root::new(view, window, cx))
+    })?;
+    Ok::<_, anyhow::Error>(())
+})
+.detach();
+```
+
+**Use the `async move |cx| { ... }` form**, NOT `|cx| async move { ... }`.
+The latter is the older "closure-returning-a-future" pattern; the gpui-0.2.2
+`spawn` bound (`AsyncFnOnce`, not `FnOnce(&mut AsyncApp) -> Future`) accepts
+both with edition 2024 trait coercions, but the gpui examples uniformly use
+`async move |cx|` — match that for consistency.
+
+The closure receives `&mut AsyncApp` (not `&mut App`). Reaching the real
+`App` requires `cx.update(|app: &mut App| ...)` inside the future:
+
+```rust
+// crates/gpui-0.2.2/src/app/async_context.rs:142-146
+pub fn update<R>(&self, f: impl FnOnce(&mut App) -> R) -> Result<R> {
+    let app = self.app.upgrade().context("app was released")?;
+    let mut lock = app.borrow_mut();   // <-- BorrowMut on the App's RefCell
+    Ok(lock.update(f))
+}
+```
+
+**`AsyncApp::update` returns `Result<R>`** (errors when the underlying `App`
+has been dropped, e.g., during shutdown). The `?` operator inside the spawn
+future propagates the error; pair with `.detach()` (or capture the `Task` and
+ignore on shutdown).
+
+### 0.A.7 `cx.update(|cx| ...)` thread-safety — confirmed unsafe off-main-thread
+
+The key citations for PD-010:
+
+```rust
+// crates/gpui-0.2.2/src/app.rs:58-63 — AppCell is RefCell<App>
+#[doc(hidden)]
+pub struct AppCell {
+    app: RefCell<App>,
+}
+
+// crates/gpui-0.2.2/src/app.rs:78-84 — borrow_mut panic site
+#[doc(hidden)]
+#[track_caller]
+pub fn borrow_mut(&self) -> AppRefMut<'_> {
+    if option_env!("TRACK_THREAD_BORROWS").is_some() {
+        let thread_id = std::thread::current().id();
+        eprintln!("borrowed {thread_id:?}");
+    }
+    AppRefMut(self.app.borrow_mut())   // <-- this is the RefCell::borrow_mut() call
+}
+
+// crates/gpui-0.2.2/src/app/async_context.rs:17-21
+#[derive(Clone)]
+pub struct AsyncApp {
+    pub(crate) app: Weak<AppCell>,   // <-- Weak<Rc<RefCell<App>>>; Rc is !Send
+    pub(crate) background_executor: BackgroundExecutor,
+    pub(crate) foreground_executor: ForegroundExecutor,
+}
+```
+
+`AppCell` wraps `RefCell<App>`. `AsyncApp` holds `Weak<AppCell>` (`Weak<Rc<...>>`).
+**`Rc` is `!Send`**, so `Weak<AppCell>` is `!Send`. There is no `unsafe impl Send`
+on `AppCell`, `App`, or `AsyncApp` (grepped). Therefore `AsyncApp` cannot
+*physically* cross a thread boundary in safe Rust.
+
+However: if a `Send`-able `AsyncApp` clone leaks (e.g., via `unsafe` or
+through a `'static` future that somehow ends up polled off-main), calling
+`AsyncApp::update` reaches `lock.borrow_mut()` on the `RefCell`. That call
+**panics** when the cell is already borrowed elsewhere (the Cocoa event loop
+holds a borrow during dispatch). On older rustc / debug builds, the panic is
+deterministic; on release builds the same code path can produce UB if the
+panic is caught and the borrow tracker is bypassed. PD-010 is the
+authoritative diagnosis.
+
+**P3b §3.1 design conclusion:** `MainThreadDispatcher` does NOT clone or carry
+the `AsyncApp` across threads. It uses a `futures::channel::mpsc::Sender`
+(which IS `Send`) to post a `Box<dyn FnOnce(&mut App) + Send>` closure. The
+receiver side is consumed inside a `cx.spawn` future that stays on the
+foreground executor:
+
+```rust
+// Sketch (pseudo-code for T1):
+let (tx, mut rx) = futures::channel::mpsc::channel::<Box<dyn FnOnce(&mut App) + Send>>(64);
+cx.set_global(MainThreadDispatcher { tx });
+
+cx.spawn(async move |cx| {
+    use futures::StreamExt;
+    while let Some(closure) = rx.next().await {
+        cx.update(|app| closure(app))?;   // safe — runs on foreground executor
+    }
+    Ok::<_, anyhow::Error>(())
+}).detach();
+```
+
+The off-main-thread caller (tokio task, UDS handler, etc.) only ever touches
+`tx.try_send(Box::new(move |app| ...))` — `Sender::try_send` does not borrow
+the `App` and is thread-safe.
+
+### 0.A.8 `futures::channel::mpsc` — verbatim semantics
+
+Source: `~/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/futures-channel-0.3.32/src/mpsc/mod.rs`.
+
+```rust
+// mpsc/mod.rs:385 — bounded channel
+pub fn channel<T>(buffer: usize) -> (Sender<T>, Receiver<T>)
+
+// mpsc/mod.rs:420 — unbounded channel
+pub fn unbounded<T>() -> (UnboundedSender<T>, UnboundedReceiver<T>)
+```
+
+`Sender` / `UnboundedSender` are `Send + Sync` (no `unsafe impl` needed — the
+inner state is `Arc<…>` with atomic counters). `Receiver` / `UnboundedReceiver`
+implement `Stream` (`mpsc/mod.rs:1126` and `:1320` respectively):
+
+```rust
+// mpsc/mod.rs:1126
+impl<T> Stream for Receiver<T> {
+    type Item = T;
+    fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<T>> { ... }
+}
+// mpsc/mod.rs:1320
+impl<T> Stream for UnboundedReceiver<T> { ... }
+```
+
+`Stream::Item = T` (not `Result<T, _>`). Consume with `StreamExt::next`:
+
+```rust
+use futures::StreamExt;
+while let Some(item) = rx.next().await { /* ... */ }
+```
+
+**Drop behavior (verbatim, `mpsc/mod.rs:969-988`):**
+
+```rust
+impl<T> Drop for UnboundedSenderInner<T> {
+    fn drop(&mut self) {
+        let prev = self.inner.num_senders.fetch_sub(1, SeqCst);
+        if prev == 1 {
+            self.close_channel();
+        }
+    }
+}
+impl<T> Drop for BoundedSenderInner<T> {
+    fn drop(&mut self) {
+        let prev = self.inner.num_senders.fetch_sub(1, SeqCst);
+        if prev == 1 {
+            self.close_channel();
+        }
+    }
+}
+```
+
+When the **last** sender drops, `close_channel` is called. The receiver's
+`next_message` then sees `state.is_closed()` and returns `Poll::Ready(None)`
+(`mpsc/mod.rs:1283-1289`):
+
+```rust
+None => {
+    let state = decode_state(inner.state.load(SeqCst));
+    if state.is_closed() {
+        self.inner = None;
+        Poll::Ready(None)
+    } else {
+        Poll::Pending
+    }
+}
+```
+
+**Answer to plan question Step 6.3:** Yes, the receiver-side `while let
+Some(...)` loop exits cleanly when the last `Sender` is dropped. The
+`Receiver::poll_next` returns `Poll::Ready(None)`, `StreamExt::next` yields
+`None`, and the loop terminates. **Cloning a sender increments `num_senders`**;
+the channel only closes when every clone has dropped. For T1, the
+`MainThreadDispatcher` should store the `Sender` clone in the `Global`, and
+the app shutdown path can drop the global (via `cx.remove_global`) to signal
+the receiver loop to exit.
+
+### 0.A.9 `App::test()` and safe test seams (Step 6.4 — CRITICAL question)
+
+**Question:** Does `gpui::App::test()` (or any safe test seam yielding a usable
+`&mut gpui::App`) exist?
+
+**Answer:** **PARTIAL — yes, but behind a feature flag dat0 does not currently
+enable.**
+
+Source: `crates/gpui-0.2.2/src/app.rs:30-31`:
+
+```rust
+#[cfg(any(test, feature = "test-support"))]
+pub use test_context::*;
+```
+
+And `crates/gpui-0.2.2/src/app/test_context.rs:122-149`:
+
+```rust
+impl TestAppContext {
+    /// Creates a new `TestAppContext`. Usually you can rely on `#[gpui::test]`
+    /// to do this for you.
+    pub fn build(dispatcher: TestDispatcher, fn_name: Option<&'static str>) -> Self {
+        let arc_dispatcher = Arc::new(dispatcher.clone());
+        let background_executor = BackgroundExecutor::new(arc_dispatcher.clone());
+        let foreground_executor = ForegroundExecutor::new(arc_dispatcher);
+        let platform = TestPlatform::new(background_executor.clone(), foreground_executor.clone());
+        let asset_source = Arc::new(());
+        let http_client = http_client::FakeHttpClient::with_404_response();
+        let text_system = Arc::new(TextSystem::new(platform.text_system()));
+
+        Self {
+            app: App::new_app(platform.clone(), asset_source, http_client),
+            background_executor,
+            foreground_executor,
+            dispatcher,
+            test_platform: platform,
+            text_system,
+            fn_name,
+            on_quit: Rc::new(RefCell::new(Vec::default())),
+        }
+    }
+
+    /// Create a single TestAppContext, for non-multi-client tests
+    pub fn single() -> Self {
+        let dispatcher = TestDispatcher::new(StdRng::seed_from_u64(0));
+        Self::build(dispatcher, None)
+    }
+}
+```
+
+So `TestAppContext::single()` is the safe seam. **However**, it is
+`#[cfg(any(test, feature = "test-support"))]` — gated by the `test-support`
+feature on the `gpui` crate. dat0's workspace `Cargo.toml` currently declares
+`gpui = "=0.2.2"` **without** the `test-support` feature (grepped — no
+occurrence of `test-support` or `test_support` in `Cargo.toml` /
+`crates/*/Cargo.toml` as of 2026-05-25).
+
+`TestAppContext::single()` itself takes no arguments and constructs a fully
+synthetic `App` over a `TestPlatform`. Its `app` field is
+`pub Rc<AppCell>` — a unit test can call
+`cx.app.borrow_mut()` to get a `&mut App` directly, or use the
+`BorrowAppContext` / `AppContext` impls on `TestAppContext` for the higher-level
+update API. Unit tests using this seam:
+
+```rust
+#[gpui::test]
+fn my_test(cx: &mut gpui::TestAppContext) {
+    cx.update(|app| {
+        app.set_global(MyGlobal::default());
+        // ...
+    });
+}
+```
+
+**For P3b T1 (`MainThreadDispatcher` + tests):** the `unsafe { std::mem::zeroed() }`
+shim referenced in the T1 plan can be replaced by `TestAppContext` **provided
+dat0 enables `gpui/test-support` as a `[dev-dependencies]` feature** in
+`crates/dat0-app/Cargo.toml`. The recommended snippet:
+
+```toml
+# crates/dat0-app/Cargo.toml
+[dev-dependencies]
+gpui = { workspace = true, features = ["test-support"] }
+```
+
+This adds a dev-only dep on the test seam without affecting the release build.
+T1 should make this dep flip part of its acceptance, then replace the shim
+with `TestAppContext::single()`.
+
+### 0.A.10 Summary table (P3b T1 / T7 / T13 quick reference)
+
+| Question (plan Step) | Verified answer | Source citation |
+|---|---|---|
+| Step 5.1: `set_global<T: Global>` exact signature | `pub fn set_global<G: Global>(&mut self, global: G)` | `app.rs:1497` |
+| Step 5.1: `update_global<T, R>` exact signature | `fn update_global<G, R>(&mut self, f: impl FnOnce(&mut G, &mut Self) -> R) -> R where G: Global` | `gpui.rs:245`, impl `gpui.rs:263` |
+| Step 5.1: `observe_global<T>` exact signature | `pub fn observe_global<G: Global>(&mut self, mut f: impl FnMut(&mut Self) + 'static) -> Subscription` | `app.rs:1522` |
+| Step 5.1: `try_global<T>` exact signature | `pub fn try_global<G: Global>(&self) -> Option<&G>` | `app.rs:1466` |
+| Step 5.2: `Global` trait bound | `Global: 'static` only — NO `Send`/`Sync` | `global.rs:22` |
+| Step 5.3: app-scoped or window-scoped? | App-scoped — `App::globals_by_type: FxHashMap<TypeId, Box<dyn Any>>` | `app.rs:552` |
+| Step 5.4: notify automatically? | Yes — `set_global` / `update_global` / `global_mut` / `default_global` / `remove_global` all push `Effect::NotifyGlobalObservers`; flushed at end of `App::update` | `app.rs:1476,1488,1499,1512,1552`; flush at `app.rs:1330-1335` |
+| Step 6.1: exact `cx.spawn` closure shape | `cx.spawn(async move \|cx\| { ... })` — `AsyncFnOnce(&mut AsyncApp) -> R + 'static` | `app.rs:1417-1430`; canonical example `examples/hello_world/src/main.rs:30` |
+| Step 6.2: `cx.update` panic from non-main? | Yes — `AsyncApp::update` calls `app.borrow_mut()` on `RefCell<App>`; `AppCell = RefCell<App>` (`app.rs:61`); `Weak<AppCell>` is `!Send` so the panic is normally prevented by the type system, but `unsafe`-ly sending a clone triggers `RefCell::borrow_mut` panic from off-main | `async_context.rs:142-146`; `app.rs:61-95` |
+| Step 6.3: sender drop → receiver exits? | Yes — `Drop for {Unbounded,Bounded}SenderInner` decrements `num_senders`; at zero calls `close_channel`; `Receiver::next_message` then returns `Poll::Ready(None)` | `futures-channel-0.3.32/src/mpsc/mod.rs:969-988, 1283-1289, 1320-1330` |
+| Step 6.4: safe `&mut App` test seam? | **PARTIAL** — `gpui::TestAppContext::single()` exists, gated by `cfg(any(test, feature = "test-support"))`; dat0 must opt into `gpui/test-support` as a dev-dep feature | `app.rs:30-31`; `app/test_context.rs:122-149` |
+
+### 0.A.11 — T1 manual UAT path for visual second-launch
+
+Cross-references: PD-010 (closed by T1), §0.A.7 (the `RefCell`/`!Send`
+diagnosis), §0.A.9 (`TestAppContext` safe seam). This subsection documents
+the **manual** UAT recipe the `#[ignore]`d integration test points to.
+
+**Why one of the T1 integration tests is `#[ignore]`d.** The visual
+second-launch assertion — "second `cargo run -p dat0-app` invocation makes
+a new window appear in the running instance" — needs a live GPUI event
+loop pinned to the platform main thread (Cocoa `NSApplication`, X11/Wayland
+connection, etc.). `cargo test` runs each `#[test]` (and `#[tokio::test]`)
+on a worker thread the harness chose, *not* on the process's platform
+main thread, and gpui's `Application::run` is not safe to start from a
+worker thread inside a `#[tokio::test]` harness:
+
+- `Application::run` takes over the calling thread for the platform event
+  loop (it never returns until the app quits — `app.rs:174` and per §0.2).
+- gpui 0.2.2 has no headless / no-window variant of `Application::run`;
+  the only off-thread seam is `TestAppContext::single()` (§0.A.9), which
+  supplies a `&mut App` but no event loop and no window backend.
+- Even if the event loop were started on a worker, the `RefCell<App>`
+  borrow rules (§0.A.7) make it racy to drive UI work from outside that
+  thread.
+
+The integration test `second_launch_spawns_visual_window` in
+`crates/dat0-app/tests/single_instance.rs` is therefore marked
+`#[ignore]` with a reason string and a body that
+`unimplemented!()`s — its purpose is to be a discoverable anchor for the
+manual UAT recipe below, not to run under `cargo test`.
+
+**Compensating automated coverage.** The same UDS → dispatcher → main-thread
+plumbing is exercised by the sibling test
+`second_launch_forwards_and_dispatches_to_main_thread` in the same file.
+That test substitutes an `AtomicUsize` increment for the
+`WindowRegistry::open()` call inside the dispatched closure, then drives
+the dispatcher's drain against a real `&mut gpui::App` supplied by
+`TestAppContext::single()` (the safe seam established in §0.A.9). The
+assertion "closure ran exactly once after the UDS forward" is the same
+shape as "window count grew by one after the UDS forward" — the only
+delta is what the closure does once it's on the main thread, which is the
+piece the manual UAT verifies visually.
+
+**Manual UAT recipe (visual second-launch).** Run from two separate
+shells with the workspace as cwd:
+
+```bash
+# Terminal A — start the first instance
+cargo run -p dat0-app
+# (leave it running; a window appears)
+
+# Terminal B — simulate a second launch
+cargo run -p dat0-app
+# (this process must exit ~immediately after forwarding via UDS;
+#  it must NOT open its own window)
+```
+
+Pass criteria:
+
+1. Terminal A's existing instance grows from one window to two visible
+   windows. The new window is empty (no file paths were forwarded) and
+   focusable independently of the first.
+2. Terminal B's process exits with status 0 within ~1 s of launch.
+3. Terminal A's logs (with `RUST_LOG=dat0=debug`) show a
+   `single_instance: forwarded open-window message` line followed by a
+   `window_registry: opened window` line on the main thread.
+
+Failure modes to watch for:
+
+- Terminal B spawns its own window (single-instance check broke).
+- Terminal A panics with a `BorrowMutError` (PD-010 regression — the
+  dispatcher is being bypassed and `AsyncApp::update` is being called
+  off-main).
+- Second window never appears but no panic (UDS message reached the
+  handler but the dispatcher closure never drained — likely the
+  `MainThreadDispatcher` global wasn't installed in `main.rs`).
+
+**Revisit in T13 retro.** T13 (post-implementation retrospective) should
+either (a) replace this manual UAT with an automated end-to-end test if
+a headless gpui seam becomes available upstream, or (b) explicitly accept
+the manual path as the long-term shape for this assertion and move the
+recipe into `docs/ci.md` alongside other manual smokes. Track in the T13
+deliverable as "P3b T1 manual UAT — promote or accept".
+
+- T7 manual UAT: `cargo run -p dat0-app` against an empty `$STATE`
+  (`rm -rf "$HOME/Library/Application Support/dat0"` on macOS) and an
+  empty recents file; verify the two-column empty-state hero ("Drop a
+  file to start" left, samples picker right) appears on the first
+  window. Toggle by registering a recent (drop any CSV) and relaunching
+  — right column should now read "Recents…" instead.

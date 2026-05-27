@@ -42,13 +42,33 @@ jobs:
         # label set. `runs-on: ${{ fromJSON(...) }}` AND-matches all labels.
         target:
           - { labels: '["macos-14"]',                              triple: aarch64-apple-darwin,     name: macos-arm64  }
-          - { labels: '["self-hosted", "Linux", "runnerkit"]',     triple: x86_64-unknown-linux-gnu, name: linux-x86_64 }
+          # Temporarily routed back to ubuntu-latest while runnerkit host
+          # is recovered (disk exhaustion 2026-05-26 on PR #5). Re-route to
+          # runnerkit labels once host is restored. Billing impact: Linux
+          # = 1x multiplier, ~1h per PR — manageable short-term.
+          - { labels: '["ubuntu-latest"]',                         triple: x86_64-unknown-linux-gnu, name: linux-x86_64 }
     runs-on: ${{ fromJSON(matrix.target.labels) }}
     env:
       DAT0_SPARKLE_APPCAST_URL: https://dat0.dev/appcast.xml
       DAT0_GLITCHTIP_DSN_PUBLIC: ${{ secrets.GLITCHTIP_DSN_PUBLIC }}
     steps:
       - uses: actions/checkout@v5
+      # GitHub-hosted ubuntu-latest ships ~14 GB free disk by default;
+      # dat0's debug-profile cargo test --workspace blows past that
+      # (duckdb + arrow + gpui + sentry rlib chain). Free ~30 GB by
+      # removing preinstalled language tooling we don't use.
+      # See docs/ci-mac-vm-runner.md / docs/ci.md for the wider disk
+      # story. Skipped on self-hosted (operator manages disk there).
+      - name: Free disk space (hosted Linux only)
+        if: runner.os == 'Linux' && runner.environment == 'github-hosted'
+        uses: jlumbroso/free-disk-space@v1.3.1
+        with:
+          tool-cache: true
+          android: true
+          dotnet: true
+          haskell: true
+          large-packages: false
+          swap-storage: true
       - uses: dtolnay/rust-toolchain@stable
         with:
           targets: ${{ matrix.target.triple }}
@@ -104,6 +124,17 @@ jobs:
         # `--include-ignored` deliberately omitted. Heavy exit_criteria tests
         # (1 GB CSV / 500 MB Parquet / 100 MB SQLite) run nightly via
         # heavy.yml. PR-time validation runs the fast suite only.
+        #
+        # CARGO_BUILD_JOBS caps concurrent rustc/link processes on hosted
+        # Linux: ubuntu-latest has 4 vCPU + 16 GB RAM, and the dev-profile
+        # link of dat0's test binary set (duckdb + arrow + gpui + sentry
+        # rlib chain) OOM-kills `ld` (signal 7 Bus error) at default
+        # parallelism. See docs/ci.md "OOM mitigations" §2.
+        env:
+          # Empty-string fallback would be re-read by cargo and rejected
+          # ("could not parse ``"). Use the literal "default" for the
+          # non-Linux branch so cargo treats it as the unset semantics.
+          CARGO_BUILD_JOBS: ${{ (runner.os == 'Linux' && runner.environment == 'github-hosted') && '2' || 'default' }}
         run: cargo test --workspace --target ${{ matrix.target.triple }}
       # Bench is macOS-only (single host class — variance across runners
       # makes cross-OS comparison meaningless). Artifact-only at P3a; spec

@@ -67,6 +67,14 @@ impl GridDataSource {
         })
     }
 
+    /// Returns `true` when the backing table has zero rows. Used by
+    /// [`crate::window::WorkspaceShell::render`] (P3b T7) to fall back to
+    /// the empty-state hero when a source is technically mounted but has
+    /// no data (e.g., the user opened a freshly-created empty table).
+    pub fn is_empty(&self) -> bool {
+        self.row_count == 0
+    }
+
     /// Return (or look up cached) the `RecordBatch` covering `row`.
     /// The batch is page-aligned to `PAGE_ROWS` boundaries.
     ///

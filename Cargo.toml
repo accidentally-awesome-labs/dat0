@@ -66,6 +66,18 @@ regex = "1"
 # HTTP (used by updater module for appcast smoke checks)
 ureq = { version = "2", default-features = false, features = ["tls"] }
 
+# P3b T8: async HTTP for sample-data fetch (NYC taxi parquet). rustls only —
+# no native-tls leak (verified at T8). `stream` feature kept for future
+# chunked-download progress UI; current fetch_remote buffers the body whole.
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "stream"] }
+
+# P3b T8: SHA-256 over the downloaded blob before atomic-rename into the
+# samples cache.
+sha2 = "0.10"
+
+# P3b T8: dev-only HTTP mock server for sample_data_fetch tests.
+mockito = "1"
+
 # Bench
 criterion = { version = "0.5", features = ["html_reports"] }
 

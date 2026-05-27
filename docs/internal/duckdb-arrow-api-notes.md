@@ -519,3 +519,188 @@ When bumping the duckdb pin (per `docs/upstream-watch.md` cadence):
    `execute_streaming` wrapper simplifies.
 4. Re-check for `sqlite_scanner` / `motherduck` features (D-009 close trigger).
 5. Update the verified-pins row in `docs/upstream-watch.md`.
+
+---
+
+## SniffCsv — CSV dialect / encoding / schema detection (P3b T0 spike)
+
+- **Verification date:** 2026-05-25
+- **Verifier:** P3b.T0 spike (read-only inspection of
+  `~/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/duckdb-1.4.4/src/` +
+  DuckDB engine docs at `duckdb.org/docs/stable/data/csv/auto_detection`)
+- **Why:** P3b §3.7 "Import wizard drawer" (T9 + T11) triggers ONLY on
+  ambiguous sniff. T0 must verify the call-shape and return shape of the
+  sniff API at the pinned versions before T9 implements the ambiguity rule.
+
+### 1. Is `sniff_csv` exposed as a typed Rust method on `duckdb-rs`?
+
+**Answer:** **NO. `sniff_csv` is exposed only via raw SQL** as a
+table-returning function. The Rust API is `Connection::query` / `query_arrow`
+called against the SQL surface.
+
+Verification: grepped
+`~/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/duckdb-1.4.4/src/`
+for `sniff_csv`, `SniffCsv`, `sniff`. **Zero hits.** Grepped
+`~/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/libduckdb-sys-1.4.4/`
+for the same — zero hits. DuckDB's native C++ exposes the function; duckdb-rs
+exposes the SQL surface, not a typed wrapper.
+
+Implication for T9: `read_csv_auto` (which sniffs internally) is already the
+default fast path; `sniff_csv(...)` (the explicit function) is invoked only
+when T9 needs to **inspect** the sniff result before mounting the import.
+That call is plain SQL:
+
+```rust
+// Sketch (T9):
+let mut stmt = conn.prepare("SELECT * FROM sniff_csv(?, sample_size := 20480)")?;
+let arrow_iter = stmt.query_arrow([path_str])?;   // returns Arrow<'_>, Item = RecordBatch
+let batch = arrow_iter.collect::<Vec<_>>().pop().expect("sniff returns exactly 1 row");
+```
+
+### 2. Return shape — verbatim from DuckDB docs
+
+`sniff_csv(path [, sample_size := N])` returns a **single-row table** with the
+following columns (DuckDB 1.4.x; reference:
+<https://duckdb.org/docs/stable/data/csv/auto_detection#sniff_csv-function>):
+
+| Column | Type | Description |
+|---|---|---|
+| `Delimiter` | VARCHAR | The detected field delimiter (e.g., `,`, `\t`, `;`, `|`). |
+| `Quote` | VARCHAR | The detected quote character (e.g., `"`, `'`). |
+| `Escape` | VARCHAR | The detected escape character. |
+| `NewLineDelimiter` | VARCHAR | One of `\n`, `\r`, `\r\n`. |
+| `SkipRows` | UBIGINT | Rows skipped before the first data row (header inference offset). |
+| `HasHeader` | BOOLEAN | True if the first non-skip row was inferred as the header. |
+| `Columns` | STRUCT(name VARCHAR, type VARCHAR)\[\] | List of `(column_name, inferred_type)` pairs. The inferred types are DuckDB SQL types as strings (e.g., `'INTEGER'`, `'DOUBLE'`, `'VARCHAR'`, `'TIMESTAMP'`). |
+| `DateFormat` | VARCHAR | Inferred strftime-style date format, or NULL. |
+| `TimestampFormat` | VARCHAR | Inferred strftime-style timestamp format, or NULL. |
+| `UserArguments` | VARCHAR | Pretty-printed arguments to pass to `read_csv(...)` to reproduce this sniff. |
+| `Prompt` | VARCHAR | Pretty-printed copy-paste-ready `SELECT * FROM read_csv(...)` SQL using the sniffed dialect. |
+
+**No `Score` or candidate-list columns are emitted.** This is a critical drift
+finding — see §5 below.
+
+### 3. Encoding handling
+
+DuckDB 1.4.x's CSV reader auto-detects encoding **only between UTF-8 and
+Latin-1**. There is **no explicit "Encoding" column in `sniff_csv`'s output**.
+The reader falls back to Latin-1 on UTF-8 decode failure; the sniff result
+does not expose which encoding was chosen. To detect a non-UTF-8 file in T9,
+the wizard must either:
+
+(a) Open the file separately and run a heuristic check (e.g., try
+    `std::str::from_utf8` on the first 8 KB); or
+(b) Run the read with `read_csv(..., encoding='utf8')` and observe whether it
+    succeeds; on failure, prompt the user.
+
+**Drift finding** vs. plan §3.7 ("(b) sniff returns a non-UTF-8 encoding
+marker"): the plan assumed an encoding column in the sniff output. **This
+column does not exist.** T9 must use heuristic (a) or behavior (b) above, or
+remove the encoding-based ambiguity rule. See PD-011 below for the deferral
+log entry.
+
+### 4. Type-inference confidence
+
+The sniff output's `Columns` field gives the **single inferred type per
+column** — there is no per-column confidence score, no candidate-type list,
+and no probability distribution. The detection is deterministic per sample
+size (default 20480 rows). Two sample-size runs may produce different types
+on the same file, but each run reports one type with no score.
+
+**Drift finding** vs. plan §3.7 ("(c) type-inference flags any column with
+confidence below the sniff's reported threshold"): the plan assumed a
+per-column confidence value. **This does not exist in `sniff_csv` output.**
+T9 must derive a proxy for "low confidence":
+
+- **Option A** (recommended): Re-run sniff with a larger `sample_size` (e.g.,
+  131072). If the inferred types of any column differ between the small and
+  large sample, that column is "ambiguous." This costs two scans of a sample,
+  but matches the spirit of "low confidence."
+- **Option B**: Treat any column inferred as `VARCHAR` when the data
+  *contains* numeric-looking values as ambiguous. This is brittle.
+- **Option C**: Drop confidence-based ambiguity entirely and require explicit
+  user confirmation only when delimiters are ambiguous (see §5).
+
+T9 should pick Option A or C; the drift means the plan's three-clause rule
+must be relaxed to two (delimiter ambiguity + encoding heuristic), or
+extended with Option A's two-pass sniff.
+
+### 5. "Ambiguous" — concrete heuristic for T9
+
+**Drift finding** vs. plan §3.7 ("(a) more than one candidate delimiter
+scored within 5% of the top"): `sniff_csv` does not expose candidate
+delimiters or scores; it returns only the **winner**. The plan's literal rule
+is unimplementable.
+
+**Concrete T9 implementation strategy** (recommended for spike acceptance):
+
+1. **Delimiter check via dual-sniff:**
+   - Run `SELECT Delimiter FROM sniff_csv(path, sample_size := 4096)`
+   - Run `SELECT Delimiter FROM sniff_csv(path, sample_size := 65536)`
+   - If the two delimiters disagree → **ambiguous**, open wizard.
+2. **Encoding heuristic:**
+   - Read the first 8 KB of the file with `std::fs::read` + `std::str::from_utf8`.
+   - On UTF-8 decode error → **ambiguous**, open wizard, default to Latin-1.
+3. **(Optional) Type stability via dual-sniff:**
+   - Compare `Columns[*].type` between the two sniff sample sizes.
+   - If any column type differs → **ambiguous**.
+4. Otherwise → mount the tab directly with `read_csv_auto`.
+
+This replaces the plan's three-clause rule with a two-or-three-clause rule
+grounded in the actual sniff output. T9 plan task description in
+`docs/plans/2026-05-25-dat0-p3b-plan.md` should be updated to match — see
+PD-011.
+
+### 6. Calling shape from duckdb-rs
+
+The full Rust invocation (verified against the public `Connection` /
+`Statement` APIs documented in this file's main body):
+
+```rust
+use duckdb::{params, Connection};
+
+fn sniff(conn: &Connection, path: &str, sample_size: u64) -> duckdb::Result<SniffResult> {
+    let mut stmt = conn.prepare("SELECT * FROM sniff_csv(?, sample_size := ?)")?;
+    let mut rows = stmt.query(params![path, sample_size])?;
+    let row = rows.next()?.expect("sniff_csv returns exactly one row on success");
+    Ok(SniffResult {
+        delimiter: row.get::<_, String>("Delimiter")?,
+        quote:     row.get::<_, String>("Quote")?,
+        has_header: row.get::<_, bool>("HasHeader")?,
+        prompt:    row.get::<_, String>("Prompt")?,
+        // ... columns list extraction via row.get on the Columns STRUCT[] field
+    })
+}
+```
+
+For the `Columns` STRUCT array, use `query_arrow` (Arrow Batch) and extract
+the StructArray children, or use DuckDB's `to_json` trick:
+
+```rust
+// Bypass Rust struct-array decoding by asking DuckDB to emit JSON:
+let mut stmt = conn.prepare(
+    "SELECT Delimiter, Quote, HasHeader,
+            json_array_length(to_json(Columns)) AS col_count,
+            to_json(Columns) AS columns_json
+     FROM sniff_csv(?, sample_size := ?)"
+)?;
+```
+
+T9 should prefer the JSON-decode path — DuckDB's STRUCT type round-trip via
+`duckdb-rs` is documented in the main `Connection` notes (see issue
+duckdb/duckdb-rs#418 for the rough edges).
+
+### 7. Source pointers (for re-verification)
+
+- duckdb-rs `crates/duckdb/src/{lib,statement,row}.rs` (pinned 1.4.4) —
+  `Connection` / `Statement` / `Row` APIs used to invoke `sniff_csv`
+- DuckDB engine docs: <https://duckdb.org/docs/stable/data/csv/auto_detection>
+- DuckDB CSV reader source (informational; not vendored): see
+  <https://github.com/duckdb/duckdb/blob/v1.4.4/src/execution/operator/csv_scanner/sniffer/csv_sniffer.cpp>
+  for the underlying detection algorithm.
+
+### 8. Plan-defect summary
+
+This spike surfaces three drift items in the P3b plan §3.7 ambiguity rule.
+Filed as PD-011 in `docs/deferrals.md` (link from this section). Severity:
+**low** — the wizard still ships; only the trigger heuristic changes.

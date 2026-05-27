@@ -40,8 +40,8 @@ that's modifying it; merge conflicts are signals worth investigating.
 
 | ID    | Title                                              | Status | From | Target |
 |-------|----------------------------------------------------|--------|------|--------|
-| D-001 | Editable Settings widgets (author identity + theme dropdown) | open | P1 | P3 |
-| D-002 | Theme live-switch through running window           | open | P1   | P3     |
+| D-001 | Editable Settings widgets (author identity + theme dropdown) | closed | P1 | P3 |
+| D-002 | Theme live-switch through running window           | closed | P1   | P3     |
 | D-003 | Sparkle Objective-C `SUUpdater` bridge             | open | P1   | P10    |
 | D-004 | AppImageUpdate subprocess invocation               | open | P1   | P10    |
 | D-005 | Linux Secret Service "setup banner" UX             | open | P1   | TBD    |
@@ -53,6 +53,7 @@ that's modifying it; merge conflicts are signals worth investigating.
 | D-011 | Remove `__debug_query_scalar` test-only helper     | closed | P2   | P3a    |
 | D-012 | Engine catalog `TableInfo` synthesis (origin + schema) | closed | P2   | P3a    |
 | D-013 | Self-hosted macOS CI runner (cut hosted macos-14 10× billing) | open | P2 | TBD |
+| D-014 | Memory Budget Settings section | open | P3b | P3c / P9c |
 
 ## At-a-glance — Plan defects
 
@@ -62,12 +63,19 @@ that's modifying it; merge conflicts are signals worth investigating.
 | PD-002 | Settings store atomic-write missing `fsync` before rename          | open   | low      |
 | PD-003 | cargo-about NOTICE output not deterministic across host platforms  | open   | low      |
 | PD-004 | Linux Secret Service backend not reachable from CI keychain tests  | open   | low      |
+| PD-011 | P3b plan §3.7 ambiguity rule references sniff outputs that don't exist: no candidate-delimiter scores, no encoding column, no per-column confidence in `sniff_csv` | open | low |
+| PD-012 | `NYC_TAXI_SHA256 = "FILL_AT_T8"` — release asset not yet uploaded, so the fetch path always fails the checksum check at runtime | open | low |
+
+## At-a-glance — Closed plan defects
+
+| ID     | Title                                                              | Status | Severity |
+|--------|--------------------------------------------------------------------|--------|----------|
 | PD-005 | P2 plan T3 snippet uses `&*conn` triggering clippy explicit-auto-deref | closed | trivial |
 | PD-006 | P2 plan T12 fixtures snippet uses bare `rng.gen::<…>()` — reserved keyword in Rust 2024 | closed | low      |
 | PD-007 | P2 plan T14 snippet calls non-existent `error_ux::banner::push_banner` with mismatched `Banner` shape | closed | low      |
 | PD-008 | P3a plan T2 snippets use wrong import paths for `fs4::FileExt` and `interprocess::local_socket::traits::Stream` | closed | trivial  |
 | PD-009 | P3a plan T6 test snippet calls non-existent `engine.catalog().get_tables()` — no `catalog()` method on `DuckDBEngine` | closed | trivial |
-| PD-010 | P3a plan T12 UDS → GPUI cross-thread window-open bridge is unsafe: `AsyncApp::update` borrows a `RefCell`-backed app cell, not safe to call from a tokio background thread | open | low |
+| PD-010 | P3a plan T12 UDS → GPUI cross-thread window-open bridge is unsafe: `AsyncApp::update` borrows a `RefCell`-backed app cell, not safe to call from a tokio background thread | closed | low |
 
 ---
 
@@ -75,7 +83,7 @@ that's modifying it; merge conflicts are signals worth investigating.
 
 ### D-001 — Editable Settings widgets (author identity + theme dropdown)
 
-- **Status:** open
+- **Status:** closed
 - **Deferred from:** P1 (T7 schema, T16 settings UI)
 - **Target phase:** P3
 - **Reason:** Depends on form-input primitives (text input, select dropdown) from
@@ -87,11 +95,24 @@ that's modifying it; merge conflicts are signals worth investigating.
   bound to the existing `SettingsStore`.
 - **Originating doc:** `docs/plans/2026-04-26-dat0-p1-foundation-plan.md` §"Risks & Caveats"
 - **Closes:** spec §21.2 P1 exit — "Settings panel opens; changes persist across launches" (full editability)
-- **Last touched:** 2026-04-28
+- **Last touched:** 2026-05-25
+- **Closed by:** T11 (`crates/dat0-app/src/settings_ui/sections/{profile,theme}.rs`
+  + `crates/dat0-app/src/settings/store.rs`); P3b plan T11. The plan-verbatim
+  KV facade (`SettingsStore::open_in_memory`, `set`, `get_string`) lands on
+  top of the P1 TOML store — `author.name`, `author.email`, `theme.id`
+  round-trip via the same atomic-write path P1 already uses, and the on-change
+  closures (`ProfileSection::on_name_change` / `on_email_change`,
+  `ThemeSection::on_theme_change`) carry the live wiring shape. The visible
+  view stayed stubbed because the gpui-component `Input` + `Select` mount
+  rides on the T13 follow-up that opens the real settings window
+  (see T0 spike §3 + §3.6 in `docs/internal/gpui-component-api-notes.md`);
+  SettingsStore round-trip is live + tested (7 tests in
+  `crates/dat0-app/tests/settings_ui.rs`). T12 reads `theme.id` for the
+  `Theme::switch` fan-out via the same facade.
 
 ### D-002 — Theme live-switch through running window
 
-- **Status:** open
+- **Status:** closed
 - **Deferred from:** P1 (T10)
 - **Target phase:** P3
 - **Reason:** Live theme application requires the running UI surfaces to consume
@@ -103,7 +124,8 @@ that's modifying it; merge conflicts are signals worth investigating.
   re-renders on theme change without restart.
 - **Originating doc:** `docs/plans/2026-04-26-dat0-p1-foundation-plan.md` §"Risks & Caveats"
 - **Closes:** spec §21.2 P1 exit — "Theme switch (default ↔ alternate) works without restart"
-- **Last touched:** 2026-04-28
+- **Last touched:** 2026-05-25
+- **Closed by:** T12 (`crates/dat0-app/src/theme/mod.rs` Theme::install + Theme::switch + observe_global audit); P3b plan T12. cx.set_global + cx.observe_global propagation; Theme dropdown change in Settings updates the global; subscribed views re-render in the same tick. Cross-window propagation automatic via app-scoped global.
 
 ### D-003 — Sparkle Objective-C `SUUpdater` bridge
 
@@ -384,6 +406,28 @@ that's modifying it; merge conflicts are signals worth investigating.
   macOS side remains.
 - **Last touched:** 2026-05-14
 
+### D-014 — Memory Budget Settings section
+
+- **Status:** open
+- **Deferred from:** P3b (T11 scope decision)
+- **Target phase:** P3c (if split) or P9c (settings polish)
+- **Reason:** P3b T11 scope locks to D-001 wording (Profile + Theme widgets).
+  Memory Budget requires engine plumbing to re-apply `memory_limit` PRAGMA on
+  change, not in P3b ad-hoc scope. Settings store already persists the value;
+  the missing piece is the engine-side reapply path + a UI surface that does
+  not silently mislead users into thinking a budget change took effect when
+  it actually only applies on next window open.
+- **What P3b ships:** Profile + Theme editable sections (D-001 closed by T11).
+  Memory Budget remains read-only display or absent from the Settings panel
+  surface area depending on which sections the registry exposes.
+- **What target phase delivers:** Slider/number input for `memory_limit`;
+  engine reapplies on change (`PRAGMA memory_limit = 'NMB'` against the live
+  connection per window), or — if reapply-on-live-connection turns out to
+  carry mid-query risk — a footnote "applies next window" tied to the
+  control with a Restart hint.
+- **Originating doc:** `docs/specs/2026-05-25-dat0-p3b-ux-polish-design.md` §7.
+- **Last touched:** 2026-05-25.
+
 ---
 
 ## Plan defects
@@ -657,7 +701,7 @@ that's modifying it; merge conflicts are signals worth investigating.
 
 ### PD-010 — P3a plan T12 UDS → GPUI cross-thread window-open bridge is unsafe
 
-- **Status:** open
+- **Status:** closed
 - **Severity:** low (single-instance enforcement and Cmd-N multi-window are fully
   functional; only UDS-triggered window-open from a second launch is affected)
 - **Affected files:** `crates/dat0-app/src/window.rs` (`run_app` UDS handler)
@@ -696,7 +740,102 @@ that's modifying it; merge conflicts are signals worth investigating.
   ("Pattern C (preferred)" + "Practical fallback").
 - **Target phase:** T17 / P3b polish — depends on the UDS round-trip
   integration test (T16) that validates single-instance enforcement end-to-end.
-- **Last touched:** 2026-05-16
+- **Closed by:** T1 (`crates/dat0-app/src/main_bridge.rs` + UDS handler rewire + `tests/main_thread_dispatcher.rs`); P3b plan T1. The futures-mpsc dispatcher (option (b)) is captured before `Application::run`; the UDS handler posts visual-spawn closures through it. P3a partial exit #5 now PASS.
+- **Last touched:** 2026-05-25
+
+---
+
+### PD-011 — P3b plan §3.7 ambiguity rule references sniff outputs that don't exist
+
+- **Status:** open
+- **Severity:** low (the import wizard still ships; only the trigger heuristic
+  changes shape)
+- **Affected files:** `docs/plans/2026-05-25-dat0-p3b-plan.md` T9 task description
+  (the three-clause ambiguity rule); `docs/specs/2026-05-25-dat0-p3b-ux-polish-design.md`
+  §3.7 (mirrors the same rule)
+- **Symptom:** P3b spec §3.7 and the plan's T9 description specify a three-clause
+  ambiguity rule for triggering the import wizard:
+  (a) "more than one candidate delimiter scored within 5% of the top",
+  (b) "sniff returns a non-UTF-8 encoding marker",
+  (c) "type-inference flags any column with confidence below the sniff's
+  reported threshold."
+  None of these three clauses match the actual `sniff_csv` output shape
+  documented at <https://duckdb.org/docs/stable/data/csv/auto_detection#sniff_csv-function>:
+  - (a) `sniff_csv` returns only the winner delimiter; there is no candidate
+    list and no scores.
+  - (b) There is no encoding column in the output. The CSV reader auto-detects
+    UTF-8 vs Latin-1 internally but does not surface that choice.
+  - (c) The `Columns` STRUCT array has `(name, type)` pairs only — no
+    per-column confidence value.
+  Cited verification: P3b.T0 spike doc
+  `docs/internal/duckdb-arrow-api-notes.md` §SniffCsv (2026-05-25 entry).
+- **Root cause:** Plan drafted from spec memory of "sniff returns rich
+  metadata" assumption. The real DuckDB sniff is dialect-focused, not
+  uncertainty-focused. duckdb-rs 1.4.4 has no typed Rust wrapper for
+  `sniff_csv` either; it is SQL-only, so the plan also can't lean on a Rust
+  return-type signature.
+- **What P3b T9 must do instead:** Replace the three-clause rule with a
+  spec-compatible substitute grounded in actual sniff output. Recommended
+  shape (see `duckdb-arrow-api-notes.md` §SniffCsv #5):
+  1. **Delimiter check via dual-sniff:** run `sniff_csv` twice with two
+     `sample_size` values (e.g., 4096 and 65536); if the inferred `Delimiter`
+     differs between runs, treat the file as ambiguous.
+  2. **Encoding heuristic:** read the first 8 KB of the file with
+     `std::str::from_utf8`; on decode error, treat as ambiguous and default
+     the wizard to Latin-1.
+  3. **(Optional) Type stability:** compare `Columns[*].type` between the
+     same two sample sizes; if any column type differs, treat as ambiguous.
+- **What target phase delivers:** Plan + spec §3.7 amended to drop (a), (c)
+  as written and substitute the dual-sniff + UTF-8-heuristic rule. T9 plan
+  step list updates to call the new shape. Spec §3.7 wording remains
+  conceptually accurate ("ambiguous → drawer, confident → bypass") so the
+  amendment is mechanical.
+- **Originating doc:** `docs/specs/2026-05-25-dat0-p3b-ux-polish-design.md`
+  §3.7 + `docs/plans/2026-05-25-dat0-p3b-plan.md` T9 (the spike-source
+  references at the bottom of each).
+- **Target phase:** P3b T9 (no separate target phase — this defect is
+  surfaced by T0 and consumed by T9 before T9 begins implementation).
+- **Last touched:** 2026-05-25
+
+---
+
+### PD-012 — `NYC_TAXI_SHA256` placeholder until release asset upload
+
+- **Status:** open
+- **Severity:** low (the fetch path is wired + fully tested via mockito; only
+  the production NYC-taxi sample is unavailable until the asset upload)
+- **Affected files:** `crates/dat0-app/src/sample_data.rs`
+  (`NYC_TAXI_SHA256` constant)
+- **Symptom:** `NYC_TAXI_SHA256` is currently `"FILL_AT_T8"`. If the
+  empty-state hero (T7) dispatches the NYC taxi sample, `fetch_remote`
+  downloads the body from `NYC_TAXI_URL` and then fails the SHA-256
+  compare ("checksum mismatch: expected fill_at_t8 got <real>"). The
+  failure path is correct UX — the T8 banner shows
+  "Sample data download failed: Couldn't download from <url>: checksum
+  mismatch…" with a Retry button — but the user can never successfully
+  pull the asset until this placeholder is replaced with the real hash.
+- **Discovered:** P3b T8 implementation (2026-05-25). The plan explicitly
+  scoped this as maintainer work: T8 wires + tests the fetch path; the
+  asset upload + hash compute is owned outside the implementer's
+  worktree.
+- **What T8 ships:** Async `fetch_remote(url, expected_sha, …)` with
+  rustls-only reqwest, SHA-256 verify, atomic-write cache. mockito tests
+  cover happy-path / checksum-mismatch / 404 / cache-hit. Banner
+  `fetch_failed_banner` + `sample_data.retry_taxi` action descriptor for
+  the offline UX. `NYC_TAXI_URL` points at the
+  `accidentally-awesome-labs/dat0` GitHub Release tag `sample-data-v1`
+  with asset name `nyc_taxi.parquet`.
+- **What target phase delivers:** Maintainer uploads `nyc_taxi.parquet`
+  to the `sample-data-v1` release, computes the SHA-256
+  (`shasum -a 256 nyc_taxi.parquet`), replaces `"FILL_AT_T8"` in
+  `sample_data.rs` with the real lowercase hex, and lands a one-line
+  commit. No code paths change. The fetch path then succeeds end-to-end
+  on first hero click.
+- **Target phase:** P3b T13 retro, or P3b follow-up commit if the asset
+  upload lands before retro.
+- **Originating doc:** `docs/plans/2026-05-25-dat0-p3b-plan.md` T8 ("External
+  work (defer to maintainer)").
+- **Last touched:** 2026-05-25
 
 ---
 
