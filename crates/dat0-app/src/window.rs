@@ -338,6 +338,40 @@ pub fn run_app(lock: AppLock, initial_paths: Vec<PathBuf>, main_loop: MainLoop) 
             );
         }
 
+        // Wire Cmd-Z / Ctrl-Z → Undo, Cmd-Shift-Z / Ctrl-Shift-Z → Redo (P4a T7).
+        // `Undo` and `Redo` are gpui action stubs declared in `menu_macos.rs`
+        // (unconditional, so they resolve on Linux too). Handlers dispatch
+        // through the ActionRegistry so the same closure drives menu-click,
+        // keybind, and command-palette paths.
+        {
+            #[cfg(target_os = "macos")]
+            let (undo_ks, redo_ks) = ("cmd-z", "cmd-shift-z");
+            #[cfg(not(target_os = "macos"))]
+            let (undo_ks, redo_ks) = ("ctrl-z", "ctrl-shift-z");
+            cx.bind_keys([
+                gpui::KeyBinding::new(undo_ks, crate::menu_macos::Undo, None),
+                gpui::KeyBinding::new(redo_ks, crate::menu_macos::Redo, None),
+            ]);
+            cx.on_action(|_action: &crate::menu_macos::Undo, cx: &mut App| {
+                if let Some(reg) = crate::window_registry::action_registry() {
+                    if let Some(desc) = reg.get(&crate::actions::ActionId::from(
+                        crate::actions::builtin::ids::VIEW_UNDO,
+                    )) {
+                        (desc.dispatch)(cx);
+                    }
+                }
+            });
+            cx.on_action(|_action: &crate::menu_macos::Redo, cx: &mut App| {
+                if let Some(reg) = crate::window_registry::action_registry() {
+                    if let Some(desc) = reg.get(&crate::actions::ActionId::from(
+                        crate::actions::builtin::ids::VIEW_REDO,
+                    )) {
+                        (desc.dispatch)(cx);
+                    }
+                }
+            });
+        }
+
         let first_window_id = session.lock().window_id;
         let bounds = Bounds::centered(None, size(px(1200.), px(800.)), cx);
         let session_for_window = Arc::clone(&session);
