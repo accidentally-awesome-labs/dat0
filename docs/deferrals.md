@@ -68,6 +68,7 @@ that's modifying it; merge conflicts are signals worth investigating.
 | PD-013 | P4a T0 plan-snippet drifts: `dat0-fixtures` assumed to be a lib crate; `dat0-engine` assumed to have a `benches/` dir + criterion dev-dep; plan snippet pinned `criterion = "0.5"` instead of using workspace inheritance | open | low |
 | PD-014 | P4a design §3 used `#[serde(untagged)]` on `FilterValue` + `Scalar`, causing Str/Date/Timestamp collisions and FilterValue::None/Scalar::Null collision; reworked to tagged wire shapes | open | low |
 | PD-015 | P4a plan T2–T15 snippets still use the pre-PD-014 tuple form `FilterValue::Scalar(...)` + `FilterValue::List(vec![...])` (~57 occurrences); implementers must read variants as struct form `FilterValue::Scalar { value }` + `FilterValue::List { values }` | open | low |
+| PD-016 | P4a UI-click → ViewChange wirings unowned by plan T13: funnel-click → open popover, popover `Outcome::Apply` → `vm.apply`, sort-zone-click → `vm.set_sort`. T7/T9/T10b/T12 implementers each commented "T13 wires" but plan T13 Steps 1-4 cover only keybind undo/redo + supersede-cancel test. T14 E2E either pulls in the missing glue or tests via direct VM API; P4b/c may inherit if not closed at T15. | open | medium |
 
 ## At-a-glance — Closed plan defects
 
@@ -965,6 +966,27 @@ that's modifying it; merge conflicts are signals worth investigating.
   - `FilterValue::None` is unchanged (unit variant).
 - **Discovered:** T1 quality review (2026-05-29).
 - **Originating doc:** `docs/plans/2026-05-27-dat0-p4a-plan.md` — pre-PD-014 wire form.
+- **Last touched:** 2026-05-29
+
+### PD-016 — P4a UI-click → ViewChange wirings unowned by plan T13
+
+- **Status:** open
+- **Severity:** medium (P4a is functionally incomplete on the UI-click path: funnel + sort-zone clicks log but don't actually trigger ViewChanges; only the keybind undo/redo path is wired end-to-end)
+- **Affected files:**
+  - `crates/dat0-app/src/grid/mod.rs` — sort-zone + funnel-zone click handlers still log debug + leave wiring comments
+  - `crates/dat0-app/src/view/filter_popover_entity.rs` — `Outcome::Apply` / `Outcome::Clear` emit but have no upper-layer consumer wired to `vm.apply` / `vm.replace_at_cursor` + `spawn_view_change`
+  - Possibly: a missing "popover-mount-on-funnel-click" hook in `WorkspaceShell` or wherever the popover is instantiated
+- **Symptom:** T7 (action registry stubs), T9 (four-zone column header), T10b (filter popover entity), T12 (sort header state machine) each shipped with placeholder dispatch closures and inline `// T13 wires …` comments. Plan §T13 Steps 1-4 (`spawn_view_change` helper, `WorkspaceShell::apply_view_change`, `view_actions::dispatch_undo/redo` real wiring, supersede-cancel test) did NOT include the click-handler wirings those earlier tasks deferred. T13 (`516c31c`) matches plan §T13 exactly; the gap is in the plan, not the implementation.
+- **Net effect:** keybind undo/redo works end-to-end via `dispatch_undo` / `dispatch_redo` → `spawn_view_change` → engine round-trip → `apply_view_change` rebind. But:
+  - Clicking the funnel zone does NOT open the filter popover.
+  - The filter popover, if mounted manually, would emit `Outcome::Apply` to nobody.
+  - Clicking the sort zone (plain or shift-click) logs the column/modifier but does NOT call `vm.set_sort`.
+- **Fix paths (to close before P4a merges or accept as in-progress):**
+  - **Path A (in-phase completion):** wire all three click paths in `grid/mod.rs` + `filter_popover_entity.rs` to call `spawn_view_change` via the focused-workspace lookup. ~50-100 lines of glue. Closes the P4a integration story.
+  - **Path B (defer to T14 E2E):** T14's `view_restore_e2e.rs` can test the apply→undo→redo→clear→crash→reload flow via direct `ViewModel` API + engine round-trips, sidestepping the UI click layer. P4a still ships, but the UI is only half-interactive (keybinds work, mouse doesn't).
+  - **Path C (defer to P4b/c):** P4b ships row-edit + clipboard which also need a click-handler integration layer; the wirings could fold in there.
+- **Discovered:** T13 implementation review (2026-05-29 / 2026-05-29). Documented by the controller after the T13 implementer correctly noted plan §T13 Steps 1-4 don't cover these wirings.
+- **Originating doc:** `docs/plans/2026-05-27-dat0-p4a-plan.md` §T13.
 - **Last touched:** 2026-05-29
 
 ---
