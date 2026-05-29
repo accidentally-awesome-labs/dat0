@@ -67,6 +67,7 @@ that's modifying it; merge conflicts are signals worth investigating.
 | PD-012 | `NYC_TAXI_SHA256 = "FILL_AT_T8"` — release asset not yet uploaded, so the fetch path always fails the checksum check at runtime | open | low |
 | PD-013 | P4a T0 plan-snippet drifts: `dat0-fixtures` assumed to be a lib crate; `dat0-engine` assumed to have a `benches/` dir + criterion dev-dep; plan snippet pinned `criterion = "0.5"` instead of using workspace inheritance | open | low |
 | PD-014 | P4a design §3 used `#[serde(untagged)]` on `FilterValue` + `Scalar`, causing Str/Date/Timestamp collisions and FilterValue::None/Scalar::Null collision; reworked to tagged wire shapes | open | low |
+| PD-015 | P4a plan T2–T15 snippets still use the pre-PD-014 tuple form `FilterValue::Scalar(...)` + `FilterValue::List(vec![...])` (~57 occurrences); implementers must read variants as struct form `FilterValue::Scalar { value }` + `FilterValue::List { values }` | open | low |
 
 ## At-a-glance — Closed plan defects
 
@@ -941,6 +942,29 @@ that's modifying it; merge conflicts are signals worth investigating.
   forms after user review.
 - **Originating doc:** `docs/plans/2026-05-27-dat0-p4a-design.md` §3 +
   `docs/plans/2026-05-27-dat0-p4a-plan.md` T1 task description.
+- **Last touched:** 2026-05-29
+
+### PD-015 — P4a plan T2–T15 snippets use pre-PD-014 tuple form for `FilterValue::Scalar` + `FilterValue::List`
+
+- **Status:** open
+- **Severity:** low (mechanical adaptation; ~57 occurrences are all in plan code blocks, not in committed code)
+- **Affected files:**
+  - `docs/plans/2026-05-27-dat0-p4a-plan.md` — T1 example (Step 1), T2 (Step 4 render impl, Steps 7+ golden tests), T5/T6/T8/T10/T11/T13/T14 wherever `FilterValue` is constructed in a snippet
+- **Symptom:** PD-014 reshaped `FilterValue::Scalar(Scalar)` → `FilterValue::Scalar { value: Scalar }`
+  and `FilterValue::List(Vec<Scalar>)` → `FilterValue::List { values: Vec<Scalar> }`. The plan
+  document was authored before PD-014 and still uses the tuple form throughout. A T2+
+  implementer pasting plan snippets verbatim hits compile errors immediately.
+- **Fix (mechanical, per snippet):**
+  - `FilterValue::Scalar(Scalar::Null)` → `FilterValue::Scalar { value: Scalar::Null }`
+  - `FilterValue::Scalar(s)` (binding pattern) → `FilterValue::Scalar { value: s }`
+  - `FilterValue::Scalar(_)` (ignore pattern) → `FilterValue::Scalar { .. }`
+  - `FilterValue::List(items)` (binding) → `FilterValue::List { values: items }`
+  - `FilterValue::List(vec![…])` (construction) → `FilterValue::List { values: vec![…] }`
+  - `FilterValue::List(_)` (ignore) → `FilterValue::List { .. }`
+  - `FilterValue::Range { lo, hi, inclusive }` is unchanged (was already struct-form).
+  - `FilterValue::None` is unchanged (unit variant).
+- **Discovered:** T1 quality review (2026-05-29).
+- **Originating doc:** `docs/plans/2026-05-27-dat0-p4a-plan.md` — pre-PD-014 wire form.
 - **Last touched:** 2026-05-29
 
 ---
