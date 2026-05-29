@@ -158,6 +158,21 @@ impl ViewModel {
         }
     }
 
+    // --- Filter query helpers ---
+
+    /// Find the most recent `Transformation::Filter` on `column` in the active
+    /// stack (i.e., within `stack[..cursor]`). Returns the last (most recent)
+    /// matching entry, or `None` if no filter on that column is active.
+    ///
+    /// Used by the filter-popover edit flow to pre-populate the popover when
+    /// the user re-clicks the funnel on a column with an existing filter.
+    pub fn find_filter_for(&self, column: &str) -> Option<&Transformation> {
+        self.stack[..self.cursor].iter().rfind(|op| match op {
+            Transformation::Filter { column: c, .. } => c == column,
+            _ => false,
+        })
+    }
+
     // --- Private helpers ---
 
     /// Recompute active_view name + SQL given the current cursor.

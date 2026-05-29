@@ -221,3 +221,65 @@ fn view_name_strips_unsafe_chars_from_tab_id() {
     let name = change.new_active_view.unwrap();
     assert!(name.starts_with("v_tab7withspecial_"));
 }
+
+// ---------------------------------------------------------------------------
+// find_filter_for tests (T10 — filter popover edit flow)
+// ---------------------------------------------------------------------------
+
+#[test]
+fn find_filter_for_returns_most_recent() {
+    let mut v = vm();
+    v.apply(filter_eq("a", 1));
+    v.apply(filter_eq("b", 2));
+    v.apply(filter_eq("a", 99)); // most recent filter on "a"
+    let found = v.find_filter_for("a").unwrap();
+    match found {
+        Transformation::Filter { value, .. } => {
+            assert!(
+                matches!(
+                    value,
+                    FilterValue::Scalar {
+                        value: Scalar::Int(99)
+                    }
+                ),
+                "expected Scalar Int(99), got {value:?}"
+            );
+        }
+        _ => panic!("expected Filter"),
+    }
+}
+
+#[test]
+fn find_filter_for_returns_none_when_absent() {
+    let v = vm();
+    assert!(v.find_filter_for("a").is_none(), "empty stack → None");
+}
+
+#[test]
+fn find_filter_for_ignores_ops_beyond_cursor() {
+    let mut v = vm();
+    v.apply(filter_eq("a", 1));
+    v.apply(filter_eq("a", 2));
+    // Undo once: cursor now at 1. Only filter_eq("a", 1) is active.
+    v.undo();
+    let found = v.find_filter_for("a").unwrap();
+    assert!(
+        matches!(
+            found,
+            Transformation::Filter {
+                value: FilterValue::Scalar {
+                    value: Scalar::Int(1)
+                },
+                ..
+            }
+        ),
+        "must not see the undone op"
+    );
+}
+
+#[test]
+fn find_filter_for_returns_none_for_unknown_column() {
+    let mut v = vm();
+    v.apply(filter_eq("a", 1));
+    assert!(v.find_filter_for("z").is_none());
+}
