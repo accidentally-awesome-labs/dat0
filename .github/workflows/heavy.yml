@@ -76,3 +76,6 @@ jobs:
           cargo test -p dat0-engine --test attach_dispatch -- --nocapture || true
       - name: Run exit_criteria
         run: cargo test -p dat0-engine --test exit_criteria -- --include-ignored
+      - name: view_regen bench (P4a perf gate — 1M-row Filter < 500 ms p95)
+        if: contains(github.event.pull_request.labels.*.name, 'run-heavy')
+        run: cargo bench -p dat0-engine --bench view_regen 2>&1 | tee /tmp/p4a_view_regen_linux.log
