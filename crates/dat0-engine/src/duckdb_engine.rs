@@ -418,6 +418,41 @@ impl crate::QueryEngine for DuckDBEngine {
         .await
         .map_err(|e| EngineError::TaskJoin(e.to_string()))?
     }
+
+    #[instrument(skip(self, sql), fields(name = name, sql_len = sql.len()))]
+    async fn create_or_replace_view(&self, name: &str, sql: &str) -> Result<()> {
+        self.assert_open()?;
+        let conn = self.conn.clone();
+        let name = name.to_owned();
+        let sql = sql.to_owned();
+        let stmt = format!(
+            "CREATE OR REPLACE TEMP VIEW {} AS {}",
+            quote_ident(&name),
+            sql
+        );
+        tokio::task::spawn_blocking(move || -> Result<()> {
+            let conn = conn.lock().map_err(|_| EngineError::EnginePoisoned)?;
+            conn.execute_batch(&stmt)?;
+            Ok(())
+        })
+        .await
+        .map_err(|e| EngineError::TaskJoin(e.to_string()))?
+    }
+
+    #[instrument(skip(self), fields(name = name))]
+    async fn drop_view(&self, name: &str) -> Result<()> {
+        self.assert_open()?;
+        let conn = self.conn.clone();
+        let name = name.to_owned();
+        let stmt = format!("DROP VIEW IF EXISTS {}", quote_ident(&name));
+        tokio::task::spawn_blocking(move || -> Result<()> {
+            let conn = conn.lock().map_err(|_| EngineError::EnginePoisoned)?;
+            conn.execute_batch(&stmt)?;
+            Ok(())
+        })
+        .await
+        .map_err(|e| EngineError::TaskJoin(e.to_string()))?
+    }
 }
 
 impl DuckDBEngine {

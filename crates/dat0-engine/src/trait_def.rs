@@ -31,4 +31,18 @@ pub trait QueryEngine: Send + Sync {
 
     async fn attach(&self, dsn: &str, alias: &str, opts: AttachOpts) -> Result<()>;
     async fn detach(&self, alias: &str) -> Result<()>;
+
+    /// Create or replace a DuckDB TEMP VIEW. View is scoped to the connection
+    /// and is dropped automatically when the connection drops.
+    ///
+    /// Caller owns the view name: pass a plain identifier string (e.g.
+    /// `"v_tab3_a1b2"`). This method quotes it via `catalog::quote_ident`
+    /// before interpolating into SQL — callers MUST NOT pre-quote the name.
+    async fn create_or_replace_view(&self, name: &str, sql: &str) -> Result<()>;
+
+    /// Drop a TEMP VIEW. Idempotent — succeeds whether or not the view exists.
+    ///
+    /// Caller owns the view name in the same sense as `create_or_replace_view`:
+    /// pass the plain identifier; quoting is applied internally.
+    async fn drop_view(&self, name: &str) -> Result<()>;
 }
