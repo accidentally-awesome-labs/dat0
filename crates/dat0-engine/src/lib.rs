@@ -13,6 +13,7 @@ pub(crate) mod export;
 pub mod extension_bootstrap;
 pub mod migrations;
 pub(crate) mod register;
+pub mod render;
 pub(crate) mod tracing_helpers;
 pub mod trait_def;
 pub mod transform;
@@ -20,6 +21,7 @@ pub mod types;
 
 pub use duckdb_engine::DuckDBEngine;
 pub use error::EngineError;
+pub use render::{RenderError, compile_view_sql};
 pub use trait_def::QueryEngine;
 pub use transform::{FilterOp, FilterValue, Scalar, SortDirection, SortKey, Transformation};
 pub use types::{

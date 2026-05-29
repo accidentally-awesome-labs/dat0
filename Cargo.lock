@@ -1769,6 +1769,7 @@ dependencies = [
  "duckdb",
  "futures",
  "num_cpus",
+ "regex",
  "serde",
  "serde_json",
  "tempfile",
