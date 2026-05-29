@@ -76,6 +76,37 @@ jobs:
           cargo test -p dat0-engine --test attach_dispatch -- --nocapture || true
       - name: Run exit_criteria
         run: cargo test -p dat0-engine --test exit_criteria -- --include-ignored
+
+  view-regen-bench:
+    # P4a perf gate — 1M-row Filter < 500 ms p95 (linux-x86 leg).
+    # Routed to hosted ubuntu-latest (not the self-hosted runnerkit) because
+    # the bench is self-contained (gen_filter_fixture builds its own 1M-row
+    # CSV in-test) and does not need the 1.6 GB exit-criteria fixture cache.
+    # Keeping it hosted decouples the bench from runnerkit availability.
+    if: >
+      github.event_name != 'pull_request' ||
+      contains(github.event.pull_request.labels.*.name, 'run-heavy')
+    runs-on: ubuntu-latest
+    env:
+      CARGO_BUILD_JOBS: 2
+    steps:
+      - uses: actions/checkout@v5
+      - name: Free disk space (hosted Linux only)
+        uses: jlumbroso/free-disk-space@v1.3.1
+        with:
+          tool-cache: false
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-unknown-linux-gnu
+      - name: Linux deps (libduckdb-sys build)
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libssl-dev
       - name: view_regen bench (P4a perf gate — 1M-row Filter < 500 ms p95)
-        if: contains(github.event.pull_request.labels.*.name, 'run-heavy')
         run: cargo bench -p dat0-engine --bench view_regen 2>&1 | tee /tmp/p4a_view_regen_linux.log
+      - name: Upload bench log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: p4a-view-regen-linux
+          path: /tmp/p4a_view_regen_linux.log
