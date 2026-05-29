@@ -369,3 +369,164 @@ fn apply_transformation_matches_build() {
     s.set_value_text("7".into());
     assert_eq!(s.apply_transformation(), s.build());
 }
+
+// ---------------------------------------------------------------------------
+// T11 IN-list integration tests (against a live DuckDB engine)
+// ---------------------------------------------------------------------------
+
+use std::sync::Arc;
+use tempfile::TempDir;
+
+use dat0_app::view::distinct_values::{TOP_N, banner_needed, fetch_top_n};
+use dat0_engine::{DuckDBEngine, MemoryBudget, QueryEngine, RegisterOpts};
+
+async fn engine_with_cities(tmp: &TempDir) -> (Arc<DuckDBEngine>, String) {
+    let csv = tmp.path().join("cities.csv");
+    let mut s = String::from("city,n\n");
+    let cities = ["SF", "NYC", "LA", "CHI", "HOU"];
+    for (i, city) in cities.iter().enumerate() {
+        // Different repeat counts so ORDER BY COUNT is non-trivial.
+        for _ in 0..((i + 1) * 10) {
+            s.push_str(&format!("{},{}\n", city, i));
+        }
+    }
+    std::fs::write(&csv, s).unwrap();
+    let engine = DuckDBEngine::new(
+        tmp.path().join("scratch.duckdb"),
+        MemoryBudget {
+            bytes: 256 * 1024 * 1024,
+        },
+    )
+    .unwrap();
+    engine.init().await.unwrap();
+    engine
+        .register_file(&csv, RegisterOpts::default())
+        .await
+        .unwrap();
+    let name = engine.get_tables().await.unwrap()[0].name.clone();
+    (Arc::new(engine), name)
+}
+
+#[tokio::test]
+async fn fetch_top_n_returns_count_descending() {
+    let tmp = TempDir::new().unwrap();
+    let (engine, table) = engine_with_cities(&tmp).await;
+    let (values, total) = fetch_top_n(engine, &table, "city").await.unwrap();
+    assert_eq!(total, 5, "5 distinct cities");
+    assert_eq!(
+        values[0].value, "HOU",
+        "HOU has the most rows in the fixture"
+    );
+    assert!(values[0].count > values[1].count);
+}
+
+#[tokio::test]
+async fn fetch_top_n_caps_at_top_n() {
+    // Build a fixture with 70 distinct values.
+    let tmp = TempDir::new().unwrap();
+    let csv = tmp.path().join("many.csv");
+    let mut s = String::from("v\n");
+    for i in 0..70 {
+        s.push_str(&format!("val_{}\n", i));
+    }
+    std::fs::write(&csv, s).unwrap();
+    let engine = DuckDBEngine::new(
+        tmp.path().join("scratch.duckdb"),
+        MemoryBudget {
+            bytes: 256 * 1024 * 1024,
+        },
+    )
+    .unwrap();
+    engine.init().await.unwrap();
+    engine
+        .register_file(&csv, RegisterOpts::default())
+        .await
+        .unwrap();
+    let table = engine.get_tables().await.unwrap()[0].name.clone();
+
+    let (values, total) = fetch_top_n(Arc::new(engine), &table, "v").await.unwrap();
+    assert_eq!(total, 70);
+    assert_eq!(values.len() as u64, TOP_N, "capped at TOP_N");
+}
+
+#[tokio::test]
+async fn fetch_top_n_empty_table_returns_zero() {
+    let tmp = TempDir::new().unwrap();
+    let csv = tmp.path().join("empty.csv");
+    // Header-only CSV — no rows.
+    std::fs::write(&csv, "city\n").unwrap();
+    let engine = DuckDBEngine::new(
+        tmp.path().join("scratch.duckdb"),
+        MemoryBudget {
+            bytes: 256 * 1024 * 1024,
+        },
+    )
+    .unwrap();
+    engine.init().await.unwrap();
+    engine
+        .register_file(&csv, RegisterOpts::default())
+        .await
+        .unwrap();
+    let table = engine.get_tables().await.unwrap()[0].name.clone();
+
+    let (values, total) = fetch_top_n(Arc::new(engine), &table, "city").await.unwrap();
+    assert_eq!(total, 0, "empty table → 0 distinct");
+    assert!(values.is_empty(), "empty table → no candidates");
+    assert!(!banner_needed(total), "empty result → no banner");
+}
+
+#[tokio::test]
+async fn fetch_top_n_banner_triggered_when_over_top_n() {
+    // 70 distinct values → total (70) > TOP_N (50) → banner needed.
+    let tmp = TempDir::new().unwrap();
+    let csv = tmp.path().join("many2.csv");
+    let mut s = String::from("v\n");
+    for i in 0..70 {
+        s.push_str(&format!("val_{}\n", i));
+    }
+    std::fs::write(&csv, s).unwrap();
+    let engine = DuckDBEngine::new(
+        tmp.path().join("scratch.duckdb"),
+        MemoryBudget {
+            bytes: 256 * 1024 * 1024,
+        },
+    )
+    .unwrap();
+    engine.init().await.unwrap();
+    engine
+        .register_file(&csv, RegisterOpts::default())
+        .await
+        .unwrap();
+    let table = engine.get_tables().await.unwrap()[0].name.clone();
+
+    let (_values, total) = fetch_top_n(Arc::new(engine), &table, "v").await.unwrap();
+    assert!(
+        banner_needed(total),
+        "total ({total}) > TOP_N ({TOP_N}) → banner required"
+    );
+}
+
+#[test]
+fn manual_entry_append_deduplicates() {
+    // Simulate the manual-entry append logic: value is added once only.
+    let mut list_values: Vec<String> = vec!["SF".into(), "NYC".into()];
+    let new_val = "LA".to_string();
+    let dup_val = "SF".to_string();
+
+    // Append new value — should succeed.
+    if !list_values.contains(&new_val) {
+        list_values.push(new_val.clone());
+    }
+    assert!(list_values.contains(&new_val), "LA should be appended");
+
+    // Append duplicate — should be a no-op.
+    let before_len = list_values.len();
+    if !list_values.contains(&dup_val) {
+        list_values.push(dup_val.clone());
+    }
+    assert_eq!(
+        list_values.len(),
+        before_len,
+        "duplicate SF should not be added again"
+    );
+}

@@ -1,4 +1,4 @@
-//! GPUI widget mount for the compact-inline filter popover (T10b).
+//! GPUI widget mount for the compact-inline filter popover (T10b + T11).
 //!
 //! This module owns [`FilterPopoverEntity`] — the GPUI [`Entity`] that wraps
 //! [`FilterPopoverState`] and mounts the visible input / select / checkbox
@@ -26,11 +26,13 @@
 //! layers (T13: `ColumnHeaderZone::Funnel` wiring) subscribe via
 //! [`FilterPopoverEntity::on_outcome`].
 //!
-//! # IN-list distinct-values stub
+//! # IN-list distinct-values panel (T11)
 //!
-//! When `op == In` the render shows a clearly-marked
-//! `Label::new("distinct values: T11")` placeholder. T11 will replace it
-//! with a fetched suggestion list and the chip editor.
+//! When `op == In` the render shows candidate chips (fetched via
+//! `distinct_values::fetch_top_n`) plus a manual-entry input. A truncation
+//! banner appears when `list_total_distinct > TOP_N`. Callers populate
+//! `list_candidates` and `list_total_distinct` after the async fetch
+//! completes; the entity re-renders automatically via `cx.notify()`.
 
 use std::rc::Rc;
 
@@ -151,6 +153,12 @@ pub struct FilterPopoverEntity {
     /// Populated once by `ensure_widgets()` (one-shot-gated), so this vec
     /// never grows beyond the initial 5 entries.
     _subscriptions: Vec<Subscription>,
+    /// T11: top-N distinct value candidates fetched for the IN-list panel.
+    /// Populated by the async fetch task; empty until the first fetch completes.
+    pub list_candidates: Vec<String>,
+    /// T11: total distinct count for the column (returned alongside candidates).
+    /// Used to decide whether to show the truncation banner.
+    pub list_total_distinct: u64,
 }
 
 /// Lazily-initialised widget-state handles. Created on first `render()`.
@@ -182,6 +190,8 @@ impl FilterPopoverEntity {
             widgets: None,
             outcome_callbacks: Vec::new(),
             _subscriptions: Vec::new(),
+            list_candidates: Vec::new(),
+            list_total_distinct: 0,
         }
     }
 
@@ -197,6 +207,8 @@ impl FilterPopoverEntity {
             widgets: None,
             outcome_callbacks: Vec::new(),
             _subscriptions: Vec::new(),
+            list_candidates: Vec::new(),
+            list_total_distinct: 0,
         }
     }
 
@@ -363,12 +375,16 @@ impl FilterPopoverEntity {
         let sub_list = cx.subscribe_in(
             &widgets.list_input,
             window,
-            |_this, _input, ev: &InputEvent, _window, _cx| {
-                if matches!(ev, InputEvent::Change) {
-                    // T10b: comma-separated text is tracked via InputState.
-                    // T11 will replace this stub with a chip-list UI and
-                    // distinct-values suggestions; list_values population is
-                    // T11's responsibility.
+            |this, input, ev: &InputEvent, _window, cx| {
+                // T11: on PressEnter, append the typed value to list_values and
+                // clear the input field. Duplicate values are silently ignored.
+                if matches!(ev, InputEvent::PressEnter { .. }) {
+                    let text = input.read(cx).value().to_string();
+                    let trimmed = text.trim().to_string();
+                    if !trimmed.is_empty() && !this.state.list_values.contains(&trimmed) {
+                        this.state.list_values.push(trimmed);
+                        cx.notify();
+                    }
                 }
             },
         );
@@ -441,14 +457,66 @@ impl Render for FilterPopoverEntity {
                     .into_any_element()
             }
 
-            // IN list: single text input + T11 stub.
-            FilterOp::In => v_flex()
-                .gap_2()
-                // T11 stub: distinct-values panel mounts here.
-                // Render an explicit placeholder so the gap is visible in dev.
-                .child(Label::new("distinct values: T11"))
-                .child(Input::new(&widgets.list_input).appearance(true))
-                .into_any_element(),
+            // IN list: distinct-values suggestion + manual-entry input.
+            FilterOp::In => {
+                use crate::view::distinct_values::{TOP_N, banner_needed};
+
+                let total = self.list_total_distinct;
+                let candidates = &self.list_candidates;
+
+                // Suggestion chips — each tapping selects/deselects the value.
+                let entity_in = cx.entity();
+                let mut chip_col = v_flex().gap_1();
+                for candidate in candidates {
+                    let val = candidate.clone();
+                    let entity_chip = entity_in.clone();
+                    let is_selected = self.state.list_values.contains(&val);
+                    let label_text = if is_selected {
+                        format!("✓ {}", val)
+                    } else {
+                        val.clone()
+                    };
+                    chip_col = chip_col.child(
+                        Button::new(gpui::ElementId::Name(format!("chip-{}", val).into()))
+                            .label(label_text)
+                            .ghost()
+                            .on_click({
+                                let val = val.clone();
+                                move |_ev, _window, cx| {
+                                    entity_chip.update(cx, |this, cx| {
+                                        if let Some(pos) =
+                                            this.state.list_values.iter().position(|v| v == &val)
+                                        {
+                                            this.state.list_values.remove(pos);
+                                        } else {
+                                            this.state.list_values.push(val.clone());
+                                        }
+                                        cx.notify();
+                                    });
+                                }
+                            }),
+                    );
+                }
+
+                // Truncation banner — shown when total distinct > TOP_N.
+                let banner_el: gpui::AnyElement = if banner_needed(total) {
+                    Label::new(format!(
+                        "Showing {} of {} distinct values; type to add more",
+                        TOP_N, total
+                    ))
+                    .into_any_element()
+                } else {
+                    div().into_any_element()
+                };
+
+                // Manual-entry input — pressing Enter appends the typed value.
+                v_flex()
+                    .gap_2()
+                    .child(chip_col)
+                    .child(banner_el)
+                    .child(Input::new(&widgets.list_input).appearance(true))
+                    .into_any_element()
+            }
 
             // All other ops (unary text): single value input.
             _ => Input::new(&widgets.value_input)

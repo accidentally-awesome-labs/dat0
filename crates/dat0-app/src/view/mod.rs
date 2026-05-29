@@ -1,5 +1,6 @@
 //! Per-tab view state: active Transformation stack + undo cursor + active view name.
 
+pub mod distinct_values;
 pub mod filter_popover;
 pub mod filter_popover_entity;
 pub mod model;
