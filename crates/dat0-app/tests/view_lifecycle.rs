@@ -358,3 +358,83 @@ async fn set_sort_upserts_and_pages_are_ordered() {
         "sort upsert must not alter the filter row count"
     );
 }
+
+// ---------------------------------------------------------------------------
+// T13: supersede-cancel — engine.interrupt() doesn't leave engine broken
+// ---------------------------------------------------------------------------
+
+/// Verify that `engine.interrupt()` signals a cooperative cancel on an
+/// in-flight view creation, and that the engine remains usable afterward
+/// (either completing normally or returning an error, but not poisoning
+/// the connection).
+///
+/// Timing note: this test is intentionally lenient — we do NOT assert that
+/// the first task was actually interrupted (race between interrupt and
+/// completion). What we DO assert is that:
+/// 1. After the interrupt + wait, the engine is still functional.
+/// 2. The second `ViewChange` (c2) creates a correct view.
+/// 3. The final paged query against c2's view returns the expected rows.
+///
+/// This is the "supersede semantics" contract: the newer change wins, and
+/// the engine is never left in a bad state regardless of whether the
+/// interrupt arrived early or late.
+///
+/// Marked `#[ignore]` because it is timing-sensitive on heavily-loaded CI;
+/// run via `cargo test -- --ignored supersede_cancels_in_flight_view_regen`
+/// or the `run-heavy` workflow.
+#[tokio::test]
+#[ignore = "timing-sensitive; run with --ignored on dedicated CI"]
+async fn supersede_cancels_in_flight_view_regen() {
+    use std::time::Duration;
+
+    let tmp = tempfile::TempDir::new().unwrap();
+    let (engine, table) = engine_with_100_rows(&tmp).await;
+    let base = format!("\"{}\"", table.replace('"', "\"\""));
+    let mut vm = dat0_app::view::ViewModel::new("tab1".into(), base);
+
+    // First change: a >= 50.
+    let c1 = vm.apply(filter_a_gte(50));
+    let c1_name = c1.new_active_view.clone().unwrap();
+    let c1_sql = c1.sql.clone().unwrap();
+
+    // Spawn the first view creation on a separate task to simulate an
+    // in-flight engine round-trip.
+    let engine_c1 = Arc::clone(&engine);
+    let task =
+        tokio::spawn(async move { engine_c1.create_or_replace_view(&c1_name, &c1_sql).await });
+
+    // Almost immediately, signal interrupt (supersede).
+    tokio::time::sleep(Duration::from_millis(5)).await;
+    engine.interrupt(); // cooperative cancel
+
+    // Wait for the first task — it either completed normally or returned
+    // an Interrupted error. Either is acceptable; the engine must be healthy.
+    let _ = task.await;
+
+    // Second change: a >= 90. This must succeed regardless of whether the
+    // first task was actually interrupted.
+    let c2 = vm.apply(filter_a_gte(90));
+    let c2_name = c2.new_active_view.as_ref().unwrap();
+    let c2_sql = c2.sql.as_ref().unwrap();
+
+    engine
+        .create_or_replace_view(c2_name, c2_sql)
+        .await
+        .expect("second view creation must succeed after interrupt");
+
+    // Verify c2's view returns the expected row count.
+    let paged = engine
+        .execute_paged(
+            &format!("SELECT * FROM \"{}\"", c2_name.replace('"', "\"\"")),
+            0,
+            100,
+        )
+        .await
+        .expect("paged query must succeed");
+
+    // a in [90..99] = 10 rows
+    assert_eq!(
+        paged.total_rows, 10,
+        "second view must return rows for a >= 90 (10 of 100)"
+    );
+}
