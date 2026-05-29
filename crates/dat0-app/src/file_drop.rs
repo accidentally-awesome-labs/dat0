@@ -145,6 +145,9 @@ async fn handle_one(path: PathBuf, session: &Mutex<Session>) -> DropOutcome {
             s.add_tab(Tab {
                 table_name: info.name.clone(),
                 source_path: Some(path.clone()),
+                transform_stack: Vec::new(),
+                undo_cursor: 0,
+                extra: Default::default(),
             })
             .expect("session::add_tab: persist tab state");
             DropOutcome::Registered {

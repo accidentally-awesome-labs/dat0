@@ -30,6 +30,9 @@ async fn force_quit_then_relaunch_finds_orphan_and_tab_state() {
         s.add_tab(Tab {
             table_name: info.name,
             source_path: Some(csv),
+            transform_stack: Vec::new(),
+            undo_cursor: 0,
+            extra: Default::default(),
         })
         .unwrap();
         s.scratch_dir.clone()

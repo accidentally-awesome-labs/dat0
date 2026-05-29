@@ -6,6 +6,7 @@
 //! Atomic-rename persistence is the contract: `.tmp` files must never be present
 //! after a successful `persist()`.
 
+use std::io::Write as _;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
@@ -13,19 +14,38 @@ use anyhow::{Context, Result, bail};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
-use dat0_engine::{DuckDBEngine, MemoryBudget, QueryEngine};
+use dat0_engine::{DuckDBEngine, MemoryBudget, QueryEngine, Transformation};
+
+pub mod migrate;
+pub use migrate::SessionLoadError;
 
 // ---------------------------------------------------------------------------
 // Public data types
 // ---------------------------------------------------------------------------
 
+/// Current schema version. Bump whenever fields are added/removed.
+pub const SESSION_SCHEMA_VERSION: u32 = 2;
+
 /// A single tab within a scratch session.
+///
+/// v2 additions: `transform_stack` + `undo_cursor`. Unknown fields from
+/// the on-disk file flow through `extra` so forward-incompat is graceful.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Tab {
     /// The DuckDB table name this tab is viewing.
     pub table_name: String,
     /// The source file path, if this tab was created by registering a file.
     pub source_path: Option<PathBuf>,
+    /// Active transformation chain for this tab (v2+). Default is empty.
+    #[serde(default)]
+    pub transform_stack: Vec<Transformation>,
+    /// Undo cursor position into `transform_stack` (v2+). Default is 0.
+    #[serde(default)]
+    pub undo_cursor: usize,
+    /// Catch-all for unknown fields written by future versions; preserved
+    /// verbatim through migration round-trips.
+    #[serde(flatten)]
+    pub extra: serde_json::Map<String, serde_json::Value>,
 }
 
 // ---------------------------------------------------------------------------
@@ -33,10 +53,29 @@ pub struct Tab {
 // ---------------------------------------------------------------------------
 
 /// Serialized form of mutable session state written to `session.json`.
-#[derive(Debug, Serialize, Deserialize, Default)]
-struct SessionState {
-    tabs: Vec<Tab>,
-    active_tab: Option<usize>,
+#[derive(Debug, Serialize, Deserialize)]
+pub struct SessionState {
+    /// Schema version. Absent in v1 files (treated as 1 by serde default).
+    #[serde(default = "default_schema_version_v1")]
+    pub schema_version: u32,
+    #[serde(default)]
+    pub tabs: Vec<Tab>,
+    #[serde(default)]
+    pub active_tab: Option<usize>,
+}
+
+fn default_schema_version_v1() -> u32 {
+    1
+}
+
+impl Default for SessionState {
+    fn default() -> Self {
+        Self {
+            schema_version: SESSION_SCHEMA_VERSION,
+            tabs: Vec::new(),
+            active_tab: None,
+        }
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -114,25 +153,23 @@ impl Session {
             format!("session::recover: directory name is not a valid UUID: {dir_name}")
         })?;
 
-        let state: SessionState = {
-            let json_path = scratch_dir.join("session.json");
-            if json_path.exists() {
-                let bytes = std::fs::read(&json_path).with_context(|| {
-                    format!("session::recover: could not read {}", json_path.display())
-                })?;
-                serde_json::from_slice(&bytes).with_context(|| {
-                    format!(
-                        "session::recover: malformed session.json at {}",
-                        json_path.display()
-                    )
-                })?
-            } else {
+        let json_path = scratch_dir.join("session.json");
+        let state: SessionState = match migrate::load(&json_path) {
+            Ok(state) => state,
+            Err(SessionLoadError::Io(e)) if e.kind() == std::io::ErrorKind::NotFound => {
                 tracing::warn!(
                     window_id = %window_id,
                     path = %json_path.display(),
                     "session.json missing; using empty default state"
                 );
                 SessionState::default()
+            }
+            Err(e) => {
+                // Forward-incompat or malformed JSON surfaces here; caller decides UX.
+                // For P4a we propagate; T14 e2e + recovery_panel banner work decide
+                // the visible UX.
+                return Err(anyhow::Error::from(e))
+                    .context("recover: session.json migration failed");
             }
         };
 
@@ -194,10 +231,14 @@ impl Session {
 
     /// Atomically persist the current tab state to `session.json`.
     ///
-    /// Writes to `session.json.tmp` first, then renames to `session.json`.
-    /// The `.tmp` file is never visible after a successful call.
+    /// Writes to `session.json.tmp` first, syncs the file, then renames to
+    /// `session.json`, then syncs the parent directory so the rename metadata
+    /// also reaches stable storage (PD-002 sibling fix — same pattern as
+    /// `settings.toml` atomic-write). The `.tmp` file is never visible after a
+    /// successful call.
     pub fn persist(&self) -> Result<()> {
         let state = SessionState {
+            schema_version: SESSION_SCHEMA_VERSION,
             tabs: self.tabs.clone(),
             active_tab: self.active_tab,
         };
@@ -208,12 +249,22 @@ impl Session {
         let json_path = self.scratch_dir.join("session.json");
         let tmp_path = self.scratch_dir.join("session.json.tmp");
 
-        std::fs::write(&tmp_path, &bytes).with_context(|| {
-            format!(
-                "session::persist: write to tmp file {} failed",
-                tmp_path.display()
-            )
-        })?;
+        {
+            let f = std::fs::File::create(&tmp_path).with_context(|| {
+                format!(
+                    "session::persist: create tmp file {} failed",
+                    tmp_path.display()
+                )
+            })?;
+            let mut bw = std::io::BufWriter::new(f);
+            bw.write_all(&bytes)
+                .context("session::persist: write to tmp failed")?;
+            let f = bw
+                .into_inner()
+                .context("session::persist: flush BufWriter failed")?;
+            f.sync_all()
+                .context("session::persist: fsync tmp file failed")?;
+        }
 
         std::fs::rename(&tmp_path, &json_path).with_context(|| {
             format!(
@@ -222,6 +273,19 @@ impl Session {
                 json_path.display()
             )
         })?;
+
+        // fsync the parent directory so the rename metadata hits disk.
+        // PD-002 sibling concern: without this, a power-loss between the rename
+        // and any future OS-triggered directory sync could lose the new file.
+        let parent_dir = std::fs::File::open(&self.scratch_dir).with_context(|| {
+            format!(
+                "session::persist: open parent dir {} failed",
+                self.scratch_dir.display()
+            )
+        })?;
+        parent_dir
+            .sync_all()
+            .context("session::persist: fsync parent dir failed")?;
 
         Ok(())
     }
@@ -331,6 +395,9 @@ mod tests {
         let tab = Tab {
             table_name: "my_table".to_string(),
             source_path: None,
+            transform_stack: Vec::new(),
+            undo_cursor: 0,
+            extra: Default::default(),
         };
         sess.add_tab(tab).expect("add_tab");
 
@@ -342,6 +409,7 @@ mod tests {
         assert_eq!(state.tabs.len(), 1);
         assert_eq!(state.tabs[0].table_name, "my_table");
         assert_eq!(state.active_tab, Some(0));
+        assert_eq!(state.schema_version, SESSION_SCHEMA_VERSION);
     }
 
     #[tokio::test]
@@ -356,6 +424,9 @@ mod tests {
             let tab = Tab {
                 table_name: "recovered_table".to_string(),
                 source_path: Some(PathBuf::from("/tmp/data.csv")),
+                transform_stack: Vec::new(),
+                undo_cursor: 0,
+                extra: Default::default(),
             };
             sess.add_tab(tab).expect("add_tab");
 
@@ -386,6 +457,9 @@ mod tests {
         let tab = Tab {
             table_name: "atomic_test".to_string(),
             source_path: None,
+            transform_stack: Vec::new(),
+            undo_cursor: 0,
+            extra: Default::default(),
         };
         sess.add_tab(tab).expect("add_tab");
 
@@ -411,5 +485,32 @@ mod tests {
 
         let found = scan_orphans(tmp.path(), &[orphan_id]).unwrap();
         assert!(found.is_empty());
+    }
+
+    #[tokio::test]
+    async fn recover_v1_session_json_migrates_to_v2() {
+        // Write a raw v1 session.json (no schema_version, no transform fields).
+        let root = tempfile::tempdir().expect("tempdir");
+        let window_id = Uuid::now_v7();
+        let scratch_dir = root.path().join("scratch").join(window_id.to_string());
+        std::fs::create_dir_all(&scratch_dir).unwrap();
+
+        let v1_json = r#"{
+  "tabs": [{ "table_name": "orders", "source_path": null }],
+  "active_tab": 0
+}"#;
+        std::fs::write(scratch_dir.join("session.json"), v1_json).unwrap();
+
+        let sess = Session::recover(scratch_dir, TEST_BUDGET)
+            .await
+            .expect("Session::recover with v1 json");
+
+        assert_eq!(sess.tabs().len(), 1);
+        assert_eq!(sess.tabs()[0].table_name, "orders");
+        assert!(
+            sess.tabs()[0].transform_stack.is_empty(),
+            "v1 migration should default transform_stack to empty"
+        );
+        assert_eq!(sess.tabs()[0].undo_cursor, 0);
     }
 }
