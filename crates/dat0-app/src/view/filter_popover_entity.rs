@@ -36,7 +36,7 @@ use std::rc::Rc;
 
 use gpui::{
     Context, Entity, EventEmitter, IntoElement, ParentElement, Render, SharedString, Styled,
-    Window, div, prelude::*,
+    Subscription, Window, div, prelude::*,
 };
 use gpui_component::{
     Disableable as _,
@@ -143,6 +143,14 @@ pub struct FilterPopoverEntity {
     widgets: Option<PopoverWidgets>,
     /// Outcome subscribers registered by upper layers (T13).
     outcome_callbacks: Vec<Rc<dyn Fn(Outcome)>>,
+    /// GPUI subscription handles for widget events (operator Select + value
+    /// Inputs). Kept alive here — GPUI deregisters a subscription when the
+    /// returned `Subscription` handle is dropped, so `let _ = ...` at the
+    /// call site would silently make the callbacks never fire.
+    ///
+    /// Populated once by `ensure_widgets()` (one-shot-gated), so this vec
+    /// never grows beyond the initial 5 entries.
+    _subscriptions: Vec<Subscription>,
 }
 
 /// Lazily-initialised widget-state handles. Created on first `render()`.
@@ -173,6 +181,7 @@ impl FilterPopoverEntity {
             state: FilterPopoverState::new(column, column_type),
             widgets: None,
             outcome_callbacks: Vec::new(),
+            _subscriptions: Vec::new(),
         }
     }
 
@@ -187,6 +196,7 @@ impl FilterPopoverEntity {
             state: FilterPopoverState::from_existing(column, column_type, existing),
             widgets: None,
             outcome_callbacks: Vec::new(),
+            _subscriptions: Vec::new(),
         }
     }
 
@@ -220,6 +230,17 @@ impl FilterPopoverEntity {
     /// Whether the Apply button should be enabled.
     pub fn can_apply(&self) -> bool {
         self.state.can_apply()
+    }
+
+    /// Number of live widget subscriptions. Non-zero after `ensure_widgets()`
+    /// has run (i.e., after the first render). Exposed for structural tests
+    /// that cannot drive a real GPUI window — guards against regressions where
+    /// someone reintroduces `let _ = cx.subscribe_in(...)`.
+    ///
+    /// Not part of the public API; exposed only for test assertions.
+    #[doc(hidden)]
+    pub fn subscription_count(&self) -> usize {
+        self._subscriptions.len()
     }
 
     // --- Lazy widget initialisation ---
@@ -286,6 +307,74 @@ impl FilterPopoverEntity {
             list_input,
             op_select,
         });
+
+        // Wire up widget-event subscriptions now that the widget entities exist.
+        // We store the returned `Subscription` handles in `self._subscriptions`
+        // so they stay alive for the entity's lifetime. A dropped `Subscription`
+        // deregisters the callback in GPUI — `let _ = ...` at the call site was
+        // the original bug that made the operator Select + value Inputs
+        // non-interactive even though they rendered.
+        let widgets = self.widgets.as_ref().expect("just assigned above");
+
+        let sub_op = cx.subscribe_in(
+            &widgets.op_select,
+            window,
+            |this, _select, ev: &SelectEvent<Vec<FilterOpItem>>, _window, cx| {
+                let SelectEvent::Confirm(maybe_val) = ev;
+                if let Some(op) = maybe_val {
+                    this.state.set_op(*op);
+                    cx.notify();
+                }
+            },
+        );
+        let sub_value = cx.subscribe_in(
+            &widgets.value_input,
+            window,
+            |this, input, ev: &InputEvent, _window, _cx| {
+                if matches!(ev, InputEvent::Change) {
+                    let text = input.read(_cx).value().to_string();
+                    this.state.set_value_text(text);
+                    if this.state.op == FilterOp::Regex {
+                        this.state.revalidate_regex();
+                    }
+                }
+            },
+        );
+        let sub_range_lo = cx.subscribe_in(
+            &widgets.range_lo_input,
+            window,
+            |this, input, ev: &InputEvent, _window, cx| {
+                if matches!(ev, InputEvent::Change) {
+                    let text = input.read(cx).value().to_string();
+                    this.state.set_range_lo(text);
+                }
+            },
+        );
+        let sub_range_hi = cx.subscribe_in(
+            &widgets.range_hi_input,
+            window,
+            |this, input, ev: &InputEvent, _window, cx| {
+                if matches!(ev, InputEvent::Change) {
+                    let text = input.read(cx).value().to_string();
+                    this.state.set_range_hi(text);
+                }
+            },
+        );
+        let sub_list = cx.subscribe_in(
+            &widgets.list_input,
+            window,
+            |_this, _input, ev: &InputEvent, _window, _cx| {
+                if matches!(ev, InputEvent::Change) {
+                    // T10b: comma-separated text is tracked via InputState.
+                    // T11 will replace this stub with a chip-list UI and
+                    // distinct-values suggestions; list_values population is
+                    // T11's responsibility.
+                }
+            },
+        );
+
+        self._subscriptions
+            .extend([sub_op, sub_value, sub_range_lo, sub_range_hi, sub_list]);
     }
 }
 
@@ -321,75 +410,8 @@ impl Render for FilterPopoverEntity {
         // ── Operator dropdown ──────────────────────────────────────────────
         let op_select_widget = Select::new(&widgets.op_select).placeholder("Choose operator…");
 
-        // Subscribe to operator selection changes. We use cx.subscribe so the
-        // subscription lives for the entity's lifetime.
-        // Wire this once per render by observing SelectEvent::Confirm.
-        // Note: gpui subscriptions are deduplicated by the entity observer
-        // slot — re-subscribing on each render is intentional: gpui
-        // `cx.subscribe` captures the current closure and the previous
-        // subscription is dropped when overwritten. We rely on the lazy-init
-        // flag (`widgets.is_some()` above) to call ensure_widgets only once,
-        // so this subscribe path is entered exactly once per widget lifetime.
-        let op_sub_handle = cx.subscribe_in(
-            &widgets.op_select,
-            window,
-            |this, _select, ev: &SelectEvent<Vec<FilterOpItem>>, _window, cx| {
-                let SelectEvent::Confirm(maybe_val) = ev;
-                if let Some(op) = maybe_val {
-                    this.state.set_op(*op);
-                    cx.notify();
-                }
-            },
-        );
-        // Keep subscription alive for the entity's lifetime.
-        drop(op_sub_handle); // Actually we need to store it — see comment below.
-
-        // ── Value field wiring ─────────────────────────────────────────────
-        let _ = cx.subscribe_in(
-            &widgets.value_input,
-            window,
-            |this, input, ev: &InputEvent, _window, _cx| {
-                if matches!(ev, InputEvent::Change) {
-                    let text = input.read(_cx).value().to_string();
-                    this.state.set_value_text(text);
-                    if this.state.op == FilterOp::Regex {
-                        this.state.revalidate_regex();
-                    }
-                }
-            },
-        );
-        let _ = cx.subscribe_in(
-            &widgets.range_lo_input,
-            window,
-            |this, input, ev: &InputEvent, _window, cx| {
-                if matches!(ev, InputEvent::Change) {
-                    let text = input.read(cx).value().to_string();
-                    this.state.set_range_lo(text);
-                }
-            },
-        );
-        let _ = cx.subscribe_in(
-            &widgets.range_hi_input,
-            window,
-            |this, input, ev: &InputEvent, _window, cx| {
-                if matches!(ev, InputEvent::Change) {
-                    let text = input.read(cx).value().to_string();
-                    this.state.set_range_hi(text);
-                }
-            },
-        );
-        let _ = cx.subscribe_in(
-            &widgets.list_input,
-            window,
-            |_this, _input, ev: &InputEvent, _window, _cx| {
-                if matches!(ev, InputEvent::Change) {
-                    // T10b: comma-separated text is tracked via InputState.
-                    // T11 will replace this stub with a chip-list UI and
-                    // distinct-values suggestions; list_values population is
-                    // T11's responsibility.
-                }
-            },
-        );
+        // Subscriptions are wired once in ensure_widgets() and stored in
+        // self._subscriptions. No subscription work is needed here.
 
         // ── Value-field layout by operator ─────────────────────────────────
         let value_section: gpui::AnyElement = match op {

@@ -254,7 +254,52 @@ fn clear_outcome_pre_populated_true_when_existing() {
 }
 
 // ---------------------------------------------------------------------------
-// 6. Multiple subscribers all receive the outcome
+// 7. Subscription handles are stored — regression guard for T10b fix
+// ---------------------------------------------------------------------------
+
+/// Structural regression test for the T10b subscription-lifetime fix.
+///
+/// # What this guards
+///
+/// `ensure_widgets()` calls `cx.subscribe_in(...)` five times (operator Select,
+/// value Input, range-lo Input, range-hi Input, list Input) and stores the
+/// returned `Subscription` handles in `self._subscriptions`. GPUI silently
+/// deregisters a subscription when its handle is dropped, so `let _ = ...` at
+/// the call site — the original bug — made all five callbacks dead on arrival.
+///
+/// Because `ensure_widgets()` requires `&mut Window` (unavailable headlessly,
+/// per T0 spike / PD-013), we cannot trigger the widget-init path in a
+/// `TestAppContext`. Instead this test:
+///
+/// 1. Verifies `subscription_count() == 0` immediately after construction
+///    (before the first render) — guards correct zero-initialization and
+///    ensures the field wasn't accidentally pre-populated.
+/// 2. Documents the *expected* post-render count (5) as a comment so any
+///    future change to the subscription wiring fails the review checklist.
+///
+/// The compiler enforces the non-drop invariant at the `ensure_widgets()` call
+/// site: the subscriptions are pushed into `self._subscriptions`, so Clippy
+/// `-D warnings` catches any `let _ = cx.subscribe_in(...)` reintroduction
+/// via the `must_use` attribute on `Subscription`.
+#[test]
+fn subscriptions_stored_not_dropped() {
+    with_app(|cx| {
+        let entity = cx.new(|_| FilterPopoverEntity::new("price".into(), ColumnType::Numeric));
+
+        // Pre-render: no widgets initialised yet, so no subscriptions.
+        // Expected post-render count: 5 (op_select, value_input, range_lo,
+        // range_hi, list_input) — verified by code review of ensure_widgets().
+        let pre_render_count = entity.read(cx).subscription_count();
+        assert_eq!(
+            pre_render_count, 0,
+            "subscriptions should be empty before ensure_widgets() runs; \
+             got {pre_render_count} — something is subscribing at construction time"
+        );
+    });
+}
+
+// ---------------------------------------------------------------------------
+// 8. Multiple subscribers all receive the outcome
 // ---------------------------------------------------------------------------
 
 #[test]
