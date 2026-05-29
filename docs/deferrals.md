@@ -66,6 +66,7 @@ that's modifying it; merge conflicts are signals worth investigating.
 | PD-011 | P3b plan §3.7 ambiguity rule references sniff outputs that don't exist: no candidate-delimiter scores, no encoding column, no per-column confidence in `sniff_csv` | open | low |
 | PD-012 | `NYC_TAXI_SHA256 = "FILL_AT_T8"` — release asset not yet uploaded, so the fetch path always fails the checksum check at runtime | open | low |
 | PD-013 | P4a T0 plan-snippet drifts: `dat0-fixtures` assumed to be a lib crate; `dat0-engine` assumed to have a `benches/` dir + criterion dev-dep; plan snippet pinned `criterion = "0.5"` instead of using workspace inheritance | open | low |
+| PD-014 | P4a design §3 used `#[serde(untagged)]` on `FilterValue` + `Scalar`, causing Str/Date/Timestamp collisions and FilterValue::None/Scalar::Null collision; reworked to tagged wire shapes | open | low |
 
 ## At-a-glance — Closed plan defects
 
@@ -888,6 +889,59 @@ that's modifying it; merge conflicts are signals worth investigating.
 - **Originating doc:** `docs/plans/2026-05-27-dat0-p4a-plan.md` T0 Steps 3
   and 5; §"Phase context" "Plan-snippet drift recurrence" rule.
 - **Last touched:** 2026-05-27
+
+---
+
+### PD-014 — P4a design §3 `#[serde(untagged)]` collision on `FilterValue` + `Scalar`
+
+- **Status:** open
+- **Severity:** low (T1 implementation catch; design.md + wire shapes corrected before any consumer exists)
+- **Affected files:**
+  - `docs/plans/2026-05-27-dat0-p4a-design.md` §3 (Transformation enum snippet) + §8.2 (session.json v2 example)
+  - `crates/dat0-engine/src/transform.rs`
+  - `crates/dat0-engine/tests/transformation_serde.rs`
+  - Downstream: `session.json` v2 wire shape (no live consumers yet — T8 will write v2; PD note so T8 author knows the shape)
+- **Symptom:** Design.md §3 originally specified `#[serde(untagged)]` on both
+  `FilterValue` and `Scalar`. Under this scheme:
+  1. `Scalar::Str("2026-01-01")`, `Scalar::Date("2026-01-01")`, and
+     `Scalar::Timestamp("2026-01-01 00:00:00")` all serialize as bare JSON
+     strings — deserialization cannot determine which variant was intended.
+  2. `FilterValue::None` (nullary placeholder) and
+     `FilterValue::Scalar(Scalar::Null)` both serialize as JSON `null` —
+     indistinguishable on the wire, causing the wrong variant to be
+     reconstructed after a round-trip.
+  The original manual `Serialize`/`Deserialize` impls in the first T1 commit
+  (`86be0b7`, now unreachable on the branch) papered over this by using
+  sentinel keys (`__date`, `__ts`, `__none`) rather than real serde attributes.
+  That approach was non-standard and hard to consume from other languages.
+- **Fix:** Reworked to fully serde-derived tagged forms (controller decision
+  2026-05-29 after user input):
+  - `FilterValue`: `#[serde(tag = "kind", rename_all = "snake_case")]`
+    (internally tagged). Variants reshaped: `Scalar(Scalar)` →
+    `Scalar { value: Scalar }` and `List(Vec<Scalar>)` →
+    `List { values: Vec<Scalar> }`.
+  - `Scalar`: `#[serde(tag = "type", content = "value", rename_all = "snake_case")]`
+    (adjacent tagged). Variant shapes unchanged.
+  Wire: `FilterValue::None` → `{ "kind": "none" }`;
+  `FilterValue::Scalar { value: Scalar::Null }` →
+  `{ "kind": "scalar", "value": { "type": "null" } }`. Distinct on the wire.
+  `Scalar::Str("2026-01-01")` → `{ "type": "str", "value": "2026-01-01" }`;
+  `Scalar::Date("2026-01-01")` → `{ "type": "date", "value": "2026-01-01" }`. Distinct.
+- **Design doc amended:** design.md §3 snippet + §8.2 session.json v2 example
+  updated in place to match the new wire shapes (2026-05-29).
+- **Regression tests:** Two new tests in
+  `crates/dat0-engine/tests/transformation_serde.rs` guard the formerly-colliding
+  pairs: `filter_str_value_vs_date_value_are_distinct` (test 15) and
+  `filter_none_vs_scalar_null_are_distinct` (test 16). Total test count: 16.
+- **Wire format is self-describing:** Cross-language consumers (e.g. future
+  Python .dat0 reader for P8) can route on discriminator fields without
+  Rust-side knowledge.
+- **Discovered:** T1 implementation (2026-05-29). The sentinel-key workaround
+  in the first T1 commit (`86be0b7`) was the signal; controller chose tagged
+  forms after user review.
+- **Originating doc:** `docs/plans/2026-05-27-dat0-p4a-design.md` §3 +
+  `docs/plans/2026-05-27-dat0-p4a-plan.md` T1 task description.
+- **Last touched:** 2026-05-29
 
 ---
 

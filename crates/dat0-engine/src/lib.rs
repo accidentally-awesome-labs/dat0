@@ -15,11 +15,13 @@ pub mod migrations;
 pub(crate) mod register;
 pub(crate) mod tracing_helpers;
 pub mod trait_def;
+pub mod transform;
 pub mod types;
 
 pub use duckdb_engine::DuckDBEngine;
 pub use error::EngineError;
 pub use trait_def::QueryEngine;
+pub use transform::{FilterOp, FilterValue, Scalar, SortDirection, SortKey, Transformation};
 pub use types::{
     ArrowRecordBatchStream, AttachOpts, ColumnInfo, DerivedOrigin, EngineStatus, ExportFormat,
     FileFormat, MemoryBudget, PagedQueryResult, QueryResult, RegisterOpts, TableInfo, TableOrigin,

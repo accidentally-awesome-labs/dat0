@@ -109,31 +109,39 @@ pub enum FilterOp {
     Eq, Neq, Lt, Lte, Gt, Gte,
     Between,                  // value = Range { lo, hi, inclusive }
     Contains, NotContains, StartsWith, EndsWith,
-    In,                       // value = List(Vec<Scalar>)
+    In,                       // value = List { values: Vec<Scalar> }
     Regex,
     IsEmpty, IsNotEmpty,
     IsTrue, IsFalse,
 }
 
+// FilterValue is internally tagged on "kind" (chosen 2026-05-29 — see PD-014).
+// `#[serde(untagged)]` was discarded: it collapses FilterValue::None and
+// FilterValue::Scalar(Scalar::Null) both to JSON null, making round-trip
+// ambiguous. Internal tagging gives each variant a stable "kind" key.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-#[serde(untagged)]
+#[serde(tag = "kind", rename_all = "snake_case")]
 pub enum FilterValue {
-    Scalar(Scalar),
-    Range { lo: Scalar, hi: Scalar, inclusive: bool },
-    List(Vec<Scalar>),
-    None,                     // for IsEmpty / IsNotEmpty / IsTrue / IsFalse
+    Scalar { value: Scalar },              // { "kind": "scalar", "value": <Scalar> }
+    Range { lo: Scalar, hi: Scalar, inclusive: bool },  // { "kind": "range", ... }
+    List { values: Vec<Scalar> },          // { "kind": "list", "values": [...] }
+    None,                                  // { "kind": "none" }  — nullary ops
 }
 
+// Scalar is adjacent-tagged on "type"/"value" (chosen 2026-05-29 — see PD-014).
+// `#[serde(untagged)]` was discarded: Scalar::Str, Scalar::Date, and
+// Scalar::Timestamp all serialize as plain JSON strings, making deserialization
+// ambiguous. Adjacent tagging gives each variant a stable "type" key.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-#[serde(untagged)]
+#[serde(tag = "type", content = "value", rename_all = "snake_case")]
 pub enum Scalar {
-    Null,
-    Bool(bool),
-    Int(i64),
-    Float(f64),
-    Str(String),
-    Date(String),             // ISO-8601 yyyy-mm-dd, validated at parse
-    Timestamp(String),        // ISO-8601 RFC 3339, validated at parse
+    Null,                    // { "type": "null" }
+    Bool(bool),              // { "type": "bool",      "value": true }
+    Int(i64),                // { "type": "int",       "value": 42 }
+    Float(f64),              // { "type": "float",     "value": 10.0 }
+    Str(String),             // { "type": "str",       "value": "hello" }
+    Date(String),            // { "type": "date",      "value": "yyyy-mm-dd" }
+    Timestamp(String),       // { "type": "timestamp", "value": "yyyy-mm-dd hh:mm:ss" }
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -150,8 +158,10 @@ pub enum SortDirection { Asc, Desc }
 **Design notes:**
 - `#[serde(tag = "kind")]` on the outer enum gives self-describing JSONL rows — same shape that P7 `.dat0/lineage/transforms.jsonl` and P8 `.dat0` format will consume directly
 - `Scalar` is a sum type (not `serde_json::Value`) — keeps DuckDB type literals explicit + render predictable
-- `FilterValue::None` covers nullary ops without `Option` field on every variant
+- `FilterValue::None` covers nullary ops without `Option` field on every variant; the internally-tagged shape `{ "kind": "none" }` keeps it distinct from `FilterValue::Scalar { value: Scalar::Null }` (which serializes as `{ "kind": "scalar", "value": { "type": "null" } }`)
 - Engine does **not** validate column existence or type compatibility at construction — that's the render-time gate (`compile_view_sql` returns `Result<String, RenderError>`)
+
+**Wire format chosen 2026-05-29 to fix a serde-untagged collision found at T1 implementation.** `Scalar::Str`, `Scalar::Date`, and `Scalar::Timestamp` all serialize as plain JSON strings under `#[serde(untagged)]`, making round-trip ambiguous. `FilterValue::None` similarly collides with `FilterValue::Scalar(Scalar::Null)` (both become JSON `null`). The fix: internally-tagged `FilterValue` on `"kind"` + adjacent-tagged `Scalar` on `"type"`/`"value"`. Cross-language consumers (e.g. future Python .dat0 reader for P8) can route on the discriminator fields without Rust-side knowledge. See PD-014 in `docs/deferrals.md`.
 
 **Replacement of placeholder:** `types::DerivedOrigin::Transform { parent: String, ops: Vec<String> }` → `{ parent: String, ops: Vec<Transformation> }`. Single grep + replace; no callers serialize `ops` today (P2/P3 only wrote `Sql(String)` for derived tables).
 
@@ -384,11 +394,14 @@ No `schema_version` field. No transform-related fields.
     {
       "id": "tab_7",
       "table_name": "orders",
-      // NEW in v2:
+      // NEW in v2 (wire format amended 2026-05-29 per PD-014 — tagged shapes):
       "transform_stack": [
         { "kind": "filter", "column": "price",
           "op": "between",
-          "value": { "lo": 10.00, "hi": 99.99, "inclusive": true } },
+          "value": { "kind": "range",
+                     "lo":  { "type": "float", "value": 10.0 },
+                     "hi":  { "type": "float", "value": 99.99 },
+                     "inclusive": true } },
         { "kind": "sort",
           "keys": [{ "column": "city", "direction": "asc" }] }
       ],
