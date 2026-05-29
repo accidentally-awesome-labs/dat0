@@ -297,6 +297,39 @@ fn filter_str_value_vs_date_value_are_distinct() {
     );
 }
 
+// ── 17. DerivedOrigin::Transform round-trips with Transformation ops ──────────
+
+#[test]
+fn derived_origin_transform_round_trips() {
+    use dat0_engine::DerivedOrigin;
+
+    let o = DerivedOrigin::Transform {
+        parent: "orders".into(),
+        ops: vec![
+            Transformation::Filter {
+                column: "price".into(),
+                op: FilterOp::Gte,
+                value: FilterValue::Scalar {
+                    value: Scalar::Float(10.0),
+                },
+            },
+            Transformation::Sort {
+                keys: vec![SortKey {
+                    column: "ts".into(),
+                    direction: SortDirection::Desc,
+                }],
+            },
+        ],
+    };
+    let json = serde_json::to_string(&o).unwrap();
+    let back: DerivedOrigin = serde_json::from_str(&json).unwrap();
+    let DerivedOrigin::Transform { parent, ops } = back else {
+        panic!("expected Transform variant after round-trip");
+    };
+    assert_eq!(parent, "orders");
+    assert_eq!(ops.len(), 2);
+}
+
 // ── 16. PD-014 regression: FilterValue::None vs Scalar::Null are distinct ─────
 
 #[test]
