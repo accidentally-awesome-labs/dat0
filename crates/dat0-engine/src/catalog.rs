@@ -40,12 +40,39 @@ pub(crate) fn get_tables(
     conn: &duckdb::Connection,
     origins: &HashMap<String, TableOrigin>,
 ) -> Result<Vec<TableInfo>> {
-    // Use information_schema for portability; columns: table_schema, table_name.
+    // Use DuckDB-native system functions rather than information_schema.tables.
+    //
+    // Why not information_schema.tables: its SQL definition (visible in
+    // duckdb_views()) emits table_type='VIEW' for ALL views — both persistent
+    // file-registered views (created by register_file via CREATE OR REPLACE VIEW)
+    // and per-tab temp views (created by create_or_replace_view via CREATE OR
+    // REPLACE TEMP VIEW). There is no column in information_schema.tables that
+    // distinguishes them.
+    //
+    // Why duckdb_views() works: the table function duckdb_views() exposes a
+    // boolean `temporary` column. File-registered views have temporary=false;
+    // T13 per-chain views have temporary=true. Filtering NOT temporary cleanly
+    // excludes phantom entries before they reach the sidebar.
+    //
+    // Regression coverage: tests/temp_view_lifecycle.rs ::
+    //   get_tables_excludes_temp_views_created_via_create_or_replace_view
+    //
+    // PD-014 context: T13 calls create_or_replace_view on every chain mutation;
+    // without this filter every active tab would inject a phantom sidebar entry.
     let mut stmt = conn.prepare(
-        "SELECT table_schema, table_name
-         FROM information_schema.tables
-         WHERE table_schema NOT IN ('information_schema', 'pg_catalog')
-           AND table_name NOT LIKE '__dat0_meta%'",
+        "SELECT schema_name AS table_schema, table_name
+         FROM duckdb_tables()
+         WHERE schema_name NOT IN ('information_schema', 'pg_catalog')
+           AND NOT internal
+           AND NOT temporary
+           AND table_name NOT LIKE '__dat0_meta%'
+         UNION ALL
+         SELECT schema_name AS table_schema, view_name AS table_name
+         FROM duckdb_views()
+         WHERE schema_name NOT IN ('information_schema', 'pg_catalog')
+           AND NOT internal
+           AND NOT temporary
+           AND view_name NOT LIKE '__dat0_meta%'",
     )?;
     let rows: Vec<(String, String)> = stmt
         .query_map([], |row| {

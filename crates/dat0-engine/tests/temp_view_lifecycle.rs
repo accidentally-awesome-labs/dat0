@@ -164,3 +164,44 @@ async fn create_view_errors_when_engine_closed() {
         .await;
     assert!(res.is_err(), "create after close must error");
 }
+
+#[tokio::test]
+async fn get_tables_excludes_temp_views_created_via_create_or_replace_view() {
+    // Regression for the T4 review concern: DuckDB's information_schema.tables
+    // lists CREATE OR REPLACE TEMP VIEW objects alongside BASE TABLEs and
+    // file-registered VIEWs — they are indistinguishable by table_type or
+    // table_schema alone. After T13 starts calling create_or_replace_view on
+    // every chain mutation, the sidebar (which calls get_tables()) would have
+    // shown phantom entries for every active tab.
+    //
+    // Fix: catalog::get_tables now queries duckdb_views() with NOT temporary
+    // instead of information_schema.tables. duckdb_views().temporary is a
+    // bool column: false for file-registered views, true for TEMP VIEWs.
+    let tmp = TempDir::new().unwrap();
+    let engine = build_engine_with_csv(&tmp, 5).await;
+    let file_table = engine.get_tables().await.unwrap()[0].name.clone();
+
+    engine
+        .create_or_replace_view(
+            "v_phantom",
+            &format!("SELECT * FROM \"{}\"", file_table.replace('"', "\"\"")),
+        )
+        .await
+        .unwrap();
+
+    let names: Vec<String> = engine
+        .get_tables()
+        .await
+        .unwrap()
+        .into_iter()
+        .map(|t| t.name)
+        .collect();
+    assert!(
+        names.iter().all(|n| n != "v_phantom"),
+        "temp view v_phantom leaked into get_tables(): {names:?}"
+    );
+    assert!(
+        names.iter().any(|n| n == &file_table),
+        "file-registered view {file_table} disappeared from get_tables(): {names:?}"
+    );
+}
