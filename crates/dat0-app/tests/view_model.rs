@@ -283,3 +283,43 @@ fn find_filter_for_returns_none_for_unknown_column() {
     v.apply(filter_eq("a", 1));
     assert!(v.find_filter_for("z").is_none());
 }
+
+// ---------------------------------------------------------------------------
+// current_sort_as_active tests (T12 — sort-header click handler)
+// ---------------------------------------------------------------------------
+
+#[test]
+fn current_sort_as_active_returns_empty_when_no_sort() {
+    let v = vm();
+    let active = v.current_sort_as_active();
+    assert!(active.keys.is_empty(), "no ops → empty ActiveSort");
+}
+
+#[test]
+fn current_sort_as_active_returns_keys_from_sort_op() {
+    let mut v = vm();
+    v.set_sort(vec![SortKey {
+        column: "price".into(),
+        direction: SortDirection::Asc,
+    }]);
+    let active = v.current_sort_as_active();
+    assert_eq!(active.find("price"), Some((1, SortDirection::Asc)));
+}
+
+#[test]
+fn current_sort_as_active_ignores_ops_beyond_cursor() {
+    let mut v = vm();
+    v.set_sort(vec![SortKey {
+        column: "a".into(),
+        direction: SortDirection::Desc,
+    }]);
+    v.set_sort(vec![SortKey {
+        column: "b".into(),
+        direction: SortDirection::Asc,
+    }]);
+    // Undo: cursor steps back to the first sort (upsert replaced, so cursor = 1).
+    v.undo();
+    // After undo, cursor is 0 — no active sort.
+    let active = v.current_sort_as_active();
+    assert!(active.keys.is_empty(), "undone sort must not appear");
+}

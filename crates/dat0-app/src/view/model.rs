@@ -4,6 +4,8 @@
 
 use dat0_engine::{SortKey, Transformation, compile_view_sql};
 
+use crate::view::sort_header::ActiveSort;
+
 /// Maximum number of ops retained per tab. On overflow, oldest is dropped
 /// and the cursor decrements to stay aligned with surviving history.
 pub const HISTORY_CAP: usize = 200;
@@ -156,6 +158,29 @@ impl ViewModel {
         } else {
             self.apply(Transformation::Sort { keys })
         }
+    }
+
+    // --- Sort query helpers ---
+
+    /// Return the current Sort op (if any) as an [`ActiveSort`] for the header
+    /// click handler to mutate.
+    ///
+    /// Scans `stack[..cursor]` in reverse and returns the first
+    /// `Transformation::Sort` found. If no Sort op is active, returns an
+    /// empty `ActiveSort`.
+    ///
+    /// Used by the grid sort-zone click handler (T12): read current state →
+    /// mutate via `ActiveSort::click` / `shift_click` → call `set_sort`.
+    pub fn current_sort_as_active(&self) -> ActiveSort {
+        let keys = self.stack[..self.cursor]
+            .iter()
+            .rev()
+            .find_map(|op| match op {
+                Transformation::Sort { keys } => Some(keys.clone()),
+                _ => None,
+            })
+            .unwrap_or_default();
+        ActiveSort::new(keys)
     }
 
     // --- Filter query helpers ---

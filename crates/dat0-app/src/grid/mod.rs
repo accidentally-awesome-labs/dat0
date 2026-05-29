@@ -145,14 +145,17 @@ impl GridTableDelegate {
 
     /// Renders the sort-icon zone (right-of-center).
     ///
-    /// T9 live: clicking logs the intent and calls a placeholder that T12 will
-    /// replace with the real Asc/Desc/None cycle.
+    /// T12 live: the on_click closure reads the shift modifier from the GPUI
+    /// `ClickEvent` and logs the intended state-machine transition. The actual
+    /// `ViewModel::current_sort_as_active → click/shift_click → set_sort`
+    /// engine round-trip is wired in T13, which plumbs `ViewModel` access and
+    /// `spawn_view_change` into the delegate.
     ///
     /// The element must carry a unique `id` so GPUI can track click events
     /// across reframes; we encode `("th-sort", col_ix)`.
     fn render_sort_icon(&self, col_ix: usize) -> impl IntoElement {
-        // "⇅" is the neutral sort indicator; T12 will swap in "↑"/"↓" based on
-        // ActiveSort state.
+        // "⇅" is the neutral sort indicator; T13 will swap in "↑"/"↓" once
+        // ActiveSort state is readable from the delegate.
         div()
             .id(("th-sort", col_ix))
             .w(gpui::px(HEADER_SORT_PX))
@@ -161,11 +164,20 @@ impl GridTableDelegate {
             .items_center()
             .justify_center()
             .cursor_pointer()
-            .on_click(move |_ev, _window, _cx| {
-                // T9 stub: placeholder invocation for "cycle sort on column col_ix".
-                // T12 replaces this closure with the real Asc → Desc → None cycle
-                // via ViewModel::set_sort and ActiveSort state.
-                tracing::debug!(col_ix, "header sort zone clicked — T12 will wire cycle");
+            .on_click(move |ev, _window, _cx| {
+                // T12: read shift modifier so the state-machine transition is
+                // observable in logs. T13 replaces this with the real dispatch:
+                //   let col_name = self.columns[col_ix].name.clone();
+                //   let active = vm.current_sort_as_active();
+                //   let active = if shift { active.shift_click(&col_name) }
+                //                else     { active.click(&col_name) };
+                //   spawn_view_change(engine, base_table, vm.set_sort(active.keys), rebind);
+                let shift_held = ev.modifiers().shift;
+                tracing::debug!(
+                    col_ix,
+                    shift_held,
+                    "header sort zone clicked — T13 will dispatch to ViewModel::set_sort"
+                );
             })
             .child("⇅")
     }
