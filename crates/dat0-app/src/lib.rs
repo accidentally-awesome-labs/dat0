@@ -22,6 +22,7 @@ pub mod settings_ui;
 pub mod telemetry;
 pub mod theme;
 pub mod updater;
+pub mod view;
 pub mod window;
 pub mod window_registry;
 
