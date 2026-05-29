@@ -204,6 +204,39 @@ fn v2_round_trip_through_serialization() {
     assert_eq!(back.active_tab, Some(0));
 }
 
+/// Session::recover eagerly calls persist() after loading, so a v1 file is
+/// rewritten as v2 on the first open — no subsequent mutation required.
+#[tokio::test]
+async fn recover_eagerly_writes_back_v2_on_first_open() {
+    use std::fs;
+    use uuid::Uuid;
+
+    const BUDGET: u64 = 256 * 1024 * 1024;
+
+    // Build a scratch dir with a UUID name (Session::recover parses it).
+    let tmp = TempDir::new().unwrap();
+    let window_id = Uuid::now_v7();
+    let scratch_dir = tmp.path().join("scratch").join(window_id.to_string());
+    fs::create_dir_all(&scratch_dir).unwrap();
+
+    // Write a v1 fixture to disk.
+    let session_path = scratch_dir.join("session.json");
+    fs::write(&session_path, V1_FIXTURE_JSON).unwrap();
+
+    // Recover — this must eagerly persist v2 before returning.
+    let _session = dat0_app::session::Session::recover(scratch_dir.clone(), BUDGET)
+        .await
+        .expect("Session::recover should succeed on a v1 file");
+
+    // The on-disk file must now be v2 without any further persist() call.
+    let after = fs::read_to_string(&session_path).unwrap();
+    assert!(
+        after.contains("\"schema_version\": 2") || after.contains("\"schema_version\":2"),
+        "post-recover file should be v2, got: {}",
+        &after[..after.len().min(300)]
+    );
+}
+
 #[test]
 fn v1_migration_write_back_produces_v2_on_disk() {
     // Simulates the write-back path: load a v1 file, then re-serialize as v2.

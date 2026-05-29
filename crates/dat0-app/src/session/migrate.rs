@@ -1,15 +1,17 @@
 //! session.json schema migration. v1 (no version field) → v2 (typed transforms).
 //!
-//! Migration is one-shot + write-back. `load` returns the migrated in-memory
-//! `SessionState`; the caller (`Session::recover`) is responsible for persisting
-//! the v2 state via the existing atomic-write path on the first dirty save.
+//! Migration is load-and-write-back (eager): a successful v1 → v2 migration is
+//! immediately followed by the caller's `Session::persist` call to land the v2
+//! file atomically. `load` returns the migrated in-memory `SessionState`; the
+//! caller (`Session::recover`) unconditionally persists the returned state before
+//! returning.
 //!
 //! Forward-incompat (v > current) is a hard error so the caller can surface
 //! a Banner instead of silently dropping state.
 
 use std::path::Path;
 
-use serde::{Deserialize, Serialize};
+use serde::Deserialize;
 
 use super::{SESSION_SCHEMA_VERSION, SessionState};
 
@@ -38,7 +40,7 @@ pub enum SessionLoadError {
 // Version probe — minimal deserialize to peek at schema_version
 // ---------------------------------------------------------------------------
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Deserialize)]
 struct VersionProbe {
     /// Absent in v1 files; defaults to 1.
     #[serde(default = "version_one")]
@@ -55,31 +57,36 @@ fn version_one() -> u32 {
 
 /// Load `path` and migrate forward to the current schema if necessary.
 ///
-/// Returns the live [`SessionState`]. Does NOT write back — the caller
-/// (`Session::recover`) decides when to persist. By design, the first
-/// `persist()` call after a successful v1→v2 migration writes the v2 file
-/// via the existing atomic-write path.
+/// Returns the live [`SessionState`]. The caller (`Session::recover`)
+/// unconditionally persists the returned state via the existing atomic-write
+/// path, landing the v2 file on disk on first open (eager write-back).
 ///
 /// # Errors
 ///
 /// - [`SessionLoadError::Io`] — file not found or unreadable (NotFound is
 ///   the caller's signal to fall back to `SessionState::default()`).
 /// - [`SessionLoadError::Json`] — malformed JSON.
-/// - [`SessionLoadError::UnsupportedVersion`] — schema_version > current.
+/// - [`SessionLoadError::UnsupportedVersion`] — schema_version is not a known
+///   version handled by this function.
 pub fn load(path: &Path) -> Result<SessionState, SessionLoadError> {
     let raw = std::fs::read_to_string(path)?;
     let probe: VersionProbe = serde_json::from_str(&raw)?;
 
+    // IMPORTANT: use literal version arms, NOT `n if n == SESSION_SCHEMA_VERSION`.
+    // The guard form breaks whenever SESSION_SCHEMA_VERSION is bumped: a valid
+    // v2 file would fall through to UnsupportedVersion(2) once the const is 3.
+    // Literal arms also force the future implementer to add a migration path
+    // (e.g. `2 => migrate_v2_to_v3(&raw)`) or get a compile-time inexhaustive
+    // match error instead of a silent runtime failure.
     match probe.schema_version {
         1 => migrate_v1_to_v2(&raw),
-        n if n == SESSION_SCHEMA_VERSION => {
+        2 => {
             let state: SessionState = serde_json::from_str(&raw)?;
             Ok(state)
         }
-        n if n > SESSION_SCHEMA_VERSION => Err(SessionLoadError::UnsupportedVersion(n)),
-        // n == 0 or any gap below 1: treat as unsupported (impossible in
-        // practice because the default is 1, but be explicit).
-        other => Err(SessionLoadError::UnsupportedVersion(other)),
+        // When SESSION_SCHEMA_VERSION advances, add: N => migrate_vN_to_v(N+1)(&raw)
+        // The current-version arm becomes the new "load as-is" target.
+        n => Err(SessionLoadError::UnsupportedVersion(n)),
     }
 }
 

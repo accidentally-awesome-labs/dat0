@@ -183,6 +183,15 @@ impl Session {
             active_tab: state.active_tab,
         };
 
+        // Eagerly persist after recovery. This matches Session::new's pattern and
+        // guarantees that a v1 → v2 migration lands on disk on the first open,
+        // rather than waiting for the first user-initiated mutation (plan §T8:
+        // "one-shot + write-back"). A read-only session that never mutates state
+        // would otherwise leave v1 on disk indefinitely, re-running migration on
+        // every subsequent open.
+        sess.persist()
+            .context("recover: post-migration persist failed")?;
+
         tracing::debug!(window_id = %sess.window_id, tab_count = sess.tabs.len(), "session recovered");
         Ok(sess)
     }
