@@ -51,8 +51,10 @@ pub fn compile_view_sql(base: &str, ops: &[Transformation]) -> Result<String, Re
         sql.push_str(&where_clauses.join(" AND "));
     }
     if let Some(keys) = sort {
-        sql.push_str(" ORDER BY ");
-        sql.push_str(&render_sort(keys));
+        if !keys.is_empty() {
+            sql.push_str(" ORDER BY ");
+            sql.push_str(&render_sort(keys));
+        }
     }
     Ok(sql)
 }
@@ -153,6 +155,9 @@ fn render_filter(column: &str, op: &FilterOp, value: &FilterValue) -> Result<Str
                 value: Scalar::Str(s),
             },
         ) => {
+            // Compile-and-discard for syntax validation only; DuckDB uses its own
+            // regex engine at query time. Cheap for typical patterns. Caller (T13)
+            // must debounce input bursts so this is not re-run per keystroke.
             regex::Regex::new(s).map_err(|e| RenderError::InvalidRegex(e.to_string()))?;
             Ok(format!(
                 "regexp_matches({}, '{}')",
@@ -188,6 +193,14 @@ fn render_sort(keys: &[SortKey]) -> String {
         .join(", ")
 }
 
+/// Render a `Scalar` value as a DuckDB SQL literal.
+///
+/// Assumes `Scalar::Date` and `Scalar::Timestamp` strings have already been
+/// validated by `Scalar::validate_date` / `Scalar::validate_timestamp` at
+/// input time (filter popover, T10). Malformed date/timestamp strings will
+/// produce SQL that DuckDB rejects at query execution, not at render time.
+/// Render does not duplicate validation — keep input-time and execution-time
+/// concerns separate.
 fn render_scalar(s: &Scalar) -> String {
     match s {
         Scalar::Null => "NULL".to_string(),

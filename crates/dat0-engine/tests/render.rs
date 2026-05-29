@@ -360,6 +360,65 @@ fn float_precision_round_trip() {
     }];
     // {:?} format preserves the exact f64 representation; this is critical
     // for replay-on-new-source determinism.
-    let sql = compile_view_sql(BASE, &ops).unwrap();
-    assert!(sql.contains("0.30000000000000004") || sql.contains("0.300000"));
+    assert_eq!(
+        compile_view_sql(BASE, &ops).unwrap(),
+        "SELECT * FROM \"main\".\"orders\" WHERE (\"x\" = 0.30000000000000004)"
+    );
+}
+
+#[test]
+fn filter_ends_with_renders_anchored_like() {
+    let ops = [Transformation::Filter {
+        column: "name".into(),
+        op: FilterOp::EndsWith,
+        value: FilterValue::Scalar {
+            value: Scalar::Str("son".into()),
+        },
+    }];
+    assert_eq!(
+        compile_view_sql(BASE, &ops).unwrap(),
+        "SELECT * FROM \"main\".\"orders\" WHERE (\"name\" LIKE '%son' ESCAPE '\\')"
+    );
+}
+
+#[test]
+fn filter_not_contains_renders_not_like() {
+    let ops = [Transformation::Filter {
+        column: "name".into(),
+        op: FilterOp::NotContains,
+        value: FilterValue::Scalar {
+            value: Scalar::Str("foo".into()),
+        },
+    }];
+    assert_eq!(
+        compile_view_sql(BASE, &ops).unwrap(),
+        "SELECT * FROM \"main\".\"orders\" WHERE (\"name\" NOT LIKE '%foo%' ESCAPE '\\')"
+    );
+}
+
+#[test]
+fn empty_sort_keys_emits_no_order_by() {
+    let ops = [Transformation::Sort { keys: vec![] }];
+    assert_eq!(
+        compile_view_sql(BASE, &ops).unwrap(),
+        "SELECT * FROM \"main\".\"orders\""
+    );
+}
+
+#[test]
+fn empty_sort_keys_combined_with_filter_emits_no_order_by() {
+    let ops = [
+        Transformation::Filter {
+            column: "x".into(),
+            op: FilterOp::Eq,
+            value: FilterValue::Scalar {
+                value: Scalar::Int(1),
+            },
+        },
+        Transformation::Sort { keys: vec![] },
+    ];
+    assert_eq!(
+        compile_view_sql(BASE, &ops).unwrap(),
+        "SELECT * FROM \"main\".\"orders\" WHERE (\"x\" = 1)"
+    );
 }
