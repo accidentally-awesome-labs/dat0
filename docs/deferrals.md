@@ -69,6 +69,7 @@ that's modifying it; merge conflicts are signals worth investigating.
 | PD-014 | P4a design §3 used `#[serde(untagged)]` on `FilterValue` + `Scalar`, causing Str/Date/Timestamp collisions and FilterValue::None/Scalar::Null collision; reworked to tagged wire shapes | closed | low |
 | PD-015 | P4a plan T2–T15 snippets still use the pre-PD-014 tuple form `FilterValue::Scalar(...)` + `FilterValue::List(vec![...])` (~57 occurrences); implementers must read variants as struct form `FilterValue::Scalar { value }` + `FilterValue::List { values }` | closed | low |
 | PD-016 | P4a UI-click → ViewChange wirings unowned by plan T13: funnel-click → open popover, popover `Outcome::Apply` → `vm.apply`, sort-zone-click → `vm.set_sort`. T7/T9/T10b/T12 implementers each commented "T13 wires" but plan T13 Steps 1-4 cover only keybind undo/redo + supersede-cancel test. T14 E2E either pulls in the missing glue or tests via direct VM API; P4b/c may inherit if not closed at T15. | open | medium |
+| PD-017 | P4b T3 plan premise wrong: it assumed `register_file` "finalizes a CTAS import", but `register_file` emits `CREATE OR REPLACE VIEW … AS SELECT * FROM read_csv/json/parquet(…)` — a VIEW, which cannot be `ALTER TABLE`-d, so the eager `__dat0_rowid` surrogate only lands via `create_table` (base tables). The app imports files exclusively via `register_file` (`file_drop.rs:133`), so imported grids are VIEWs with no `__dat0_rowid`, and the P4b edit/delete overlay (`WHERE __dat0_rowid NOT IN …`, `CASE WHEN __dat0_rowid = …`) references a non-existent column → edit/delete fail on real imports. T3 engine work is correct + complete; resolution is app-side (materialize imports to base tables, or back-fill via `ensure_rowid` on first bind). | open | high |
 
 ## At-a-glance — Closed plan defects
 
@@ -996,6 +997,27 @@ that's modifying it; merge conflicts are signals worth investigating.
 - **Discovered:** T13 implementation review (2026-05-29). Documented by the controller after the T13 implementer correctly noted plan §T13 Steps 1-4 don't cover these wirings.
 - **Originating doc:** `docs/plans/2026-05-27-dat0-p4a-plan.md` §T13.
 - **Last touched:** 2026-05-29
+
+---
+
+### PD-017 — Imported files are VIEWs, so the `__dat0_rowid` surrogate never reaches them
+
+- **Status:** open
+- **Severity:** high (the P4b edit/selection/clipboard headline feature does not work on real file imports until resolved; engine + test paths are correct, but the running app's grids are views without the surrogate)
+- **Affected files:**
+  - `crates/dat0-engine/src/duckdb_engine.rs` — `ensure_rowid` is correctly wired into `create_table` (the only CTAS→base-table path); `register_file` carries a hand-off comment explaining why it is NOT wired there.
+  - `crates/dat0-engine/src/register/{csv,json,parquet}.rs` — all emit `CREATE OR REPLACE VIEW … AS SELECT * FROM read_*(…)`.
+  - `crates/dat0-app/src/file_drop.rs:133` — the app's sole import path; calls `engine.register_file(...)` (a VIEW). No `create_table` or `ensure_rowid` call exists anywhere in the app crate.
+  - Consumers of the surrogate: `crates/dat0-engine/src/render.rs` (overlay references `__dat0_rowid`); `crates/dat0-app/src/grid/{mod,data_source}.rs` (T5 hidden-key plumbing).
+- **Symptom:** P4b plan T3 Step 3 says "Call `ensure_rowid` at the end of the existing table-create path … where `register_file` finalizes a CTAS import." That premise is false — `register_file` finalizes a VIEW, not a CTAS. A VIEW cannot be `ALTER TABLE … ADD COLUMN`-ed, so calling `ensure_rowid` there would error on every import. The eager surrogate therefore only lands for base tables built via `create_table`, which the app never calls for imports.
+- **Net effect:** the engine surrogate + `ensure_rowid` migration + all T2/T3 tests are correct (tests use `create_table` base tables). But an imported CSV/JSON/Parquet becomes a DuckDB VIEW with no `__dat0_rowid`; when P4b edit/delete renders its overlay against that view's name, the query references a column that does not exist → runtime SQL error. The headline edit/selection/clipboard flow cannot work end-to-end on real imports until closed. T14 manual UAT (Excel/Sheets round-trip via in-app edits) depends on this.
+- **Fix paths:**
+  - **Path A (materialize on import):** change the app import path to `create_table` (CTAS materializing `read_*(…)` into a base table) instead of `register_file` (view), so `ensure_rowid` runs eagerly. Trade-off: loads the file into a DuckDB base table rather than a lazy view over the source file — memory/behavior change for large files. The design's "surrogate injected at import" language implies materialization was intended.
+  - **Path B (back-fill on first bind):** keep views for browsing; when the grid first binds a view for editing, materialize-or-back-fill that table via `ensure_rowid`. More surgical but adds a view→table promotion step.
+- **Decision:** PENDING — to be resolved when P4b reaches the app-side grid binding (T5 grid hidden-key plumbing is the natural site, since the grid must reference `__dat0_rowid`). May require a user decision on Path A vs B given the memory/behavior implications.
+- **Discovered:** P4b T3 implementation (2026-05-30), confirmed independently by the T3 spec review (quoted the `register/*.rs` VIEW DDL).
+- **Originating doc:** `docs/plans/2026-05-30-dat0-p4b-plan.md` §T3 Step 3.
+- **Last touched:** 2026-05-30
 
 ---
 
