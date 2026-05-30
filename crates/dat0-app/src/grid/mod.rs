@@ -133,15 +133,21 @@ impl GridTableDelegate {
     /// sort/funnel click closures (T0 / PD-016) can dispatch into it. Tests
     /// that build a delegate without a shell pass `WeakEntity::new_invalid()`.
     pub fn new(source: Arc<GridDataSource>, ws: WeakEntity<crate::window::WorkspaceShell>) -> Self {
+        // Columns are derived from the VISIBLE schema fields only: the hidden
+        // `__dat0_rowid` surrogate (T5) is plumbed through the Arrow schema for
+        // `row_key` resolution but must never paint. We index each visible
+        // column back into the Arrow schema via `schema_index_for_visible` so
+        // the type badge reflects the right field; a user's renamed-collision
+        // column `__dat0_rowid__src` stays visible (it was the user's data).
         let schema = source.schema.clone();
-        let columns = schema
-            .fields()
-            .iter()
-            .map(|f| {
+        let columns = (0..source.visible_column_count())
+            .filter_map(|visible_ix| {
+                let schema_ix = source.schema_index_for_visible(visible_ix)?;
+                let f = schema.fields().get(schema_ix)?;
                 let badge = type_badge(f.data_type());
                 let name: SharedString = format!("{} ({})", f.name(), badge).into();
                 let key: SharedString = f.name().to_string().into();
-                Column::new(key, name)
+                Some(Column::new(key, name))
             })
             .collect();
         Self {
@@ -305,11 +311,14 @@ impl TableDelegate for GridTableDelegate {
         // call does not populate the LRU. Hence "—" is the expected
         // render for every cell at T4. The follow-up task replaces this
         // with a synchronous cache lookup.
+        //
+        // `col_ix` is a VISIBLE-column index (the hidden `__dat0_rowid` never
+        // paints, T5); map it to the underlying Arrow schema index before
+        // reading the field so the cell reflects the right column.
         let text = self
             .source
-            .schema
-            .fields()
-            .get(col_ix)
+            .schema_index_for_visible(col_ix)
+            .and_then(|schema_ix| self.source.schema.fields().get(schema_ix).cloned())
             .map(|f| match f.data_type() {
                 DataType::Int32 | DataType::Int64 | DataType::UInt64 | DataType::Float64 => "—",
                 _ => "—",
@@ -369,7 +378,9 @@ mod tests {
     async fn delegate_columns_match_schema() {
         let (_tmp, ds) = build_source(8).await;
         let delegate = GridTableDelegate::new(Arc::clone(&ds), gpui::WeakEntity::new_invalid());
-        assert_eq!(delegate.columns.len(), ds.schema.fields().len());
+        // Delegate paints VISIBLE columns only (the `__dat0_rowid` surrogate, when
+        // present, is hidden) — assert against the visible count, not the raw schema.
+        assert_eq!(delegate.columns.len(), ds.visible_column_count());
         // Column name carries the type badge suffix.
         let first = &delegate.columns[0];
         assert!(

@@ -2,7 +2,7 @@
 
 use anyhow::{Context, Result};
 use dat0_engine::{DuckDBEngine, QueryEngine};
-use duckdb::arrow::array::Int64Array;
+use duckdb::arrow::array::{Array, Int64Array};
 use duckdb::arrow::datatypes::SchemaRef;
 use duckdb::arrow::record_batch::RecordBatch;
 use lru::LruCache;
@@ -67,24 +67,125 @@ impl GridDataSource {
         })
     }
 
-    /// Name of the column at `ix` in the Arrow schema, or `None` if `ix` is
-    /// out of range. Used by the grid header click handlers (T0 / PD-016) to
-    /// resolve a clicked column index to the bare column name that the
-    /// `ViewModel` / filter-popover work against.
-    pub fn column_name(&self, ix: usize) -> Option<String> {
-        self.schema.fields().get(ix).map(|f| f.name().to_string())
+    /// Names of the columns the grid paints, in render order — every Arrow
+    /// schema field EXCEPT the hidden surrogate [`dat0_engine::ROWID_COL`].
+    ///
+    /// The surrogate `__dat0_rowid` is plumbed through the schema (views/tables
+    /// `SELECT *` it) so [`Self::row_key`] can resolve a screen row to its
+    /// `RowKey`, but it is NEVER a user-visible column. A user's renamed
+    /// collision column `__dat0_rowid__src` (moved aside by `ensure_rowid` when
+    /// the user's own data already had that name) stays VISIBLE — it was the
+    /// user's data, and only the exact `__dat0_rowid` sentinel is hidden.
+    ///
+    /// When the surrogate is absent (PD-017: file imports are VIEWs without it),
+    /// this simply has nothing to filter and returns every column.
+    pub fn visible_column_names(&self) -> Vec<String> {
+        self.schema
+            .fields()
+            .iter()
+            .map(|f| f.name())
+            .filter(|name| name.as_str() != dat0_engine::ROWID_COL)
+            .cloned()
+            .collect()
     }
 
-    /// Coarse [`crate::view::filter_popover::ColumnType`] of the column at
-    /// `ix`, derived from its Arrow `DataType`. Used by the funnel-zone click
+    /// Map a VISIBLE-column index (as used by the grid delegate's rendered
+    /// columns and the header click handlers) to its index in the underlying
+    /// Arrow schema, which still contains the hidden surrogate. Returns `None`
+    /// if `visible_ix` is out of range.
+    ///
+    /// This is the single source of truth for the visible→schema mapping so
+    /// that a click on visible column N, the rendered cell at column N, and
+    /// [`Self::column_name(N)`] all refer to the SAME user-visible column even
+    /// after `__dat0_rowid` is hidden.
+    pub fn schema_index_for_visible(&self, visible_ix: usize) -> Option<usize> {
+        self.schema
+            .fields()
+            .iter()
+            .enumerate()
+            .filter(|(_, f)| f.name().as_str() != dat0_engine::ROWID_COL)
+            .map(|(schema_ix, _)| schema_ix)
+            .nth(visible_ix)
+    }
+
+    /// Number of VISIBLE columns the grid paints (schema columns minus the
+    /// hidden surrogate). Convenience for the delegate's `columns_count`.
+    pub fn visible_column_count(&self) -> usize {
+        self.schema
+            .fields()
+            .iter()
+            .filter(|f| f.name().as_str() != dat0_engine::ROWID_COL)
+            .count()
+    }
+
+    /// Name of the VISIBLE column at `ix`, or `None` if `ix` is out of range.
+    /// Used by the grid header click handlers (T0 / PD-016) to resolve a clicked
+    /// column index to the bare column name that the `ViewModel` /
+    /// filter-popover work against.
+    ///
+    /// Indexes over VISIBLE columns (the hidden `__dat0_rowid` is skipped) so
+    /// the `col_ix` the delegate hands the click closure is consistent with the
+    /// rendered/visible column it sits under.
+    pub fn column_name(&self, ix: usize) -> Option<String> {
+        let schema_ix = self.schema_index_for_visible(ix)?;
+        self.schema
+            .fields()
+            .get(schema_ix)
+            .map(|f| f.name().to_string())
+    }
+
+    /// Surrogate `__dat0_rowid` of the row at `screen_row`, or `None` when the
+    /// row's page is not cached or the surrogate column is absent (PD-017 —
+    /// graceful degradation, no panic).
+    ///
+    /// Reads the cached page batch for `screen_row` (a synchronous LRU lookup —
+    /// it never triggers a DuckDB fetch, mirroring the synchronous
+    /// `render_td` contract). The surrogate lives in the Arrow schema because
+    /// views/tables `SELECT *` it. Later edit/delete/copy work maps a grid
+    /// coordinate → `RowKey::Surrogate(row_key(screen_row))`.
+    pub fn row_key(&self, screen_row: usize) -> Option<i64> {
+        let rowid_ix = self
+            .schema
+            .fields()
+            .iter()
+            .position(|f| f.name().as_str() == dat0_engine::ROWID_COL)?;
+
+        let screen_row = u64::try_from(screen_row).ok()?;
+        let key = PageKey {
+            start: (screen_row / PAGE_ROWS) * PAGE_ROWS,
+        };
+        let offset = usize::try_from(screen_row - key.start).ok()?;
+
+        let batch = {
+            let mut cache = self.cache.lock().expect("grid cache poisoned");
+            Arc::clone(cache.get(&key)?)
+        };
+
+        if offset >= batch.num_rows() {
+            return None;
+        }
+        let arr = batch
+            .column(rowid_ix)
+            .as_any()
+            .downcast_ref::<Int64Array>()?;
+        if arr.is_null(offset) {
+            return None;
+        }
+        Some(arr.value(offset))
+    }
+
+    /// Coarse [`crate::view::filter_popover::ColumnType`] of the VISIBLE column
+    /// at `ix`, derived from its Arrow `DataType`. Used by the funnel-zone click
     /// handler to construct the filter popover with the right operator surface.
     ///
+    /// Indexes over VISIBLE columns (consistent with [`Self::column_name`]).
     /// Unknown / unhandled Arrow types fall back to `String` (the safe,
     /// non-destructive default — Contains/Regex rather than numeric ops).
     pub fn column_type(&self, ix: usize) -> Option<crate::view::filter_popover::ColumnType> {
         use crate::view::filter_popover::ColumnType;
         use duckdb::arrow::datatypes::DataType;
-        self.schema.fields().get(ix).map(|f| match f.data_type() {
+        let schema_ix = self.schema_index_for_visible(ix)?;
+        self.schema.fields().get(schema_ix).map(|f| match f.data_type() {
             DataType::Int8
             | DataType::Int16
             | DataType::Int32
