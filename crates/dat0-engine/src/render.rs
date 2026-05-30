@@ -9,7 +9,15 @@
 //! - Nulls + `Eq`/`Neq` ops are rewritten to `IS NULL` / `IS NOT NULL`.
 
 use crate::catalog::quote_ident;
-use crate::transform::{FilterOp, FilterValue, Scalar, SortDirection, SortKey, Transformation};
+use crate::transform::{
+    CellEdit, FilterOp, FilterValue, RowKey, Scalar, SortDirection, SortKey, Transformation,
+};
+
+/// Fixed row-identity column injected at import (T3) and referenced literally by
+/// the edit/delete overlay. Not quoted: it is an internal sentinel name with no
+/// special characters and never collides with user columns (double-underscore
+/// prefix is reserved).
+const ROWID_COL: &str = "__dat0_rowid";
 
 #[derive(Debug, thiserror::Error, PartialEq)]
 pub enum RenderError {
@@ -24,6 +32,10 @@ pub enum RenderError {
         op: FilterOp,
         value_shape: &'static str,
     },
+    #[error("Edit transform has no cells")]
+    EmptyEdit,
+    #[error("RowDelete transform has no rows")]
+    EmptyRowDelete,
 }
 
 /// Render the active op stack against `base` into a DuckDB-executable SELECT.
@@ -33,6 +45,10 @@ pub enum RenderError {
 pub fn compile_view_sql(base: &str, ops: &[Transformation]) -> Result<String, RenderError> {
     let mut where_clauses: Vec<String> = Vec::new();
     let mut sort: Option<&[SortKey]> = None;
+    // Edit/delete overlay state (P4b). `edits` preserves first-seen column order;
+    // within a column, first-seen id order. Deletes preserve op order.
+    let mut edits = EditOverlay::new();
+    let mut delete_ids: Vec<i64> = Vec::new();
 
     for op in ops {
         match op {
@@ -42,15 +58,64 @@ pub fn compile_view_sql(base: &str, ops: &[Transformation]) -> Result<String, Re
             Transformation::Sort { keys } => {
                 sort = Some(keys.as_slice());
             }
-            // T2 will implement the edit overlay render (P4b).
-            // Stub arms keep T1 compiling with the exhaustive match.
-            Transformation::Edit { .. } | Transformation::RowDelete { .. } => {
-                todo!("T2: edit overlay render not yet implemented")
+            Transformation::Edit { cells } => {
+                if cells.is_empty() {
+                    return Err(RenderError::EmptyEdit);
+                }
+                for cell in cells {
+                    edits.upsert(cell);
+                }
+            }
+            Transformation::RowDelete { rows } => {
+                if rows.is_empty() {
+                    return Err(RenderError::EmptyRowDelete);
+                }
+                for row in rows {
+                    let RowKey::Surrogate { id } = row;
+                    delete_ids.push(*id);
+                }
             }
         }
     }
 
-    let mut sql = format!("SELECT * FROM {}", base);
+    // Fast path: no edits and no deletes → emit P4a's flat form, byte-identical.
+    // This branch is the structural parity guard (P4b headline regression guard);
+    // it must remain a verbatim copy of the original P4a flat assembly.
+    if edits.is_empty() && delete_ids.is_empty() {
+        let mut sql = format!("SELECT * FROM {}", base);
+        if !where_clauses.is_empty() {
+            sql.push_str(" WHERE ");
+            sql.push_str(&where_clauses.join(" AND "));
+        }
+        if let Some(keys) = sort {
+            if !keys.is_empty() {
+                sql.push_str(" ORDER BY ");
+                sql.push_str(&render_sort(keys));
+            }
+        }
+        return Ok(sql);
+    }
+
+    // Overlay path: build the inner projection that applies edits (via REPLACE)
+    // and drops deleted rows, then wrap it so any filters/sort see the edited
+    // values (filters/sort are outer; the overlay is inner).
+    let mut inner = String::from("SELECT *");
+    if !edits.is_empty() {
+        inner.push_str(" REPLACE (");
+        inner.push_str(&edits.render_replace());
+        inner.push(')');
+    }
+    inner.push_str(&format!(" FROM {}", base));
+    if !delete_ids.is_empty() {
+        let ids = delete_ids
+            .iter()
+            .map(i64::to_string)
+            .collect::<Vec<_>>()
+            .join(", ");
+        inner.push_str(&format!(" WHERE {} NOT IN ({})", ROWID_COL, ids));
+    }
+
+    let mut sql = format!("SELECT * FROM ({})", inner);
     if !where_clauses.is_empty() {
         sql.push_str(" WHERE ");
         sql.push_str(&where_clauses.join(" AND "));
@@ -62,6 +127,68 @@ pub fn compile_view_sql(base: &str, ops: &[Transformation]) -> Result<String, Re
         }
     }
     Ok(sql)
+}
+
+/// Accumulated cell edits, grouped by column with last-write-wins per (column, id).
+///
+/// Ordering is deterministic for stable golden output: columns in first-seen
+/// order, and ids within a column in first-seen order. Re-editing an existing
+/// (column, id) updates the literal in place (the later write wins) without
+/// changing position — so output stays stable across edits.
+struct EditOverlay {
+    /// `(column, [(id, sql_literal)])`, both vectors in first-seen order.
+    columns: Vec<(String, Vec<(i64, String)>)>,
+}
+
+impl EditOverlay {
+    fn new() -> Self {
+        EditOverlay {
+            columns: Vec::new(),
+        }
+    }
+
+    fn is_empty(&self) -> bool {
+        self.columns.is_empty()
+    }
+
+    /// Insert or overwrite the edit for `cell`'s (column, id). Last write wins.
+    fn upsert(&mut self, cell: &CellEdit) {
+        let RowKey::Surrogate { id } = cell.row;
+        let literal = render_scalar(&cell.value);
+
+        let col_entry = match self.columns.iter_mut().find(|(c, _)| *c == cell.column) {
+            Some(entry) => &mut entry.1,
+            None => {
+                self.columns.push((cell.column.clone(), Vec::new()));
+                &mut self.columns.last_mut().expect("just pushed").1
+            }
+        };
+
+        match col_entry.iter_mut().find(|(existing, _)| *existing == id) {
+            Some(slot) => slot.1 = literal, // last-write-wins, position preserved
+            None => col_entry.push((id, literal)),
+        }
+    }
+
+    /// Render the body of `SELECT * REPLACE ( ... )`: one CASE per edited column,
+    /// joined by `, `. Each CASE folds the per-id edits with `ELSE <qcol>`.
+    fn render_replace(&self) -> String {
+        self.columns
+            .iter()
+            .map(|(column, cells)| {
+                let qcol = quote_ident(column);
+                let whens = cells
+                    .iter()
+                    .map(|(id, literal)| {
+                        format!("WHEN {} = {} THEN {}", ROWID_COL, id, literal)
+                    })
+                    .collect::<Vec<_>>()
+                    .join(" ");
+                format!("CASE {} ELSE {} END AS {}", whens, qcol, qcol)
+            })
+            .collect::<Vec<_>>()
+            .join(", ")
+    }
 }
 
 fn render_filter(column: &str, op: &FilterOp, value: &FilterValue) -> Result<String, RenderError> {
