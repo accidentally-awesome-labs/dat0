@@ -2,6 +2,7 @@
 
 pub mod data_source;
 pub mod renderers;
+pub mod selection;
 
 pub use data_source::GridDataSource;
 
