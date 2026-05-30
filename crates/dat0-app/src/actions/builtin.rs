@@ -30,6 +30,8 @@ pub mod ids {
     pub const RECOVERY_REVIEW: &str = "recovery.review";
     pub const IMPORT_CANCEL: &str = "import.cancel";
     pub const SAMPLE_DATA_RETRY_TAXI: &str = "sample_data.retry_taxi";
+    pub const VIEW_UNDO: &str = "view.undo";
+    pub const VIEW_REDO: &str = "view.redo";
 }
 
 /// Register every built-in action onto `reg`. Returns an error if any id
@@ -148,6 +150,8 @@ pub fn register_all(reg: &ActionRegistry) -> Result<(), RegisterError> {
             );
         }),
     })?;
+
+    super::view_actions::register(reg)?;
 
     Ok(())
 }

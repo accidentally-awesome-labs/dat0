@@ -52,6 +52,7 @@ pub enum ActionGroup {
     Settings,
     Recovery,
     Import,
+    Edit,
 }
 
 /// Closure type for action dispatch. Must be `Send + Sync` because the

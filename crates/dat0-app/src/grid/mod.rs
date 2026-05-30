@@ -15,6 +15,80 @@ use gpui_component::table::{Column, TableDelegate, TableState};
 
 use renderers::{CellAlignment, render_cell, type_badge};
 
+// ── Four-zone header geometry ─────────────────────────────────────────────────
+//
+// The column header is a horizontal flex row laid out as:
+//
+//   [ grip-stub | body (column name) | sort-icon | funnel-icon ]
+//
+// Grip and body are positional sub-elements whose visual widths are defined
+// below as named constants.  Sort and funnel are icon-sized hit targets on the
+// right edge.
+//
+// Why not use raw x-offset math here?  `render_th` runs inside GPUI's flex
+// layout pass; we don't have absolute bounds until after paint.  The four-zone
+// split is therefore expressed as flex children rather than as an
+// x-position → zone mapping.  A pure zone-from-x helper (for hit-testing in
+// tests or future pointer-event work) is provided alongside these constants.
+//
+// T9 stub: grip / body are invisible no-ops.
+//   Grip → column-resize (P4c)
+//   Body → row-selection toggle (P4b)
+
+/// Width of the left-edge drag-grip in logical pixels.
+/// P4c (column resize) will replace the invisible stub with a real handle.
+/// Kept here as a single source of truth for the geometry constant.
+pub const HEADER_GRIP_PX: f32 = 6.0;
+
+/// Width of the right-edge funnel icon hit-target in logical pixels.
+pub const HEADER_FUNNEL_PX: f32 = 20.0;
+
+/// Width of the sort-icon hit-target in logical pixels (sits left of funnel).
+pub const HEADER_SORT_PX: f32 = 20.0;
+
+/// Classify an x-offset (measured from the left edge of the header cell) into
+/// a zone, given the total cell width.  Used for unit tests; the actual render
+/// uses flex children rather than raw x offsets.
+///
+/// Zone boundaries (left → right):
+///   `0 .. HEADER_GRIP_PX`                              → Grip
+///   `HEADER_GRIP_PX .. (cell_width - HEADER_SORT_PX - HEADER_FUNNEL_PX)` → Body
+///   `(cell_width - HEADER_SORT_PX - HEADER_FUNNEL_PX) .. (cell_width - HEADER_FUNNEL_PX)` → Sort
+///   `(cell_width - HEADER_FUNNEL_PX) .. cell_width`    → Funnel
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ColumnHeaderZone {
+    /// Left-edge resize grip.  T9 stub: no-op (P4c will fill).
+    Grip,
+    /// Column-name / body click area.  T9 stub: no-op (P4b will fill).
+    Body,
+    /// Sort-direction toggle icon.  Live in P4a (cycles Asc/Desc via T12).
+    Sort,
+    /// Filter funnel icon.  Live in P4a (opens popover via T10).
+    Funnel,
+}
+
+/// Map an x-offset within a header cell to the appropriate [`ColumnHeaderZone`].
+///
+/// `cell_width` is the full logical-pixel width of the cell including padding.
+/// `x` is the cursor/click offset measured from the left edge of the cell.
+///
+/// Values outside `[0, cell_width]` clamp to the nearest edge zone (Grip or
+/// Funnel) rather than panicking — callers should not rely on out-of-range
+/// inputs but the function is total.
+pub fn zone_from_x(x: f32, cell_width: f32) -> ColumnHeaderZone {
+    let funnel_start = cell_width - HEADER_FUNNEL_PX;
+    let sort_start = funnel_start - HEADER_SORT_PX;
+    if x < HEADER_GRIP_PX {
+        ColumnHeaderZone::Grip
+    } else if x < sort_start.max(HEADER_GRIP_PX) {
+        ColumnHeaderZone::Body
+    } else if x < funnel_start.max(sort_start.max(HEADER_GRIP_PX)) {
+        ColumnHeaderZone::Sort
+    } else {
+        ColumnHeaderZone::Funnel
+    }
+}
+
 /// Adapter that bridges [`GridDataSource`] (Arrow-paged, interior-mutable
 /// cache) to gpui-component's `TableDelegate` (main-thread, `&mut self`,
 /// synchronous render contract).
@@ -66,6 +140,71 @@ impl GridTableDelegate {
     pub fn source_ptr_eq(&self, other: &Arc<GridDataSource>) -> bool {
         Arc::ptr_eq(&self.source, other)
     }
+
+    // ── Four-zone header sub-renderers ────────────────────────────────────────
+
+    /// Renders the sort-icon zone (right-of-center).
+    ///
+    /// T12 live: the on_click closure reads the shift modifier from the GPUI
+    /// `ClickEvent` and logs the intended state-machine transition. The actual
+    /// `ViewModel::current_sort_as_active → click/shift_click → set_sort`
+    /// engine round-trip is wired in T13, which plumbs `ViewModel` access and
+    /// `spawn_view_change` into the delegate.
+    ///
+    /// The element must carry a unique `id` so GPUI can track click events
+    /// across reframes; we encode `("th-sort", col_ix)`.
+    fn render_sort_icon(&self, col_ix: usize) -> impl IntoElement {
+        // "⇅" is the neutral sort indicator; T13 will swap in "↑"/"↓" once
+        // ActiveSort state is readable from the delegate.
+        div()
+            .id(("th-sort", col_ix))
+            .w(gpui::px(HEADER_SORT_PX))
+            .h_full()
+            .flex()
+            .items_center()
+            .justify_center()
+            .cursor_pointer()
+            .on_click(move |ev, _window, _cx| {
+                // T12: read shift modifier so the state-machine transition is
+                // observable in logs. T13 replaces this with the real dispatch:
+                //   let col_name = self.columns[col_ix].name.clone();
+                //   let active = vm.current_sort_as_active();
+                //   let active = if shift { active.shift_click(&col_name) }
+                //                else     { active.click(&col_name) };
+                //   spawn_view_change(engine, base_table, vm.set_sort(active.keys), rebind);
+                let shift_held = ev.modifiers().shift;
+                tracing::debug!(
+                    col_ix,
+                    shift_held,
+                    "header sort zone clicked — T13 will dispatch to ViewModel::set_sort"
+                );
+            })
+            .child("⇅")
+    }
+
+    /// Renders the funnel-icon zone (rightmost).
+    ///
+    /// T9 live: clicking logs the intent and calls a placeholder that T10 will
+    /// replace with the real filter-popover open.
+    ///
+    /// The element must carry a unique `id`; we encode `("th-funnel", col_ix)`.
+    fn render_funnel_icon(&self, col_ix: usize) -> impl IntoElement {
+        div()
+            .id(("th-funnel", col_ix))
+            .w(gpui::px(HEADER_FUNNEL_PX))
+            .h_full()
+            .flex()
+            .items_center()
+            .justify_center()
+            .cursor_pointer()
+            .on_click(move |_ev, _window, _cx| {
+                // T9 stub: placeholder invocation for "open filter popover for
+                // column col_ix".  T10 replaces this closure with the real
+                // popover-open dispatch via the WorkspaceShell event channel.
+                tracing::debug!(col_ix, "header funnel zone clicked — T10 will wire popover");
+            })
+            .child("⌄")
+    }
 }
 
 impl TableDelegate for GridTableDelegate {
@@ -83,6 +222,58 @@ impl TableDelegate for GridTableDelegate {
 
     fn column(&self, col_ix: usize, _cx: &App) -> &Column {
         &self.columns[col_ix]
+    }
+
+    /// Four-zone column header per P4a spec §6.
+    ///
+    /// Layout (left → right):
+    ///   1. **Grip** — invisible `HEADER_GRIP_PX`-wide strip for future column
+    ///      resize (P4c).  T9 stub: no-op + `cursor_col_resize` hint only.
+    ///   2. **Body** — column-name text, flex-grows to fill remaining space.
+    ///      T9 stub: no-op click (P4b row-selection will claim this zone).
+    ///   3. **Sort icon** — `HEADER_SORT_PX`-wide `⇅` button.  Live in P4a:
+    ///      clicking logs a placeholder that T12 wires to Asc/Desc/None cycle.
+    ///   4. **Funnel icon** — `HEADER_FUNNEL_PX`-wide `⌄` button.  Live in P4a:
+    ///      clicking logs a placeholder that T10 wires to the filter popover.
+    fn render_th(
+        &mut self,
+        col_ix: usize,
+        _window: &mut Window,
+        _cx: &mut Context<TableState<Self>>,
+    ) -> impl IntoElement {
+        let col_name = self.columns[col_ix].name.clone();
+
+        div()
+            .flex()
+            .flex_row()
+            .items_center()
+            .w_full()
+            .h_full()
+            // ── Zone 1: Grip (T9 stub — P4c column-resize will fill) ──────────
+            .child(
+                div()
+                    .id(("th-grip", col_ix))
+                    .w(gpui::px(HEADER_GRIP_PX))
+                    .h_full()
+                    .cursor_col_resize(),
+                // T9 stub: no click handler; P4c (column resize) claims this zone.
+            )
+            // ── Zone 2: Body / column name (T9 stub — P4b selection will fill) ─
+            .child(
+                div()
+                    .id(("th-body", col_ix))
+                    .flex_1()
+                    .h_full()
+                    .flex()
+                    .items_center()
+                    .overflow_hidden()
+                    .child(col_name),
+                // T9 stub: no click handler; P4b (row selection) claims this zone.
+            )
+            // ── Zone 3: Sort icon (live — T12 replaces closure) ───────────────
+            .child(self.render_sort_icon(col_ix))
+            // ── Zone 4: Funnel icon (live — T10 replaces closure) ─────────────
+            .child(self.render_funnel_icon(col_ix))
     }
 
     fn render_td(

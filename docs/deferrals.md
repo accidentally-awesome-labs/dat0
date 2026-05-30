@@ -65,6 +65,10 @@ that's modifying it; merge conflicts are signals worth investigating.
 | PD-004 | Linux Secret Service backend not reachable from CI keychain tests  | open   | low      |
 | PD-011 | P3b plan §3.7 ambiguity rule references sniff outputs that don't exist: no candidate-delimiter scores, no encoding column, no per-column confidence in `sniff_csv` | open | low |
 | PD-012 | `NYC_TAXI_SHA256 = "FILL_AT_T8"` — release asset not yet uploaded, so the fetch path always fails the checksum check at runtime | open | low |
+| PD-013 | P4a T0 plan-snippet drifts: `dat0-fixtures` assumed to be a lib crate; `dat0-engine` assumed to have a `benches/` dir + criterion dev-dep; plan snippet pinned `criterion = "0.5"` instead of using workspace inheritance | closed | low |
+| PD-014 | P4a design §3 used `#[serde(untagged)]` on `FilterValue` + `Scalar`, causing Str/Date/Timestamp collisions and FilterValue::None/Scalar::Null collision; reworked to tagged wire shapes | closed | low |
+| PD-015 | P4a plan T2–T15 snippets still use the pre-PD-014 tuple form `FilterValue::Scalar(...)` + `FilterValue::List(vec![...])` (~57 occurrences); implementers must read variants as struct form `FilterValue::Scalar { value }` + `FilterValue::List { values }` | closed | low |
+| PD-016 | P4a UI-click → ViewChange wirings unowned by plan T13: funnel-click → open popover, popover `Outcome::Apply` → `vm.apply`, sort-zone-click → `vm.set_sort`. T7/T9/T10b/T12 implementers each commented "T13 wires" but plan T13 Steps 1-4 cover only keybind undo/redo + supersede-cancel test. T14 E2E either pulls in the missing glue or tests via direct VM API; P4b/c may inherit if not closed at T15. | open | medium |
 
 ## At-a-glance — Closed plan defects
 
@@ -453,9 +457,11 @@ that's modifying it; merge conflicts are signals worth investigating.
 
 ### PD-002 — Settings store atomic-write missing `fsync` before rename
 
-- **Status:** open
+- **Status:** open (partial — session.json side closed; settings.toml side still open)
 - **Severity:** low (durability, not correctness)
-- **Affected files:** `crates/dat0-app/src/settings/store.rs:save`
+- **Affected files:**
+  - `crates/dat0-app/src/settings/store.rs:save` — **still open** (settings.toml path)
+  - `crates/dat0-app/src/session/store.rs:save` — **closed by T8** (session.json path)
 - **Symptom:** Comment claims "Atomic write: write to .tmp, fsync, rename." but
   the code uses `std::fs::write` (which only writes + closes, no fsync). On
   macOS the rename is atomic at the directory-entry level, but the new file's
@@ -464,7 +470,7 @@ that's modifying it; merge conflicts are signals worth investigating.
   zero-length `settings.toml`.
 - **Discovered:** P1 T8 implementer report
 - **Originating doc:** `docs/plans/2026-04-26-dat0-p1-foundation-plan.md` Step 8.3
-- **Suggested fix:**
+- **Suggested fix (for remaining settings.toml path):**
   ```rust
   let tmp = self.path.with_extension("toml.tmp");
   let mut f = std::fs::OpenOptions::new()
@@ -480,7 +486,8 @@ that's modifying it; merge conflicts are signals worth investigating.
 - **Acceptable when:** dat0 begins storing recoverable state in settings (e.g.,
   workspace pointers a user would lose if the file zeroed). Until then the cost
   of a corrupt settings file is "user re-enters preferences," which is low.
-- **Last touched:** 2026-04-28
+- **Session.json side closed by:** commit `e295cd5` (T8 post-review, P4a) — `session/store.rs` now uses `OpenOptions` + `write_all` + `sync_all` + `rename` + optional parent-dir fsync. Only `settings/store.rs` remains.
+- **Last touched:** 2026-05-29
 
 ---
 
@@ -836,6 +843,159 @@ that's modifying it; merge conflicts are signals worth investigating.
 - **Originating doc:** `docs/plans/2026-05-25-dat0-p3b-plan.md` T8 ("External
   work (defer to maintainer)").
 - **Last touched:** 2026-05-25
+
+---
+
+### PD-013 — P4a T0 plan-snippet drifts: fixtures lib + engine bench setup + criterion workspace inheritance
+
+- **Status:** closed
+- **Severity:** low (build-time failures; mechanical fixes applied in T0)
+- **Affected files:**
+  - `docs/plans/2026-05-27-dat0-p4a-plan.md` T0 Steps 3, 5 code snippets
+  - `crates/dat0-fixtures/Cargo.toml` + `src/lib.rs`
+  - `crates/dat0-engine/Cargo.toml` + `benches/`
+  - `Cargo.toml` (workspace) — criterion feature set
+- **Symptoms (three related drifts):**
+
+  **Drift 1 — `dat0-fixtures` is binary-only.**
+  Plan T0 Step 3 instructs "Append to `crates/dat0-fixtures/src/lib.rs`: `pub mod filter;`"
+  as if `dat0-fixtures` already had a lib target. At T0 execution, the crate was
+  binary-only: `[[bin]] name = "dat0-fixtures" path = "src/main.rs"` with no `[lib]`
+  section and no `src/lib.rs`. The plan step fails at the first `pub mod filter;`
+  reference from the bench.
+
+  **Drift 2 — `dat0-engine` has no `benches/` dir or criterion dev-dep.**
+  Plan T0 Step 5 hint "matches what `grid_scroll` bench uses" is misleading —
+  `grid_scroll` lives in `crates/dat0-app/benches/`, not engine. At T0 execution,
+  `crates/dat0-engine/Cargo.toml` had no `[[bench]]` entry, no `benches/` directory,
+  and no `criterion` in `[dev-dependencies]`.
+
+  **Drift 3 — Plan Step 5 pins `criterion = "0.5"` verbatim.**
+  The plan snippet provides `criterion = { version = "0.5", default-features = false,
+  features = ["cargo_bench_support"] }` — a version-pinned form that diverges from
+  the project's workspace-inheritance convention and omits the `async_tokio` feature
+  required by `b.to_async(&rt)` in the bench body.
+
+- **Discovered:** T0 execution (2026-05-27) — pre-T0 gap analysis documented
+  in the task prompt; fixes applied in place per the "Plan-snippet drift
+  recurrence" rule in `docs/plans/2026-05-27-dat0-p4a-plan.md` §"Phase context".
+- **Fix applied:**
+  1. Added `[lib] path = "src/lib.rs"` to `crates/dat0-fixtures/Cargo.toml`
+     (bin + lib coexist; `main.rs` unchanged). Created `src/lib.rs` containing
+     only `pub mod filter;`. Created `src/filter.rs` with the fixture generator.
+  2. Created `crates/dat0-engine/benches/` directory. Added to
+     `crates/dat0-engine/Cargo.toml`: `criterion = { workspace = true }`,
+     `dat0-fixtures = { path = "../dat0-fixtures" }`,
+     `tempfile = { workspace = true }` under `[dev-dependencies]`, and
+     `[[bench]] name = "view_regen" harness = false`.
+  3. Added `async_tokio` feature to the workspace `criterion` entry
+     (`Cargo.toml` line 82) so `b.to_async(&rt)` compiles. The `html_reports`
+     feature already present is retained; the addition is purely additive.
+- **Originating doc:** `docs/plans/2026-05-27-dat0-p4a-plan.md` T0 Steps 3
+  and 5; §"Phase context" "Plan-snippet drift recurrence" rule.
+- **Closed by:** commits `74694e2` (T0 spike) + `2f1ab44` (T0 post-review), applied in-place during T0 execution. Session-side verified: bench compiles clean, `cargo test --workspace` green.
+- **Last touched:** 2026-05-29
+
+---
+
+### PD-014 — P4a design §3 `#[serde(untagged)]` collision on `FilterValue` + `Scalar`
+
+- **Status:** closed
+- **Severity:** low (T1 implementation catch; design.md + wire shapes corrected before any consumer exists)
+- **Affected files:**
+  - `docs/plans/2026-05-27-dat0-p4a-design.md` §3 (Transformation enum snippet) + §8.2 (session.json v2 example)
+  - `crates/dat0-engine/src/transform.rs`
+  - `crates/dat0-engine/tests/transformation_serde.rs`
+  - Downstream: `session.json` v2 wire shape (no live consumers yet — T8 will write v2; PD note so T8 author knows the shape)
+- **Symptom:** Design.md §3 originally specified `#[serde(untagged)]` on both
+  `FilterValue` and `Scalar`. Under this scheme:
+  1. `Scalar::Str("2026-01-01")`, `Scalar::Date("2026-01-01")`, and
+     `Scalar::Timestamp("2026-01-01 00:00:00")` all serialize as bare JSON
+     strings — deserialization cannot determine which variant was intended.
+  2. `FilterValue::None` (nullary placeholder) and
+     `FilterValue::Scalar(Scalar::Null)` both serialize as JSON `null` —
+     indistinguishable on the wire, causing the wrong variant to be
+     reconstructed after a round-trip.
+  The original manual `Serialize`/`Deserialize` impls in the first T1 commit
+  (`86be0b7`, now unreachable on the branch) papered over this by using
+  sentinel keys (`__date`, `__ts`, `__none`) rather than real serde attributes.
+  That approach was non-standard and hard to consume from other languages.
+- **Fix:** Reworked to fully serde-derived tagged forms (controller decision
+  2026-05-29 after user input):
+  - `FilterValue`: `#[serde(tag = "kind", rename_all = "snake_case")]`
+    (internally tagged). Variants reshaped: `Scalar(Scalar)` →
+    `Scalar { value: Scalar }` and `List(Vec<Scalar>)` →
+    `List { values: Vec<Scalar> }`.
+  - `Scalar`: `#[serde(tag = "type", content = "value", rename_all = "snake_case")]`
+    (adjacent tagged). Variant shapes unchanged.
+  Wire: `FilterValue::None` → `{ "kind": "none" }`;
+  `FilterValue::Scalar { value: Scalar::Null }` →
+  `{ "kind": "scalar", "value": { "type": "null" } }`. Distinct on the wire.
+  `Scalar::Str("2026-01-01")` → `{ "type": "str", "value": "2026-01-01" }`;
+  `Scalar::Date("2026-01-01")` → `{ "type": "date", "value": "2026-01-01" }`. Distinct.
+- **Design doc amended:** design.md §3 snippet + §8.2 session.json v2 example
+  updated in place to match the new wire shapes (2026-05-29).
+- **Regression tests:** Two new tests in
+  `crates/dat0-engine/tests/transformation_serde.rs` guard the formerly-colliding
+  pairs: `filter_str_value_vs_date_value_are_distinct` (test 15) and
+  `filter_none_vs_scalar_null_are_distinct` (test 16). Total test count: 16.
+- **Wire format is self-describing:** Cross-language consumers (e.g. future
+  Python .dat0 reader for P8) can route on discriminator fields without
+  Rust-side knowledge.
+- **Discovered:** T1 implementation (2026-05-29). The sentinel-key workaround
+  in the first T1 commit (`86be0b7`) was the signal; controller chose tagged
+  forms after user review.
+- **Originating doc:** `docs/plans/2026-05-27-dat0-p4a-design.md` §3 +
+  `docs/plans/2026-05-27-dat0-p4a-plan.md` T1 task description.
+- **Closed by:** commit `48a95d0` (T1 — tagged wire format + 16 serde round-trip tests, including collision-guard tests 15 + 16); design.md §3 + §8.2 amended in-place to match wire shapes.
+- **Last touched:** 2026-05-29
+
+### PD-015 — P4a plan T2–T15 snippets use pre-PD-014 tuple form for `FilterValue::Scalar` + `FilterValue::List`
+
+- **Status:** closed
+- **Severity:** low (mechanical adaptation; ~57 occurrences are all in plan code blocks, not in committed code)
+- **Affected files:**
+  - `docs/plans/2026-05-27-dat0-p4a-plan.md` — T1 example (Step 1), T2 (Step 4 render impl, Steps 7+ golden tests), T5/T6/T8/T10/T11/T13/T14 wherever `FilterValue` is constructed in a snippet
+- **Symptom:** PD-014 reshaped `FilterValue::Scalar(Scalar)` → `FilterValue::Scalar { value: Scalar }`
+  and `FilterValue::List(Vec<Scalar>)` → `FilterValue::List { values: Vec<Scalar> }`. The plan
+  document was authored before PD-014 and still uses the tuple form throughout. A T2+
+  implementer pasting plan snippets verbatim hits compile errors immediately.
+- **Fix (mechanical, per snippet):**
+  - `FilterValue::Scalar(Scalar::Null)` → `FilterValue::Scalar { value: Scalar::Null }`
+  - `FilterValue::Scalar(s)` (binding pattern) → `FilterValue::Scalar { value: s }`
+  - `FilterValue::Scalar(_)` (ignore pattern) → `FilterValue::Scalar { .. }`
+  - `FilterValue::List(items)` (binding) → `FilterValue::List { values: items }`
+  - `FilterValue::List(vec![…])` (construction) → `FilterValue::List { values: vec![…] }`
+  - `FilterValue::List(_)` (ignore) → `FilterValue::List { .. }`
+  - `FilterValue::Range { lo, hi, inclusive }` is unchanged (was already struct-form).
+  - `FilterValue::None` is unchanged (unit variant).
+- **Discovered:** T1 quality review (2026-05-29).
+- **Originating doc:** `docs/plans/2026-05-27-dat0-p4a-plan.md` — pre-PD-014 wire form.
+- **Closed by:** All committed code in T1 (`48a95d0`) through T14 (`2af2c02`) uses the struct form. The plan doc was annotated in `45419b1` (PD-015 doc commit) to warn implementers; every T2+ task adapted snippets in-place and none committed the tuple form. No tuple-form code exists in the worktree.
+- **Last touched:** 2026-05-29
+
+### PD-016 — P4a UI-click → ViewChange wirings unowned by plan T13
+
+- **Status:** open
+- **Severity:** medium (P4a is functionally incomplete on the UI-click path: funnel + sort-zone clicks log but don't actually trigger ViewChanges; only the keybind undo/redo path is wired end-to-end)
+- **Affected files:**
+  - `crates/dat0-app/src/grid/mod.rs` — sort-zone + funnel-zone click handlers still log debug + leave wiring comments
+  - `crates/dat0-app/src/view/filter_popover_entity.rs` — `Outcome::Apply` / `Outcome::Clear` emit but have no upper-layer consumer wired to `vm.apply` / `vm.replace_at_cursor` + `spawn_view_change`
+  - Possibly: a missing "popover-mount-on-funnel-click" hook in `WorkspaceShell` or wherever the popover is instantiated
+- **Symptom:** T7 (action registry stubs), T9 (four-zone column header), T10b (filter popover entity), T12 (sort header state machine) each shipped with placeholder dispatch closures and inline `// T13 wires …` comments. Plan §T13 Steps 1-4 (`spawn_view_change` helper, `WorkspaceShell::apply_view_change`, `view_actions::dispatch_undo/redo` real wiring, supersede-cancel test) did NOT include the click-handler wirings those earlier tasks deferred. T13 (`516c31c`) matches plan §T13 exactly; the gap is in the plan, not the implementation.
+- **Net effect:** keybind undo/redo works end-to-end via `dispatch_undo` / `dispatch_redo` → `spawn_view_change` → engine round-trip → `apply_view_change` rebind. But:
+  - Clicking the funnel zone does NOT open the filter popover.
+  - The filter popover, if mounted manually, would emit `Outcome::Apply` to nobody.
+  - Clicking the sort zone (plain or shift-click) logs the column/modifier but does NOT call `vm.set_sort`.
+- **Fix paths (to close before P4a merges or accept as in-progress):**
+  - **Path A (in-phase completion):** wire all three click paths in `grid/mod.rs` + `filter_popover_entity.rs` to call `spawn_view_change` via the focused-workspace lookup. ~50-100 lines of glue. Closes the P4a integration story.
+  - **Path B (defer to T14 E2E):** T14's `view_restore_e2e.rs` can test the apply→undo→redo→clear→crash→reload flow via direct `ViewModel` API + engine round-trips, sidestepping the UI click layer. P4a still ships, but the UI is only half-interactive (keybinds work, mouse doesn't).
+  - **Path C (defer to P4b/c):** P4b ships row-edit + clipboard which also need a click-handler integration layer; the wirings could fold in there.
+- **Decision (T15 retro):** Path B accepted. T14 E2E (`view_restore_e2e.rs`) validates the full apply → undo → redo → clear → crash → restore story via direct ViewModel API + real engine round-trips. UI-click wirings defer to P4b.
+- **Next phase:** P4b T0 must wire: (1) `grid/mod.rs` funnel-zone click → `filter_popover_entity.rs` mount + present via `WorkspaceShell`; (2) `filter_popover_entity.rs` `Outcome::Apply` → `vm.apply` + `spawn_view_change`; (3) `grid/mod.rs` sort-zone click (plain + shift) → `vm.set_sort` + `spawn_view_change`; (4) a click-path integration test covering the full UI-click → ViewChange → rebind loop.
+- **Discovered:** T13 implementation review (2026-05-29). Documented by the controller after the T13 implementer correctly noted plan §T13 Steps 1-4 don't cover these wirings.
+- **Originating doc:** `docs/plans/2026-05-27-dat0-p4a-plan.md` §T13.
+- **Last touched:** 2026-05-29
 
 ---
 

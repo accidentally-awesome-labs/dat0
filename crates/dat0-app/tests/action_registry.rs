@@ -69,12 +69,14 @@ fn lookup_returns_descriptor() {
 }
 
 #[test]
-fn builtins_register_eight() {
+fn builtins_register_ten() {
     let reg = ActionRegistry::new();
     dat0_app::actions::builtin::register_all(&reg).unwrap();
-    assert_eq!(reg.count(), 8);
+    assert_eq!(reg.count(), 10);
     let titles: Vec<String> = reg.iter().map(|d| d.title).collect();
     assert!(titles.contains(&"New Window".to_string()));
     assert!(titles.contains(&"Open Settings".to_string()));
     assert!(titles.contains(&"Retry NYC Taxi download".to_string()));
+    assert!(titles.contains(&"Undo".to_string()));
+    assert!(titles.contains(&"Redo".to_string()));
 }

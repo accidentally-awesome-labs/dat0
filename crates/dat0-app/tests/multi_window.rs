@@ -33,11 +33,17 @@ async fn two_sessions_isolated_scratch_and_engine() {
     a.add_tab(Tab {
         table_name: info_a.name.clone(),
         source_path: Some(csv_a.clone()),
+        transform_stack: Vec::new(),
+        undo_cursor: 0,
+        extra: Default::default(),
     })
     .unwrap();
     b.add_tab(Tab {
         table_name: info_b.name.clone(),
         source_path: Some(csv_b.clone()),
+        transform_stack: Vec::new(),
+        undo_cursor: 0,
+        extra: Default::default(),
     })
     .unwrap();
 

@@ -51,6 +51,7 @@ use crate::grid::{GridDataSource, GridTableDelegate};
 use crate::main_bridge::MainLoop;
 use crate::recents::Recents;
 use crate::session::Session;
+use crate::view::ViewModel;
 use crate::window_registry::{WindowHandle, WindowRegistry};
 
 /// Spawn a new workspace window.
@@ -102,6 +103,9 @@ pub(crate) fn spawn_window(
         },
         move |window, cx| {
             let view = cx.new(|_| WorkspaceShell::new(Arc::clone(&session)));
+            // T13: register this workspace as the focused one so that
+            // view.undo / view.redo dispatch closures can reach it.
+            crate::window_registry::install_focused_workspace(view.downgrade().into());
             cx.new(|cx| Root::new(view, window, cx))
         },
     )
@@ -338,6 +342,40 @@ pub fn run_app(lock: AppLock, initial_paths: Vec<PathBuf>, main_loop: MainLoop) 
             );
         }
 
+        // Wire Cmd-Z / Ctrl-Z → Undo, Cmd-Shift-Z / Ctrl-Shift-Z → Redo (P4a T7).
+        // `Undo` and `Redo` are gpui action stubs declared in `menu_macos.rs`
+        // (unconditional, so they resolve on Linux too). Handlers dispatch
+        // through the ActionRegistry so the same closure drives menu-click,
+        // keybind, and command-palette paths.
+        {
+            #[cfg(target_os = "macos")]
+            let (undo_ks, redo_ks) = ("cmd-z", "cmd-shift-z");
+            #[cfg(not(target_os = "macos"))]
+            let (undo_ks, redo_ks) = ("ctrl-z", "ctrl-shift-z");
+            cx.bind_keys([
+                gpui::KeyBinding::new(undo_ks, crate::menu_macos::Undo, None),
+                gpui::KeyBinding::new(redo_ks, crate::menu_macos::Redo, None),
+            ]);
+            cx.on_action(|_action: &crate::menu_macos::Undo, cx: &mut App| {
+                if let Some(reg) = crate::window_registry::action_registry() {
+                    if let Some(desc) = reg.get(&crate::actions::ActionId::from(
+                        crate::actions::builtin::ids::VIEW_UNDO,
+                    )) {
+                        (desc.dispatch)(cx);
+                    }
+                }
+            });
+            cx.on_action(|_action: &crate::menu_macos::Redo, cx: &mut App| {
+                if let Some(reg) = crate::window_registry::action_registry() {
+                    if let Some(desc) = reg.get(&crate::actions::ActionId::from(
+                        crate::actions::builtin::ids::VIEW_REDO,
+                    )) {
+                        (desc.dispatch)(cx);
+                    }
+                }
+            });
+        }
+
         let first_window_id = session.lock().window_id;
         let bounds = Bounds::centered(None, size(px(1200.), px(800.)), cx);
         let session_for_window = Arc::clone(&session);
@@ -353,6 +391,9 @@ pub fn run_app(lock: AppLock, initial_paths: Vec<PathBuf>, main_loop: MainLoop) 
                 },
                 |window, cx| {
                     let view = cx.new(|_| WorkspaceShell::new(Arc::clone(&session_for_window)));
+                    // T13: register this workspace as the focused one so that
+                    // view.undo / view.redo dispatch closures can reach it.
+                    crate::window_registry::install_focused_workspace(view.downgrade().into());
                     // Per gpui-component v0.5.1, the window's first layer MUST be
                     // a Root: it provides the overlay layer used by Dialog,
                     // Sheet, notifications, etc.
@@ -443,6 +484,14 @@ pub struct WorkspaceShell {
     /// `gpui::Global` in `crates/dat0-app/src/theme/mod.rs`, replacing
     /// the T4 placeholder subscription against `gpui_component::Theme`.
     theme_subscription: Option<Subscription>,
+    /// Per-tab view model (T13). Owns the active Transformation stack,
+    /// undo cursor, and view name. Initialized when a table is first
+    /// registered (file drop). `None` until the first table lands.
+    ///
+    /// T13 note: P4a is single-tab per window; multi-tab (one ViewModel
+    /// per tab) is P4b. The field is `Option` so it can be None before
+    /// any file is dropped.
+    pub(crate) view_model: Option<ViewModel>,
 }
 
 impl WorkspaceShell {
@@ -452,6 +501,7 @@ impl WorkspaceShell {
             data_source: None,
             table_state: None,
             theme_subscription: None,
+            view_model: None,
         }
     }
 
@@ -461,6 +511,34 @@ impl WorkspaceShell {
         // The next `render` call rebuilds one against the new source.
         self.table_state = None;
         self.data_source = Some(ds);
+    }
+
+    /// Install or replace the active `GridDataSource` after a `ViewChange`
+    /// round-trip completes (T13). Clears the stale `TableState` so the
+    /// next `render` promotes the new source into a fresh `Entity<TableState>`.
+    pub fn apply_view_change(&mut self, new_ds: Arc<GridDataSource>, cx: &mut Context<Self>) {
+        self.table_state = None;
+        self.data_source = Some(new_ds);
+        cx.notify();
+    }
+
+    /// Mutable access to the per-tab `ViewModel` (T13). Returns `None` if
+    /// no table has been registered yet (pre-file-drop state).
+    pub fn view_model_mut(&mut self) -> Option<&mut ViewModel> {
+        self.view_model.as_mut()
+    }
+
+    /// The `Arc<DuckDBEngine>` bound to this session (T13 helper).
+    pub fn engine(&self) -> Arc<dat0_engine::DuckDBEngine> {
+        Arc::clone(&self.session.lock().engine)
+    }
+
+    /// The base table name (already-quoted, suitable for ViewModel construction).
+    /// Returns `None` if no file has been registered yet.
+    pub fn base_table(&self) -> Option<String> {
+        self.view_model
+            .as_ref()
+            .map(|vm| vm.base_table().to_string())
     }
 }
 
@@ -573,10 +651,22 @@ impl Render for WorkspaceShell {
                             .flatten();
 
                         if let Some(engine) = engine {
-                            match GridDataSource::new(engine, table_name).await {
+                            match GridDataSource::new(engine, table_name.clone()).await {
                                 Ok(ds) => {
                                     let _ = async_cx.update(|app_cx| {
                                         let _ = weak_shell.update(app_cx, |view, cx| {
+                                            // T13: initialise ViewModel for the new table.
+                                            // The base_table is already-quoted per ViewModel
+                                            // design §4 ("base_table passed to ViewModel must
+                                            // already be quoted").
+                                            let quoted =
+                                                format!("\"{}\"", table_name.replace('"', "\"\""));
+                                            view.view_model = Some(ViewModel::new(
+                                                // Use table_name as tab_id for the single-tab
+                                                // P4a case; P4b will replace with a real UUID.
+                                                table_name.clone(),
+                                                quoted,
+                                            ));
                                             view.set_data_source(Arc::new(ds));
                                             cx.notify();
                                         });

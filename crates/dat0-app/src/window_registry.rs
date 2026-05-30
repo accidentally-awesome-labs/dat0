@@ -5,12 +5,24 @@
 //! shutdown, and orphan-recovery banner dispatch). The WorkspaceMutex
 //! map is scaffolded here per P2 retro #1 but not exercised until P4
 //! SQL Console / Workspace mode lands.
+//!
+//! # Focused workspace tracking (T13)
+//!
+//! `FOCUSED_WORKSPACE` stores a type-erased `AnyWeakEntity` so that
+//! `view_actions::dispatch_undo`/`dispatch_redo` can reach the current
+//! `WorkspaceShell` without a circular import. The workspace registers
+//! itself via `install_focused_workspace`; the accessor returns the
+//! weak handle. The indirection through `AnyWeakEntity` lets
+//! `window_registry.rs` stay import-free of the concrete `WorkspaceShell`
+//! type.
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
+use gpui::AnyWeakEntity;
 use once_cell::sync::OnceCell;
+use parking_lot::Mutex as PLMutex;
 use tokio::sync::Mutex as TokioMutex;
 use uuid::Uuid;
 
@@ -40,6 +52,15 @@ static STATE_ROOT: OnceCell<PathBuf> = OnceCell::new();
 /// first-window path uses (so T17's window-count assertion sees every
 /// window spawned, regardless of trigger).
 static WINDOW_REGISTRY: OnceCell<Arc<parking_lot::Mutex<WindowRegistry>>> = OnceCell::new();
+
+/// Process-wide "focused workspace" slot (T13). Stores the most-recently
+/// created `WorkspaceShell` as a type-erased weak entity so `dispatch_undo`
+/// / `dispatch_redo` can reach it without a circular import.
+///
+/// Updated by `install_focused_workspace` each time a new `WorkspaceShell`
+/// is constructed. The mutex allows atomic swap from any thread, though in
+/// practice updates happen on the GPUI main thread.
+static FOCUSED_WORKSPACE: OnceCell<Arc<PLMutex<Option<AnyWeakEntity>>>> = OnceCell::new();
 
 /// Install the dispatcher for process-wide access. Idempotent: a second
 /// call is a no-op (subsequent attempts simply drop the new dispatcher).
@@ -85,6 +106,27 @@ pub fn install_window_registry(r: Arc<parking_lot::Mutex<WindowRegistry>>) {
 /// [`install_window_registry`] has not yet been called.
 pub fn window_registry() -> Option<Arc<parking_lot::Mutex<WindowRegistry>>> {
     WINDOW_REGISTRY.get().cloned()
+}
+
+/// Register a workspace entity as the currently-focused workspace (T13).
+///
+/// Overwrites any previously registered workspace. Call from
+/// `WorkspaceShell::new` (or whenever focus changes to a workspace).
+/// Uses a type-erased `AnyWeakEntity` to avoid a circular import between
+/// `window_registry.rs` and `window.rs`.
+pub fn install_focused_workspace(weak: AnyWeakEntity) {
+    // Ensure the `Arc<PLMutex<...>>` exists (initialised once), then swap.
+    let slot = FOCUSED_WORKSPACE.get_or_init(|| Arc::new(PLMutex::new(None)));
+    *slot.lock() = Some(weak);
+}
+
+/// Access the currently-focused workspace as a type-erased weak entity.
+///
+/// Returns `None` if no workspace has been registered yet or after all
+/// workspace entities have been dropped. The caller is responsible for
+/// upgrading + downcasting to `Entity<WorkspaceShell>`.
+pub fn focused_workspace_weak() -> Option<AnyWeakEntity> {
+    FOCUSED_WORKSPACE.get()?.lock().as_ref().cloned()
 }
 
 #[derive(Debug, Clone)]

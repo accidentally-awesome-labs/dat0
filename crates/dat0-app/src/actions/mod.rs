@@ -8,5 +8,6 @@
 
 pub mod builtin;
 pub mod registry;
+pub mod view_actions;
 
 pub use registry::{ActionDescriptor, ActionGroup, ActionId, ActionRegistry, RegisterError};

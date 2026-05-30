@@ -104,10 +104,13 @@ pub enum TableOrigin {
     Attached { alias: String, source: String },
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum DerivedOrigin {
     Sql(String),
-    Transform { parent: String, ops: Vec<String> },
+    Transform {
+        parent: String,
+        ops: Vec<crate::transform::Transformation>,
+    },
 }
 
 #[derive(Debug, Clone)]
