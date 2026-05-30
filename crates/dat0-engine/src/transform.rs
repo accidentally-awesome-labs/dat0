@@ -55,8 +55,40 @@ pub enum Transformation {
     Sort {
         keys: Vec<SortKey>,
     },
-    // P4b will add: Edit, RowDelete
+    Edit {
+        cells: Vec<CellEdit>,
+    },
+    RowDelete {
+        rows: Vec<RowKey>,
+    },
     // P4c will add: Reorder, Rename, Delete (column)
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct CellEdit {
+    pub row: RowKey,
+    pub column: String,
+    pub value: Scalar,
+}
+
+/// Row identity for Edit / RowDelete. Tagged so P7 can add a semantic-PK
+/// variant (`Pk { col, val }`) with no wire-format break. P4b ships only
+/// `Surrogate`, mapping to the `__dat0_rowid` column injected at import.
+///
+/// SERDE NOTE: Internally-tagged enums (`#[serde(tag = "kind")]`) do NOT
+/// support newtype variants wrapping a primitive (e.g. `Surrogate(i64)`).
+/// Serde rejects this at compile time: "cannot serialize tagged newtype
+/// variant ... containing an integer". The struct-variant form
+/// `Surrogate { id: i64 }` produces `{"kind":"surrogate","id":7}` on the
+/// wire, which satisfies all three requirements:
+///   (1) round-trips correctly,
+///   (2) the `row` object carries `"kind":"surrogate"`,
+///   (3) forward-compatible for P7 adding `Pk { col: String, val: Scalar }`.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum RowKey {
+    Surrogate { id: i64 },
+    // P7 adds: Pk { col: String, val: Scalar },
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]

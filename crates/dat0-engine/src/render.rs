@@ -42,6 +42,11 @@ pub fn compile_view_sql(base: &str, ops: &[Transformation]) -> Result<String, Re
             Transformation::Sort { keys } => {
                 sort = Some(keys.as_slice());
             }
+            // T2 will implement the edit overlay render (P4b).
+            // Stub arms keep T1 compiling with the exhaustive match.
+            Transformation::Edit { .. } | Transformation::RowDelete { .. } => {
+                todo!("T2: edit overlay render not yet implemented")
+            }
         }
     }
 
