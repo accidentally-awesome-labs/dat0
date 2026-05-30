@@ -67,6 +67,44 @@ impl GridDataSource {
         })
     }
 
+    /// Name of the column at `ix` in the Arrow schema, or `None` if `ix` is
+    /// out of range. Used by the grid header click handlers (T0 / PD-016) to
+    /// resolve a clicked column index to the bare column name that the
+    /// `ViewModel` / filter-popover work against.
+    pub fn column_name(&self, ix: usize) -> Option<String> {
+        self.schema.fields().get(ix).map(|f| f.name().to_string())
+    }
+
+    /// Coarse [`crate::view::filter_popover::ColumnType`] of the column at
+    /// `ix`, derived from its Arrow `DataType`. Used by the funnel-zone click
+    /// handler to construct the filter popover with the right operator surface.
+    ///
+    /// Unknown / unhandled Arrow types fall back to `String` (the safe,
+    /// non-destructive default — Contains/Regex rather than numeric ops).
+    pub fn column_type(&self, ix: usize) -> Option<crate::view::filter_popover::ColumnType> {
+        use crate::view::filter_popover::ColumnType;
+        use duckdb::arrow::datatypes::DataType;
+        self.schema.fields().get(ix).map(|f| match f.data_type() {
+            DataType::Int8
+            | DataType::Int16
+            | DataType::Int32
+            | DataType::Int64
+            | DataType::UInt8
+            | DataType::UInt16
+            | DataType::UInt32
+            | DataType::UInt64
+            | DataType::Float16
+            | DataType::Float32
+            | DataType::Float64
+            | DataType::Decimal128(_, _)
+            | DataType::Decimal256(_, _) => ColumnType::Numeric,
+            DataType::Boolean => ColumnType::Bool,
+            DataType::Date32 | DataType::Date64 => ColumnType::Date,
+            DataType::Timestamp(_, _) => ColumnType::Timestamp,
+            _ => ColumnType::String,
+        })
+    }
+
     /// Returns `true` when the backing table has zero rows. Used by
     /// [`crate::window::WorkspaceShell::render`] (P3b T7) to fall back to
     /// the empty-state hero when a source is technically mounted but has

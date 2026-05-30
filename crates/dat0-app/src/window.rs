@@ -492,6 +492,16 @@ pub struct WorkspaceShell {
     /// per tab) is P4b. The field is `Option` so it can be None before
     /// any file is dropped.
     pub(crate) view_model: Option<ViewModel>,
+    /// Currently-mounted filter popover (T0 / PD-016 funnel-click wiring).
+    /// `Some` while a popover is open for some column; cleared when its
+    /// `Outcome` is routed (apply / clear / cancel). Rendered as an overlay
+    /// child in `render` when present.
+    active_popover: Option<Entity<crate::view::filter_popover_entity::FilterPopoverEntity>>,
+    /// Subscription to the active popover's `FilterPopoverEvent`. Stored so
+    /// the callback stays registered — a dropped `Subscription` deregisters
+    /// silently (P4a T10b post-review lesson). Cleared alongside
+    /// `active_popover`.
+    popover_sub: Option<Subscription>,
 }
 
 impl WorkspaceShell {
@@ -502,6 +512,8 @@ impl WorkspaceShell {
             table_state: None,
             theme_subscription: None,
             view_model: None,
+            active_popover: None,
+            popover_sub: None,
         }
     }
 
@@ -539,6 +551,133 @@ impl WorkspaceShell {
         self.view_model
             .as_ref()
             .map(|vm| vm.base_table().to_string())
+    }
+
+    /// Resolve a header column index to its bare column name via the active
+    /// `GridDataSource`'s Arrow schema (T0 / PD-016). Returns `None` if no
+    /// data source is mounted or `col_ix` is out of range.
+    fn column_name(&self, col_ix: usize) -> Option<String> {
+        self.data_source
+            .as_ref()
+            .and_then(|ds| ds.column_name(col_ix))
+    }
+
+    /// Sort-zone click (T0 / PD-016). Reads the current sort, cycles the
+    /// clicked column (plain `click` or `shift_click` extend), writes it back
+    /// via [`ViewModel::set_sort`], and drives the engine round-trip exactly
+    /// like `dispatch_undo` in `actions/view_actions.rs`.
+    pub fn on_sort_zone_click(&mut self, col_ix: usize, shift: bool, cx: &mut Context<Self>) {
+        let Some(column) = self.column_name(col_ix) else {
+            return;
+        };
+        let engine = self.engine();
+        let Some(vm) = self.view_model.as_mut() else {
+            return;
+        };
+        let active = vm.current_sort_as_active();
+        let active = if shift {
+            active.shift_click(&column)
+        } else {
+            active.click(&column)
+        };
+        let change = vm.set_sort(active.keys().to_vec());
+        let base_table = vm.base_table().to_string();
+
+        let ws_weak = cx.entity().downgrade();
+        crate::view::spawn_view_change(
+            engine,
+            base_table,
+            change,
+            Arc::new(move |new_ds, app_cx| {
+                if let Some(h) = ws_weak.upgrade() {
+                    h.update(app_cx, |ws, cx| ws.apply_view_change(new_ds, cx));
+                }
+            }),
+        );
+    }
+
+    /// Funnel-zone click (T0 / PD-016). Mounts the filter popover for
+    /// `col_ix`, pre-populated from any active filter on that column, and
+    /// subscribes to its `FilterPopoverEvent` so the terminal `Outcome` is
+    /// routed back into the `ViewModel` + engine round-trip.
+    pub fn on_funnel_click(&mut self, col_ix: usize, _window: &mut Window, cx: &mut Context<Self>) {
+        use crate::view::filter_popover_entity::{FilterPopoverEntity, FilterPopoverEvent};
+
+        let Some(column) = self.column_name(col_ix) else {
+            return;
+        };
+        let Some(ds) = self.data_source.as_ref() else {
+            return;
+        };
+        let column_type = ds
+            .column_type(col_ix)
+            .unwrap_or(crate::view::filter_popover::ColumnType::String);
+
+        // Pre-populate from any active filter on this column (edit-existing flow).
+        let pre = self
+            .view_model
+            .as_ref()
+            .and_then(|vm| vm.find_filter_for(&column).cloned());
+
+        let popover = cx.new(|_| match &pre {
+            Some(existing) => FilterPopoverEntity::from_existing(column.clone(), column_type, existing),
+            None => FilterPopoverEntity::new(column.clone(), column_type),
+        });
+
+        // STORE the subscription — callbacks fire silently if the returned
+        // Subscription is dropped (P4a T10b post-review lesson).
+        let sub = cx.subscribe(
+            &popover,
+            move |ws: &mut Self, _pop, ev: &FilterPopoverEvent, cx| {
+                let FilterPopoverEvent::OutcomeEmitted(outcome) = ev;
+                ws.route_filter_outcome(outcome.clone(), cx);
+            },
+        );
+        self.popover_sub = Some(sub);
+        self.active_popover = Some(popover);
+        cx.notify();
+    }
+
+    /// Route a filter-popover [`Outcome`] into the ViewModel + engine
+    /// round-trip, then dismiss the popover (T0 / PD-016).
+    ///
+    /// [`Outcome`]: crate::view::filter_popover_entity::Outcome
+    fn route_filter_outcome(
+        &mut self,
+        outcome: crate::view::filter_popover_entity::Outcome,
+        cx: &mut Context<Self>,
+    ) {
+        // Dismiss the popover regardless of the outcome.
+        self.active_popover = None;
+        self.popover_sub = None;
+
+        let (change, base_table) = {
+            let Some(vm) = self.view_model.as_mut() else {
+                cx.notify();
+                return;
+            };
+            // Pure decision lives in `view::route_outcome` (shared with the
+            // click_wiring integration test); the engine round-trip below stays
+            // in this GPUI handler.
+            let change = crate::view::route_outcome(vm, outcome);
+            (change, vm.base_table().to_string())
+        };
+        let Some(change) = change else {
+            cx.notify();
+            return;
+        };
+        let engine = self.engine();
+        let ws_weak = cx.entity().downgrade();
+        crate::view::spawn_view_change(
+            engine,
+            base_table,
+            change,
+            Arc::new(move |new_ds, app_cx| {
+                if let Some(h) = ws_weak.upgrade() {
+                    h.update(app_cx, |ws, cx| ws.apply_view_change(new_ds, cx));
+                }
+            }),
+        );
     }
 }
 
@@ -594,7 +733,7 @@ impl Render for WorkspaceShell {
                 }
             };
             if needs_rebuild {
-                let delegate = GridTableDelegate::new(Arc::clone(ds));
+                let delegate = GridTableDelegate::new(Arc::clone(ds), cx.entity().downgrade());
                 self.table_state = Some(cx.new(|cx| TableState::new(delegate, window, cx)));
             }
         }
@@ -727,10 +866,25 @@ impl Render for WorkspaceShell {
             }
         };
 
+        // Funnel-click filter popover overlay (T0 / PD-016). Anchored top-right
+        // while open; the entity drives its own Apply/Cancel/Clear buttons,
+        // whose `Outcome` routes back via the stored subscription. A later P4b
+        // polish task can anchor it precisely under the clicked funnel icon.
+        let popover_overlay: Option<gpui::AnyElement> = self.active_popover.as_ref().map(|p| {
+            div()
+                .absolute()
+                .top_8()
+                .right_4()
+                .child(p.clone())
+                .into_any_element()
+        });
+
         div()
             .size_full()
+            .relative()
             .drag_over::<ExternalPaths>(|style, _, _, _| style.bg(gpui::rgba(0x0088_ff22)))
             .on_drop::<ExternalPaths>(drop_listener)
             .child(body)
+            .children(popover_overlay)
     }
 }

@@ -6,7 +6,7 @@ pub mod filter_popover_entity;
 pub mod model;
 pub mod sort_header;
 
-pub use model::{HISTORY_CAP, ViewChange, ViewModel};
+pub use model::{HISTORY_CAP, ViewChange, ViewModel, route_outcome};
 
 // ---------------------------------------------------------------------------
 // spawn_view_change — drives engine round-trip + grid rebind (T13)

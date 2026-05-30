@@ -4,6 +4,7 @@
 
 use dat0_engine::{SortKey, Transformation, compile_view_sql};
 
+use crate::view::filter_popover_entity::Outcome;
 use crate::view::sort_header::ActiveSort;
 
 /// Maximum number of ops retained per tab. On overflow, oldest is dropped
@@ -160,6 +161,36 @@ impl ViewModel {
         }
     }
 
+    /// Upsert a `Filter` op into the active stack, keyed by *column*:
+    /// - If a `Filter` on the SAME column exists in stack[..cursor], replace it
+    ///   in place (single undo step, no new history entry).
+    /// - Otherwise, append the filter via `apply`.
+    ///
+    /// This is the filter-popover edit-apply path (mirrors [`Self::set_sort`]).
+    /// Unlike [`Self::replace_at_cursor`] (which replaces only the TOP entry),
+    /// this finds the existing filter wherever it sits in the active slice — so
+    /// re-editing a column whose filter is buried under a later sort/filter
+    /// replaces the right entry instead of stacking a second predicate.
+    ///
+    /// Guard: only a `Transformation::Filter` carries a column to key on. If a
+    /// non-Filter is passed (not expected from the popover), fall back to
+    /// `apply` so the op is never silently dropped.
+    pub fn set_filter(&mut self, t: Transformation) -> ViewChange {
+        let Transformation::Filter { column, .. } = &t else {
+            debug_assert!(false, "set_filter called with a non-Filter transformation");
+            return self.apply(t);
+        };
+        let column = column.clone();
+        if let Some(idx) = self.stack[..self.cursor].iter().position(|op| {
+            matches!(op, Transformation::Filter { column: c, .. } if *c == column)
+        }) {
+            self.stack[idx] = t;
+            self.regenerate_view()
+        } else {
+            self.apply(t)
+        }
+    }
+
     // --- Sort query helpers ---
 
     /// Return the current Sort op (if any) as an [`ActiveSort`] for the header
@@ -230,6 +261,32 @@ impl ViewModel {
             previous_active_view: previous,
             sql: Some(body_sql),
         }
+    }
+}
+
+/// Pure outcome→[`ViewChange`] decision for the filter popover (T0 / PD-016).
+///
+/// This is the single source of truth for routing a popover [`Outcome`] into
+/// the ViewModel. Both `WorkspaceShell::route_filter_outcome` (which then drives
+/// the GPUI engine round-trip on the returned `Some(change)`) and the
+/// `click_wiring` integration test call this function, so the test exercises
+/// production routing rather than a duplicate match.
+///
+/// - `Apply(t)` → [`ViewModel::set_filter`] (column-aware upsert: replaces an
+///   existing filter on the same column, else appends — correct for both the
+///   new-filter and edit-existing flows).
+/// - `Clear { pre_populated: true }` → [`ViewModel::clear`].
+/// - `Clear { pre_populated: false }` / `Cancel` → no ViewChange.
+pub fn route_outcome(vm: &mut ViewModel, outcome: Outcome) -> Option<ViewChange> {
+    match outcome {
+        Outcome::Apply(t) => Some(vm.set_filter(t)),
+        Outcome::Clear {
+            pre_populated: true,
+        } => Some(vm.clear()),
+        Outcome::Clear {
+            pre_populated: false,
+        }
+        | Outcome::Cancel => None,
     }
 }
 

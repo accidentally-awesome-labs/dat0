@@ -9,7 +9,8 @@ use std::sync::Arc;
 
 use duckdb::arrow::datatypes::DataType;
 use gpui::{
-    App, Context, IntoElement, ParentElement, SharedString, Styled, Window, div, prelude::*,
+    App, Context, IntoElement, ParentElement, SharedString, Styled, WeakEntity, Window, div,
+    prelude::*,
 };
 use gpui_component::table::{Column, TableDelegate, TableState};
 
@@ -114,13 +115,23 @@ pub struct GridTableDelegate {
     /// hand a `&Column` to the widget on each `column()` call without
     /// re-deriving from the Arrow schema every frame.
     columns: Vec<Column>,
+    /// Weak handle to the owning `WorkspaceShell` (T0 / PD-016). The header
+    /// sort/funnel click closures upgrade this and dispatch into
+    /// `WorkspaceShell::on_sort_zone_click` / `on_funnel_click`. Weak so the
+    /// delegate never keeps the shell alive; `None` only in unit tests that
+    /// build a delegate without a shell.
+    ws: WeakEntity<crate::window::WorkspaceShell>,
 }
 
 impl GridTableDelegate {
     /// Build a delegate over `source`, deriving column metadata from the
     /// Arrow schema. Columns get a small default width and a type-badge
     /// suffix in their display name (e.g., `id (INT64)`).
-    pub fn new(source: Arc<GridDataSource>) -> Self {
+    ///
+    /// `ws` is a weak handle to the owning `WorkspaceShell` so the header
+    /// sort/funnel click closures (T0 / PD-016) can dispatch into it. Tests
+    /// that build a delegate without a shell pass `WeakEntity::new_invalid()`.
+    pub fn new(source: Arc<GridDataSource>, ws: WeakEntity<crate::window::WorkspaceShell>) -> Self {
         let schema = source.schema.clone();
         let columns = schema
             .fields()
@@ -132,7 +143,11 @@ impl GridTableDelegate {
                 Column::new(key, name)
             })
             .collect();
-        Self { source, columns }
+        Self {
+            source,
+            columns,
+            ws,
+        }
     }
 
     /// `Arc::ptr_eq` shortcut for the parent view's "rebuild on data-source
@@ -145,17 +160,18 @@ impl GridTableDelegate {
 
     /// Renders the sort-icon zone (right-of-center).
     ///
-    /// T12 live: the on_click closure reads the shift modifier from the GPUI
-    /// `ClickEvent` and logs the intended state-machine transition. The actual
-    /// `ViewModel::current_sort_as_active → click/shift_click → set_sort`
-    /// engine round-trip is wired in T13, which plumbs `ViewModel` access and
-    /// `spawn_view_change` into the delegate.
+    /// T0 (PD-016) live: the on_click closure reads the shift modifier from the
+    /// GPUI `ClickEvent` and dispatches into
+    /// [`crate::window::WorkspaceShell::on_sort_zone_click`], which runs the
+    /// `current_sort_as_active → click/shift_click → set_sort` cycle and the
+    /// `spawn_view_change` engine round-trip.
     ///
     /// The element must carry a unique `id` so GPUI can track click events
     /// across reframes; we encode `("th-sort", col_ix)`.
     fn render_sort_icon(&self, col_ix: usize) -> impl IntoElement {
-        // "⇅" is the neutral sort indicator; T13 will swap in "↑"/"↓" once
-        // ActiveSort state is readable from the delegate.
+        // "⇅" is the neutral sort indicator. A later P4b polish task can swap
+        // in "↑"/"↓" once ActiveSort state is read back into the delegate.
+        let ws = self.ws.clone();
         div()
             .id(("th-sort", col_ix))
             .w(gpui::px(HEADER_SORT_PX))
@@ -164,31 +180,25 @@ impl GridTableDelegate {
             .items_center()
             .justify_center()
             .cursor_pointer()
-            .on_click(move |ev, _window, _cx| {
-                // T12: read shift modifier so the state-machine transition is
-                // observable in logs. T13 replaces this with the real dispatch:
-                //   let col_name = self.columns[col_ix].name.clone();
-                //   let active = vm.current_sort_as_active();
-                //   let active = if shift { active.shift_click(&col_name) }
-                //                else     { active.click(&col_name) };
-                //   spawn_view_change(engine, base_table, vm.set_sort(active.keys), rebind);
-                let shift_held = ev.modifiers().shift;
-                tracing::debug!(
-                    col_ix,
-                    shift_held,
-                    "header sort zone clicked — T13 will dispatch to ViewModel::set_sort"
-                );
+            .on_click(move |ev, _window, cx| {
+                let shift = ev.modifiers().shift;
+                if let Some(h) = ws.upgrade() {
+                    h.update(cx, |ws, cx| ws.on_sort_zone_click(col_ix, shift, cx));
+                }
             })
             .child("⇅")
     }
 
     /// Renders the funnel-icon zone (rightmost).
     ///
-    /// T9 live: clicking logs the intent and calls a placeholder that T10 will
-    /// replace with the real filter-popover open.
+    /// T0 (PD-016) live: clicking dispatches into
+    /// [`crate::window::WorkspaceShell::on_funnel_click`], which mounts the
+    /// filter popover for `col_ix` and routes its `Outcome` back into the
+    /// ViewModel + engine round-trip.
     ///
     /// The element must carry a unique `id`; we encode `("th-funnel", col_ix)`.
     fn render_funnel_icon(&self, col_ix: usize) -> impl IntoElement {
+        let ws = self.ws.clone();
         div()
             .id(("th-funnel", col_ix))
             .w(gpui::px(HEADER_FUNNEL_PX))
@@ -197,11 +207,10 @@ impl GridTableDelegate {
             .items_center()
             .justify_center()
             .cursor_pointer()
-            .on_click(move |_ev, _window, _cx| {
-                // T9 stub: placeholder invocation for "open filter popover for
-                // column col_ix".  T10 replaces this closure with the real
-                // popover-open dispatch via the WorkspaceShell event channel.
-                tracing::debug!(col_ix, "header funnel zone clicked — T10 will wire popover");
+            .on_click(move |_ev, window, cx| {
+                if let Some(h) = ws.upgrade() {
+                    h.update(cx, |ws, cx| ws.on_funnel_click(col_ix, window, cx));
+                }
             })
             .child("⌄")
     }
@@ -358,7 +367,7 @@ mod tests {
     #[tokio::test]
     async fn delegate_columns_match_schema() {
         let (_tmp, ds) = build_source(8).await;
-        let delegate = GridTableDelegate::new(Arc::clone(&ds));
+        let delegate = GridTableDelegate::new(Arc::clone(&ds), gpui::WeakEntity::new_invalid());
         assert_eq!(delegate.columns.len(), ds.schema.fields().len());
         // Column name carries the type badge suffix.
         let first = &delegate.columns[0];
@@ -372,7 +381,7 @@ mod tests {
     #[tokio::test]
     async fn delegate_source_ptr_eq() {
         let (_tmp, ds) = build_source(4).await;
-        let delegate = GridTableDelegate::new(Arc::clone(&ds));
+        let delegate = GridTableDelegate::new(Arc::clone(&ds), gpui::WeakEntity::new_invalid());
         assert!(delegate.source_ptr_eq(&ds));
     }
 }

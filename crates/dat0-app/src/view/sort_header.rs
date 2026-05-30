@@ -13,6 +13,18 @@ impl ActiveSort {
         Self { keys }
     }
 
+    /// Borrow the current sort keys as a slice.
+    ///
+    /// Used by the grid sort-zone click handler (T0 / PD-016) to feed the
+    /// cycled keys into [`crate::view::ViewModel::set_sort`]:
+    /// `vm.set_sort(active.keys().to_vec())`.
+    ///
+    /// (A method, not just the `pub keys` field, so call sites read as
+    /// `active.keys()` symmetric with the rest of the read API.)
+    pub fn keys(&self) -> &[SortKey] {
+        &self.keys
+    }
+
     /// Find (1-based rank, direction) for `column`, or None if absent.
     pub fn find(&self, column: &str) -> Option<(usize, SortDirection)> {
         self.keys
