@@ -23,7 +23,10 @@ pub use duckdb_engine::DuckDBEngine;
 pub use error::EngineError;
 pub use render::{RenderError, compile_view_sql};
 pub use trait_def::QueryEngine;
-pub use transform::{CellEdit, FilterOp, FilterValue, RowKey, Scalar, SortDirection, SortKey, Transformation};
+pub use transform::{
+    CellEdit, FilterOp, FilterValue, ROWID_COL, RowKey, Scalar, SortDirection, SortKey,
+    Transformation,
+};
 pub use types::{
     ArrowRecordBatchStream, AttachOpts, ColumnInfo, DerivedOrigin, EngineStatus, ExportFormat,
     FileFormat, MemoryBudget, PagedQueryResult, QueryResult, RegisterOpts, TableInfo, TableOrigin,

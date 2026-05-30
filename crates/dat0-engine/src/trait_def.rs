@@ -57,4 +57,23 @@ pub trait QueryEngine: Send + Sync {
 
     async fn attach(&self, dsn: &str, alias: &str, opts: AttachOpts) -> Result<()>;
     async fn detach(&self, alias: &str) -> Result<()>;
+
+    /// Ensure `table` carries the `__dat0_rowid` surrogate (idempotent). Injected
+    /// at import; back-filled lazily for pre-P4b tables. See design §5.
+    ///
+    /// The surrogate is a gap-free `0..n-1` BIGINT key in physical scan order
+    /// (stable across reads), tagged with a `dat0:surrogate` column COMMENT that
+    /// makes this call idempotent and disambiguates our key from a user column
+    /// of the same name. A pre-existing UNMARKED `__dat0_rowid` source column is
+    /// renamed to `__dat0_rowid__src` (preserving the user's data) before the
+    /// surrogate is injected.
+    ///
+    /// `table` is a plain (unquoted) identifier; quoting is applied internally.
+    ///
+    /// # Errors
+    /// - `EngineError::EngineClosed` — if the engine has been closed.
+    /// - `EngineError::DuckDb` — if `table` is a VIEW or does not exist
+    ///   (`ALTER TABLE` only applies to base tables).
+    /// - `EngineError::EnginePoisoned` — if the connection mutex was poisoned.
+    async fn ensure_rowid(&self, table: &str) -> Result<()>;
 }

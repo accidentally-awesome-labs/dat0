@@ -10,14 +10,9 @@
 
 use crate::catalog::quote_ident;
 use crate::transform::{
-    CellEdit, FilterOp, FilterValue, RowKey, Scalar, SortDirection, SortKey, Transformation,
+    CellEdit, FilterOp, FilterValue, ROWID_COL, RowKey, Scalar, SortDirection, SortKey,
+    Transformation,
 };
-
-/// Fixed row-identity column injected at import (T3) and referenced literally by
-/// the edit/delete overlay. Not quoted: it is an internal sentinel name with no
-/// special characters and never collides with user columns (double-underscore
-/// prefix is reserved).
-const ROWID_COL: &str = "__dat0_rowid";
 
 #[derive(Debug, thiserror::Error, PartialEq)]
 pub enum RenderError {

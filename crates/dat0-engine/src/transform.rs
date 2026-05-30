@@ -44,6 +44,20 @@
 
 use serde::{Deserialize, Serialize};
 
+/// Fixed row-identity column injected at import (T3) and referenced literally by
+/// the edit/delete overlay render and by the engine's `ensure_rowid` migration.
+///
+/// Single source of truth: this is the ONLY definition of the literal
+/// `__dat0_rowid`. `render.rs` imports it, the engine's `ensure_rowid` uses it,
+/// and it is re-exported as `dat0_engine::ROWID_COL` for the app crate (T5).
+///
+/// Not quoted when interpolated into SQL: it is an internal sentinel name with
+/// no special characters and never collides with user columns (the
+/// double-underscore prefix is reserved; a colliding source column is renamed
+/// to `<ROWID_COL>__src` by `ensure_rowid`). It maps to the `RowKey::Surrogate`
+/// variant below.
+pub const ROWID_COL: &str = "__dat0_rowid";
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum Transformation {
