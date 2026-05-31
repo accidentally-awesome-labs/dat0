@@ -517,6 +517,12 @@ pub struct WorkspaceShell {
     /// deregisters silently (the P4a T10b trap). Cleared alongside
     /// `cell_editor`.
     cell_editor_sub: Option<Subscription>,
+    /// Marching-ants range set by the most recent copy/cut (T7). Stored in
+    /// screen-space; T7 only records the range. T11/polish will render the
+    /// animated dashed border and clear this on the next selection change —
+    /// until then it persists after a copy/cut.
+    // T11/polish: render marching-ants from this stored range + clear on selection change.
+    pub(crate) copied_range: Option<crate::grid::selection::CellRange>,
 }
 
 impl WorkspaceShell {
@@ -532,6 +538,7 @@ impl WorkspaceShell {
             selection: None,
             cell_editor: None,
             cell_editor_sub: None,
+            copied_range: None,
         }
     }
 
@@ -819,6 +826,206 @@ impl WorkspaceShell {
         self.cell_editor = Some(editor);
         cx.notify();
     }
+
+    // ── Clipboard: copy / cut / paste (T7) ───────────────────────────────────
+    //
+    // T11 wires the Cmd+C / Cmd+X / Cmd+V (Ctrl on Linux) keybinds → these
+    // handlers; T7 only exposes them. The pure-logic TSV codec + coerce live in
+    // `crate::grid::clipboard`; these handlers are the thin GPUI glue (clipboard
+    // I/O + ViewModel round-trip) — build+clippy verified, with the real Excel /
+    // Sheets round-trip exercised in T14 manual UAT.
+
+    /// Build the bounding-rectangle grid of the current selection's display
+    /// values, serialize it as spreadsheet-TSV, and write it to the system
+    /// clipboard (T7 copy). Gaps in a discontiguous selection become empty
+    /// cells (the bounding-rect convention; mirrors Excel / Sheets). Records the
+    /// copied range for the marching-ants border (rendered in T11/polish).
+    ///
+    /// No-op (graceful) when no data source / selection is mounted or the
+    /// selection is empty. Cells whose page isn't cached read as empty strings
+    /// (the synchronous-only contract — copy never blocks on a DuckDB fetch).
+    pub fn copy_selection(&mut self, cx: &mut Context<Self>) {
+        let Some(tsv) = self.build_selection_tsv() else {
+            return;
+        };
+        cx.write_to_clipboard(gpui::ClipboardItem::new_string(tsv));
+        cx.notify();
+    }
+
+    /// Copy the selection, then clear every selected cell to NULL in a single
+    /// undo step (T7 cut). The NULL edits are coerced through one
+    /// [`ViewModel::edit_cells`] call (one undo step) + one
+    /// [`Self::spawn_rebind`], exactly like paste.
+    ///
+    /// No-op when no data source / view model / selection is mounted.
+    pub fn cut_selection(&mut self, cx: &mut Context<Self>) {
+        // Copy first (sets the clipboard + marching-ants range).
+        self.copy_selection(cx);
+
+        let (Some(ds), Some(_vm)) = (self.data_source.as_ref(), self.view_model.as_ref()) else {
+            return;
+        };
+        let Some(selection) = self.selection.as_ref() else {
+            return;
+        };
+
+        // One CellEdit setting each selected cell to NULL. Cells whose page
+        // isn't cached (so `row_key` returns None) or whose column index is out
+        // of range are skipped — they can't be addressed.
+        let mut edits: Vec<dat0_engine::CellEdit> = Vec::new();
+        for (row, col) in selection.resolved_cells() {
+            let (Some(id), Some(column)) = (ds.row_key(row), ds.column_name(col)) else {
+                continue;
+            };
+            edits.push(dat0_engine::CellEdit {
+                row: dat0_engine::RowKey::Surrogate { id },
+                column,
+                value: dat0_engine::Scalar::Null,
+            });
+        }
+        if edits.is_empty() {
+            return;
+        }
+
+        let change = self
+            .view_model
+            .as_mut()
+            .expect("view_model checked above")
+            .edit_cells(edits);
+        self.spawn_rebind(change, cx);
+    }
+
+    /// Paste the clipboard's TSV block, anchored at the active selection cell
+    /// (T7). Parses the clipboard text, clamps the pasted block to the grid edge
+    /// (`row_count` × visible-column-count — out-of-range cells are dropped),
+    /// coerces each cell against its column's Arrow type (coerce-or-skip), and
+    /// applies the `Ok` cells as ONE [`ViewModel::edit_cells`] undo step + one
+    /// [`Self::spawn_rebind`]. If any cells were skipped (bad coercion) or
+    /// dropped (clamped past the edge), raises a paste-reject [`Banner`].
+    ///
+    /// No-op when no data source / view model / selection is mounted, or when
+    /// the clipboard holds no string (e.g. an image).
+    pub fn paste_clipboard(&mut self, cx: &mut Context<Self>) {
+        let Some(text) = cx.read_from_clipboard().and_then(|item| item.text()) else {
+            return;
+        };
+        let grid = crate::grid::clipboard::tsv_parse(&text);
+        // `tsv_parse` always returns at least one row of one cell, so a truly
+        // empty (or whitespace-only single-cell) clipboard payload decodes to
+        // `[[""]]` — guard against pasting that as an unintended empty-string
+        // write rather than relying on `grid.is_empty()` (which never fires).
+        if grid.iter().all(|row| row.iter().all(String::is_empty)) {
+            return;
+        }
+
+        let (Some(ds), Some(_vm), Some(selection)) = (
+            self.data_source.as_ref(),
+            self.view_model.as_ref(),
+            self.selection.as_ref(),
+        ) else {
+            return;
+        };
+
+        let anchor = selection.active();
+        let max_row = usize::try_from(ds.row_count).unwrap_or(usize::MAX);
+        let max_col = ds.visible_column_count();
+
+        let mut edits: Vec<dat0_engine::CellEdit> = Vec::new();
+        let mut skipped: usize = 0;
+        for (dr, paste_row) in grid.iter().enumerate() {
+            let row = anchor.row + dr;
+            for (dc, cell) in paste_row.iter().enumerate() {
+                let col = anchor.col + dc;
+                // Clamp-at-edge: drop cells that fall past the grid edge.
+                if row >= max_row || col >= max_col {
+                    skipped += 1;
+                    continue;
+                }
+                let (Some(id), Some(column), Some(ty)) = (
+                    ds.row_key(row),
+                    ds.column_name(col),
+                    ds.column_arrow_type(col),
+                ) else {
+                    // Page not cached or index out of range — can't address it.
+                    skipped += 1;
+                    continue;
+                };
+                match crate::grid::clipboard::coerce_cell(cell, &ty) {
+                    crate::grid::clipboard::CoerceResult::Ok(value) => {
+                        edits.push(dat0_engine::CellEdit {
+                            row: dat0_engine::RowKey::Surrogate { id },
+                            column,
+                            value,
+                        });
+                    }
+                    crate::grid::clipboard::CoerceResult::Skip => skipped += 1,
+                }
+            }
+        }
+
+        if !edits.is_empty() {
+            let change = self
+                .view_model
+                .as_mut()
+                .expect("view_model checked above")
+                .edit_cells(edits);
+            self.spawn_rebind(change, cx);
+        } else {
+            // Nothing applied — still re-render (e.g. to clear any prior state).
+            cx.notify();
+        }
+
+        if skipped > 0 {
+            // Structured title + body (P3b Banner shape), not a flat string. The
+            // banner is `dismissible` by default (the X closes it); a paste-reject
+            // has no natural primary action, so none is wired (unlike the
+            // recovery banner's "Review"). Surfaced via the boot-time pending
+            // queue, drained by the banner host like every other Banner.
+            crate::error_ux::push(crate::error_ux::Banner::error(
+                format!(
+                    "{skipped} cell{} couldn't be pasted",
+                    if skipped == 1 { "" } else { "s" }
+                ),
+                "Values that don't match the column type (or fall outside the grid) \
+                 were skipped. The rest were pasted."
+                    .to_string(),
+            ));
+        }
+    }
+
+    /// Build the bounding-rect TSV blob of the current selection's display
+    /// values, recording the copied range for marching-ants. Returns `None`
+    /// when no data source / selection is mounted or the selection is empty.
+    ///
+    /// Shared by [`Self::copy_selection`] and [`Self::cut_selection`]; the
+    /// bounding rectangle spans `min..=max` row / column over every selected
+    /// cell, and each gap (a coordinate in the rect not in the selection, or a
+    /// cell whose page isn't cached) becomes an empty string.
+    fn build_selection_tsv(&mut self) -> Option<String> {
+        let ds = self.data_source.as_ref()?;
+        let selection = self.selection.as_ref()?;
+
+        let cells: Vec<(usize, usize)> = selection.resolved_cells().collect();
+        let (r0, c0, r1, c1) = bounding_rect(&cells)?;
+
+        let grid: Vec<Vec<String>> = (r0..=r1)
+            .map(|row| {
+                (c0..=c1)
+                    .map(|col| {
+                        if selection.contains(row, col) {
+                            ds.cell_display(row, col).unwrap_or_default()
+                        } else {
+                            // Gap inside the bounding rect → empty cell.
+                            String::new()
+                        }
+                    })
+                    .collect()
+            })
+            .collect();
+
+        self.copied_range = Some(crate::grid::selection::CellRange { r0, c0, r1, c1 });
+        Some(crate::grid::clipboard::tsv_serialize(&grid))
+    }
 }
 
 impl WorkspaceShell {
@@ -839,6 +1046,23 @@ impl WorkspaceShell {
     pub fn child_widget_type_name() -> &'static str {
         std::any::type_name::<Table<GridTableDelegate>>()
     }
+}
+
+/// Inclusive bounding rectangle `(r0, c0, r1, c1)` over a set of `(row, col)`
+/// cells, or `None` when the set is empty (T7 copy/cut). Used to build the
+/// dense bounding-rect grid a discontiguous selection serializes to (gaps in
+/// the rect become empty cells).
+fn bounding_rect(cells: &[(usize, usize)]) -> Option<(usize, usize, usize, usize)> {
+    let mut it = cells.iter();
+    let &(r, c) = it.next()?;
+    let (mut r0, mut c0, mut r1, mut c1) = (r, c, r, c);
+    for &(row, col) in it {
+        r0 = r0.min(row);
+        c0 = c0.min(col);
+        r1 = r1.max(row);
+        c1 = c1.max(col);
+    }
+    Some((r0, c0, r1, c1))
 }
 
 impl Render for WorkspaceShell {

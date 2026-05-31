@@ -209,6 +209,62 @@ impl GridDataSource {
             })
     }
 
+    /// Real Arrow [`DataType`] of the VISIBLE column at `ix`, or `None` when
+    /// `ix` is out of range (T7 — paste coercion needs the precise type, not
+    /// the coarse [`crate::view::filter_popover::ColumnType`], so int/float
+    /// fidelity survives: `42` into an Int column → `Scalar::Int`, into a Float
+    /// column → `Scalar::Float`).
+    ///
+    /// Indexes over VISIBLE columns (consistent with [`Self::column_name`]).
+    pub fn column_arrow_type(&self, ix: usize) -> Option<duckdb::arrow::datatypes::DataType> {
+        let schema_ix = self.schema_index_for_visible(ix)?;
+        self.schema
+            .fields()
+            .get(schema_ix)
+            .map(|f| f.data_type().clone())
+    }
+
+    /// Synchronously read the rendered DISPLAY string of the cell at
+    /// (`screen_row`, `visible_col`) for copy (T7), or `None` when the row's
+    /// page is not cached or the indices are out of range (graceful — never
+    /// blocks the render loop / never triggers a DuckDB fetch).
+    ///
+    /// Mirrors the synchronous LRU lookup [`Self::row_key`] uses: only reads a
+    /// page already promoted into the cache by the paged render path. NULL cells
+    /// return an empty string (the spreadsheet convention — Excel / Sheets paste
+    /// an empty cell, not the literal text "NULL"). Non-NULL values use the same
+    /// [`crate::grid::renderers::render_cell`] display string the grid paints, so
+    /// a copy reflects exactly what the user sees.
+    ///
+    /// `visible_col` indexes over VISIBLE columns (the hidden `__dat0_rowid`
+    /// surrogate is skipped) — consistent with [`Self::column_name`].
+    pub fn cell_display(&self, screen_row: usize, visible_col: usize) -> Option<String> {
+        let schema_ix = self.schema_index_for_visible(visible_col)?;
+
+        let screen_row_u64 = u64::try_from(screen_row).ok()?;
+        let key = PageKey {
+            start: (screen_row_u64 / PAGE_ROWS) * PAGE_ROWS,
+        };
+        let offset = usize::try_from(screen_row_u64 - key.start).ok()?;
+
+        let batch = {
+            let mut cache = self.cache.lock().expect("grid cache poisoned");
+            Arc::clone(cache.get(&key)?)
+        };
+
+        if offset >= batch.num_rows() {
+            return None;
+        }
+
+        let display = crate::grid::renderers::render_cell(&batch, schema_ix, offset);
+        if display.is_null {
+            // Spreadsheet round-trip convention: a NULL cell copies as empty.
+            Some(String::new())
+        } else {
+            Some(display.text)
+        }
+    }
+
     /// Returns `true` when the backing table has zero rows. Used by
     /// [`crate::window::WorkspaceShell::render`] (P3b T7) to fall back to
     /// the empty-state hero when a source is technically mounted but has
