@@ -244,6 +244,9 @@ impl crate::QueryEngine for DuckDBEngine {
         // the `__dat0_rowid` surrogate. All of this runs under a single
         // connection lock so the table is never observable mid-materialization
         // (mirrors the `create_table` invariant).
+        //
+        // NOTE: `dispatch_register_sql` emits `CREATE OR REPLACE VIEW` for the
+        // transient, so we rewrite the leading statement to target `tmp_view`.
         let tmp_view = format!("__dat0_import_tmp_{table_name}");
         let view_sql = crate::register::dispatch_register_sql(path, &opts, &tmp_view)?;
         let path = path.to_path_buf();
@@ -256,22 +259,49 @@ impl crate::QueryEngine for DuckDBEngine {
                 let conn = conn.lock().map_err(|_| EngineError::EnginePoisoned)?;
                 let qt = quote_ident(&table_name);
                 let qv = quote_ident(&tmp_view);
-                // 1) Build the sniffing view (transient intermediate).
-                // 2) Materialize it into a base table via CTAS.
-                // 3) Drop the intermediate view.
-                // Wrapped in a single execute_batch so the steps run atomically
-                // from the caller's perspective.
-                conn.execute_batch(&format!(
-                    "{view_sql}\n\
-                     CREATE TABLE {qt} AS SELECT * FROM {qv};\n\
-                     DROP VIEW {qv};",
+                // Materialize the import atomically:
+                //   1) Build the sniffing view (transient intermediate). This is
+                //      `CREATE OR REPLACE VIEW` (see `register::*::build_*_view_sql`),
+                //      so a leftover transient from a crashed pre-transaction-era
+                //      import is overwritten in place and cannot wedge a fresh
+                //      import — no separate defensive DROP needed.
+                //   2) Materialize it into a base table via `CREATE OR REPLACE
+                //      TABLE … AS SELECT` — idempotent, so re-importing the same
+                //      filename overwrites rather than erroring (restores the
+                //      old view-based `register_file` re-import semantics).
+                //   3) Drop the intermediate view.
+                //
+                // We wrap the sequence in `BEGIN … COMMIT` AND explicitly
+                // `ROLLBACK` on any error. This explicit rollback is REQUIRED:
+                // in duckdb-rs 1.4.4 a statement error mid-transaction does NOT
+                // auto-abort the txn — the already-applied `CREATE OR REPLACE
+                // VIEW` would otherwise survive a later `COMMIT`/autocommit and
+                // leak `__dat0_import_tmp_<name>` permanently (verified against
+                // 1.4.4: error→COMMIT leaks; error→ROLLBACK is clean). With the
+                // ROLLBACK, ANY failure (CTAS name-clash, disk full, malformed
+                // file) unwinds the transient-view create — no leak.
+                let batch = format!(
+                    "BEGIN TRANSACTION;\n\
+                     {view_sql}\n\
+                     CREATE OR REPLACE TABLE {qt} AS SELECT * FROM {qv};\n\
+                     DROP VIEW {qv};\n\
+                     COMMIT;",
                     view_sql = view_sql,
                     qt = qt,
                     qv = qv,
-                ))?;
-                // Inject the surrogate EAGERLY (design §5: "at import"). Done
-                // here, under the same lock, so the base table is never visible
-                // without its `__dat0_rowid`.
+                );
+                if let Err(e) = conn.execute_batch(&batch) {
+                    // Best-effort rollback; ignore its own error (e.g. if the
+                    // failure was on `BEGIN` itself and no txn is open).
+                    let _ = conn.execute_batch("ROLLBACK;");
+                    return Err(e.into());
+                }
+                // Inject the surrogate EAGERLY (design §5: "at import"). Runs
+                // only on batch success (after COMMIT), under the same lock, so
+                // the base table is never visible without its `__dat0_rowid`.
+                // `ensure_rowid_blocking` is itself idempotent; running it
+                // outside the materialization txn is fine since it only fires on
+                // a committed base table.
                 ensure_rowid_blocking(&conn, &table_name)?;
                 crate::catalog::describe_table(&conn, &table_name, None)
             }

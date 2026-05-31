@@ -118,8 +118,9 @@ async fn register_file_as_table_yields_base_table_with_rowid() {
 
 #[tokio::test]
 async fn register_file_as_table_leaves_no_intermediate_view() {
-    // A1 materializes via a transient intermediate; it must not leak a leftover
-    // view alongside the base table.
+    // A1 materializes via a transient `__dat0_import_tmp_<name>` view; on the
+    // happy path neither the transient NOR a view sharing the final table name
+    // may remain alongside the base table.
     let tmp = TempDir::new().unwrap();
     let eng = engine(&tmp).await;
 
@@ -137,8 +138,61 @@ async fn register_file_as_table_leaves_no_intermediate_view() {
         "no leftover intermediate view should share the table name"
     );
 
+    // The transient intermediate view itself must be dropped.
+    assert!(
+        !is_view(&eng, &format!("__dat0_import_tmp_{}", info.name)).await,
+        "transient __dat0_import_tmp_<name> view must not survive the happy path"
+    );
+
     // get_tables (sidebar catalog) lists exactly one object for this name.
     let tables = eng.get_tables().await.unwrap();
     let matches = tables.iter().filter(|t| t.name == info.name).count();
     assert_eq!(matches, 1, "exactly one catalog entry for the import");
+}
+
+#[tokio::test]
+async fn register_file_as_table_ctas_failure_rolls_back_transient_view() {
+    // ERROR PATH (regression guard for the autocommit-batch leak): the
+    // materialization runs `CREATE OR REPLACE VIEW __dat0_import_tmp_<name>`
+    // then `CREATE OR REPLACE TABLE <name> AS …`. duckdb-rs 1.4.4's
+    // `execute_batch` is AUTOCOMMIT and does NOT roll back prior statements when
+    // a later one fails, so without an explicit transaction + ROLLBACK a failing
+    // CTAS would leak the transient view permanently.
+    //
+    // Deterministic failure trigger: pre-create a VIEW named `orders`, then
+    // import a file deriving table name `orders`. `CREATE OR REPLACE TABLE
+    // orders …` errors ("Existing object orders is of type View, trying to
+    // replace with type Table"), which fires AFTER the transient-view create.
+    let tmp = TempDir::new().unwrap();
+    let eng = engine(&tmp).await;
+
+    // Pre-create a VIEW that collides with the derived table name.
+    eng.__test_execute_batch("CREATE VIEW orders AS SELECT 1 AS x;")
+        .await
+        .unwrap();
+
+    let csv = tmp.path().join("orders.csv");
+    std::fs::write(&csv, "name,score\nalice,10\nbob,20\n").unwrap();
+
+    // (a) The import fails (CTAS cannot replace a view with a table).
+    let res = eng
+        .register_file_as_table(&csv, RegisterOpts::default())
+        .await;
+    assert!(
+        res.is_err(),
+        "import must fail when the derived name is an existing VIEW: {res:?}"
+    );
+
+    // (b) The transient intermediate must NOT be leaked — the transaction's
+    // explicit ROLLBACK unwound the `CREATE OR REPLACE VIEW`.
+    assert!(
+        !is_view(&eng, "__dat0_import_tmp_orders").await,
+        "transient __dat0_import_tmp_orders view leaked after a failed CTAS"
+    );
+
+    // The pre-existing `orders` view is untouched (rollback restored state).
+    assert!(
+        is_view(&eng, "orders").await,
+        "pre-existing 'orders' view must survive the rolled-back import"
+    );
 }
