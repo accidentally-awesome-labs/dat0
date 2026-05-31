@@ -39,6 +39,7 @@ use gpui::{
     TitlebarOptions, Window, WindowBounds, WindowOptions, div, prelude::*, px, size,
 };
 use gpui_component::Root;
+use gpui_component::h_flex;
 use gpui_component::table::{Table, TableState};
 use parking_lot::Mutex;
 use std::path::PathBuf;
@@ -1476,12 +1477,38 @@ impl Render for WorkspaceShell {
                 .into_any_element()
         });
 
+        // T10: tab-strip with dirty-dot indicator. Shown whenever a ViewModel
+        // is mounted (i.e. a file has been loaded). The "•" glyph appears next
+        // to the tab label when `vm.is_dirty()` is true — meaning the active
+        // transformation stack contains at least one Edit or RowDelete op.
+        // Undo clears the stack back past the dirty ops and the dot disappears
+        // on the next render (cx.notify() fires after every rebind).
+        let tab_strip: Option<gpui::AnyElement> = self.view_model.as_ref().map(|vm| {
+            let is_dirty = vm.is_dirty();
+            let label = vm.tab_id().to_string();
+            let tab_label = h_flex()
+                .gap_1()
+                .items_center()
+                .child(div().child(label))
+                .children(is_dirty.then(|| div().child("•")));
+            h_flex()
+                .w_full()
+                .px_3()
+                .py_1()
+                .border_b_1()
+                .child(tab_label)
+                .into_any_element()
+        });
+
         div()
             .size_full()
+            .flex()
+            .flex_col()
             .relative()
             .drag_over::<ExternalPaths>(|style, _, _, _| style.bg(gpui::rgba(0x0088_ff22)))
             .on_drop::<ExternalPaths>(drop_listener)
-            .child(body)
+            .children(tab_strip)
+            .child(div().flex_1().child(body))
             .children(popover_overlay)
             .children(editor_overlay)
     }
