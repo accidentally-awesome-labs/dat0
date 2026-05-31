@@ -181,6 +181,17 @@ impl SelectionModel {
         set.into_iter()
     }
 
+    /// Returns `true` when the selection has at least one range and the context
+    /// menu should offer "Delete row(s)". Always `true` when there is any
+    /// selection — semantically, any selected cell's row is a deletion candidate
+    /// (mirrors [`crate::window::WorkspaceShell::delete_selected_rows`]).
+    ///
+    /// The method exists as a named hook so future logic (e.g., "require
+    /// full-row select for delete") can be added without touching call sites.
+    pub fn has_selection(&self) -> bool {
+        !self.ranges.is_empty()
+    }
+
     /// Move the active cell by `(dr, dc)`, clamping to grid bounds, and set a
     /// new single-cell selection at the result.  Analogous to arrow-key navigation.
     ///

@@ -2,6 +2,7 @@
 
 pub mod cell_editor;
 pub mod clipboard;
+pub mod context_menu;
 pub mod data_source;
 pub mod renderers;
 pub mod selection;

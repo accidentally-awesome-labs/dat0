@@ -123,4 +123,9 @@ impl ActionRegistry {
     pub fn count(&self) -> usize {
         self.inner.read().len()
     }
+
+    /// Return `true` if an action with the given string id has been registered.
+    pub fn contains(&self, id: &str) -> bool {
+        self.inner.read().contains_key(&ActionId(id.to_string()))
+    }
 }

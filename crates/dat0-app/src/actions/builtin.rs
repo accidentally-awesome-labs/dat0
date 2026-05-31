@@ -32,6 +32,14 @@ pub mod ids {
     pub const SAMPLE_DATA_RETRY_TAXI: &str = "sample_data.retry_taxi";
     pub const VIEW_UNDO: &str = "view.undo";
     pub const VIEW_REDO: &str = "view.redo";
+    // T9: edit/clipboard/bulk action ids.
+    pub const VIEW_COPY: &str = "view.copy";
+    pub const VIEW_CUT: &str = "view.cut";
+    pub const VIEW_PASTE: &str = "view.paste";
+    pub const VIEW_FILL_DOWN: &str = "view.fill_down";
+    pub const VIEW_DELETE_ROWS: &str = "view.delete_rows";
+    pub const VIEW_SET_NULL: &str = "view.set_null";
+    pub const VIEW_SET_VALUE: &str = "view.set_value";
 }
 
 /// Register every built-in action onto `reg`. Returns an error if any id
@@ -152,6 +160,7 @@ pub fn register_all(reg: &ActionRegistry) -> Result<(), RegisterError> {
     })?;
 
     super::view_actions::register(reg)?;
+    super::edit_actions::register(reg)?;
 
     Ok(())
 }
