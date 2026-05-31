@@ -1,5 +1,6 @@
 use crate::settings::Settings;
 use anyhow::{Context, Result};
+use std::io::Write as _;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
 
@@ -69,15 +70,61 @@ impl SettingsStore {
         }
     }
 
+    /// Atomically persist `s` to `settings.toml`.
+    ///
+    /// Writes to `settings.toml.tmp` first, syncs the file, then renames to
+    /// `settings.toml`, then syncs the parent directory so the rename metadata
+    /// also reaches stable storage (PD-002 — same pattern as
+    /// `session/mod.rs::persist` which closed the session.json twin in P4a T8).
+    /// The `.tmp` file is never visible after a successful call.
     pub fn save(&self, s: &Settings) -> Result<()> {
-        if let Some(parent) = self.path.parent() {
-            std::fs::create_dir_all(parent)?;
+        let parent = self.path.parent();
+        if let Some(p) = parent {
+            std::fs::create_dir_all(p)?;
         }
-        let serialized = toml::to_string_pretty(s)?;
-        // Atomic write: write to .tmp, fsync, rename.
+        let serialized =
+            toml::to_string_pretty(s).context("settings::save: TOML serialisation failed")?;
+
         let tmp = self.path.with_extension("toml.tmp");
-        std::fs::write(&tmp, serialized)?;
-        std::fs::rename(&tmp, &self.path)?;
+
+        {
+            let f = std::fs::OpenOptions::new()
+                .write(true)
+                .create(true)
+                .truncate(true)
+                .open(&tmp)
+                .with_context(|| {
+                    format!("settings::save: create tmp file {} failed", tmp.display())
+                })?;
+            let mut bw = std::io::BufWriter::new(f);
+            bw.write_all(serialized.as_bytes())
+                .context("settings::save: write to tmp failed")?;
+            let f = bw
+                .into_inner()
+                .context("settings::save: flush BufWriter failed")?;
+            f.sync_all()
+                .context("settings::save: fsync tmp file failed")?;
+        }
+
+        std::fs::rename(&tmp, &self.path).with_context(|| {
+            format!(
+                "settings::save: rename {} -> {} failed",
+                tmp.display(),
+                self.path.display()
+            )
+        })?;
+
+        // fsync the parent directory so the rename metadata hits disk.
+        // PD-002: without this, a power-loss between the rename and any
+        // future OS-triggered directory sync could lose the new file.
+        if let Some(p) = parent {
+            let dir = std::fs::File::open(p).with_context(|| {
+                format!("settings::save: open parent dir {} failed", p.display())
+            })?;
+            dir.sync_all()
+                .context("settings::save: fsync parent dir failed")?;
+        }
+
         Ok(())
     }
 

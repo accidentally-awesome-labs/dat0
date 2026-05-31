@@ -60,7 +60,7 @@ that's modifying it; merge conflicts are signals worth investigating.
 | ID     | Title                                                              | Status | Severity |
 |--------|--------------------------------------------------------------------|--------|----------|
 | PD-001 | tracing EnvFilter directive `dat0=debug` doesn't match dat0 crates | open   | low      |
-| PD-002 | Settings store atomic-write missing `fsync` before rename          | open   | low      |
+| PD-002 | Settings store atomic-write missing `fsync` before rename          | closed | low      |
 | PD-003 | cargo-about NOTICE output not deterministic across host platforms  | open   | low      |
 | PD-004 | Linux Secret Service backend not reachable from CI keychain tests  | open   | low      |
 | PD-011 | P3b plan §3.7 ambiguity rule references sniff outputs that don't exist: no candidate-delimiter scores, no encoding column, no per-column confidence in `sniff_csv` | open | low |
@@ -459,37 +459,27 @@ that's modifying it; merge conflicts are signals worth investigating.
 
 ### PD-002 — Settings store atomic-write missing `fsync` before rename
 
-- **Status:** open (partial — session.json side closed; settings.toml side still open)
+- **Status:** closed
 - **Severity:** low (durability, not correctness)
 - **Affected files:**
-  - `crates/dat0-app/src/settings/store.rs:save` — **still open** (settings.toml path)
-  - `crates/dat0-app/src/session/store.rs:save` — **closed by T8** (session.json path)
-- **Symptom:** Comment claims "Atomic write: write to .tmp, fsync, rename." but
-  the code uses `std::fs::write` (which only writes + closes, no fsync). On
+  - `crates/dat0-app/src/settings/store.rs:save` — **closed by T12** (settings.toml path)
+  - `crates/dat0-app/src/session/mod.rs:persist` — **closed by T8** (session.json path)
+- **Symptom:** Comment claimed "Atomic write: write to .tmp, fsync, rename." but
+  the code used `std::fs::write` (which only writes + closes, no fsync). On
   macOS the rename is atomic at the directory-entry level, but the new file's
   data blocks may not be durable before the rename completes if the kernel
   hasn't flushed the page cache. On power loss the user could see a
   zero-length `settings.toml`.
 - **Discovered:** P1 T8 implementer report
 - **Originating doc:** `docs/plans/2026-04-26-dat0-p1-foundation-plan.md` Step 8.3
-- **Suggested fix (for remaining settings.toml path):**
-  ```rust
-  let tmp = self.path.with_extension("toml.tmp");
-  let mut f = std::fs::OpenOptions::new()
-      .write(true).create(true).truncate(true).open(&tmp)?;
-  use std::io::Write;
-  f.write_all(serialized.as_bytes())?;
-  f.sync_all()?;
-  drop(f);
-  std::fs::rename(&tmp, &self.path)?;
-  // Optional: fsync the parent directory for durable rename:
-  // std::fs::File::open(self.path.parent().unwrap_or(Path::new("/")))?.sync_all()?;
-  ```
-- **Acceptable when:** dat0 begins storing recoverable state in settings (e.g.,
-  workspace pointers a user would lose if the file zeroed). Until then the cost
-  of a corrupt settings file is "user re-enters preferences," which is low.
-- **Session.json side closed by:** commit `e295cd5` (T8 post-review, P4a) — `session/store.rs` now uses `OpenOptions` + `write_all` + `sync_all` + `rename` + optional parent-dir fsync. Only `settings/store.rs` remains.
-- **Last touched:** 2026-05-29
+- **Session.json side closed by:** commit `e295cd5` (T8 post-review, P4a) — `session/mod.rs::persist` now uses `OpenOptions` + `write_all` + `sync_all` + `rename` + parent-dir fsync.
+- **Closed by:** P4b T12 — `settings/store.rs::save` now uses the same durable
+  write pattern as the session-side twin: `OpenOptions` + `BufWriter` +
+  `write_all` + `sync_all` (file) + `rename` + `sync_all` (parent dir). Three
+  durability regression tests added to `crates/dat0-app/tests/settings_store.rs`:
+  `save_no_tmp_file_left_after_successful_save`, `save_overwrite_yields_complete_valid_toml`,
+  `save_durability_round_trip_all_fields`. Both sides now fully closed.
+- **Last touched:** 2026-05-31
 
 ---
 
