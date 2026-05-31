@@ -265,6 +265,47 @@ impl GridDataSource {
         }
     }
 
+    /// Synchronously read the full [`crate::grid::renderers::CellDisplay`] of the
+    /// cell at (`screen_row`, `visible_col`) for the paged render path (PD-018),
+    /// or `None` when the row's page is not cached or the indices are out of
+    /// range (graceful — never blocks the render loop / never triggers a DuckDB
+    /// fetch).
+    ///
+    /// Unlike [`Self::cell_display`] (which returns the bare copy string and maps
+    /// NULL → empty for the spreadsheet round-trip), this returns the structured
+    /// `CellDisplay` so the grid delegate can apply numeric right-alignment and
+    /// NULL styling. The two share the same underlying [`crate::grid::renderers::render_cell`]
+    /// so an on-screen cell and a copied cell reflect the same value.
+    ///
+    /// `visible_col` indexes over VISIBLE columns (the hidden `__dat0_rowid`
+    /// surrogate is skipped) — consistent with [`Self::column_name`].
+    pub fn cell_render(
+        &self,
+        screen_row: usize,
+        visible_col: usize,
+    ) -> Option<crate::grid::renderers::CellDisplay> {
+        let schema_ix = self.schema_index_for_visible(visible_col)?;
+
+        let screen_row_u64 = u64::try_from(screen_row).ok()?;
+        let key = PageKey {
+            start: (screen_row_u64 / PAGE_ROWS) * PAGE_ROWS,
+        };
+        let offset = usize::try_from(screen_row_u64 - key.start).ok()?;
+
+        let batch = {
+            let mut cache = self.cache.lock().expect("grid cache poisoned");
+            Arc::clone(cache.get(&key)?)
+        };
+
+        if offset >= batch.num_rows() {
+            return None;
+        }
+
+        Some(crate::grid::renderers::render_cell(
+            &batch, schema_ix, offset,
+        ))
+    }
+
     /// Returns `true` when the backing table has zero rows. Used by
     /// [`crate::window::WorkspaceShell::render`] (P3b T7) to fall back to
     /// the empty-state hero when a source is technically mounted but has

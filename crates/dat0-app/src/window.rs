@@ -582,6 +582,69 @@ impl WorkspaceShell {
         cx.notify();
     }
 
+    /// Prefetch the page(s) covering screen rows `[start, end)` into the
+    /// `GridDataSource` LRU so the grid's synchronous `render_td` paints real
+    /// values for the rows the user can see (PD-018).
+    ///
+    /// The fetch runs OFF the GPUI main thread — `GridDataSource::page_for` is
+    /// async DuckDB I/O and must never block the 60 fps render loop. Once the
+    /// page is in the LRU, the re-render `notify` is posted back onto the main
+    /// thread via the [`crate::main_bridge::MainThreadDispatcher`] (the canonical
+    /// `spawn_view_change` discipline — NEVER `cx.update` from the tokio task).
+    /// Re-rendering the shell re-renders the mounted `Table`, whose `render_td`
+    /// now finds the cached page.
+    ///
+    /// Called on grid bind (page 0) and from the delegate's
+    /// `visible_rows_changed` hook (scroll-paging). Pages already in the LRU are
+    /// a cheap `O(1)` cache hit, so re-entrant calls for the same range are
+    /// nearly free; the `notify` is still posted once per fetch so a page that
+    /// was already resident triggers no extra DuckDB round-trip.
+    pub fn prefetch_visible_rows(&self, start: usize, end: usize, cx: &mut Context<Self>) {
+        let Some(ds) = self.data_source.as_ref() else {
+            return;
+        };
+        let ds = Arc::clone(ds);
+        let ws_weak = cx.entity().downgrade();
+
+        // Page-align the range to the rows actually requested; `page_for`
+        // internally aligns each `row` to its `PAGE_ROWS` boundary, so issuing
+        // one fetch per visible row would be wasteful. We sample the start and
+        // (inclusive) last row so a visible range that straddles a page boundary
+        // loads both pages.
+        let start = start as u64;
+        let last = end.saturating_sub(1) as u64;
+
+        tokio::spawn(async move {
+            // Load the page covering the first visible row, then (if different)
+            // the page covering the last visible row. `page_for` is idempotent
+            // (cache hit on the second call for the same page).
+            let mut changed = false;
+            for row in [start, last] {
+                match ds.page_for(row).await {
+                    Ok(_) => changed = true,
+                    Err(e) => {
+                        tracing::warn!(row, error = %e, "prefetch_visible_rows: page_for failed");
+                    }
+                }
+            }
+            if !changed {
+                return;
+            }
+            // Post the re-render onto the GPUI main thread via the dispatcher.
+            if let Some(dispatcher) = crate::window_registry::dispatcher() {
+                let _ = dispatcher.dispatch(move |app_cx: &mut gpui::App| {
+                    if let Some(h) = ws_weak.upgrade() {
+                        h.update(app_cx, |_ws, cx| cx.notify());
+                    }
+                });
+            } else {
+                tracing::warn!(
+                    "prefetch_visible_rows: no MainThreadDispatcher installed; grid will not refresh"
+                );
+            }
+        });
+    }
+
     /// Mutable access to the per-tab `ViewModel` (T13). Returns `None` if
     /// no table has been registered yet (pre-file-drop state).
     pub fn view_model_mut(&mut self) -> Option<&mut ViewModel> {
@@ -1321,6 +1384,15 @@ impl Render for WorkspaceShell {
             if needs_rebuild {
                 let delegate = GridTableDelegate::new(Arc::clone(ds), cx.entity().downgrade());
                 self.table_state = Some(cx.new(|cx| TableState::new(delegate, window, cx)));
+
+                // PD-018 prefetch-on-bind: kick a background fetch of the first
+                // visible page so the grid paints real values on the next frame
+                // instead of em-dash placeholders. The delegate's
+                // `visible_rows_changed` hook takes over on scroll. We seed a
+                // generous first window (PAGE_ROWS worth) so the initial viewport
+                // is fully covered even before the first scroll event fires.
+                let initial_rows = usize::try_from(ds.row_count).unwrap_or(usize::MAX);
+                self.prefetch_visible_rows(0, initial_rows.min(1024), cx);
             }
 
             // Lazily construct the selection model once a non-empty source is
@@ -1439,9 +1511,22 @@ impl Render for WorkspaceShell {
                 //   `Table::new(state: &Entity<TableState<D>>) -> Self`
                 // Theming flows implicitly via `cx.theme()` inside the
                 // widget (spike §1.3); no prop to pass.
-                Table::new(state)
-                    .stripe(true)
-                    .bordered(true)
+                let table = Table::new(state).stripe(true).bordered(true);
+
+                // T9: mount the selection-aware right-click context menu on the
+                // grid body. `ContextMenuExt::context_menu` requires
+                // `ParentElement + Styled`, which the `Table` (a `RenderOnce`
+                // widget) does not implement directly — so we wrap it in a
+                // `div` and hang the menu off that. `build_menu` snapshots the
+                // current selection flag and captures a weak handle to this
+                // shell so the items dispatch into the live edit handlers.
+                use crate::grid::context_menu::{ContextMenuExt, build_menu};
+                let ws_weak = cx.entity().downgrade();
+                let menu_builder = build_menu(ws_weak, self.selection.as_ref());
+                div()
+                    .size_full()
+                    .child(table)
+                    .context_menu(menu_builder)
                     .into_any_element()
             }
             (Some(_), None) => {
@@ -1512,35 +1597,16 @@ impl Render for WorkspaceShell {
                 .into_any_element()
         });
 
-        // ── T11: focus ring for the active cell ──────────────────────────────────
+        // ── T11 / PD-018: focus ring for the active cell ─────────────────────────
         //
-        // PD-018 note: the grid renders cells as em-dash placeholders until the
-        // render-cache work lands, so this focus ring cannot anchor over a real
-        // painted cell.  We render it as a floating badge in the bottom-left
-        // corner of the table area showing the active coord (row, col) — it is
-        // a deliberately minimal "something is here" indicator that proves the
-        // wiring is live.  The badge disappears when there is no selection.
-        //
-        // A future P4c polish pass can replace this with a proper overlaid
-        // border that sits at the exact cell's bounding box once cell layout
-        // data is available (closes PD-018).
-        let focus_ring: Option<gpui::AnyElement> = self.selection.as_ref().map(|sel| {
-            let active = sel.active();
-            div()
-                .absolute()
-                .bottom_2()
-                .left_2()
-                .px_2()
-                .py_1()
-                .rounded_md()
-                // Thin 2-px blue ring — "focus ring" visual idiom.
-                .border_2()
-                .border_color(gpui::rgb(0x3b82f6))
-                .bg(gpui::rgba(0x3b82f611))
-                .text_sm()
-                .child(format!("▸ ({},{})", active.row, active.col))
-                .into_any_element()
-        });
+        // PD-018 closed the render-cache gap, so the focus ring is now drawn
+        // PER-CELL inside `GridTableDelegate::render_td` (a 2-px blue border on
+        // the cell at `selection.active()`, plus a lighter tint on selected
+        // cells). It reads the live selection through the delegate's weak
+        // `WorkspaceShell` handle, so it always tracks the current cursor and
+        // re-renders whenever the selection changes (`cx.notify()` after every
+        // mover / mutation). The previous bottom-left floating badge is therefore
+        // removed — there is no overlay element here anymore.
 
         // ── T11: key-down handler — navigation keys → SelectionModel movers ──────
         //
@@ -1652,6 +1718,5 @@ impl Render for WorkspaceShell {
             .child(div().flex_1().child(body))
             .children(popover_overlay)
             .children(editor_overlay)
-            .children(focus_ring)
     }
 }

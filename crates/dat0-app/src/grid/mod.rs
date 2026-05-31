@@ -12,14 +12,13 @@ pub use data_source::GridDataSource;
 
 use std::sync::Arc;
 
-use duckdb::arrow::datatypes::DataType;
 use gpui::{
     App, Context, IntoElement, ParentElement, SharedString, Styled, WeakEntity, Window, div,
     prelude::*,
 };
 use gpui_component::table::{Column, TableDelegate, TableState};
 
-use renderers::{CellAlignment, render_cell, type_badge};
+use renderers::{CellAlignment, type_badge};
 
 // ── Four-zone header geometry ─────────────────────────────────────────────────
 //
@@ -301,39 +300,41 @@ impl TableDelegate for GridTableDelegate {
         row_ix: usize,
         col_ix: usize,
         _window: &mut Window,
-        _cx: &mut Context<TableState<Self>>,
+        cx: &mut Context<TableState<Self>>,
     ) -> impl IntoElement {
-        // Per §4.4: `render_td` must return synchronously from in-memory
-        // data. P3a's `GridDataSource::page_for` is async; we can't await
-        // here. The proper fix (background prefetch + cached page lookup)
-        // is the next task in P3b — for T4 we read the Arrow schema for
-        // column type and, when the cache happens to hold the row's page,
-        // render the cell. Otherwise we emit a placeholder.
-        //
-        // Page-0 is the only page that's "guaranteed" available because
-        // `GridDataSource::new` probes the schema via `LIMIT 1` — that
-        // call does not populate the LRU. Hence "—" is the expected
-        // render for every cell at T4. The follow-up task replaces this
-        // with a synchronous cache lookup.
+        // PD-018: `render_td` reads the real value from the LRU page cache
+        // synchronously (`cell_render` never triggers a DuckDB fetch). When the
+        // row's page is already cached — prefetched on bind / on scroll via the
+        // background path — the cell paints its real value with numeric
+        // right-alignment and NULL styling. When the page hasn't loaded yet, we
+        // fall back to the em-dash placeholder for THAT cell only; the
+        // virtualized-table pattern means real values appear as pages load.
         //
         // `col_ix` is a VISIBLE-column index (the hidden `__dat0_rowid` never
-        // paints, T5); map it to the underlying Arrow schema index before
-        // reading the field so the cell reflects the right column.
-        let text = self
-            .source
-            .schema_index_for_visible(col_ix)
-            .and_then(|schema_ix| self.source.schema.fields().get(schema_ix).cloned())
-            .map(|f| match f.data_type() {
-                DataType::Int32 | DataType::Int64 | DataType::UInt64 | DataType::Float64 => "—",
-                _ => "—",
-            })
-            .unwrap_or("—");
+        // paints, T5); `cell_render` maps it to the underlying Arrow schema
+        // index internally so the cell reflects the right column.
+        let cell = self.source.cell_render(row_ix, col_ix);
 
-        // Note: the explicit numeric/right-align branch will land alongside
-        // the cache lookup; we keep the visual API (`render_cell` →
-        // `CellDisplay`) live below to ensure dead-code linters do not strip
-        // it, but the rendered output here is the placeholder.
-        let _ = (render_cell, CellAlignment::Right);
+        // PD-018 focus ring: now that cells paint real values we can anchor a
+        // per-cell ring on the active selection cell (replacing the T11
+        // bottom-left floating badge). Read the live selection through the weak
+        // `WorkspaceShell` handle — a cheap `read` per cell; selection sizes are
+        // small and this is the only place the active/selected state is known at
+        // cell-render time. Tests build the delegate with an invalid `ws`, so
+        // `upgrade` returns `None` and no ring is drawn.
+        let (is_active, is_selected) = self
+            .ws
+            .upgrade()
+            .and_then(|ws| {
+                ws.read(cx).selection.as_ref().map(|sel| {
+                    let active = sel.active();
+                    (
+                        active.row == row_ix && active.col == col_ix,
+                        sel.contains(row_ix, col_ix),
+                    )
+                })
+            })
+            .unwrap_or((false, false));
 
         // ElementId only accepts (&str, usize) tuples (gpui 0.2.2), not
         // 3-tuples. Encode (row_ix, col_ix) into a single index so each
@@ -341,7 +342,61 @@ impl TableDelegate for GridTableDelegate {
         let cell_ix = row_ix
             .saturating_mul(self.columns.len())
             .saturating_add(col_ix);
-        div().id(("td", cell_ix)).size_full().child(text)
+
+        let mut el = div().id(("td", cell_ix)).size_full().flex().items_center();
+
+        // Selected-cell tint (lighter than the active ring) so a multi-cell
+        // selection is visible for UAT.
+        if is_selected && !is_active {
+            el = el.bg(gpui::rgba(0x3b82f622));
+        }
+        // Active-cell focus ring: 2-px blue border anchored on the exact cell.
+        if is_active {
+            el = el
+                .border_2()
+                .border_color(gpui::rgb(0x3b82f6))
+                .bg(gpui::rgba(0x3b82f611));
+        }
+
+        match cell {
+            Some(display) => {
+                // Numeric / big-int cells right-align; text + NULL left-align.
+                el = match display.alignment {
+                    CellAlignment::Right => el.justify_end(),
+                    CellAlignment::Left => el.justify_start(),
+                };
+                if display.is_null {
+                    // NULL renders dimmed so it reads as "absent value", not the
+                    // literal string the user typed.
+                    el = el.text_color(gpui::rgb(0x9ca3af));
+                }
+                el.child(display.text)
+            }
+            // Page not yet cached (or out-of-range): placeholder for this cell.
+            None => el.justify_start().child("—".to_string()),
+        }
+    }
+
+    /// Background-fetch the page(s) covering `visible_range` so the next render
+    /// paints real values for the rows the user can see (PD-018 scroll-paging).
+    ///
+    /// Called by the gpui-component `Table` widget whenever the visible row
+    /// range changes. The fetch runs OFF the GPUI main thread (`page_for` is
+    /// async DuckDB I/O); the re-render notify is posted back onto the main
+    /// thread via the `MainThreadDispatcher` (never `cx.update` from the tokio
+    /// task — the canonical `spawn_view_change` discipline). Delegated to the
+    /// owning `WorkspaceShell` (it holds the dispatcher-friendly weak entity).
+    fn visible_rows_changed(
+        &mut self,
+        visible_range: std::ops::Range<usize>,
+        _window: &mut Window,
+        cx: &mut Context<TableState<Self>>,
+    ) {
+        if let Some(ws) = self.ws.upgrade() {
+            ws.update(cx, |ws, cx| {
+                ws.prefetch_visible_rows(visible_range.start, visible_range.end, cx);
+            });
+        }
     }
 }
 

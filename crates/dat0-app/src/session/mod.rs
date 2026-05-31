@@ -169,10 +169,23 @@ impl Session {
                 );
                 SessionState::default()
             }
+            Err(e) if e.is_forward_incompat() => {
+                // Forward-incompat: the session.json was written by a NEWER dat0
+                // (a newer top-level schema_version, or a known version carrying
+                // an unrecognized transform `kind`). Surface the dedicated
+                // forward-incompat Banner (PD-018 / T13 review Important 2) rather
+                // than treating it as corruption or silently dropping state, then
+                // propagate the error so the caller does NOT proceed to eagerly
+                // persist OUR (older) schema over the user's newer file —
+                // destroying data the newer binary can still read.
+                crate::error_ux::push(forward_incompat_banner(&e));
+                return Err(anyhow::Error::from(e))
+                    .context("recover: session.json is from a newer dat0 version");
+            }
             Err(e) => {
-                // Forward-incompat or malformed JSON surfaces here; caller decides UX.
-                // For P4a we propagate; T14 e2e + recovery_panel banner work decide
-                // the visible UX.
+                // Malformed JSON / other I/O errors surface here; caller decides
+                // UX. We propagate (no forward-incompat banner — this is genuine
+                // corruption, not a version skew).
                 return Err(anyhow::Error::from(e))
                     .context("recover: session.json migration failed");
             }
@@ -371,6 +384,36 @@ pub fn scan_orphans(state_root: &Path, live: &[Uuid]) -> Result<Vec<PathBuf>> {
 }
 
 // ---------------------------------------------------------------------------
+// Forward-incompat banner
+// ---------------------------------------------------------------------------
+
+/// Build the persistent forward-incompat [`crate::error_ux::Banner`] for a
+/// [`SessionLoadError`] that [`SessionLoadError::is_forward_incompat`] flags —
+/// i.e. the session.json was written by a newer dat0 version.
+///
+/// Routed from [`Session::recover`] instead of generic error propagation
+/// (T13 review Important 2). The banner is an Error-kind notice with a body
+/// distinguishing the two forward-incompat shapes (newer top-level version vs.
+/// an unrecognized transform `kind`), so the user understands their session is
+/// intact but needs the newer dat0 to open.
+fn forward_incompat_banner(err: &SessionLoadError) -> crate::error_ux::Banner {
+    let body = match err {
+        SessionLoadError::UnsupportedVersion(v) => format!(
+            "This session was saved by a newer version of dat0 (schema v{v}). \
+             Open it with that version, or discard it to start fresh."
+        ),
+        SessionLoadError::ForwardIncompatTransform(kind) => format!(
+            "This session uses a feature ('{kind}') from a newer version of dat0. \
+             Open it with that version, or discard it to start fresh."
+        ),
+        // Non-forward-incompat variants never reach this helper (the caller
+        // gates on `is_forward_incompat`), but keep the match total.
+        other => other.to_string(),
+    };
+    crate::error_ux::Banner::error("Session from a newer dat0 version", body)
+}
+
+// ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------
 
@@ -526,5 +569,64 @@ mod tests {
             "v1 migration should default transform_stack to empty"
         );
         assert_eq!(sess.tabs()[0].undo_cursor, 0);
+    }
+
+    /// `forward_incompat_banner` produces an Error-kind banner whose body
+    /// distinguishes the two forward-incompat shapes (pure function — no global
+    /// state, no parallel-test interference).
+    #[test]
+    fn forward_incompat_banner_describes_both_shapes() {
+        let v = forward_incompat_banner(&SessionLoadError::UnsupportedVersion(999));
+        assert_eq!(v.kind, crate::error_ux::BannerKind::Error);
+        assert!(
+            v.body.contains("999"),
+            "version banner body must mention the version: {}",
+            v.body
+        );
+
+        let k = forward_incompat_banner(&SessionLoadError::ForwardIncompatTransform(
+            "frobnicate".into(),
+        ));
+        assert_eq!(k.kind, crate::error_ux::BannerKind::Error);
+        assert!(
+            k.body.contains("frobnicate"),
+            "transform banner body must mention the kind: {}",
+            k.body
+        );
+    }
+
+    /// `Session::recover` on a forward-incompat (newer-version) session.json
+    /// pushes the forward-incompat Banner AND returns an error — it must NOT
+    /// silently fall back to default state (which would overwrite the user's
+    /// newer file via the eager post-recover persist).
+    #[tokio::test]
+    async fn recover_forward_incompat_pushes_banner_and_errors() {
+        // Drain any banners other tests left pending so our assertion is clean.
+        let _ = crate::error_ux::drain_pending();
+
+        let root = tempfile::tempdir().expect("tempdir");
+        let window_id = Uuid::now_v7();
+        let scratch_dir = root.path().join("scratch").join(window_id.to_string());
+        std::fs::create_dir_all(&scratch_dir).unwrap();
+
+        // A session.json written by a hypothetical future dat0 (newer schema).
+        let v999_json = r#"{ "schema_version": 999, "tabs": [], "active_tab": null }"#;
+        std::fs::write(scratch_dir.join("session.json"), v999_json).unwrap();
+
+        let result = Session::recover(scratch_dir, TEST_BUDGET).await;
+        assert!(
+            result.is_err(),
+            "forward-incompat recover must error (not fall back + overwrite the newer file)"
+        );
+
+        // The forward-incompat banner must have been pushed to the pending queue.
+        let drained = crate::error_ux::drain_pending();
+        assert!(
+            drained
+                .iter()
+                .any(|b| b.kind == crate::error_ux::BannerKind::Error
+                    && b.title.contains("newer dat0 version")),
+            "a forward-incompat Error banner must be pushed, got: {drained:?}"
+        );
     }
 }

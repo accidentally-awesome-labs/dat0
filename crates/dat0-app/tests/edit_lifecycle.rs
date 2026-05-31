@@ -187,3 +187,53 @@ async fn data_source_exposes_row_key_and_hides_column() {
     // Beyond row count → None (no panic).
     assert!(ds.row_key(999).is_none());
 }
+
+/// PD-018 — prefetching a page populates the LRU so the synchronous render-path
+/// readers (`cell_display` / `cell_render` / `row_key`) resolve REAL values
+/// instead of `None`. This is the cache contract the grid's `render_td` and the
+/// copy/paste/edit handlers depend on: before any page load they read nothing;
+/// after `page_for` the visible cells light up. Mirrors the T5 `row_key` test
+/// above (page_for(0) then assert), extended to the display readers PD-018 wired
+/// into `render_td`.
+#[tokio::test]
+async fn prefetch_populates_cache_so_cell_display_resolves_real_values() {
+    let (engine, base, _tmp) = test_engine_with_orders_rowid().await;
+    let ds = dat0_app::grid::GridDataSource::new(engine, base)
+        .await
+        .unwrap();
+
+    // Before any page load the synchronous readers find nothing (the running
+    // grid would paint em-dash placeholders — the PD-018 symptom).
+    assert!(
+        ds.cell_display(0, 0).is_none(),
+        "cell_display before prefetch must be None (empty cache → placeholder)"
+    );
+    assert!(
+        ds.cell_render(0, 0).is_none(),
+        "cell_render before prefetch must be None (empty cache → placeholder)"
+    );
+
+    // Prefetch page 0 — exactly what `WorkspaceShell::prefetch_visible_rows`
+    // does off-thread on bind.
+    ds.page_for(0).await.unwrap();
+
+    // Now the visible cells resolve their REAL values. Visible columns are
+    // `id`, `amount` (the surrogate is hidden); the rows are (1,100),(2,200),(3,300).
+    assert_eq!(
+        ds.cell_display(0, 0).as_deref(),
+        Some("1"),
+        "row 0 / col 0 (id) must be the real value after prefetch"
+    );
+    assert_eq!(
+        ds.cell_display(0, 1).as_deref(),
+        Some("100"),
+        "row 0 / col 1 (amount) must be the real value after prefetch"
+    );
+    assert_eq!(ds.cell_display(2, 1).as_deref(), Some("300"));
+
+    // `cell_render` returns the structured display the delegate paints (with
+    // alignment for the focus-ring / right-align styling).
+    let rendered = ds.cell_render(1, 0).expect("cell_render after prefetch");
+    assert_eq!(rendered.text, "2");
+    assert!(!rendered.is_null);
+}
