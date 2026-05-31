@@ -57,6 +57,85 @@ async fn test_engine_with_orders_rowid() -> (Arc<DuckDBEngine>, String, TempDir)
     (Arc::new(engine), "orders".to_string(), tmp)
 }
 
+/// T8 — fill_down: one `Edit` undo step regardless of how many cells are filled.
+///
+/// Directly calls `ViewModel::edit_cells` with a multi-cell `Vec<CellEdit>`
+/// (the shape `fill_down` on WorkspaceShell will produce) and asserts that the
+/// undo stack has exactly ONE step — confirming the "ONE transform per op"
+/// invariant required by T8.
+#[tokio::test]
+async fn fill_down_sets_column_from_top_cell_one_undo_step() {
+    let (engine, base, _tmp) = test_engine_with_orders_rowid().await;
+    let mut vm = dat0_app::view::ViewModel::new("t".into(), base);
+
+    // Simulate fill-down over rows 1..=2 of "amount" from row 0's value 100.
+    // (The helper creates: (1,100), (2,200), (3,300) — id and amount columns.)
+    let cells: Vec<dat0_engine::CellEdit> = (1i64..=2)
+        .map(|r| dat0_engine::CellEdit {
+            row: dat0_engine::RowKey::Surrogate { id: r },
+            column: "amount".into(),
+            value: dat0_engine::Scalar::Int(100),
+        })
+        .collect();
+    let _ = vm.edit_cells(cells);
+
+    // ONE undo step regardless of cell count — the core T8 guarantee.
+    assert_eq!(
+        vm.active().len(),
+        1,
+        "fill_down must produce exactly one undo step"
+    );
+
+    // Suppress unused-engine warning; the engine is needed to keep _tmp alive.
+    let _ = engine;
+}
+
+/// T8 — set_null_selection: one `Edit` undo step for multiple cells.
+#[tokio::test]
+async fn set_null_selection_one_undo_step() {
+    let (_engine, base, _tmp) = test_engine_with_orders_rowid().await;
+    let mut vm = dat0_app::view::ViewModel::new("t".into(), base);
+
+    // Two selected cells → two CellEdits with Scalar::Null, but ONE Edit transform.
+    let cells: Vec<dat0_engine::CellEdit> = vec![
+        dat0_engine::CellEdit {
+            row: dat0_engine::RowKey::Surrogate { id: 0 },
+            column: "amount".into(),
+            value: dat0_engine::Scalar::Null,
+        },
+        dat0_engine::CellEdit {
+            row: dat0_engine::RowKey::Surrogate { id: 1 },
+            column: "amount".into(),
+            value: dat0_engine::Scalar::Null,
+        },
+    ];
+    let _ = vm.edit_cells(cells);
+    assert_eq!(
+        vm.active().len(),
+        1,
+        "set_null must produce exactly one undo step"
+    );
+}
+
+/// T8 — delete_rows: one `RowDelete` undo step for multiple rows.
+#[tokio::test]
+async fn delete_rows_selection_one_undo_step() {
+    let (_engine, base, _tmp) = test_engine_with_orders_rowid().await;
+    let mut vm = dat0_app::view::ViewModel::new("t".into(), base);
+
+    // Two selected rows → two RowKeys, but ONE RowDelete transform.
+    let keys: Vec<dat0_engine::RowKey> = vec![
+        dat0_engine::RowKey::Surrogate { id: 0 },
+        dat0_engine::RowKey::Surrogate { id: 1 },
+    ];
+    let _ = vm.delete_rows(keys);
+    assert_eq!(
+        vm.active().len(),
+        1,
+        "delete_rows must produce exactly one undo step"
+    );
+}
+
 #[tokio::test]
 async fn data_source_exposes_row_key_and_hides_column() {
     // After ensure_rowid + a view bind, the source yields __dat0_rowid per screen

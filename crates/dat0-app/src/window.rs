@@ -993,6 +993,215 @@ impl WorkspaceShell {
         }
     }
 
+    // ── Bulk ops: fill-down / set-null / set-value / delete-rows (T8) ──────────
+    //
+    // T9 wires these to the context menu and T11 wires Ctrl+D / Delete keys;
+    // T8 only exposes the `pub` handlers. Each resolves the current selection
+    // → ONE transform → `spawn_rebind`. Empty / unresolvable selections are
+    // silent no-ops (no empty Edit/RowDelete emitted — the render layer errors
+    // on those).
+
+    /// Fill every selected cell in each column with the value of the top-most
+    /// selected cell in that column (T8 Ctrl+D behaviour).
+    ///
+    /// For each selected column:
+    ///   1. Find the minimum selected row in that column — the "source" cell.
+    ///   2. Read its display string via `ds.cell_display(top_row, col)` and
+    ///      coerce it through `clipboard::coerce_cell(display, column_arrow_type)`
+    ///      (same coercion path as paste, so the filled value matches the type).
+    ///      If coercion returns `Skip` (e.g. the top cell is NULL / empty), the
+    ///      fill value is `Scalar::Null`.
+    ///   3. Apply the coerced value to every *lower* selected cell in that column
+    ///      (the top cell itself is NOT overwritten — fill-down starts below the
+    ///      source).
+    ///
+    /// All columns' fills are bundled into ONE [`ViewModel::edit_cells`] call →
+    /// ONE undo step. No-op when no data source / view model / selection is
+    /// mounted, or when the resolved set is empty.
+    pub fn fill_down(&mut self, cx: &mut Context<Self>) {
+        let (Some(ds), Some(_vm)) = (self.data_source.as_ref(), self.view_model.as_ref()) else {
+            return;
+        };
+        let Some(selection) = self.selection.as_ref() else {
+            return;
+        };
+
+        // Collect all resolved (row, col) pairs.
+        let cells: Vec<(usize, usize)> = selection.resolved_cells().collect();
+        if cells.is_empty() {
+            return;
+        }
+
+        // Group cells by column; find the top row per column.
+        // BTreeMap preserves column order for deterministic behaviour.
+        use std::collections::BTreeMap;
+        let mut col_rows: BTreeMap<usize, Vec<usize>> = BTreeMap::new();
+        for (row, col) in &cells {
+            col_rows.entry(*col).or_default().push(*row);
+        }
+
+        let mut edits: Vec<dat0_engine::CellEdit> = Vec::new();
+        for (col, mut rows) in col_rows {
+            rows.sort_unstable();
+            let top_row = rows[0];
+
+            // Coerce the top cell's display value into a typed Scalar.
+            let fill_value = if let (Some(display), Some(arrow_type)) =
+                (ds.cell_display(top_row, col), ds.column_arrow_type(col))
+            {
+                match crate::grid::clipboard::coerce_cell(&display, &arrow_type) {
+                    crate::grid::clipboard::CoerceResult::Ok(v) => v,
+                    // Empty / NULL display or uncoercible → fill with NULL.
+                    crate::grid::clipboard::CoerceResult::Skip => dat0_engine::Scalar::Null,
+                }
+            } else {
+                // Page not cached or col out of range for the top cell: skip column.
+                continue;
+            };
+
+            // Apply fill_value to every lower selected cell in this column.
+            for row in rows.into_iter().skip(1) {
+                let (Some(id), Some(column)) = (ds.row_key(row), ds.column_name(col)) else {
+                    continue;
+                };
+                edits.push(dat0_engine::CellEdit {
+                    row: dat0_engine::RowKey::Surrogate { id },
+                    column,
+                    value: fill_value.clone(),
+                });
+            }
+        }
+
+        if edits.is_empty() {
+            return;
+        }
+
+        let change = self
+            .view_model
+            .as_mut()
+            .expect("view_model checked above")
+            .edit_cells(edits);
+        self.spawn_rebind(change, cx);
+    }
+
+    /// Set every selected cell to `Scalar::Null` in ONE undo step (T8).
+    ///
+    /// Resolves the current selection → one [`ViewModel::edit_cells`] call
+    /// → one [`Self::spawn_rebind`]. Cells whose page isn't cached (so
+    /// `row_key` returns `None`) or whose column index is out of range are
+    /// skipped gracefully. No-op when no data source / view model / selection
+    /// is mounted or the selection resolves to nothing.
+    pub fn set_null_selection(&mut self, cx: &mut Context<Self>) {
+        let (Some(ds), Some(_vm)) = (self.data_source.as_ref(), self.view_model.as_ref()) else {
+            return;
+        };
+        let Some(selection) = self.selection.as_ref() else {
+            return;
+        };
+
+        let mut edits: Vec<dat0_engine::CellEdit> = Vec::new();
+        for (row, col) in selection.resolved_cells() {
+            let (Some(id), Some(column)) = (ds.row_key(row), ds.column_name(col)) else {
+                continue;
+            };
+            edits.push(dat0_engine::CellEdit {
+                row: dat0_engine::RowKey::Surrogate { id },
+                column,
+                value: dat0_engine::Scalar::Null,
+            });
+        }
+        if edits.is_empty() {
+            return;
+        }
+
+        let change = self
+            .view_model
+            .as_mut()
+            .expect("view_model checked above")
+            .edit_cells(edits);
+        self.spawn_rebind(change, cx);
+    }
+
+    /// Set every selected cell to `value` in ONE undo step (T8).
+    ///
+    /// Resolves the current selection → one [`ViewModel::edit_cells`] call
+    /// → one [`Self::spawn_rebind`]. Cells whose page isn't cached (so
+    /// `row_key` returns `None`) or whose column index is out of range are
+    /// skipped gracefully. No-op when no data source / view model / selection
+    /// is mounted or the selection resolves to nothing.
+    pub fn set_value_selection(&mut self, value: dat0_engine::Scalar, cx: &mut Context<Self>) {
+        let (Some(ds), Some(_vm)) = (self.data_source.as_ref(), self.view_model.as_ref()) else {
+            return;
+        };
+        let Some(selection) = self.selection.as_ref() else {
+            return;
+        };
+
+        let mut edits: Vec<dat0_engine::CellEdit> = Vec::new();
+        for (row, col) in selection.resolved_cells() {
+            let (Some(id), Some(column)) = (ds.row_key(row), ds.column_name(col)) else {
+                continue;
+            };
+            edits.push(dat0_engine::CellEdit {
+                row: dat0_engine::RowKey::Surrogate { id },
+                column,
+                value: value.clone(),
+            });
+        }
+        if edits.is_empty() {
+            return;
+        }
+
+        let change = self
+            .view_model
+            .as_mut()
+            .expect("view_model checked above")
+            .edit_cells(edits);
+        self.spawn_rebind(change, cx);
+    }
+
+    /// Delete the distinct rows represented in the current selection in ONE
+    /// undo step (T8).
+    ///
+    /// Semantics: any selected cell's row is a candidate for deletion (not
+    /// just full-row selections). Distinct `RowKey`s are collected across all
+    /// selected cells and issued as one [`ViewModel::delete_rows`] call →
+    /// ONE undo step. Cells whose page isn't cached (so `row_key` returns
+    /// `None`) are skipped. No-op when no data source / view model / selection
+    /// is mounted or the selection resolves to nothing.
+    pub fn delete_selected_rows(&mut self, cx: &mut Context<Self>) {
+        let (Some(ds), Some(_vm)) = (self.data_source.as_ref(), self.view_model.as_ref()) else {
+            return;
+        };
+        let Some(selection) = self.selection.as_ref() else {
+            return;
+        };
+
+        // Collect distinct row IDs (one per selected row regardless of how
+        // many columns are selected in that row).
+        use std::collections::BTreeSet;
+        let mut seen_ids: BTreeSet<i64> = BTreeSet::new();
+        let mut keys: Vec<dat0_engine::RowKey> = Vec::new();
+        for (row, _col) in selection.resolved_cells() {
+            let Some(id) = ds.row_key(row) else {
+                continue;
+            };
+            if seen_ids.insert(id) {
+                keys.push(dat0_engine::RowKey::Surrogate { id });
+            }
+        }
+        if keys.is_empty() {
+            return;
+        }
+
+        let change = self
+            .view_model
+            .as_mut()
+            .expect("view_model checked above")
+            .delete_rows(keys);
+        self.spawn_rebind(change, cx);
+    }
+
     /// Build the bounding-rect TSV blob of the current selection's display
     /// values, recording the copied range for marching-ants. Returns `None`
     /// when no data source / selection is mounted or the selection is empty.
