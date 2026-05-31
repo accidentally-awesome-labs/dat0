@@ -620,7 +620,9 @@ impl WorkspaceShell {
             .and_then(|vm| vm.find_filter_for(&column).cloned());
 
         let popover = cx.new(|_| match &pre {
-            Some(existing) => FilterPopoverEntity::from_existing(column.clone(), column_type, existing),
+            Some(existing) => {
+                FilterPopoverEntity::from_existing(column.clone(), column_type, existing)
+            }
             None => FilterPopoverEntity::new(column.clone(), column_type),
         });
 

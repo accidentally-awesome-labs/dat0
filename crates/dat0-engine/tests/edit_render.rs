@@ -62,7 +62,10 @@ fn row_delete_renders_not_in() {
         rows: vec![RowKey::Surrogate { id: 1 }, RowKey::Surrogate { id: 9 }],
     }];
     let sql = compile_view_sql(BASE, &ops).unwrap();
-    assert!(sql.contains("WHERE __dat0_rowid NOT IN (1, 9)"), "got: {sql}");
+    assert!(
+        sql.contains("WHERE __dat0_rowid NOT IN (1, 9)"),
+        "got: {sql}"
+    );
 }
 
 #[test]
@@ -85,7 +88,10 @@ fn edit_then_filter_sees_edited_value() {
         },
     ];
     let sql = compile_view_sql(BASE, &ops).unwrap();
-    assert!(sql.starts_with("SELECT * FROM (SELECT * REPLACE"), "got: {sql}");
+    assert!(
+        sql.starts_with("SELECT * FROM (SELECT * REPLACE"),
+        "got: {sql}"
+    );
     assert!(sql.contains(") WHERE (\"amt\" > 50)"), "got: {sql}");
 }
 
@@ -180,5 +186,8 @@ fn multi_column_edit_preserves_first_seen_order() {
     let sql = compile_view_sql(BASE, &ops).unwrap();
     let b_pos = sql.find("AS \"b\"").expect("col b present");
     let a_pos = sql.find("AS \"a\"").expect("col a present");
-    assert!(b_pos < a_pos, "expected b before a (first-seen order), got: {sql}");
+    assert!(
+        b_pos < a_pos,
+        "expected b before a (first-seen order), got: {sql}"
+    );
 }

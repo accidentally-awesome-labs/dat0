@@ -31,7 +31,10 @@ async fn create_describe_drop_cycle() {
     assert_eq!(info.name, "things");
     // 2 user columns (id, name) + the eagerly-injected __dat0_rowid surrogate.
     assert_eq!(info.columns.len(), 3);
-    assert!(has_rowid(&info.columns), "create_table must inject surrogate");
+    assert!(
+        has_rowid(&info.columns),
+        "create_table must inject surrogate"
+    );
 
     let cols = engine.describe_table("things", None).await.unwrap();
     assert_eq!(cols.len(), 3);

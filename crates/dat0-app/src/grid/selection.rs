@@ -60,7 +60,10 @@ impl SelectionModel {
     /// won't be able to select anything), but in practice callers should only
     /// construct a `SelectionModel` after they have live data dimensions.
     pub fn new(rows: usize, cols: usize) -> Self {
-        debug_assert!(rows > 0 && cols > 0, "SelectionModel expects a non-empty grid");
+        debug_assert!(
+            rows > 0 && cols > 0,
+            "SelectionModel expects a non-empty grid"
+        );
         let z = CellCoord { row: 0, col: 0 };
         Self {
             rows,

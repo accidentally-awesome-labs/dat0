@@ -174,9 +174,7 @@ impl EditOverlay {
                 let qcol = quote_ident(column);
                 let whens = cells
                     .iter()
-                    .map(|(id, literal)| {
-                        format!("WHEN {} = {} THEN {}", ROWID_COL, id, literal)
-                    })
+                    .map(|(id, literal)| format!("WHEN {} = {} THEN {}", ROWID_COL, id, literal))
                     .collect::<Vec<_>>()
                     .join(" ");
                 format!("CASE {} ELSE {} END AS {}", whens, qcol, qcol)

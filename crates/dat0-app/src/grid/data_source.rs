@@ -185,25 +185,28 @@ impl GridDataSource {
         use crate::view::filter_popover::ColumnType;
         use duckdb::arrow::datatypes::DataType;
         let schema_ix = self.schema_index_for_visible(ix)?;
-        self.schema.fields().get(schema_ix).map(|f| match f.data_type() {
-            DataType::Int8
-            | DataType::Int16
-            | DataType::Int32
-            | DataType::Int64
-            | DataType::UInt8
-            | DataType::UInt16
-            | DataType::UInt32
-            | DataType::UInt64
-            | DataType::Float16
-            | DataType::Float32
-            | DataType::Float64
-            | DataType::Decimal128(_, _)
-            | DataType::Decimal256(_, _) => ColumnType::Numeric,
-            DataType::Boolean => ColumnType::Bool,
-            DataType::Date32 | DataType::Date64 => ColumnType::Date,
-            DataType::Timestamp(_, _) => ColumnType::Timestamp,
-            _ => ColumnType::String,
-        })
+        self.schema
+            .fields()
+            .get(schema_ix)
+            .map(|f| match f.data_type() {
+                DataType::Int8
+                | DataType::Int16
+                | DataType::Int32
+                | DataType::Int64
+                | DataType::UInt8
+                | DataType::UInt16
+                | DataType::UInt32
+                | DataType::UInt64
+                | DataType::Float16
+                | DataType::Float32
+                | DataType::Float64
+                | DataType::Decimal128(_, _)
+                | DataType::Decimal256(_, _) => ColumnType::Numeric,
+                DataType::Boolean => ColumnType::Bool,
+                DataType::Date32 | DataType::Date64 => ColumnType::Date,
+                DataType::Timestamp(_, _) => ColumnType::Timestamp,
+                _ => ColumnType::String,
+            })
     }
 
     /// Returns `true` when the backing table has zero rows. Used by

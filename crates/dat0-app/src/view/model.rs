@@ -181,9 +181,10 @@ impl ViewModel {
             return self.apply(t);
         };
         let column = column.clone();
-        if let Some(idx) = self.stack[..self.cursor].iter().position(|op| {
-            matches!(op, Transformation::Filter { column: c, .. } if *c == column)
-        }) {
+        if let Some(idx) = self.stack[..self.cursor]
+            .iter()
+            .position(|op| matches!(op, Transformation::Filter { column: c, .. } if *c == column))
+        {
             self.stack[idx] = t;
             self.regenerate_view()
         } else {
