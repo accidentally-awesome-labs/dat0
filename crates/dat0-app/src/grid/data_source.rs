@@ -314,6 +314,30 @@ impl GridDataSource {
         self.row_count == 0
     }
 
+    /// Returns `true` when the LRU cache already contains the pages covering
+    /// both `start_row` and `last_row` (the first and last visible rows of the
+    /// current viewport), meaning the prefetch task can be skipped entirely.
+    ///
+    /// Uses [`LruCache::contains`], which checks residency WITHOUT bumping LRU
+    /// eviction order — a pure non-mutating probe.  When both boundary pages
+    /// are the same page (viewport fits inside a single 1 024-row page), only
+    /// one lookup is needed.
+    ///
+    /// Called by [`crate::window::WorkspaceShell::prefetch_visible_rows`] as a
+    /// cheap guard: if this returns `true`, the tokio spawn and subsequent
+    /// `cx.notify()` are skipped, eliminating the gratuitous task-storm on fast
+    /// scroll over already-loaded data.
+    pub fn pages_resident(&self, start_row: usize, last_row: usize) -> bool {
+        let start_key = PageKey {
+            start: (start_row as u64 / PAGE_ROWS) * PAGE_ROWS,
+        };
+        let last_key = PageKey {
+            start: (last_row as u64 / PAGE_ROWS) * PAGE_ROWS,
+        };
+        let cache = self.cache.lock().expect("grid cache poisoned");
+        cache.contains(&start_key) && cache.contains(&last_key)
+    }
+
     /// Return (or look up cached) the `RecordBatch` covering `row`.
     /// The batch is page-aligned to `PAGE_ROWS` boundaries.
     ///

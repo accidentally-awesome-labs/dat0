@@ -21,21 +21,17 @@
 //! | Fill Down           |                                     |
 //! | Set NULL            |                                     |
 //!
-//! # Right-click trigger wiring
+//! # Right-click trigger wiring (PD-018)
 //!
 //! gpui-component's `ContextMenuExt::context_menu` extension method is the
-//! clean hook for right-click menus.  Wiring it to the grid body (the
-//! `Table<GridTableDelegate>` element or its containing `div`) requires a
-//! `&mut Window` at build time — which is available only inside a
-//! `Render::render` call.  Full right-click → menu-popup wiring inside
-//! `WorkspaceShell::render` is therefore deferred to T11/polish (the task
-//! note says "expose a `build_context_menu` style constructor + a note").
+//! clean hook for right-click menus.  As of PD-018, [`build_menu`] is called
+//! from `WorkspaceShell::render` and the resulting closure is mounted via
+//! `.context_menu(...)` on the `Table<GridTableDelegate>` element — right-
+//! clicking the grid body now opens the menu live.
 //!
-//! The builder closure returned by [`build_menu`] is `'static + Clone`
-//! (via `Rc` inside gpui-component) so it can be embedded in a
-//! `ContextMenuExt` call when the wiring lands.  The menu items and their
-//! dispatch logic are REAL and compile-verified; only the right-click trigger
-//! is deferred.
+//! The builder closure is `'static + Clone` (via `Rc` inside gpui-component).
+//! Menu items and their dispatch logic are real; the `WeakEntity<WorkspaceShell>`
+//! captures ensure the shell is never kept alive by the menu closure.
 //!
 //! # i18n
 //!
@@ -61,11 +57,11 @@ use crate::window::WorkspaceShell;
 /// some_element.context_menu(build_menu(ws_weak, selection.as_ref()))
 /// ```
 ///
-/// # T11/polish note
-/// The right-click trigger is NOT yet wired in `WorkspaceShell::render`.
-/// This constructor is called by neither the render path nor any other live
-/// code yet — it is compile-verified only.  T11/polish will call it from
-/// `render` to mount the menu on the grid body.
+/// # Wiring status (PD-018)
+/// The right-click trigger IS wired in `WorkspaceShell::render` as of PD-018:
+/// the `Table<GridTableDelegate>` element is mounted via `.context_menu(...)`
+/// with the closure returned by this function, so right-clicking the grid body
+/// now opens the menu live.
 pub fn build_menu(
     ws: WeakEntity<WorkspaceShell>,
     selection: Option<&SelectionModel>,

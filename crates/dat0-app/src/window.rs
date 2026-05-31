@@ -595,14 +595,31 @@ impl WorkspaceShell {
     /// now finds the cached page.
     ///
     /// Called on grid bind (page 0) and from the delegate's
-    /// `visible_rows_changed` hook (scroll-paging). Pages already in the LRU are
-    /// a cheap `O(1)` cache hit, so re-entrant calls for the same range are
-    /// nearly free; the `notify` is still posted once per fetch so a page that
-    /// was already resident triggers no extra DuckDB round-trip.
+    /// `visible_rows_changed` hook (scroll-paging).  When both boundary pages
+    /// are already resident in the LRU, the spawn is skipped entirely — no
+    /// tokio task, no `cx.notify()` — eliminating the gratuitous task/notify
+    /// storm on fast scroll over already-loaded data.
     pub fn prefetch_visible_rows(&self, start: usize, end: usize, cx: &mut Context<Self>) {
         let Some(ds) = self.data_source.as_ref() else {
             return;
         };
+
+        // Cheap resident guard: if both boundary pages are already in the LRU
+        // cache, the synchronous `render_td` will already paint real values —
+        // there is nothing to fetch and no notify to post.  This eliminates the
+        // gratuitous task + notify storm when the user scrolls quickly over
+        // pages that were prefetched on an earlier tick.
+        //
+        // The guard does NOT perturb LRU eviction order (`contains` is
+        // non-mutating) and is O(1).
+        //
+        // Prefetch-on-bind path: on first render, page 0 is absent, so
+        // `pages_resident` returns false and the spawn proceeds as normal.
+        let last = end.saturating_sub(1);
+        if ds.pages_resident(start, last) {
+            return;
+        }
+
         let ds = Arc::clone(ds);
         let ws_weak = cx.entity().downgrade();
 
@@ -612,22 +629,22 @@ impl WorkspaceShell {
         // (inclusive) last row so a visible range that straddles a page boundary
         // loads both pages.
         let start = start as u64;
-        let last = end.saturating_sub(1) as u64;
+        let last = last as u64;
 
         tokio::spawn(async move {
             // Load the page covering the first visible row, then (if different)
             // the page covering the last visible row. `page_for` is idempotent
             // (cache hit on the second call for the same page).
-            let mut changed = false;
+            let mut any_loaded = false;
             for row in [start, last] {
                 match ds.page_for(row).await {
-                    Ok(_) => changed = true,
+                    Ok(_) => any_loaded = true,
                     Err(e) => {
                         tracing::warn!(row, error = %e, "prefetch_visible_rows: page_for failed");
                     }
                 }
             }
-            if !changed {
+            if !any_loaded {
                 return;
             }
             // Post the re-render onto the GPUI main thread via the dispatcher.

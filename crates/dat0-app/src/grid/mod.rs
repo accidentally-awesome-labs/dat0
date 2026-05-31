@@ -36,9 +36,9 @@ use renderers::{CellAlignment, type_badge};
 // x-position → zone mapping.  A pure zone-from-x helper (for hit-testing in
 // tests or future pointer-event work) is provided alongside these constants.
 //
-// T9 stub: grip / body are invisible no-ops.
+// Remaining stubs: grip / body zones are still no-ops.
 //   Grip → column-resize (P4c)
-//   Body → row-selection toggle (P4b)
+//   Body → row-selection toggle (future P4b task)
 
 /// Width of the left-edge drag-grip in logical pixels.
 /// P4c (column resize) will replace the invisible stub with a real handle.
@@ -62,9 +62,9 @@ pub const HEADER_SORT_PX: f32 = 20.0;
 ///   `(cell_width - HEADER_FUNNEL_PX) .. cell_width`    → Funnel
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ColumnHeaderZone {
-    /// Left-edge resize grip.  T9 stub: no-op (P4c will fill).
+    /// Left-edge resize grip.  Stub: no-op click (P4c column-resize will fill).
     Grip,
-    /// Column-name / body click area.  T9 stub: no-op (P4b will fill).
+    /// Column-name / body click area.  Stub: no-op click (future P4b row-selection will fill).
     Body,
     /// Sort-direction toggle icon.  Live in P4a (cycles Asc/Desc via T12).
     Sort,
@@ -101,16 +101,14 @@ pub fn zone_from_x(x: f32, cell_width: f32) -> ColumnHeaderZone {
 /// Per `docs/internal/gpui-table-api-notes.md` §4.1: the delegate is
 /// `Sized + 'static` — no `Send`/`Sync` bounds — so it lives on the GPUI
 /// main thread alongside the parent view. The `Arc<GridDataSource>` field
-/// is the only cross-thread handle; pages are still fetched off-thread
-/// by P3a's async paging layer (later P3b tasks will wire `load_more`).
+/// is the only cross-thread handle; pages are fetched off-thread by the
+/// async paging layer wired up in PD-018 (`prefetch_visible_rows`).
 ///
-/// For T4 this is a minimum-viable delegate: columns are derived from the
-/// `GridDataSource` schema at construction, and `render_td` renders the
-/// in-memory page-0 batch via [`renderers::render_cell`]. `load_more` /
-/// `visible_rows_changed` will land in a follow-up task that wires the
-/// async paged fetch back into a per-page cache — until then any row
-/// outside the initial page renders as an em-dash placeholder so the
-/// widget mounts cleanly.
+/// As of PD-018 this is a fully paged delegate: `render_td` reads real values
+/// from the LRU page cache via [`GridDataSource::cell_render`] (synchronous,
+/// never triggers a DuckDB fetch). Pages that haven't loaded yet fall back to
+/// an em-dash placeholder for that cell only; real values appear as pages
+/// stream in via the background prefetch path.
 pub struct GridTableDelegate {
     /// Shared paging source. `Arc` so the same source can be inspected by
     /// other views (e.g., status bar row-count badge in a later task).
@@ -246,14 +244,14 @@ impl TableDelegate for GridTableDelegate {
     /// Four-zone column header per P4a spec §6.
     ///
     /// Layout (left → right):
-    ///   1. **Grip** — invisible `HEADER_GRIP_PX`-wide strip for future column
-    ///      resize (P4c).  T9 stub: no-op + `cursor_col_resize` hint only.
+    ///   1. **Grip** — invisible `HEADER_GRIP_PX`-wide strip.  Stub: no-op +
+    ///      `cursor_col_resize` hint only (P4c column-resize will fill).
     ///   2. **Body** — column-name text, flex-grows to fill remaining space.
-    ///      T9 stub: no-op click (P4b row-selection will claim this zone).
-    ///   3. **Sort icon** — `HEADER_SORT_PX`-wide `⇅` button.  Live in P4a:
-    ///      clicking logs a placeholder that T12 wires to Asc/Desc/None cycle.
-    ///   4. **Funnel icon** — `HEADER_FUNNEL_PX`-wide `⌄` button.  Live in P4a:
-    ///      clicking logs a placeholder that T10 wires to the filter popover.
+    ///      Stub: no-op click (future P4b row-selection will claim this zone).
+    ///   3. **Sort icon** — `HEADER_SORT_PX`-wide `⇅` button.  Live (P4a):
+    ///      dispatches to `WorkspaceShell::on_sort_zone_click` (Asc/Desc/None).
+    ///   4. **Funnel icon** — `HEADER_FUNNEL_PX`-wide `⌄` button.  Live (P4a):
+    ///      dispatches to `WorkspaceShell::on_funnel_click` (filter popover).
     fn render_th(
         &mut self,
         col_ix: usize,
@@ -268,16 +266,16 @@ impl TableDelegate for GridTableDelegate {
             .items_center()
             .w_full()
             .h_full()
-            // ── Zone 1: Grip (T9 stub — P4c column-resize will fill) ──────────
+            // ── Zone 1: Grip (stub — P4c column-resize will fill) ────────────
             .child(
                 div()
                     .id(("th-grip", col_ix))
                     .w(gpui::px(HEADER_GRIP_PX))
                     .h_full()
                     .cursor_col_resize(),
-                // T9 stub: no click handler; P4c (column resize) claims this zone.
+                // Stub: no click handler; P4c (column resize) will claim this zone.
             )
-            // ── Zone 2: Body / column name (T9 stub — P4b selection will fill) ─
+            // ── Zone 2: Body / column name (stub — future P4b row-selection) ──
             .child(
                 div()
                     .id(("th-body", col_ix))
@@ -287,7 +285,7 @@ impl TableDelegate for GridTableDelegate {
                     .items_center()
                     .overflow_hidden()
                     .child(col_name),
-                // T9 stub: no click handler; P4b (row selection) claims this zone.
+                // Stub: no click handler; future P4b (row selection) will claim this zone.
             )
             // ── Zone 3: Sort icon (live — T12 replaces closure) ───────────────
             .child(self.render_sort_icon(col_ix))
