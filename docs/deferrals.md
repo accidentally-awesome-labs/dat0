@@ -69,7 +69,7 @@ that's modifying it; merge conflicts are signals worth investigating.
 | PD-014 | P4a design §3 used `#[serde(untagged)]` on `FilterValue` + `Scalar`, causing Str/Date/Timestamp collisions and FilterValue::None/Scalar::Null collision; reworked to tagged wire shapes | closed | low |
 | PD-015 | P4a plan T2–T15 snippets still use the pre-PD-014 tuple form `FilterValue::Scalar(...)` + `FilterValue::List(vec![...])` (~57 occurrences); implementers must read variants as struct form `FilterValue::Scalar { value }` + `FilterValue::List { values }` | closed | low |
 | PD-016 | P4a UI-click → ViewChange wirings unowned by plan T13: funnel-click → open popover, popover `Outcome::Apply` → `vm.apply`, sort-zone-click → `vm.set_sort`. T7/T9/T10b/T12 implementers each commented "T13 wires" but plan T13 Steps 1-4 cover only keybind undo/redo + supersede-cancel test. T14 E2E either pulls in the missing glue or tests via direct VM API; P4b/c may inherit if not closed at T15. | open | medium |
-| PD-017 | P4b T3 plan premise wrong: it assumed `register_file` "finalizes a CTAS import", but `register_file` emits `CREATE OR REPLACE VIEW … AS SELECT * FROM read_csv/json/parquet(…)` — a VIEW, which cannot be `ALTER TABLE`-d, so the eager `__dat0_rowid` surrogate only lands via `create_table` (base tables). The app imports files exclusively via `register_file` (`file_drop.rs:133`), so imported grids are VIEWs with no `__dat0_rowid`, and the P4b edit/delete overlay (`WHERE __dat0_rowid NOT IN …`, `CASE WHEN __dat0_rowid = …`) references a non-existent column → edit/delete fail on real imports. T3 engine work is correct + complete; resolution is app-side (materialize imports to base tables, or back-fill via `ensure_rowid` on first bind). | open | high |
+| PD-017 | P4b T3 plan premise wrong: it assumed `register_file` "finalizes a CTAS import", but `register_file` emits `CREATE OR REPLACE VIEW … AS SELECT * FROM read_csv/json/parquet(…)` — a VIEW, which cannot be `ALTER TABLE`-d, so the eager `__dat0_rowid` surrogate only lands via `create_table` (base tables). The app imports files exclusively via `register_file` (`file_drop.rs:133`), so imported grids are VIEWs with no `__dat0_rowid`, and the P4b edit/delete overlay (`WHERE __dat0_rowid NOT IN …`, `CASE WHEN __dat0_rowid = …`) references a non-existent column → edit/delete fail on real imports. T3 engine work is correct + complete; resolution is app-side (materialize imports to base tables, or back-fill via `ensure_rowid` on first bind). **Closed via Path A:** new `QueryEngine::register_file_as_table` materializes imports into rowid-bearing base tables (reusing all P3b sniffing); `file_drop.rs` now calls it. | closed | high |
 
 ## At-a-glance — Closed plan defects
 
@@ -1002,7 +1002,27 @@ that's modifying it; merge conflicts are signals worth investigating.
 
 ### PD-017 — Imported files are VIEWs, so the `__dat0_rowid` surrogate never reaches them
 
-- **Status:** open
+- **Status:** closed
+- **Closed by:** Path A (materialize at import). The engine grew a new
+  `QueryEngine::register_file_as_table` (in `crates/dat0-engine/src/duckdb_engine.rs` +
+  `src/trait_def.rs`) that REUSES the exact `CREATE OR REPLACE VIEW … AS SELECT *
+  FROM read_csv/json/parquet(…)` SQL `register_file` builds (so all P3b
+  delimiter/type sniffing is preserved), materializes it into a base table via
+  `CREATE TABLE <name> AS SELECT * FROM <tmp_view>; DROP VIEW <tmp_view>`, then
+  injects `__dat0_rowid` via `ensure_rowid_blocking` — all under one connection
+  lock so the table is never observable without its surrogate. The app's sole
+  import path (`crates/dat0-app/src/file_drop.rs`) now calls
+  `register_file_as_table` instead of `register_file`. `register_file` (view)
+  remains available for read-only callers (the grid `mod.rs`/`data_source.rs`
+  unit tests still use it). Session restore needed NO change: restore re-opens
+  the persistent `scratch.duckdb` rather than re-running the import, so the
+  materialized base table (with its surrogate) survives recovery as-is. Tests:
+  `crates/dat0-engine/tests/import_materialize.rs` (base-table + gap-free
+  surrogate + sniffing preserved + ALTER-TABLE-able + no leftover view),
+  `crates/dat0-app/src/file_drop.rs::csv_drop_yields_rowid_bearing_base_table`,
+  and `crates/dat0-app/tests/scratch_lifecycle.rs` (recovered import is still a
+  rowid-bearing base table). Closed by this commit (the `P4b: close PD-017 …
+  (Path A)` commit on branch `p4b-edit`).
 - **Severity:** high (the P4b edit/selection/clipboard headline feature does not work on real file imports until resolved; engine + test paths are correct, but the running app's grids are views without the surrogate)
 - **Affected files:**
   - `crates/dat0-engine/src/duckdb_engine.rs` — `ensure_rowid` is correctly wired into `create_table` (the only CTAS→base-table path); `register_file` carries a hand-off comment explaining why it is NOT wired there.
@@ -1014,10 +1034,10 @@ that's modifying it; merge conflicts are signals worth investigating.
 - **Fix paths:**
   - **Path A (materialize on import):** change the app import path to `create_table` (CTAS materializing `read_*(…)` into a base table) instead of `register_file` (view), so `ensure_rowid` runs eagerly. Trade-off: loads the file into a DuckDB base table rather than a lazy view over the source file — memory/behavior change for large files. The design's "surrogate injected at import" language implies materialization was intended.
   - **Path B (back-fill on first bind):** keep views for browsing; when the grid first binds a view for editing, materialize-or-back-fill that table via `ensure_rowid`. More surgical but adds a view→table promotion step.
-- **Decision:** PENDING — to be resolved when P4b reaches the app-side grid binding (T5 grid hidden-key plumbing is the natural site, since the grid must reference `__dat0_rowid`). May require a user decision on Path A vs B given the memory/behavior implications.
+- **Decision:** RESOLVED — Path A (materialize at import), user-approved. Chose A1 (materialize the sniffing view) over A2 (direct CTAS) because A1 reuses 100% of the existing `register/*.rs` view-builder SQL with zero changes to those builders (smallest blast radius); the view is a transient intermediate dropped within the same lock. Session restore needed no change (recovery re-opens the persistent scratch.duckdb, not a re-import).
 - **Discovered:** P4b T3 implementation (2026-05-30), confirmed independently by the T3 spec review (quoted the `register/*.rs` VIEW DDL).
 - **Originating doc:** `docs/plans/2026-05-30-dat0-p4b-plan.md` §T3 Step 3.
-- **Last touched:** 2026-05-30
+- **Last touched:** 2026-05-30 (closed via Path A — see the `P4b: close PD-017 … (Path A)` commit on `p4b-edit`)
 
 ---
 

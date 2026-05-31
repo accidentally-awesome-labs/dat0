@@ -22,9 +22,12 @@ async fn force_quit_then_relaunch_finds_orphan_and_tab_state() {
         let mut s = Session::new(tmp.path(), BUDGET).await.unwrap();
         let csv = tmp.path().join("survives.csv");
         std::fs::write(&csv, "a\n1\n").unwrap();
+        // PD-017 (Path A): the app import path materializes a base table that
+        // carries `__dat0_rowid`. Use the same materializing variant here so
+        // the lifecycle test mirrors the real drop path.
         let info = s
             .engine
-            .register_file(&csv, dat0_engine::RegisterOpts::default())
+            .register_file_as_table(&csv, dat0_engine::RegisterOpts::default())
             .await
             .unwrap();
         s.add_tab(Tab {
@@ -49,11 +52,33 @@ async fn force_quit_then_relaunch_finds_orphan_and_tab_state() {
     );
 
     // Recover. Engine attaches to the surviving scratch.duckdb; the
-    // registered table is visible in the catalog.
+    // materialized base table is visible in the catalog.
     let recovered = Session::recover(scratch_dir, BUDGET).await.unwrap();
     assert_eq!(recovered.tabs().len(), 1);
+    let table_name = recovered.tabs()[0].table_name.clone();
     let cat = recovered.engine.get_tables().await.unwrap();
-    assert!(cat.iter().any(|t| t.name == recovered.tabs()[0].table_name));
+    assert!(cat.iter().any(|t| t.name == table_name));
+
+    // PD-017 (Path A): session restore re-opens the persistent scratch.duckdb
+    // rather than re-running the import — so the materialized base table (with
+    // its `__dat0_rowid` surrogate) survives recovery as-is, no re-import
+    // needed. Assert the recovered object is STILL a rowid-bearing base table.
+    let cols = recovered
+        .engine
+        .__test_column_names(&table_name)
+        .await
+        .unwrap();
+    assert!(
+        cols.contains(&"__dat0_rowid".to_string()),
+        "recovered import must still carry __dat0_rowid: {cols:?}"
+    );
+    recovered
+        .engine
+        .__test_execute_batch(&format!(
+            "ALTER TABLE \"{table_name}\" ADD COLUMN __probe INTEGER;"
+        ))
+        .await
+        .expect("recovered import must be a base table (ALTER TABLE succeeds)");
 }
 
 /// P3b T5: multi-orphan scan consolidates into a single count Banner

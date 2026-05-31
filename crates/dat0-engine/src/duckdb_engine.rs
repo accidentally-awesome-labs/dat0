@@ -226,6 +226,73 @@ impl crate::QueryEngine for DuckDBEngine {
         Ok(info)
     }
 
+    #[instrument(skip(self), fields(path = %path.display()))]
+    async fn register_file_as_table(
+        &self,
+        path: &std::path::Path,
+        opts: crate::types::RegisterOpts,
+    ) -> Result<crate::types::TableInfo> {
+        self.assert_open()?;
+        let conn = self.conn.clone();
+        let table_name = crate::register::derive_table_name(path);
+
+        // PD-017 Path A1: build the SAME `CREATE OR REPLACE VIEW … AS SELECT *
+        // FROM read_*(…)` SQL that `register_file` uses — reusing 100% of the
+        // P3b CSV/JSON delimiter+type sniffing — but target a transient
+        // intermediate view name. We then CTAS the view into a real base table
+        // under the final `table_name`, drop the intermediate view, and inject
+        // the `__dat0_rowid` surrogate. All of this runs under a single
+        // connection lock so the table is never observable mid-materialization
+        // (mirrors the `create_table` invariant).
+        let tmp_view = format!("__dat0_import_tmp_{table_name}");
+        let view_sql = crate::register::dispatch_register_sql(path, &opts, &tmp_view)?;
+        let path = path.to_path_buf();
+
+        let columns = tokio::task::spawn_blocking({
+            let conn = conn.clone();
+            let table_name = table_name.clone();
+            let tmp_view = tmp_view.clone();
+            move || -> Result<Vec<crate::types::ColumnInfo>> {
+                let conn = conn.lock().map_err(|_| EngineError::EnginePoisoned)?;
+                let qt = quote_ident(&table_name);
+                let qv = quote_ident(&tmp_view);
+                // 1) Build the sniffing view (transient intermediate).
+                // 2) Materialize it into a base table via CTAS.
+                // 3) Drop the intermediate view.
+                // Wrapped in a single execute_batch so the steps run atomically
+                // from the caller's perspective.
+                conn.execute_batch(&format!(
+                    "{view_sql}\n\
+                     CREATE TABLE {qt} AS SELECT * FROM {qv};\n\
+                     DROP VIEW {qv};",
+                    view_sql = view_sql,
+                    qt = qt,
+                    qv = qv,
+                ))?;
+                // Inject the surrogate EAGERLY (design §5: "at import"). Done
+                // here, under the same lock, so the base table is never visible
+                // without its `__dat0_rowid`.
+                ensure_rowid_blocking(&conn, &table_name)?;
+                crate::catalog::describe_table(&conn, &table_name, None)
+            }
+        })
+        .await
+        .map_err(|e| EngineError::TaskJoin(e.to_string()))??;
+
+        let info = crate::types::TableInfo {
+            name: table_name,
+            schema: "main".to_string(),
+            columns,
+            row_count_estimate: None,
+            origin: crate::types::TableOrigin::File(path.clone()),
+        };
+        self.table_origins
+            .write()
+            .expect("table_origins poisoned")
+            .insert(info.name.clone(), TableOrigin::File(path));
+        Ok(info)
+    }
+
     #[instrument(skip(self), fields(name = name, sql_len = sql.len()))]
     async fn create_table(
         &self,

@@ -1,4 +1,4 @@
-//! GPUI file-drop handler: detect format → register_file → tab append.
+//! GPUI file-drop handler: detect format → register_file_as_table → tab append.
 //!
 //! Unsupported extension (and `.sqlite`) → Banner + drop. Engine error
 //! → Banner with err message + drop. Success → Tab + active.
@@ -130,7 +130,11 @@ async fn handle_one(path: PathBuf, session: &Mutex<Session>) -> DropOutcome {
     let progress = crate::import_progress::ImportProgress::new(total);
     crate::import_progress::set_active(progress.clone());
 
-    let info_result = engine.register_file(&path, opts).await;
+    // PD-017 (Path A): materialize the import into a base table carrying
+    // `__dat0_rowid` (reusing all P3b sniffing), rather than registering a lazy
+    // VIEW. A VIEW cannot be `ALTER TABLE`-d, so the P4b edit/delete overlay's
+    // `WHERE __dat0_rowid = …` only resolves when the import is a base table.
+    let info_result = engine.register_file_as_table(&path, opts).await;
 
     if progress.is_cancelled() {
         crate::import_progress::clear_active();
@@ -241,5 +245,60 @@ mod tests {
         let s = arc.lock();
         assert_eq!(s.tabs().len(), 1, "one tab should be added");
         assert!(s.active_tab().is_some(), "active_tab should be set");
+    }
+
+    /// PD-017 (Path A): a CSV dropped through the app import path must become a
+    /// BASE TABLE carrying `__dat0_rowid` (gap-free 0..n-1), so the P4b
+    /// edit/delete overlay (`WHERE __dat0_rowid = …`) resolves on real imports.
+    #[tokio::test]
+    #[serial]
+    async fn csv_drop_yields_rowid_bearing_base_table() {
+        let _ = drain_pending();
+        let tmp = TempDir::new().unwrap();
+        let sess = Session::new(tmp.path(), BUDGET).await.unwrap();
+        let arc = Arc::new(Mutex::new(sess));
+
+        let csv = tmp.path().join("orders.csv");
+        std::fs::write(&csv, "name,score\nalice,10\nbob,20\ncarol,30\n").unwrap();
+
+        let outcomes = handle_drop(vec![csv.clone()], Arc::clone(&arc)).await;
+        let table_name = match &outcomes[0] {
+            DropOutcome::Registered { table_name, .. } => table_name.clone(),
+            other => panic!("expected Registered, got {other:?}"),
+        };
+
+        let engine = arc.lock().engine.clone();
+
+        // Carries the hidden surrogate alongside the user's columns.
+        let cols = engine.__test_column_names(&table_name).await.unwrap();
+        assert!(
+            cols.contains(&"__dat0_rowid".to_string()),
+            "imported table must carry __dat0_rowid: {cols:?}"
+        );
+        assert!(
+            cols.contains(&"name".to_string()),
+            "user col preserved: {cols:?}"
+        );
+        assert!(
+            cols.contains(&"score".to_string()),
+            "user col preserved: {cols:?}"
+        );
+
+        // Gap-free 0..n-1 surrogate.
+        let rowids = engine
+            .__test_query_i64_col(&format!(
+                "SELECT __dat0_rowid FROM \"{table_name}\" ORDER BY __dat0_rowid"
+            ))
+            .await
+            .unwrap();
+        assert_eq!(rowids, vec![0, 1, 2], "gap-free surrogate over the 3 rows");
+
+        // It is a base table: ALTER TABLE succeeds (a VIEW would reject this).
+        engine
+            .__test_execute_batch(&format!(
+                "ALTER TABLE \"{table_name}\" ADD COLUMN __probe INTEGER;"
+            ))
+            .await
+            .expect("ALTER TABLE must succeed — import must be a base table");
     }
 }
