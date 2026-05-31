@@ -540,6 +540,11 @@ impl WorkspaceShell {
         // delegate's `Arc<GridDataSource>` and would render stale rows.
         // The next `render` call rebuilds one against the new source.
         self.table_state = None;
+        // Clear the selection so it is rebuilt against the new source's
+        // dimensions on the next render.  Without this a second file drop
+        // would leave SelectionModel with the old row/column counts, and
+        // `selection.active().col` could point past the new schema.
+        self.selection = None;
         self.data_source = Some(ds);
     }
 
@@ -548,6 +553,11 @@ impl WorkspaceShell {
     /// next `render` promotes the new source into a fresh `Entity<TableState>`.
     pub fn apply_view_change(&mut self, new_ds: Arc<GridDataSource>, cx: &mut Context<Self>) {
         self.table_state = None;
+        // Defensively clear the selection — a view-change is the rebind path
+        // and, while P4b preserves the schema, clearing keeps the selection
+        // model consistent and prevents stale-dimension bugs if column count
+        // ever changes (e.g., a future hide-column transform).
+        self.selection = None;
         self.data_source = Some(new_ds);
         cx.notify();
     }
@@ -743,10 +753,13 @@ impl WorkspaceShell {
             .as_mut()
             .expect("view_model checked above")
             .edit_cells(vec![cell]);
-        // Clear the active editor now that the edit is committed.
+        // Drive the engine round-trip FIRST (spawn_rebind does not touch
+        // `cell_editor` / `cell_editor_sub`), then tear down the editor so the
+        // teardown order is: submit → dismiss (defensive; avoids any hypothetical
+        // future dependency on the editor still being mounted at rebind time).
+        self.spawn_rebind(change, cx);
         self.cell_editor = None;
         self.cell_editor_sub = None;
-        self.spawn_rebind(change, cx);
     }
 
     /// Mount the inline cell editor over the active selection cell (T6).
@@ -761,6 +774,14 @@ impl WorkspaceShell {
     /// Enter/F2 keystroke that calls this; T6 provides the editor + commit path.
     pub fn begin_cell_edit(&mut self, _window: &mut Window, cx: &mut Context<Self>) {
         use crate::grid::cell_editor::{CellEditor, CellEditorEvent};
+
+        // Guard: both the filter popover and the cell editor render as absolute
+        // overlay children.  Mounting the editor while a popover is open would
+        // stack two overlays and leave no obvious dismiss path for the popover.
+        // The user must close the popover before starting an edit.
+        if self.active_popover.is_some() {
+            return;
+        }
 
         let Some(ds) = self.data_source.as_ref() else {
             return;
@@ -787,6 +808,9 @@ impl WorkspaceShell {
                 CellEditorEvent::Cancel => {
                     ws.cell_editor = None;
                     ws.cell_editor_sub = None;
+                    // Intentionally NOT clearing `ws.selection` here — cancel
+                    // must leave the cursor on the cell the user was editing so
+                    // they can immediately retry or navigate away.
                     cx.notify();
                 }
             },
