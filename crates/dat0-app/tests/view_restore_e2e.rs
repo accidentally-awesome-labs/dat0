@@ -114,7 +114,7 @@ async fn session_round_trip_preserves_stack() {
 
     assert_eq!(
         restored.schema_version, SESSION_SCHEMA_VERSION,
-        "reloaded schema_version must be v2"
+        "reloaded schema_version must be the current schema"
     );
     assert_eq!(restored.tabs.len(), 1);
     assert_eq!(
@@ -252,11 +252,12 @@ async fn full_loop_persist_then_restore() {
         "restored view must return the same 1 row for a=3"
     );
 
-    // --- Phase 7: verify the on-disk session.json is v2 with correct content ---
+    // --- Phase 7: verify the on-disk session.json declares the current schema
+    // (v3) with correct content ---
     let raw = std::fs::read_to_string(&session_json).unwrap();
     assert!(
-        raw.contains("\"schema_version\": 2") || raw.contains("\"schema_version\":2"),
-        "session.json must declare schema_version 2"
+        raw.contains("\"schema_version\": 3") || raw.contains("\"schema_version\":3"),
+        "session.json must declare the current schema_version (3)"
     );
     assert!(
         raw.contains("\"eq\"") || raw.contains("eq"),

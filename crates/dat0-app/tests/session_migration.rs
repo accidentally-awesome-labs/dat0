@@ -88,12 +88,35 @@ fn write_temp(tmp: &TempDir, body: &str) -> PathBuf {
     p
 }
 
+/// A v2 session.json (filter + sort only — no Edit/RowDelete). Owned `String`
+/// so callers (e.g. [`inject_unknown_kind`]) can mutate the parsed JSON.
+fn sample_v2_session_json() -> String {
+    V2_FIXTURE_JSON.to_string()
+}
+
+/// Take a v2 sample JSON and splice an unrecognized transform `kind` into the
+/// first tab's `transform_stack` — simulating a session a newer dat0 binary
+/// wrote with a variant this build doesn't know. The `schema_version` is also
+/// bumped to 3 so the doc looks like a real future v3 file (the unknown-kind
+/// guard, not the version arm, is what must reject it).
+fn inject_unknown_kind(sample: String) -> String {
+    let mut doc: serde_json::Value = serde_json::from_str(&sample).unwrap();
+    doc["schema_version"] = serde_json::json!(3);
+    let stack = doc["tabs"][0]["transform_stack"].as_array_mut().unwrap();
+    stack.push(serde_json::json!({
+        "kind": "frobnicate",
+        "intensity": 11,
+        "rows": [{ "kind": "surrogate", "id": 0 }]
+    }));
+    serde_json::to_string(&doc).unwrap()
+}
+
 // ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------
 
 #[test]
-fn v1_fixture_migrates_to_v2() {
+fn v1_fixture_migrates_to_v3() {
     let tmp = TempDir::new().unwrap();
     let p = write_temp(&tmp, V1_FIXTURE_JSON);
 
@@ -118,13 +141,16 @@ fn v1_fixture_migrates_to_v2() {
 }
 
 #[test]
-fn v2_fixture_loads_as_is() {
+fn v2_fixture_migrates_to_v3_preserving_content() {
+    // v2 → v3 is an identity migration (T13): the version stamp bumps to the
+    // current schema, but the transform stack + cursor pass through unchanged.
     let tmp = TempDir::new().unwrap();
     let p = write_temp(&tmp, V2_FIXTURE_JSON);
 
     let state: SessionState = migrate::load(&p).unwrap();
 
-    assert_eq!(state.schema_version, 2);
+    assert_eq!(state.schema_version, SESSION_SCHEMA_VERSION);
+    assert_eq!(state.schema_version, 3);
     assert_eq!(state.tabs.len(), 1);
     assert_eq!(state.tabs[0].transform_stack.len(), 2);
     assert_eq!(state.tabs[0].undo_cursor, 2);
@@ -205,9 +231,10 @@ fn v2_round_trip_through_serialization() {
 }
 
 /// Session::recover eagerly calls persist() after loading, so a v1 file is
-/// rewritten as v2 on the first open — no subsequent mutation required.
+/// rewritten as the current schema (v3) on the first open — no subsequent
+/// mutation required.
 #[tokio::test]
-async fn recover_eagerly_writes_back_v2_on_first_open() {
+async fn recover_eagerly_writes_back_current_version_on_first_open() {
     use std::fs;
     use uuid::Uuid;
 
@@ -223,25 +250,26 @@ async fn recover_eagerly_writes_back_v2_on_first_open() {
     let session_path = scratch_dir.join("session.json");
     fs::write(&session_path, V1_FIXTURE_JSON).unwrap();
 
-    // Recover — this must eagerly persist v2 before returning.
+    // Recover — this must eagerly persist the current schema before returning.
     let _session = dat0_app::session::Session::recover(scratch_dir.clone(), BUDGET)
         .await
         .expect("Session::recover should succeed on a v1 file");
 
-    // The on-disk file must now be v2 without any further persist() call.
+    // The on-disk file must now be the current schema (v3) without any further
+    // persist() call.
     let after = fs::read_to_string(&session_path).unwrap();
     assert!(
-        after.contains("\"schema_version\": 2") || after.contains("\"schema_version\":2"),
-        "post-recover file should be v2, got: {}",
+        after.contains("\"schema_version\": 3") || after.contains("\"schema_version\":3"),
+        "post-recover file should be current schema (v3), got: {}",
         &after[..after.len().min(300)]
     );
 }
 
 #[test]
-fn v1_migration_write_back_produces_v2_on_disk() {
-    // Simulates the write-back path: load a v1 file, then re-serialize as v2.
-    // This mirrors what Session::recover + Session::persist does on first save
-    // after a v1→v2 migration.
+fn v1_migration_write_back_produces_current_version_on_disk() {
+    // Simulates the write-back path: load a v1 file, then re-serialize at the
+    // current schema version. This mirrors what Session::recover +
+    // Session::persist does on first save after a v1→current migration.
     let tmp = TempDir::new().unwrap();
     let p = write_temp(&tmp, V1_FIXTURE_JSON);
 
@@ -250,7 +278,7 @@ fn v1_migration_write_back_produces_v2_on_disk() {
     let json = serde_json::to_string_pretty(&state).unwrap();
     std::fs::write(&p, &json).unwrap();
 
-    // Re-read: must parse as v2 (no migration needed).
+    // Re-read: must parse at the current version (no migration needed).
     let state2 = migrate::load(&p).unwrap();
     assert_eq!(
         state2.schema_version, SESSION_SCHEMA_VERSION,
@@ -258,4 +286,53 @@ fn v1_migration_write_back_produces_v2_on_disk() {
     );
     assert_eq!(state2.tabs.len(), 2);
     assert_eq!(state2.tabs[0].table_name, "orders");
+}
+
+// ---------------------------------------------------------------------------
+// T13 — v2 → v3 identity migration + unknown-`kind` forward-incompat guard
+// ---------------------------------------------------------------------------
+
+#[test]
+fn v2_session_migrates_to_v3_identity() {
+    // A v2 session.json (no Edit/RowDelete — filter + sort only) loads and is
+    // stamped v3 with NO field reshape: the stack + cursor pass through unchanged.
+    let v2 = sample_v2_session_json();
+    let migrated = migrate::load_str(&v2).unwrap();
+
+    assert_eq!(migrated.schema_version, 3);
+    // Identity: the active stack contents and cursor are preserved verbatim.
+    assert_eq!(migrated.tabs.len(), 1);
+    assert_eq!(migrated.tabs[0].transform_stack.len(), 2);
+    assert_eq!(migrated.tabs[0].undo_cursor, 2);
+    assert_eq!(migrated.active_tab, Some(0));
+
+    // Confirm v2 content round-trips byte-identically except for the bumped
+    // version: re-serialize the migrated state, force schema_version back to 2,
+    // and it must equal the v2 state parsed directly.
+    let v2_state: SessionState = serde_json::from_str(&v2).unwrap();
+    let v2_canonical = serde_json::to_value(&v2_state).unwrap();
+    let mut migrated_canonical = serde_json::to_value(&migrated).unwrap();
+    migrated_canonical["schema_version"] = serde_json::json!(2);
+    assert_eq!(
+        migrated_canonical, v2_canonical,
+        "v2 → v3 must change ONLY the version (identity migration)"
+    );
+}
+
+#[test]
+fn unknown_transform_kind_triggers_forward_incompat_banner_not_panic() {
+    // A v3-shaped session carrying a transform `kind` this build doesn't know
+    // (a newer binary wrote it) must surface the forward-incompat banner path,
+    // NOT a generic Json parse error and NOT a panic.
+    let v3_future = inject_unknown_kind(sample_v2_session_json());
+    let err = migrate::load_str(&v3_future);
+    // Assert the SPECIFIC offending kind is surfaced — this locks the guarantee
+    // that the scan returns the unknown TOP-LEVEL transform kind (`frobnicate`),
+    // NOT a nested `kind` (the injected transform also nests a `surrogate`
+    // RowKey). A buggy recursive scan would return `surrogate` and fail here.
+    assert!(
+        matches!(&err, Err(migrate::SessionLoadError::ForwardIncompatTransform(k)) if k == "frobnicate"),
+        "unknown transform kind must map to ForwardIncompatTransform(\"frobnicate\"), got {err:?}"
+    );
+    assert!(err.unwrap_err().is_forward_incompat());
 }

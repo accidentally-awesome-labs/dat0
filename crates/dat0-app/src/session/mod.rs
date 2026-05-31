@@ -24,7 +24,12 @@ pub use migrate::SessionLoadError;
 // ---------------------------------------------------------------------------
 
 /// Current schema version. Bump whenever fields are added/removed.
-pub const SESSION_SCHEMA_VERSION: u32 = 2;
+///
+/// v2 → v3 (P4b) is an IDENTITY migration: the `Edit` / `RowDelete`
+/// `Transformation` variants are purely additive tagged-enum cases, so no
+/// field reshape is needed — a v2 file (filter/sort only) loads byte-identically
+/// except for the bumped version.
+pub const SESSION_SCHEMA_VERSION: u32 = 3;
 
 /// A single tab within a scratch session.
 ///
