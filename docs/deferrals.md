@@ -70,6 +70,7 @@ that's modifying it; merge conflicts are signals worth investigating.
 | PD-015 | P4a plan T2–T15 snippets still use the pre-PD-014 tuple form `FilterValue::Scalar(...)` + `FilterValue::List(vec![...])` (~57 occurrences); implementers must read variants as struct form `FilterValue::Scalar { value }` + `FilterValue::List { values }` | closed | low |
 | PD-016 | P4a UI-click → ViewChange wirings unowned by plan T13: funnel-click → open popover, popover `Outcome::Apply` → `vm.apply`, sort-zone-click → `vm.set_sort`. T7/T9/T10b/T12 implementers each commented "T13 wires" but plan T13 Steps 1-4 cover only keybind undo/redo + supersede-cancel test. T14 E2E either pulls in the missing glue or tests via direct VM API; P4b/c may inherit if not closed at T15. | open | medium |
 | PD-017 | P4b T3 plan premise wrong: it assumed `register_file` "finalizes a CTAS import", but `register_file` emits `CREATE OR REPLACE VIEW … AS SELECT * FROM read_csv/json/parquet(…)` — a VIEW, which cannot be `ALTER TABLE`-d, so the eager `__dat0_rowid` surrogate only lands via `create_table` (base tables). The app imports files exclusively via `register_file` (`file_drop.rs:133`), so imported grids are VIEWs with no `__dat0_rowid`, and the P4b edit/delete overlay (`WHERE __dat0_rowid NOT IN …`, `CASE WHEN __dat0_rowid = …`) references a non-existent column → edit/delete fail on real imports. T3 engine work is correct + complete; resolution is app-side (materialize imports to base tables, or back-fill via `ensure_rowid` on first bind). **Closed via Path A:** new `QueryEngine::register_file_as_table` materializes imports into rowid-bearing base tables (reusing all P3b sniffing); `file_drop.rs` now calls it. | closed | high |
+| PD-018 | Pre-existing (P3a-era) grid-render gap surfaced during P4b T7: `GridTableDelegate::render_td` (`grid/mod.rs`) renders the em-dash placeholder for EVERY cell — it never calls `render_cell` or `page_for`, and `page_for` (the only method that populates the page LRU from DuckDB) has ZERO production callers (no `load_more`/visible-range/prefetch). So in the running app the grid shows `—` and the cache is empty. P4b's cache-only reads (`cell_display`/`row_key`/`column_arrow_type`) resolve nothing on screen, so copy reads empty strings and paste/cut/edit skip every cell. P4b edit/select/clipboard LOGIC is correct + fully test-green (engine round-trips), but the headline T14 manual Excel/Sheets UAT is BLOCKED until the paged-render cache is wired (render_td → real values via the page LRU + prefetch visible page on bind). Out of every P4b plan task's scope. | open | high |
 
 ## At-a-glance — Closed plan defects
 
@@ -1038,6 +1039,25 @@ that's modifying it; merge conflicts are signals worth investigating.
 - **Discovered:** P4b T3 implementation (2026-05-30), confirmed independently by the T3 spec review (quoted the `register/*.rs` VIEW DDL).
 - **Originating doc:** `docs/plans/2026-05-30-dat0-p4b-plan.md` §T3 Step 3.
 - **Last touched:** 2026-05-30 (closed via Path A — see the `P4b: close PD-017 … (Path A)` commit on `p4b-edit`)
+### PD-018 — Grid renders placeholders; paged-render cache never populated (blocks P4b UAT)
+
+- **Status:** open
+- **Severity:** high (P4b's edit/select/clipboard logic is correct + fully test-green, but the running app cannot demonstrate it: the grid shows em-dashes and copy/paste/edit have no real cell values to act on; the headline T14 Excel/Sheets UAT gate is blocked)
+- **Affected files:**
+  - `crates/dat0-app/src/grid/mod.rs` — `GridTableDelegate::render_td` returns the `"—"` placeholder for every cell (both `match` arms + fallback). Its own doc comment says `"—"` is the expected T4 (P3a) render and "the follow-up task replaces this with a synchronous cache lookup." That follow-up never happened.
+  - `crates/dat0-app/src/grid/data_source.rs` — `page_for` (the only method that loads a page from DuckDB into the LRU) has ZERO production callers; it is exercised only by its own unit tests. There is no `load_more` / visible-range / prefetch wiring on the delegate.
+- **Symptom:** With `render_td` painting placeholders and the page LRU never populated by the display path, the P4b cache-only synchronous reads added for clipboard/edit — `cell_display`, `row_key`, `column_arrow_type` — return `None`/empty for essentially every on-screen cell. Copy serializes empty strings; paste/cut/cell-edit resolve `row_key(row) == None` and skip every cell (paste raises the reject banner having applied nothing).
+- **Net effect:** P4b is logic-complete and test-green (every transform/codec/migration is validated via real engine round-trips against base-table harnesses), but **not demonstrable in the running app** until the grid renders real values. The T14 manual Excel/Sheets round-trip + keyboard-sweep UAT cannot pass.
+- **Not a P4b defect:** this is pre-existing debt from the P3a minimum-viable grid delegate (render + paging cache deliberately stubbed). It is outside the scope of every P4b plan task and the plan's "Files NOT touched" list; the P4b plan implicitly assumed the grid already rendered real data.
+- **Fix paths (controller to decide with the user before T14):**
+  - **Path A (wire it, scope addition):** make `render_td` do a synchronous LRU lookup → `render_cell(real value)`; populate the LRU for visible rows (prefetch page 0 on bind, and `load_more`/visible-range on scroll). Unblocks UAT and makes the whole app usable. Larger than a typical P4b task; ideally its own reviewed task.
+  - **Path B (defer):** ship P4b as logic-complete + test-green, mark T14 UAT as blocked-by-PD-018, and schedule the grid-render-cache wiring as a dedicated follow-up (P4c or a hotfix phase).
+- **Discovered:** P4b T7 implementation + spec review (2026-05-30); the T7 implementer flagged it and the spec reviewer confirmed it with the quoted `render_td` body and the zero-caller `page_for`.
+- **Originating doc:** P3a grid delegate task (render_td placeholder); surfaced against `docs/plans/2026-05-30-dat0-p4b-plan.md` §T14 (UAT gate).
+- **Last touched:** 2026-05-30
+
+---
+
 
 ---
 
