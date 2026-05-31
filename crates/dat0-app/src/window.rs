@@ -502,6 +502,21 @@ pub struct WorkspaceShell {
     /// silently (P4a T10b post-review lesson). Cleared alongside
     /// `active_popover`.
     popover_sub: Option<Subscription>,
+    /// Ephemeral grid selection (T4 pure-logic model). `None` until a data
+    /// source is mounted; `SelectionModel::new` requires non-empty grid
+    /// dimensions, so it is constructed lazily on the first render after a
+    /// source lands (see `render`). T11 wires keyboard movers to it; T6 reads
+    /// `selection.active()` to locate the cell being edited.
+    pub(crate) selection: Option<crate::grid::selection::SelectionModel>,
+    /// Currently-mounted inline cell editor (T6). `Some` while editing the
+    /// active cell; cleared on commit / cancel. Rendered as an overlay child
+    /// in `render` when present.
+    cell_editor: Option<Entity<crate::grid::cell_editor::CellEditor>>,
+    /// Subscription to the active cell editor's `CellEditorEvent`. Stored so
+    /// the commit/cancel callback stays registered — a dropped `Subscription`
+    /// deregisters silently (the P4a T10b trap). Cleared alongside
+    /// `cell_editor`.
+    cell_editor_sub: Option<Subscription>,
 }
 
 impl WorkspaceShell {
@@ -514,6 +529,9 @@ impl WorkspaceShell {
             view_model: None,
             active_popover: None,
             popover_sub: None,
+            selection: None,
+            cell_editor: None,
+            cell_editor_sub: None,
         }
     }
 
@@ -562,27 +580,23 @@ impl WorkspaceShell {
             .and_then(|ds| ds.column_name(col_ix))
     }
 
-    /// Sort-zone click (T0 / PD-016). Reads the current sort, cycles the
-    /// clicked column (plain `click` or `shift_click` extend), writes it back
-    /// via [`ViewModel::set_sort`], and drives the engine round-trip exactly
-    /// like `dispatch_undo` in `actions/view_actions.rs`.
-    pub fn on_sort_zone_click(&mut self, col_ix: usize, shift: bool, cx: &mut Context<Self>) {
-        let Some(column) = self.column_name(col_ix) else {
+    /// Drive the engine round-trip + grid rebind for a [`ViewChange`] (T6 —
+    /// extracted from `on_sort_zone_click` / `route_filter_outcome` so the
+    /// `spawn_view_change` + `apply_view_change` boilerplate is written once;
+    /// reused by T6/T7/T8 mutation handlers).
+    ///
+    /// Reads the base-table name from the active `ViewModel` (the round-trip
+    /// rebinds to it when `change` clears the stack). No-op if no `ViewModel`
+    /// is mounted yet.
+    ///
+    /// Preserves the dispatcher discipline established by `spawn_view_change`:
+    /// the closure runs on the GPUI main thread via the `MainThreadDispatcher`,
+    /// never `cx.update` from the tokio task.
+    fn spawn_rebind(&self, change: crate::view::ViewChange, cx: &mut Context<Self>) {
+        let Some(base_table) = self.base_table() else {
             return;
         };
         let engine = self.engine();
-        let Some(vm) = self.view_model.as_mut() else {
-            return;
-        };
-        let active = vm.current_sort_as_active();
-        let active = if shift {
-            active.shift_click(&column)
-        } else {
-            active.click(&column)
-        };
-        let change = vm.set_sort(active.keys().to_vec());
-        let base_table = vm.base_table().to_string();
-
         let ws_weak = cx.entity().downgrade();
         crate::view::spawn_view_change(
             engine,
@@ -594,6 +608,27 @@ impl WorkspaceShell {
                 }
             }),
         );
+    }
+
+    /// Sort-zone click (T0 / PD-016). Reads the current sort, cycles the
+    /// clicked column (plain `click` or `shift_click` extend), writes it back
+    /// via [`ViewModel::set_sort`], and drives the engine round-trip exactly
+    /// like `dispatch_undo` in `actions/view_actions.rs`.
+    pub fn on_sort_zone_click(&mut self, col_ix: usize, shift: bool, cx: &mut Context<Self>) {
+        let Some(column) = self.column_name(col_ix) else {
+            return;
+        };
+        let Some(vm) = self.view_model.as_mut() else {
+            return;
+        };
+        let active = vm.current_sort_as_active();
+        let active = if shift {
+            active.shift_click(&column)
+        } else {
+            active.click(&column)
+        };
+        let change = vm.set_sort(active.keys().to_vec());
+        self.spawn_rebind(change, cx);
     }
 
     /// Funnel-zone click (T0 / PD-016). Mounts the filter popover for
@@ -653,7 +688,7 @@ impl WorkspaceShell {
         self.active_popover = None;
         self.popover_sub = None;
 
-        let (change, base_table) = {
+        let change = {
             let Some(vm) = self.view_model.as_mut() else {
                 cx.notify();
                 return;
@@ -661,25 +696,104 @@ impl WorkspaceShell {
             // Pure decision lives in `view::route_outcome` (shared with the
             // click_wiring integration test); the engine round-trip below stays
             // in this GPUI handler.
-            let change = crate::view::route_outcome(vm, outcome);
-            (change, vm.base_table().to_string())
+            crate::view::route_outcome(vm, outcome)
         };
         let Some(change) = change else {
             cx.notify();
             return;
         };
-        let engine = self.engine();
-        let ws_weak = cx.entity().downgrade();
-        crate::view::spawn_view_change(
-            engine,
-            base_table,
-            change,
-            Arc::new(move |new_ds, app_cx| {
-                if let Some(h) = ws_weak.upgrade() {
-                    h.update(app_cx, |ws, cx| ws.apply_view_change(new_ds, cx));
+        self.spawn_rebind(change, cx);
+    }
+
+    /// Commit the in-flight cell edit (T6). Resolves the active selection cell
+    /// to a [`dat0_engine::RowKey::Surrogate`] + column name via the active
+    /// `GridDataSource`, builds a single-cell [`dat0_engine::CellEdit`], pushes
+    /// it through [`ViewModel::edit_cells`], and drives the engine round-trip
+    /// via [`Self::spawn_rebind`].
+    ///
+    /// No-op (graceful) when no data source / view model is mounted, when the
+    /// selected row's page isn't cached (so `row_key` returns `None`), or when
+    /// the column index is out of range.
+    ///
+    /// Called by the inline [`crate::grid::cell_editor::CellEditor`] on commit
+    /// (Enter / focus-out). T11 wires the Enter/F2 keystroke that mounts the
+    /// editor over the active cell.
+    pub fn commit_cell_edit(&mut self, value: dat0_engine::Scalar, cx: &mut Context<Self>) {
+        let (Some(ds), Some(_vm)) = (self.data_source.as_ref(), self.view_model.as_ref()) else {
+            return;
+        };
+        let Some(selection) = self.selection.as_ref() else {
+            return;
+        };
+        let active = selection.active();
+        let Some(key) = ds.row_key(active.row) else {
+            return;
+        };
+        let Some(col) = ds.column_name(active.col) else {
+            return;
+        };
+        let cell = dat0_engine::CellEdit {
+            row: dat0_engine::RowKey::Surrogate { id: key },
+            column: col,
+            value,
+        };
+        // `view_model` is `Some` per the guard above; `unwrap` mirrors the plan.
+        let change = self
+            .view_model
+            .as_mut()
+            .expect("view_model checked above")
+            .edit_cells(vec![cell]);
+        // Clear the active editor now that the edit is committed.
+        self.cell_editor = None;
+        self.cell_editor_sub = None;
+        self.spawn_rebind(change, cx);
+    }
+
+    /// Mount the inline cell editor over the active selection cell (T6).
+    ///
+    /// Constructs a [`crate::grid::cell_editor::CellEditor`] entity typed for
+    /// the active column's Arrow type, subscribes to its commit/cancel events
+    /// (the subscription is **stored** in `self.cell_editor_sub` — a dropped
+    /// `Subscription` deregisters silently, the P4a T10b trap), and asks the
+    /// view to re-render so the editor mounts as an overlay.
+    ///
+    /// No-op when no data source / selection is available. T11 wires the
+    /// Enter/F2 keystroke that calls this; T6 provides the editor + commit path.
+    pub fn begin_cell_edit(&mut self, _window: &mut Window, cx: &mut Context<Self>) {
+        use crate::grid::cell_editor::{CellEditor, CellEditorEvent};
+
+        let Some(ds) = self.data_source.as_ref() else {
+            return;
+        };
+        let Some(selection) = self.selection.as_ref() else {
+            return;
+        };
+        let active = selection.active();
+        let column_type = ds
+            .column_type(active.col)
+            .unwrap_or(crate::view::filter_popover::ColumnType::String);
+
+        let editor = cx.new(|_| CellEditor::new(column_type));
+
+        // STORE the subscription — callbacks fire silently if the returned
+        // Subscription is dropped (P4a T10b post-review lesson; mirrors
+        // `on_funnel_click`'s `popover_sub`).
+        let sub = cx.subscribe(
+            &editor,
+            move |ws: &mut Self, _editor, ev: &CellEditorEvent, cx| match ev {
+                CellEditorEvent::Commit(value) => {
+                    ws.commit_cell_edit(value.clone(), cx);
                 }
-            }),
+                CellEditorEvent::Cancel => {
+                    ws.cell_editor = None;
+                    ws.cell_editor_sub = None;
+                    cx.notify();
+                }
+            },
         );
+        self.cell_editor_sub = Some(sub);
+        self.cell_editor = Some(editor);
+        cx.notify();
     }
 }
 
@@ -737,6 +851,17 @@ impl Render for WorkspaceShell {
             if needs_rebuild {
                 let delegate = GridTableDelegate::new(Arc::clone(ds), cx.entity().downgrade());
                 self.table_state = Some(cx.new(|cx| TableState::new(delegate, window, cx)));
+            }
+
+            // Lazily construct the selection model once a non-empty source is
+            // mounted (T4/T6). `SelectionModel::new` debug-asserts non-empty
+            // dimensions, so we only build it when the grid actually has cells.
+            // T11 wires keyboard movers; T6 reads `selection.active()` on edit
+            // commit. Rebuilt when the dimensions change (data-source swap).
+            let rows = usize::try_from(ds.row_count).unwrap_or(usize::MAX);
+            let cols = ds.visible_column_count();
+            if rows > 0 && cols > 0 && self.selection.is_none() {
+                self.selection = Some(crate::grid::selection::SelectionModel::new(rows, cols));
             }
         }
 
@@ -881,6 +1006,19 @@ impl Render for WorkspaceShell {
                 .into_any_element()
         });
 
+        // Inline cell-editor overlay (T6). Mounted by `begin_cell_edit` over the
+        // active cell; commits via the stored `cell_editor_sub` subscription. A
+        // later P4b polish task can anchor it precisely over the active cell —
+        // T6 mounts it top-left so the widget is reachable for UAT (T14).
+        let editor_overlay: Option<gpui::AnyElement> = self.cell_editor.as_ref().map(|e| {
+            div()
+                .absolute()
+                .top_8()
+                .left_4()
+                .child(e.clone())
+                .into_any_element()
+        });
+
         div()
             .size_full()
             .relative()
@@ -888,5 +1026,6 @@ impl Render for WorkspaceShell {
             .on_drop::<ExternalPaths>(drop_listener)
             .child(body)
             .children(popover_overlay)
+            .children(editor_overlay)
     }
 }

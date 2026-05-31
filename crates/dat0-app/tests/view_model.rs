@@ -297,6 +297,58 @@ fn view_name_strips_unsafe_chars_from_tab_id() {
 }
 
 // ---------------------------------------------------------------------------
+// edit_cells / delete_rows / is_dirty tests (T6 — inline cell editor)
+// ---------------------------------------------------------------------------
+
+#[test]
+fn edit_cells_pushes_one_undo_step_and_marks_dirty() {
+    use dat0_engine::{CellEdit, RowKey, Scalar, Transformation};
+    let mut vm = dat0_app::view::ViewModel::new("t".into(), "\"main\".\"t\"".into());
+    assert!(!vm.is_dirty());
+    let _ = vm.edit_cells(vec![CellEdit {
+        row: RowKey::Surrogate { id: 1 },
+        column: "a".into(),
+        value: Scalar::Int(5),
+    }]);
+    assert!(vm.is_dirty());
+    assert_eq!(vm.active().len(), 1);
+    assert!(matches!(vm.active()[0], Transformation::Edit { .. }));
+    vm.undo();
+    assert!(!vm.is_dirty());
+}
+
+#[test]
+fn delete_rows_pushes_edit_op_and_marks_dirty() {
+    use dat0_engine::{RowKey, Transformation};
+    let mut vm = dat0_app::view::ViewModel::new("t".into(), "\"main\".\"t\"".into());
+    assert!(!vm.is_dirty());
+    let _ = vm.delete_rows(vec![
+        RowKey::Surrogate { id: 2 },
+        RowKey::Surrogate { id: 3 },
+    ]);
+    assert!(vm.is_dirty());
+    assert_eq!(vm.active().len(), 1);
+    assert!(matches!(vm.active()[0], Transformation::RowDelete { .. }));
+    vm.undo();
+    assert!(!vm.is_dirty());
+}
+
+#[test]
+fn is_dirty_is_false_for_filter_and_sort_only() {
+    use dat0_engine::{SortDirection, SortKey};
+    let mut vm = vm();
+    vm.apply(filter_eq("a", 1));
+    vm.set_sort(vec![SortKey {
+        column: "a".into(),
+        direction: SortDirection::Asc,
+    }]);
+    assert!(
+        !vm.is_dirty(),
+        "filter/sort-only stacks are not dirty (no Edit/RowDelete)"
+    );
+}
+
+// ---------------------------------------------------------------------------
 // find_filter_for tests (T10 — filter popover edit flow)
 // ---------------------------------------------------------------------------
 

@@ -1,5 +1,6 @@
 //! DataGrid: gpui-component Table wrapper over duckdb::arrow batches.
 
+pub mod cell_editor;
 pub mod data_source;
 pub mod renderers;
 pub mod selection;

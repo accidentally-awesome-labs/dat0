@@ -103,6 +103,32 @@ impl ViewModel {
         self.regenerate_view()
     }
 
+    /// Apply a cell-edit transform (T6 — inline cell editor / bulk edits).
+    /// Wraps `cells` in a [`Transformation::Edit`] and pushes it as a normal
+    /// undo step via [`Self::apply`]. Each call is one undo step.
+    pub fn edit_cells(&mut self, cells: Vec<dat0_engine::CellEdit>) -> ViewChange {
+        self.apply(dat0_engine::Transformation::Edit { cells })
+    }
+
+    /// Apply a row-delete transform (T6/T8). Wraps `rows` in a
+    /// [`Transformation::RowDelete`] and pushes it as one undo step.
+    pub fn delete_rows(&mut self, rows: Vec<dat0_engine::RowKey>) -> ViewChange {
+        self.apply(dat0_engine::Transformation::RowDelete { rows })
+    }
+
+    /// Whether the active stack carries any in-place edits (`Edit` /
+    /// `RowDelete`). Used by the tab-strip dirty indicator (T10). Filter/sort
+    /// ops are not "dirty" — only mutations of the underlying data are.
+    pub fn is_dirty(&self) -> bool {
+        self.active().iter().any(|t| {
+            matches!(
+                t,
+                dat0_engine::Transformation::Edit { .. }
+                    | dat0_engine::Transformation::RowDelete { .. }
+            )
+        })
+    }
+
     /// Undo: decrement cursor. Returns None if already at the bottom.
     pub fn undo(&mut self) -> Option<ViewChange> {
         if !self.can_undo() {
