@@ -244,6 +244,15 @@ pub fn run_app(lock: AppLock, initial_paths: Vec<PathBuf>, main_loop: MainLoop) 
     // Used by the orphan scan (all platforms) and the macOS Cmd-N handler.
     let state_root_for_action = state_root.clone();
     let registry_for_run = Arc::clone(&registry);
+    // Enter the tokio runtime for the lifetime of the GPUI event loop. GPUI's
+    // foreground executor (`cx.spawn`) runs its tasks on THIS main thread, and
+    // the app's async engine work invoked from GPUI handlers uses tokio
+    // primitives — `handle_drop`'s `spawn_blocking` (cold-start CLI file load +
+    // drag-drop) and `spawn_view_change` / prefetch's `tokio::spawn`. Without an
+    // active runtime context on the main thread those panic ("must be called
+    // from the context of a Tokio runtime"). The guard drops before `runtime`
+    // (declared earlier), so teardown order is correct.
+    let _rt_guard = runtime.enter();
     Application::new().run(move |cx: &mut App| {
         // Required before opening any window: initialises the gpui-component
         // theme, global state, and (in debug builds) the inspector. Without
