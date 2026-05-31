@@ -27,14 +27,31 @@ jobs:
     if: >
       github.event_name != 'pull_request' ||
       contains(github.event.pull_request.labels.*.name, 'run-heavy')
-    # Routed to the self-hosted runner registered via runnerkit. Linux x86_64
-    # only — see ci.yml notes on linux-arm64 deferral.
-    runs-on: [self-hosted, Linux, runnerkit]
+    # Temporarily routed to hosted ubuntu-latest while the self-hosted runnerkit
+    # host is offline — mirrors ci.yml's temporary reroute so this job actually
+    # runs instead of sitting `queued`. Restore the `[self-hosted, Linux,
+    # runnerkit]` label once the host is back. Linux x86_64 only — see ci.yml
+    # notes on linux-arm64 deferral. Fixtures are GENERATED in-job
+    # (dat0-fixtures, seed 42), not downloaded, so no release-asset dependency.
+    runs-on: ubuntu-latest
     env:
       DAT0_SPARKLE_APPCAST_URL: https://dat0.dev/appcast.xml
       DAT0_GLITCHTIP_DSN_PUBLIC: ${{ secrets.GLITCHTIP_DSN_PUBLIC }}
+      # Cap link parallelism: default 4-job `ld` OOMs (Bus error / signal 7) on
+      # hosted ubuntu-latest's 16 GB RAM during the release duckdb-bundled link
+      # (P3b CI saga). Harmless if the job is ever re-pinned to self-hosted.
+      CARGO_BUILD_JOBS: 2
     steps:
       - uses: actions/checkout@v5
+      # Hosted ubuntu-latest ships ~14 GB free; fixture generation (1 GB CSV +
+      # 500 MB Parquet + 100 MB SQLite) plus the release duckdb-bundled build
+      # overruns it. Free ~30 GB (P3b CI-saga mitigation). Skipped if this job
+      # is ever re-pinned to the self-hosted runnerkit host (operator-managed).
+      - name: Free disk space (hosted Linux only)
+        if: runner.environment == 'github-hosted'
+        uses: jlumbroso/free-disk-space@v1.3.1
+        with:
+          tool-cache: false
       - uses: dtolnay/rust-toolchain@stable
         with:
           targets: x86_64-unknown-linux-gnu
