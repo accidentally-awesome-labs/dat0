@@ -215,4 +215,26 @@ impl SelectionModel {
         let c = (self.active.col as isize + dc).clamp(0, max_c) as usize;
         self.extend_to(CellCoord { row: r, col: c });
     }
+
+    /// Jump the active cell to an absolute `(row, col)`, clamped to grid bounds,
+    /// and set a new single-cell selection there.  Used by Cmd/Ctrl+arrow
+    /// "jump to edge" navigation (T11 keymap).
+    ///
+    /// Equivalent to `click(CellCoord { row: row.min(rows-1), col: col.min(cols-1) })`.
+    /// Safe for zero-row/zero-col grids: clamps to `(0, 0)`.
+    pub fn move_active_to(&mut self, row: usize, col: usize) {
+        let r = row.min(self.rows.saturating_sub(1));
+        let c = col.min(self.cols.saturating_sub(1));
+        self.click(CellCoord { row: r, col: c });
+    }
+
+    /// Return the number of rows in this model (used by keymap for jump-to-edge).
+    pub fn rows(&self) -> usize {
+        self.rows
+    }
+
+    /// Return the number of columns in this model (used by keymap for jump-to-edge).
+    pub fn cols(&self) -> usize {
+        self.cols
+    }
 }

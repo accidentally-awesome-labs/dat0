@@ -35,8 +35,9 @@
 use anyhow::Result;
 use dat0_i18n::t;
 use gpui::{
-    App, Application, Bounds, Context, Entity, ExternalPaths, IntoElement, Render, Subscription,
-    TitlebarOptions, Window, WindowBounds, WindowOptions, div, prelude::*, px, size,
+    App, Application, Bounds, Context, Entity, ExternalPaths, FocusHandle, IntoElement,
+    KeyDownEvent, Render, Subscription, TitlebarOptions, Window, WindowBounds, WindowOptions, div,
+    prelude::*, px, size,
 };
 use gpui_component::Root;
 use gpui_component::h_flex;
@@ -103,7 +104,7 @@ pub(crate) fn spawn_window(
             ..Default::default()
         },
         move |window, cx| {
-            let view = cx.new(|_| WorkspaceShell::new(Arc::clone(&session)));
+            let view = cx.new(|cx| WorkspaceShell::new(Arc::clone(&session), cx));
             // T13: register this workspace as the focused one so that
             // view.undo / view.redo dispatch closures can reach it.
             crate::window_registry::install_focused_workspace(view.downgrade().into());
@@ -391,7 +392,8 @@ pub fn run_app(lock: AppLock, initial_paths: Vec<PathBuf>, main_loop: MainLoop) 
                     ..Default::default()
                 },
                 |window, cx| {
-                    let view = cx.new(|_| WorkspaceShell::new(Arc::clone(&session_for_window)));
+                    let view =
+                        cx.new(|cx| WorkspaceShell::new(Arc::clone(&session_for_window), cx));
                     // T13: register this workspace as the focused one so that
                     // view.undo / view.redo dispatch closures can reach it.
                     crate::window_registry::install_focused_workspace(view.downgrade().into());
@@ -524,10 +526,19 @@ pub struct WorkspaceShell {
     /// until then it persists after a copy/cut.
     // T11/polish: render marching-ants from this stored range + clear on selection change.
     pub(crate) copied_range: Option<crate::grid::selection::CellRange>,
+    /// GPUI focus handle for the workspace shell (T11). The outer container
+    /// element tracks this handle so that `on_key_down` receives key events
+    /// when the workspace has focus.  Constructed once in `new`; the element
+    /// receives focus on the first click or programmatic request.
+    ///
+    /// PD-018 note: the grid render-cache work (PD-018) may later gate
+    /// fine-grained cell focus; this shell-level handle is sufficient for
+    /// T11's keyboard map + selection navigation.
+    focus_handle: FocusHandle,
 }
 
 impl WorkspaceShell {
-    pub fn new(session: Arc<Mutex<Session>>) -> Self {
+    pub fn new(session: Arc<Mutex<Session>>, cx: &mut Context<Self>) -> Self {
         Self {
             session,
             data_source: None,
@@ -540,6 +551,7 @@ impl WorkspaceShell {
             cell_editor: None,
             cell_editor_sub: None,
             copied_range: None,
+            focus_handle: cx.focus_handle(),
         }
     }
 
@@ -1500,16 +1512,146 @@ impl Render for WorkspaceShell {
                 .into_any_element()
         });
 
+        // ── T11: focus ring for the active cell ──────────────────────────────────
+        //
+        // PD-018 note: the grid renders cells as em-dash placeholders until the
+        // render-cache work lands, so this focus ring cannot anchor over a real
+        // painted cell.  We render it as a floating badge in the bottom-left
+        // corner of the table area showing the active coord (row, col) — it is
+        // a deliberately minimal "something is here" indicator that proves the
+        // wiring is live.  The badge disappears when there is no selection.
+        //
+        // A future P4c polish pass can replace this with a proper overlaid
+        // border that sits at the exact cell's bounding box once cell layout
+        // data is available (closes PD-018).
+        let focus_ring: Option<gpui::AnyElement> = self.selection.as_ref().map(|sel| {
+            let active = sel.active();
+            div()
+                .absolute()
+                .bottom_2()
+                .left_2()
+                .px_2()
+                .py_1()
+                .rounded_md()
+                // Thin 2-px blue ring — "focus ring" visual idiom.
+                .border_2()
+                .border_color(gpui::rgb(0x3b82f6))
+                .bg(gpui::rgba(0x3b82f611))
+                .text_sm()
+                .child(format!("▸ ({},{})", active.row, active.col))
+                .into_any_element()
+        });
+
+        // ── T11: key-down handler — navigation keys → SelectionModel movers ──────
+        //
+        // The handler is attached to the outer container so it fires whenever
+        // the shell has focus (tracked via `focus_handle`).
+        //
+        // Keys handled here:
+        //   arrows (plain/shift/cmd) → `apply_key` → `SelectionModel` movers
+        //   Escape                   → `apply_key(Escape)` → `SelectionModel::clear`
+        //   Cmd/Ctrl+A               → `apply_key(SelectAll)`
+        //   Enter / F2               → `begin_cell_edit` (T6)
+        //   Cmd/Ctrl+C               → `copy_selection` (T7)
+        //   Cmd/Ctrl+X               → `cut_selection` (T7)
+        //   Cmd/Ctrl+V               → `paste_clipboard` (T7)
+        //   Delete / Backspace       → `set_null_selection` (T8)
+        //   Cmd/Ctrl+D               → `fill_down` (T8)
+        //
+        // Undo/Redo (Cmd-Z / Cmd-Shift-Z) are bound globally via cx.on_action
+        // in run_app — do NOT rebind here.
+        let key_handler = cx.listener(|ws: &mut Self, ev: &KeyDownEvent, window, cx| {
+            use crate::grid::keymap::{apply_key, key_from_event};
+
+            let ks = &ev.keystroke;
+            let mods = &ks.modifiers;
+            let key_str = ks.key.as_str();
+
+            // ── Check for non-navigation keys first ───────────────────────────
+            // secondary = Cmd on macOS, Ctrl on Linux/Windows.
+            let secondary = mods.secondary();
+            let secondary_only = secondary && !mods.shift && !mods.alt;
+            let no_mods = !mods.shift && !mods.platform && !mods.control && !mods.alt;
+
+            // Enter / F2 → begin cell edit (T6).
+            if (key_str == "enter" || key_str == "f2") && no_mods {
+                ws.begin_cell_edit(window, cx);
+                return;
+            }
+
+            // Cmd/Ctrl+C → copy (T7).
+            if key_str == "c" && secondary_only {
+                ws.copy_selection(cx);
+                return;
+            }
+
+            // Cmd/Ctrl+X → cut (T7).
+            if key_str == "x" && secondary_only {
+                ws.cut_selection(cx);
+                return;
+            }
+
+            // Cmd/Ctrl+V → paste (T7).
+            if key_str == "v" && secondary_only {
+                ws.paste_clipboard(cx);
+                return;
+            }
+
+            // Delete / Backspace → set null (T8).
+            if (key_str == "delete" || key_str == "backspace") && no_mods {
+                ws.set_null_selection(cx);
+                return;
+            }
+
+            // Cmd/Ctrl+D → fill down (T8).
+            if key_str == "d" && secondary_only {
+                ws.fill_down(cx);
+                return;
+            }
+
+            // Escape with an open cell editor → cancel the edit and keep the
+            // cursor on the cell (do NOT clear the selection). With no editor
+            // open, Escape falls through to the keymap below and clears the
+            // selection.
+            if key_str == "escape" && no_mods && ws.cell_editor.is_some() {
+                ws.cell_editor = None;
+                ws.cell_editor_sub = None;
+                cx.notify();
+                return;
+            }
+
+            // ── Navigation keys via the pure keymap ───────────────────────────
+            if let Some(nav_key) = key_from_event(ev) {
+                // SelectAll (Cmd+A) is in the keymap but we still need cx.notify().
+                if let Some(sel) = ws.selection.as_mut() {
+                    apply_key(sel, nav_key);
+                }
+                cx.notify();
+            }
+        });
+
+        // Request focus on click so the shell captures key events.
+        let focus_handle_for_click = self.focus_handle.clone();
+        let click_to_focus =
+            cx.listener(move |_ws: &mut Self, _ev: &gpui::ClickEvent, window, _cx| {
+                focus_handle_for_click.focus(window);
+            });
+
         div()
+            .id("workspace-shell")
             .size_full()
             .flex()
             .flex_col()
             .relative()
+            .track_focus(&self.focus_handle)
+            .on_key_down(key_handler)
+            .on_click(click_to_focus)
             .drag_over::<ExternalPaths>(|style, _, _, _| style.bg(gpui::rgba(0x0088_ff22)))
             .on_drop::<ExternalPaths>(drop_listener)
             .children(tab_strip)
             .child(div().flex_1().child(body))
             .children(popover_overlay)
             .children(editor_overlay)
+            .children(focus_ring)
     }
 }
