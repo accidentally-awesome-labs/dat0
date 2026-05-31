@@ -54,6 +54,7 @@ that's modifying it; merge conflicts are signals worth investigating.
 | D-012 | Engine catalog `TableInfo` synthesis (origin + schema) | closed | P2   | P3a    |
 | D-013 | Self-hosted macOS CI runner (cut hosted macos-14 10× billing) | open | P2 | TBD |
 | D-014 | Memory Budget Settings section | open | P3b | P3c / P9c |
+| D-015 | AccessKit / screen-reader selection-tree exposure | open | P4b | P10 |
 
 ## At-a-glance — Plan defects
 
@@ -68,7 +69,7 @@ that's modifying it; merge conflicts are signals worth investigating.
 | PD-013 | P4a T0 plan-snippet drifts: `dat0-fixtures` assumed to be a lib crate; `dat0-engine` assumed to have a `benches/` dir + criterion dev-dep; plan snippet pinned `criterion = "0.5"` instead of using workspace inheritance | closed | low |
 | PD-014 | P4a design §3 used `#[serde(untagged)]` on `FilterValue` + `Scalar`, causing Str/Date/Timestamp collisions and FilterValue::None/Scalar::Null collision; reworked to tagged wire shapes | closed | low |
 | PD-015 | P4a plan T2–T15 snippets still use the pre-PD-014 tuple form `FilterValue::Scalar(...)` + `FilterValue::List(vec![...])` (~57 occurrences); implementers must read variants as struct form `FilterValue::Scalar { value }` + `FilterValue::List { values }` | closed | low |
-| PD-016 | P4a UI-click → ViewChange wirings unowned by plan T13: funnel-click → open popover, popover `Outcome::Apply` → `vm.apply`, sort-zone-click → `vm.set_sort`. T7/T9/T10b/T12 implementers each commented "T13 wires" but plan T13 Steps 1-4 cover only keybind undo/redo + supersede-cancel test. T14 E2E either pulls in the missing glue or tests via direct VM API; P4b/c may inherit if not closed at T15. | open | medium |
+| PD-016 | P4a UI-click → ViewChange wirings unowned by plan T13: funnel-click → open popover, popover `Outcome::Apply` → `vm.apply`, sort-zone-click → `vm.set_sort`. T7/T9/T10b/T12 implementers each commented "T13 wires" but plan T13 Steps 1-4 cover only keybind undo/redo + supersede-cancel test. Closed by P4b T0: `on_sort_zone_click`/`on_funnel_click`/`route_outcome` → `spawn_view_change`; `click_wiring.rs` (7 tests). | closed | medium |
 | PD-017 | P4b T3 plan premise wrong: it assumed `register_file` "finalizes a CTAS import", but `register_file` emits `CREATE OR REPLACE VIEW … AS SELECT * FROM read_csv/json/parquet(…)` — a VIEW, which cannot be `ALTER TABLE`-d, so the eager `__dat0_rowid` surrogate only lands via `create_table` (base tables). The app imports files exclusively via `register_file` (`file_drop.rs:133`), so imported grids are VIEWs with no `__dat0_rowid`, and the P4b edit/delete overlay (`WHERE __dat0_rowid NOT IN …`, `CASE WHEN __dat0_rowid = …`) references a non-existent column → edit/delete fail on real imports. T3 engine work is correct + complete; resolution is app-side (materialize imports to base tables, or back-fill via `ensure_rowid` on first bind). **Closed via Path A:** new `QueryEngine::register_file_as_table` materializes imports into rowid-bearing base tables (reusing all P3b sniffing); `file_drop.rs` now calls it. | closed | high |
 | PD-018 | Pre-existing (P3a-era) grid-render gap surfaced during P4b T7: `GridTableDelegate::render_td` (`grid/mod.rs`) renders the em-dash placeholder for EVERY cell — it never calls `render_cell` or `page_for`, and `page_for` (the only method that populates the page LRU from DuckDB) has ZERO production callers (no `load_more`/visible-range/prefetch). So in the running app the grid shows `—` and the cache is empty. P4b's cache-only reads (`cell_display`/`row_key`/`column_arrow_type`) resolve nothing on screen, so copy reads empty strings and paste/cut/edit skip every cell. P4b edit/select/clipboard LOGIC is correct + fully test-green (engine round-trips), but the headline T14 manual Excel/Sheets UAT is BLOCKED until the paged-render cache is wired (render_td → real values via the page LRU + prefetch visible page on bind). Out of every P4b plan task's scope. **Closed (Path A):** `render_td` now does a synchronous LRU lookup → real `render_cell` value; the LRU is populated off-thread by `WorkspaceShell::prefetch_visible_rows` (page-0 prefetch on grid bind + the gpui-component `TableDelegate::visible_rows_changed` scroll hook), notifying the main thread via the `MainThreadDispatcher`. Also wired the right-click context menu (`ContextMenuExt`), a per-cell focus ring, and the forward-incompat recover banner. | closed | high |
 
@@ -433,6 +434,29 @@ that's modifying it; merge conflicts are signals worth investigating.
   control with a Restart hint.
 - **Originating doc:** `docs/specs/2026-05-25-dat0-p3b-ux-polish-design.md` §7.
 - **Last touched:** 2026-05-25.
+
+---
+
+### D-015 — AccessKit / screen-reader selection-tree exposure
+
+- **Status:** open
+- **Deferred from:** P4b (T0 probe finding; design decision 5)
+- **Target phase:** P10 (hardening)
+- **Reason:** The P4b T0 probe (`docs/internal/dat0-p4b-t0-probe.md` §2) verified
+  that AccessKit is **entirely absent** from the pinned GPUI 0.2.2 and
+  gpui-component 0.5.1 — no `accesskit` dependency, no `AccessibilityNode`, no
+  adapter. A screen-reader-navigable selection tree is therefore not exposable
+  on these pins without forking GPUI.
+- **What P4b ships:** the **operability-only** a11y baseline (design decision 5)
+  — full keyboard navigation of every selection variant (arrows, shift-extend,
+  cmd-jump, select-all/row/column, escape) as pure input handling via
+  `grid::keymap` + `SelectionModel`, with a visible focus ring. No AccessKit
+  dependency.
+- **What target phase delivers:** a screen-reader selection/cell semantics tree,
+  contingent on a GPUI version that ships an AccessKit adapter (or a dat0-side
+  fork). Revisit when the GPUI pin advances.
+- **Originating doc:** `docs/internal/dat0-p4b-t0-probe.md` §2.
+- **Last touched:** 2026-05-31.
 
 ---
 
@@ -968,8 +992,9 @@ that's modifying it; merge conflicts are signals worth investigating.
 
 ### PD-016 — P4a UI-click → ViewChange wirings unowned by plan T13
 
-- **Status:** open
-- **Severity:** medium (P4a is functionally incomplete on the UI-click path: funnel + sort-zone clicks log but don't actually trigger ViewChanges; only the keybind undo/redo path is wired end-to-end)
+- **Status:** closed
+- **Closed by:** P4b T0 (`p4b-edit` branch). `WorkspaceShell::on_sort_zone_click` + `on_funnel_click` + the shared `route_outcome` decision drive the funnel + sort header clicks through `spawn_view_change` → `apply_view_change`; the grid delegate's click closures upgrade the `WeakEntity<WorkspaceShell>` and dispatch into them. Verified by `crates/dat0-app/tests/click_wiring.rs` (7 tests). The funnel popover's `Outcome` is routed via a stored subscription (`emit_outcome_cx` → `cx.emit`), and the right-click context-menu trigger was mounted at the PD-018 closure. T0 also fixed a latent bug the plan snippet would have shipped (funnel-editing a column that already had a filter stacked a second `AND` predicate instead of replacing — closed with `ViewModel::set_filter` column-aware upsert).
+- **Severity:** medium (P4a was functionally incomplete on the UI-click path: funnel + sort-zone clicks logged but didn't trigger ViewChanges; only the keybind undo/redo path was wired end-to-end — now resolved)
 - **Affected files:**
   - `crates/dat0-app/src/grid/mod.rs` — sort-zone + funnel-zone click handlers still log debug + leave wiring comments
   - `crates/dat0-app/src/view/filter_popover_entity.rs` — `Outcome::Apply` / `Outcome::Clear` emit but have no upper-layer consumer wired to `vm.apply` / `vm.replace_at_cursor` + `spawn_view_change`
@@ -987,7 +1012,7 @@ that's modifying it; merge conflicts are signals worth investigating.
 - **Next phase:** P4b T0 must wire: (1) `grid/mod.rs` funnel-zone click → `filter_popover_entity.rs` mount + present via `WorkspaceShell`; (2) `filter_popover_entity.rs` `Outcome::Apply` → `vm.apply` + `spawn_view_change`; (3) `grid/mod.rs` sort-zone click (plain + shift) → `vm.set_sort` + `spawn_view_change`; (4) a click-path integration test covering the full UI-click → ViewChange → rebind loop.
 - **Discovered:** T13 implementation review (2026-05-29). Documented by the controller after the T13 implementer correctly noted plan §T13 Steps 1-4 don't cover these wirings.
 - **Originating doc:** `docs/plans/2026-05-27-dat0-p4a-plan.md` §T13.
-- **Last touched:** 2026-05-29
+- **Last touched:** 2026-05-31 (closed by P4b T0 — see `click_wiring.rs`)
 
 ---
 

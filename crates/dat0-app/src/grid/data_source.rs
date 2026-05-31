@@ -77,8 +77,10 @@ impl GridDataSource {
     /// the user's own data already had that name) stays VISIBLE — it was the
     /// user's data, and only the exact `__dat0_rowid` sentinel is hidden.
     ///
-    /// When the surrogate is absent (PD-017: file imports are VIEWs without it),
-    /// this simply has nothing to filter and returns every column.
+    /// When the surrogate is absent (e.g. a plain VIEW, or a table predating
+    /// `ensure_rowid`), this simply has nothing to filter and returns every
+    /// column — graceful degradation. (App file imports now materialize to
+    /// rowid-bearing base tables; PD-017 closed.)
     pub fn visible_column_names(&self) -> Vec<String> {
         self.schema
             .fields()
