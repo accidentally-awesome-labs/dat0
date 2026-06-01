@@ -535,6 +535,16 @@ pub struct WorkspaceShell {
     /// until then it persists after a copy/cut.
     // T11/polish: render marching-ants from this stored range + clear on selection change.
     pub(crate) copied_range: Option<crate::grid::selection::CellRange>,
+    /// Currently-mounted inline header-rename editor (P4c T7). `Some` while the
+    /// user is renaming a column; cleared on commit / cancel. The `usize` is the
+    /// screen column index. Rendered in-place inside `render_th` when `Some` for
+    /// that column.
+    header_rename: Option<(usize, Entity<crate::grid::cell_editor::HeaderRenameEditor>)>,
+    /// Subscription to the active header-rename editor's [`HeaderRenameEvent`].
+    /// Stored so the commit/cancel callback stays registered — a dropped
+    /// `Subscription` deregisters silently (the P4a T10b trap). Cleared
+    /// alongside `header_rename`.
+    header_rename_sub: Option<Subscription>,
     /// Folded visible columns (source→display, display order, deletes excluded),
     /// recomputed from the active stack whenever it changes (P4c T5). Drives the
     /// header labels + order and the screen-col→source addressing used by every
@@ -569,6 +579,8 @@ impl WorkspaceShell {
             copied_range: None,
             column_view: Vec::new(),
             focus_handle: cx.focus_handle(),
+            header_rename: None,
+            header_rename_sub: None,
         }
     }
 
@@ -1025,6 +1037,85 @@ impl WorkspaceShell {
         cx.notify();
     }
 
+    // ── Inline column rename (P4c T7) ────────────────────────────────────────
+
+    /// Commit a column rename. `col_ix` is the screen column index; `to` the new
+    /// label entered by the user.
+    ///
+    /// Trims `to` and resolves the source column via the active `ColumnView`.
+    /// No-ops (clears the editor) when `to` is empty or unchanged. Otherwise
+    /// applies a display-only [`dat0_engine::Transformation::Rename`] through the
+    /// `ViewModel`, refreshes the `ColumnView`, and routes the change (display-only
+    /// → `cx.notify()`; the underlying data is untouched).
+    pub fn commit_column_rename(&mut self, col_ix: usize, to: String, cx: &mut Context<Self>) {
+        let to = to.trim().to_string();
+        let Some(source) = self.column_name(col_ix) else {
+            // No column at this screen index — dismiss editor cleanly.
+            self.header_rename = None;
+            self.header_rename_sub = None;
+            cx.notify();
+            return;
+        };
+        // No-op: empty label or label same as the source identity — just dismiss.
+        if to.is_empty() || to == source {
+            self.header_rename = None;
+            self.header_rename_sub = None;
+            cx.notify();
+            return;
+        }
+        let Some(vm) = self.view_model.as_mut() else {
+            self.header_rename = None;
+            self.header_rename_sub = None;
+            cx.notify();
+            return;
+        };
+        let change = vm.apply(dat0_engine::Transformation::Rename { column: source, to });
+        self.header_rename = None;
+        self.header_rename_sub = None;
+        self.refresh_column_view();
+        self.route_change(change, cx);
+    }
+
+    /// Mount the inline column-header rename editor for `col_ix` (P4c T7).
+    ///
+    /// Constructs a [`crate::grid::cell_editor::HeaderRenameEditor`] seeded with
+    /// the current DISPLAY label of the column, subscribes to its commit/cancel
+    /// events (the subscription is **stored** in `self.header_rename_sub` — a
+    /// dropped `Subscription` deregisters silently, the P4a T10b trap), and asks
+    /// the view to re-render so the editor appears in-place inside `render_th`.
+    ///
+    /// No-op when no `ColumnView` entry exists for `col_ix`.
+    pub fn begin_column_rename(&mut self, col_ix: usize, cx: &mut Context<Self>) {
+        use crate::grid::cell_editor::{HeaderRenameEditor, HeaderRenameEvent};
+
+        // Resolve the current DISPLAY label (not source) as the seed.
+        let Some(display) = self.column_view.get(col_ix).map(|c| c.display.clone()) else {
+            return;
+        };
+
+        let editor = cx.new(|_| HeaderRenameEditor::new(display));
+
+        // STORE the subscription — callbacks fire silently if the returned
+        // Subscription is dropped (P4a T10b post-review lesson; mirrors
+        // `on_funnel_click`'s `popover_sub`).
+        let sub = cx.subscribe(
+            &editor,
+            move |ws: &mut Self, _editor, ev: &HeaderRenameEvent, cx| match ev {
+                HeaderRenameEvent::Commit(text) => {
+                    ws.commit_column_rename(col_ix, text.clone(), cx);
+                }
+                HeaderRenameEvent::Cancel => {
+                    ws.header_rename = None;
+                    ws.header_rename_sub = None;
+                    cx.notify();
+                }
+            },
+        );
+        self.header_rename_sub = Some(sub);
+        self.header_rename = Some((col_ix, editor));
+        cx.notify();
+    }
+
     // ── Clipboard: copy / cut / paste (T7) ───────────────────────────────────
     //
     // T11 wires the Cmd+C / Cmd+X / Cmd+V (Ctrl on Linux) keybinds → these
@@ -1412,6 +1503,19 @@ impl WorkspaceShell {
             .expect("view_model checked above")
             .delete_rows(keys);
         self.spawn_rebind(change, cx);
+    }
+
+    /// Return the active inline header-rename editor for `col_ix`, if one is
+    /// mounted for that column. Used by `GridTableDelegate::render_th` to render
+    /// the editor in-place instead of the column label (P4c T7).
+    pub fn header_rename_for(
+        &self,
+        col_ix: usize,
+    ) -> Option<Entity<crate::grid::cell_editor::HeaderRenameEditor>> {
+        self.header_rename
+            .as_ref()
+            .filter(|(c, _)| *c == col_ix)
+            .map(|(_, e)| e.clone())
     }
 
     /// Build the bounding-rect TSV blob of the current selection's display

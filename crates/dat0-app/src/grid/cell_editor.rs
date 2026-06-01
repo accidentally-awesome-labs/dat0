@@ -57,6 +57,103 @@ use crate::view::filter_popover::ColumnType;
 use dat0_engine::Scalar;
 
 // ---------------------------------------------------------------------------
+// HeaderRenameEditor + HeaderRenameEvent
+// ---------------------------------------------------------------------------
+
+/// Terminal signal emitted by the column-header rename editor.
+///
+/// `WorkspaceShell::begin_column_rename` subscribes (storing the
+/// `Subscription`) and routes `Commit` → `WorkspaceShell::commit_column_rename`.
+#[derive(Debug, Clone)]
+pub enum HeaderRenameEvent {
+    /// User committed the new name (Enter / focus-out). Carries the raw text.
+    Commit(String),
+    /// User dismissed the editor without committing.
+    Cancel,
+}
+
+/// Lightweight inline text editor for renaming a column header (P4c T7).
+///
+/// Construct with [`HeaderRenameEditor::new`] seeded with the current display
+/// label. The `InputState` is initialised lazily on the first `render()` call
+/// (mirrors [`CellEditor`] and `FilterPopoverEntity`). Subscribe to
+/// [`HeaderRenameEvent`]; the owner must **store** the subscription.
+pub struct HeaderRenameEditor {
+    /// Pre-populated text (the current display label).
+    seed: String,
+    /// Lazily-initialised `InputState`. `None` until first `render`.
+    text: Option<Entity<InputState>>,
+    /// Widget-event subscription kept alive here — a dropped `Subscription`
+    /// deregisters the callback silently (P4a T10b trap).
+    _subscription: Option<Subscription>,
+}
+
+impl HeaderRenameEditor {
+    /// Construct an editor seeded with the current display label.
+    pub fn new(seed: impl Into<String>) -> Self {
+        Self {
+            seed: seed.into(),
+            text: None,
+            _subscription: None,
+        }
+    }
+
+    /// Ensure the `InputState` entity exists. Called at the start of every
+    /// `render()` so the first frame initialises it with a real `Window`.
+    fn ensure_input(&mut self, cx: &mut Context<Self>, window: &mut Window) {
+        if self.text.is_some() {
+            return;
+        }
+        let seed = self.seed.clone();
+        let input = cx.new(|cx| {
+            let mut s = InputState::new(window, cx).placeholder("column name");
+            if !seed.is_empty() {
+                s = s.default_value(seed);
+            }
+            s
+        });
+        let sub = cx.subscribe_in(
+            &input,
+            window,
+            |_this, inp, ev: &InputEvent, _window, cx| {
+                if matches!(ev, InputEvent::PressEnter { .. } | InputEvent::Blur) {
+                    let text = inp.read(cx).value().to_string();
+                    cx.emit(HeaderRenameEvent::Commit(text));
+                }
+            },
+        );
+        self._subscription = Some(sub);
+        self.text = Some(input);
+    }
+}
+
+impl EventEmitter<HeaderRenameEvent> for HeaderRenameEditor {}
+
+impl Render for HeaderRenameEditor {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        self.ensure_input(cx, window);
+        let text = self.text.as_ref().expect("ensure_input just ran");
+
+        let entity_cancel = cx.entity();
+        let cancel_btn = Button::new("header-rename-cancel")
+            .label("✕")
+            .ghost()
+            .on_click(move |_ev, _window, cx| {
+                entity_cancel.update(cx, |_this, cx| {
+                    cx.emit(HeaderRenameEvent::Cancel);
+                });
+            });
+
+        h_flex()
+            .gap_1()
+            .p_1()
+            .min_w(gpui::px(120.))
+            .child(Input::new(text).appearance(true))
+            .child(cancel_btn)
+    }
+}
+
+// ---------------------------------------------------------------------------
 // CellEditorEvent
 // ---------------------------------------------------------------------------
 

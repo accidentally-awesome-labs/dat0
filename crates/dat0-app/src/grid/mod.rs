@@ -93,9 +93,10 @@ impl gpui::Render for ReorderDrag {
 // x-position → zone mapping.  A pure zone-from-x helper (for hit-testing in
 // tests or future pointer-event work) is provided alongside these constants.
 //
-// Remaining stubs: grip / body zones are still no-ops.
-//   Grip → column-resize (P4c)
-//   Body → row-selection toggle (future P4b task)
+// Remaining stubs: body zone is still a no-op for single-click.
+//   Grip → column drag-reorder (P4c T6, live)
+//   Body single-click → column select (T13, future)
+//   Body double-click → inline header rename (P4c T7, live)
 
 /// Width of the left-edge drag-grip in logical pixels.
 /// P4c (column resize) will replace the invisible stub with a real handle.
@@ -333,10 +334,11 @@ impl TableDelegate for GridTableDelegate {
     /// Four-zone column header per P4a spec §6.
     ///
     /// Layout (left → right):
-    ///   1. **Grip** — invisible `HEADER_GRIP_PX`-wide strip.  Stub: no-op +
-    ///      `cursor_col_resize` hint only (P4c column-resize will fill).
+    ///   1. **Grip** — invisible `HEADER_GRIP_PX`-wide strip.  Live (P4c T6):
+    ///      drag source + drop target for column reorder.
     ///   2. **Body** — column-name text, flex-grows to fill remaining space.
-    ///      Stub: no-op click (future P4b row-selection will claim this zone).
+    ///      Double-click live (P4c T7): opens inline header rename.
+    ///      Single-click stub (T13 future): column select.
     ///   3. **Sort icon** — `HEADER_SORT_PX`-wide `⇅` button.  Live (P4a):
     ///      dispatches to `WorkspaceShell::on_sort_zone_click` (Asc/Desc/None).
     ///   4. **Funnel icon** — `HEADER_FUNNEL_PX`-wide `⌄` button.  Live (P4a):
@@ -380,6 +382,45 @@ impl TableDelegate for GridTableDelegate {
                 }
             }));
 
+        // ── Zone 2: Body / column name ───────────────────────────────────────
+        //
+        // If a header-rename editor is active for this column, render the editor
+        // in-place instead of the label (P4c T7). Otherwise render the label with
+        // an on_click handler that guards on double-click to begin a rename.
+        // Single-click on the body is reserved for column-select (T13) — we
+        // branch on click_count and no-op on single-click for now.
+        let ws_for_body = self.ws.clone();
+        let rename_editor: Option<gpui::AnyElement> = self
+            .ws
+            .upgrade()
+            .and_then(|h| h.read(cx).header_rename_for(col_ix))
+            .map(|e| e.into_any_element());
+
+        let body = div()
+            .id(("th-body", col_ix))
+            .flex_1()
+            .h_full()
+            .flex()
+            .items_center()
+            .overflow_hidden()
+            .on_click(move |ev, _window, cx| {
+                // Double-click → begin inline rename (P4c T7).
+                // Single-click → reserved for T13 column-select (no-op for now).
+                if ev.click_count() == 2 {
+                    if let Some(h) = ws_for_body.upgrade() {
+                        h.update(cx, |ws, cx| ws.begin_column_rename(col_ix, cx));
+                    }
+                }
+            });
+
+        let body = if let Some(editor_el) = rename_editor {
+            // Editor active for this column: render it in-place.
+            body.child(editor_el)
+        } else {
+            // No editor: render the column label.
+            body.child(col_name)
+        };
+
         div()
             .flex()
             .flex_row()
@@ -387,18 +428,7 @@ impl TableDelegate for GridTableDelegate {
             .w_full()
             .h_full()
             .child(grip)
-            // ── Zone 2: Body / column name (stub — future P4b row-selection) ──
-            .child(
-                div()
-                    .id(("th-body", col_ix))
-                    .flex_1()
-                    .h_full()
-                    .flex()
-                    .items_center()
-                    .overflow_hidden()
-                    .child(col_name),
-                // Stub: no click handler; future P4b (row selection) will claim this zone.
-            )
+            .child(body)
             // ── Zone 3: Sort icon (live — T12 replaces closure) ───────────────
             .child(self.render_sort_icon(col_ix))
             // ── Zone 4: Funnel icon (live — T10 replaces closure) ─────────────
