@@ -13,12 +13,69 @@ pub use data_source::GridDataSource;
 use std::sync::Arc;
 
 use gpui::{
-    App, Context, IntoElement, ParentElement, SharedString, Styled, WeakEntity, Window, div,
-    prelude::*,
+    App, Context, IntoElement, ParentElement, Pixels, Point, SharedString, Styled, WeakEntity,
+    Window, div, prelude::*,
 };
 use gpui_component::table::{Column, TableDelegate, TableState};
 
 use renderers::{CellAlignment, type_badge};
+
+// ── Internal drag payload for column-header reorder (T6) ─────────────────────
+//
+// GPUI 0.2.2 `on_drag` / `on_drop` require a payload type that:
+//   1. Is `Clone` (GPUI clones the value on drag start).
+//   2. Implements `Render` (GPUI renders the drag ghost from this entity).
+//
+// Pattern mirrors the `DragInfo` struct in
+// `gpui-0.2.2/examples/drag_drop.rs` (the real internal-drag example):
+//   `.on_drag(value, |val, position, _, cx| cx.new(|_| val.position(position)))`
+// The drag source calls the constructor; `on_drop` receives a `&ReorderDrag`.
+
+/// Drag payload for a column-header reorder gesture.
+///
+/// `from` is the screen column index that started the drag. On drop the
+/// target header's index is used as `to`, and `WorkspaceShell::on_reorder_columns`
+/// is called to apply the display-only `Reorder` transform.
+#[derive(Clone, Copy)]
+pub(crate) struct ReorderDrag {
+    /// Screen column index of the dragged header.
+    pub from: usize,
+    /// Current drag-ghost position (updated by the `on_drag` constructor so
+    /// the ghost follows the pointer).
+    position: Point<Pixels>,
+}
+
+impl ReorderDrag {
+    fn new(from: usize) -> Self {
+        Self {
+            from,
+            position: Point::default(),
+        }
+    }
+
+    fn with_position(mut self, pos: Point<Pixels>) -> Self {
+        self.position = pos;
+        self
+    }
+}
+
+impl gpui::Render for ReorderDrag {
+    fn render(&mut self, _window: &mut Window, _cx: &mut Context<'_, Self>) -> impl IntoElement {
+        // Ghost: a small labelled pill that follows the pointer. Offset from the
+        // pointer so the drop-target hit test lands on the target rather than on
+        // the ghost itself (mirroring the drag_drop.rs example's pl/pt approach).
+        div().pl(self.position.x).pt(self.position.y).child(
+            div()
+                .px_2()
+                .py_1()
+                .bg(gpui::rgba(0x3b82f6aa))
+                .text_color(gpui::white())
+                .text_xs()
+                .rounded_md()
+                .child(format!("col {}", self.from)),
+        )
+    }
+}
 
 // ── Four-zone header geometry ─────────────────────────────────────────────────
 //
@@ -288,9 +345,40 @@ impl TableDelegate for GridTableDelegate {
         &mut self,
         col_ix: usize,
         _window: &mut Window,
-        _cx: &mut Context<TableState<Self>>,
+        cx: &mut Context<TableState<Self>>,
     ) -> impl IntoElement {
         let col_name = self.columns[col_ix].name.clone();
+
+        // ── Zone 1: Grip — drag source + drop target (T6) ────────────────────
+        //
+        // API: GPUI 0.2.2 internal-drag pattern from
+        // `gpui-0.2.2/examples/drag_drop.rs`:
+        //   `.on_drag(value, |val, position, _, cx| cx.new(|_| val.with_position(position)))`
+        //   `.on_drop(cx.listener(|delegate, info: &ReorderDrag, _, _| ...))` on the target.
+        //
+        // The grip is both a drag SOURCE (starts a drag carrying `col_ix`) and a
+        // drop TARGET (receives a drop from another header and applies the reorder).
+        // Keeping them on the same zone means any header-to-header drag is handled
+        // cleanly — the user grabs the left stub and drops over another header's stub.
+        let ws_for_drop = self.ws.clone();
+        let grip = div()
+            .id(("th-grip", col_ix))
+            .w(gpui::px(HEADER_GRIP_PX))
+            .h_full()
+            .cursor_move()
+            // Drag source: carry this column's index as the payload.
+            .on_drag(
+                ReorderDrag::new(col_ix),
+                |drag: &ReorderDrag, position, _, cx| cx.new(|_| drag.with_position(position)),
+            )
+            // Drop target: when a ReorderDrag lands here, call on_reorder_columns.
+            .on_drop(cx.listener(move |_delegate, drag: &ReorderDrag, _, cx| {
+                let from = drag.from;
+                let to = col_ix;
+                if let Some(h) = ws_for_drop.upgrade() {
+                    h.update(cx, |ws, cx| ws.on_reorder_columns(from, to, cx));
+                }
+            }));
 
         div()
             .flex()
@@ -298,15 +386,7 @@ impl TableDelegate for GridTableDelegate {
             .items_center()
             .w_full()
             .h_full()
-            // ── Zone 1: Grip (stub — P4c column-resize will fill) ────────────
-            .child(
-                div()
-                    .id(("th-grip", col_ix))
-                    .w(gpui::px(HEADER_GRIP_PX))
-                    .h_full()
-                    .cursor_col_resize(),
-                // Stub: no click handler; P4c (column resize) will claim this zone.
-            )
+            .child(grip)
             // ── Zone 2: Body / column name (stub — future P4b row-selection) ──
             .child(
                 div()

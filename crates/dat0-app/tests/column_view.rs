@@ -98,3 +98,11 @@ fn delete_then_reorder_omits_deleted() {
         vec![("c".into(), "c".into()), ("a".into(), "a".into())]
     );
 }
+
+#[test]
+fn reorder_payload_moves_column() {
+    use dat0_app::view::column_view::reorder_payload;
+    let folded = fold_columns(&base(), &[]);
+    assert_eq!(reorder_payload(&folded, 0, 2), vec!["b", "c", "a"]);
+    assert_eq!(reorder_payload(&folded, 2, 0), vec!["c", "a", "b"]);
+}

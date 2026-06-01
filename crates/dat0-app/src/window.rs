@@ -783,6 +783,37 @@ impl WorkspaceShell {
         );
     }
 
+    /// Apply a column reorder (grip drag). `from`/`to` are screen column indices.
+    ///
+    /// Builds the full new visible source order via [`crate::view::column_view::reorder_payload`],
+    /// applies a display-only [`dat0_engine::Transformation::Reorder`] through the `ViewModel`,
+    /// refreshes the `ColumnView`, and routes the change (display-only → `cx.notify()`; else
+    /// engine round-trip). No-op when `from == to`, or when no `ViewModel` is mounted.
+    pub fn on_reorder_columns(&mut self, from: usize, to: usize, cx: &mut Context<Self>) {
+        if from == to {
+            return;
+        }
+        let columns = crate::view::column_view::reorder_payload(&self.column_view, from, to);
+        let Some(vm) = self.view_model.as_mut() else {
+            return;
+        };
+        let change = vm.apply(dat0_engine::Transformation::Reorder { columns });
+        self.refresh_column_view();
+        self.route_change(change, cx);
+    }
+
+    /// Route a [`crate::view::ViewChange`]: display-only (projection) → just re-render;
+    /// otherwise spawn the engine rebind. Always called after `refresh_column_view` has
+    /// already been applied (projection ops) — the `notify()` re-renders with the updated
+    /// `column_view` already in place.
+    fn route_change(&mut self, change: crate::view::ViewChange, cx: &mut Context<Self>) {
+        if change.is_display_only() {
+            cx.notify();
+        } else {
+            self.spawn_rebind(change, cx);
+        }
+    }
+
     /// Sort-zone click (T0 / PD-016). Reads the current sort, cycles the
     /// clicked column (plain `click` or `shift_click` extend), writes it back
     /// via [`ViewModel::set_sort`], and drives the engine round-trip exactly

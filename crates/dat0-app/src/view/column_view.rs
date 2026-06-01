@@ -58,6 +58,17 @@ pub fn fold_columns(base: &[String], ops: &[Transformation]) -> Vec<ProjectionCo
         .collect()
 }
 
+/// Compute the `Reorder` payload (full visible source order) for moving the
+/// column at screen index `from` to index `to` within `folded`.
+pub fn reorder_payload(folded: &[ProjectionColumn], from: usize, to: usize) -> Vec<String> {
+    let mut sources: Vec<String> = folded.iter().map(|c| c.source.clone()).collect();
+    if from < sources.len() && to < sources.len() {
+        let moved = sources.remove(from);
+        sources.insert(to, moved);
+    }
+    sources
+}
+
 /// Resolve a screen (visible) column index to its source identity using a
 /// folded `ColumnView`. Returns `None` if `screen_ix` is out of range.
 ///
