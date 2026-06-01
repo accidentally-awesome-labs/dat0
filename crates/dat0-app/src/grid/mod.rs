@@ -126,31 +126,63 @@ pub struct GridTableDelegate {
 }
 
 impl GridTableDelegate {
-    /// Build a delegate over `source`, deriving column metadata from the
-    /// Arrow schema. Columns get a small default width and a type-badge
-    /// suffix in their display name (e.g., `id (INT64)`).
+    /// Build a delegate over `source`, deriving column metadata from the active
+    /// `ColumnView` (`column_view`) — its display label, order, and the deletes
+    /// it excludes (P4c T5). Each column's name carries the type-badge suffix of
+    /// its underlying Arrow field (e.g., `id (INT64)`); the badge is resolved by
+    /// the column's SOURCE identity, so a display-only reorder keeps the right
+    /// badge with the right column.
+    ///
+    /// When `column_view` is empty — no data source bound yet (pre-bind), a
+    /// delegate built without a shell in unit tests, OR a genuine
+    /// zero-visible-column state — the columns fall back to the raw VISIBLE
+    /// schema order (which is itself empty in the zero-column case), the identity
+    /// the pre-P4c delegate produced, so existing behaviour and tests are
+    /// unchanged. The hidden `__dat0_rowid` surrogate is never a `ColumnView`
+    /// source and never a visible field, so it never paints either way.
     ///
     /// `ws` is a weak handle to the owning `WorkspaceShell` so the header
     /// sort/funnel click closures (T0 / PD-016) can dispatch into it. Tests
-    /// that build a delegate without a shell pass `WeakEntity::new_invalid()`.
-    pub fn new(source: Arc<GridDataSource>, ws: WeakEntity<crate::window::WorkspaceShell>) -> Self {
-        // Columns are derived from the VISIBLE schema fields only: the hidden
-        // `__dat0_rowid` surrogate (T5) is plumbed through the Arrow schema for
-        // `row_key` resolution but must never paint. We index each visible
-        // column back into the Arrow schema via `schema_index_for_visible` so
-        // the type badge reflects the right field; a user's renamed-collision
-        // column `__dat0_rowid__src` stays visible (it was the user's data).
+    /// that build a delegate without a shell pass `WeakEntity::new_invalid()`
+    /// (and `&[]` for `column_view`).
+    pub fn new(
+        source: Arc<GridDataSource>,
+        ws: WeakEntity<crate::window::WorkspaceShell>,
+        column_view: &[dat0_engine::transform::ProjectionColumn],
+    ) -> Self {
         let schema = source.schema.clone();
-        let columns = (0..source.visible_column_count())
-            .filter_map(|visible_ix| {
-                let schema_ix = source.schema_index_for_visible(visible_ix)?;
-                let f = schema.fields().get(schema_ix)?;
-                let badge = type_badge(f.data_type());
-                let name: SharedString = format!("{} ({})", f.name(), badge).into();
-                let key: SharedString = f.name().to_string().into();
-                Some(Column::new(key, name))
-            })
-            .collect();
+        let columns: Vec<Column> = if column_view.is_empty() {
+            // Identity fallback: derive from the VISIBLE schema fields in schema
+            // order (the pre-P4c behaviour). The hidden `__dat0_rowid` surrogate
+            // is excluded by `schema_index_for_visible`.
+            (0..source.visible_column_count())
+                .filter_map(|visible_ix| {
+                    let schema_ix = source.schema_index_for_visible(visible_ix)?;
+                    let f = schema.fields().get(schema_ix)?;
+                    let badge = type_badge(f.data_type());
+                    let name: SharedString = format!("{} ({})", f.name(), badge).into();
+                    let key: SharedString = f.name().to_string().into();
+                    Some(Column::new(key, name))
+                })
+                .collect()
+        } else {
+            // ColumnView-driven: display label + order from the fold; the badge
+            // is resolved off the SOURCE field so a reorder keeps it aligned. The
+            // `key` stays the SOURCE identity (the header renders `name`, the
+            // display label). A source absent from the schema (defensive) is
+            // skipped rather than panicking.
+            column_view
+                .iter()
+                .filter_map(|c| {
+                    let schema_ix = source.schema_index_for_source(&c.source)?;
+                    let f = schema.fields().get(schema_ix)?;
+                    let badge = type_badge(f.data_type());
+                    let name: SharedString = format!("{} ({})", c.display, badge).into();
+                    let key: SharedString = c.source.clone().into();
+                    Some(Column::new(key, name))
+                })
+                .collect()
+        };
         Self {
             source,
             columns,
@@ -301,17 +333,32 @@ impl TableDelegate for GridTableDelegate {
         cx: &mut Context<TableState<Self>>,
     ) -> impl IntoElement {
         // PD-018: `render_td` reads the real value from the LRU page cache
-        // synchronously (`cell_render` never triggers a DuckDB fetch). When the
+        // synchronously (the render never triggers a DuckDB fetch). When the
         // row's page is already cached — prefetched on bind / on scroll via the
         // background path — the cell paints its real value with numeric
         // right-alignment and NULL styling. When the page hasn't loaded yet, we
         // fall back to the em-dash placeholder for THAT cell only; the
         // virtualized-table pattern means real values appear as pages load.
         //
-        // `col_ix` is a VISIBLE-column index (the hidden `__dat0_rowid` never
-        // paints, T5); `cell_render` maps it to the underlying Arrow schema
-        // index internally so the cell reflects the right column.
-        let cell = self.source.cell_render(row_ix, col_ix);
+        // `col_ix` is a DISPLAY-order index into `self.columns` (the `ColumnView`
+        // fold's order, P4c). We resolve it to the column's stable SOURCE identity
+        // (`columns[col_ix].key`, set to `ProjectionColumn::source`) and read by
+        // source via `cell_render_for_source`. This is the body-cell mirror of the
+        // header/addressing reroute: under a `Reorder`/`DeleteColumn` the display
+        // ordinal no longer equals the schema ordinal, so reading by `col_ix`
+        // directly would paint the WRONG column's data under each header.
+        //
+        // Identity / pre-bind fallback: when `columns[col_ix]` is out of range or
+        // carries no source (the empty-`column_view` identity build, or a delegate
+        // built without a shell in unit tests), fall back to the index-based
+        // `cell_render(row_ix, col_ix)` — under that build display ordinal ==
+        // visible/schema ordinal, so behaviour is unchanged.
+        let cell = match self.columns.get(col_ix) {
+            Some(col) if !col.key.is_empty() => {
+                self.source.cell_render_for_source(row_ix, col.key.as_ref())
+            }
+            _ => self.source.cell_render(row_ix, col_ix),
+        };
 
         // PD-018 focus ring: now that cells paint real values we can anchor a
         // per-cell ring on the active selection cell (replacing the T11
@@ -434,7 +481,8 @@ mod tests {
     #[tokio::test]
     async fn delegate_columns_match_schema() {
         let (_tmp, ds) = build_source(8).await;
-        let delegate = GridTableDelegate::new(Arc::clone(&ds), gpui::WeakEntity::new_invalid());
+        let delegate =
+            GridTableDelegate::new(Arc::clone(&ds), gpui::WeakEntity::new_invalid(), &[]);
         // Delegate paints VISIBLE columns only (the `__dat0_rowid` surrogate, when
         // present, is hidden) — assert against the visible count, not the raw schema.
         assert_eq!(delegate.columns.len(), ds.visible_column_count());
@@ -450,7 +498,8 @@ mod tests {
     #[tokio::test]
     async fn delegate_source_ptr_eq() {
         let (_tmp, ds) = build_source(4).await;
-        let delegate = GridTableDelegate::new(Arc::clone(&ds), gpui::WeakEntity::new_invalid());
+        let delegate =
+            GridTableDelegate::new(Arc::clone(&ds), gpui::WeakEntity::new_invalid(), &[]);
         assert!(delegate.source_ptr_eq(&ds));
     }
 }

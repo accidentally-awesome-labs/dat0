@@ -57,3 +57,14 @@ pub fn fold_columns(base: &[String], ops: &[Transformation]) -> Vec<ProjectionCo
         .filter(|c| !deleted.contains(&c.source))
         .collect()
 }
+
+/// Resolve a screen (visible) column index to its source identity using a
+/// folded `ColumnView`. Returns `None` if `screen_ix` is out of range.
+///
+/// This is the testable kernel of the screen-col→source addressing the grid
+/// uses: after a reorder/delete the screen-col order no longer matches the
+/// underlying schema order, so the source for a given screen index must be
+/// looked up through the folded view rather than assumed positional.
+pub fn source_for_screen_col(folded: &[ProjectionColumn], screen_ix: usize) -> Option<&str> {
+    folded.get(screen_ix).map(|c| c.source.as_str())
+}

@@ -70,6 +70,19 @@ fn reorder_applies_full_visible_order_preserving_renames() {
 }
 
 #[test]
+fn screen_col_maps_to_source_after_reorder() {
+    use dat0_app::view::column_view::source_for_screen_col;
+    let ops = vec![Transformation::Reorder {
+        columns: vec!["c".into(), "a".into(), "b".into()],
+    }];
+    let folded = fold_columns(&base(), &ops);
+    assert_eq!(source_for_screen_col(&folded, 0), Some("c"));
+    assert_eq!(source_for_screen_col(&folded, 1), Some("a"));
+    assert_eq!(source_for_screen_col(&folded, 2), Some("b"));
+    assert_eq!(source_for_screen_col(&folded, 3), None);
+}
+
+#[test]
 fn delete_then_reorder_omits_deleted() {
     let ops = vec![
         Transformation::DeleteColumn {

@@ -94,7 +94,15 @@ fn dispatch_undo(app: &mut gpui::App) {
         // requires mutable access to the same entity.
         let _ = ws;
         let change = workspace.update(app, |ws, _cx| {
-            ws.view_model.as_mut().and_then(|vm| vm.undo())
+            let change = ws.view_model.as_mut().and_then(|vm| vm.undo());
+            // Refresh the ColumnView off the new active stack (P4c T5). A
+            // display-only undo (e.g. undoing a Rename/Reorder, T6+) never
+            // round-trips through `apply_view_change`, so this is the only hook
+            // that keeps the header labels/order + addressing fresh for those.
+            // For a real data-view undo it is harmless (the source columns are
+            // unchanged) and `apply_view_change` refreshes again on rebind.
+            ws.refresh_column_view();
+            change
         });
         (engine, base_table, change, ws_weak)
     };
@@ -139,7 +147,11 @@ fn dispatch_redo(app: &mut gpui::App) {
         // requires mutable access to the same entity.
         let _ = ws;
         let change = workspace.update(app, |ws, _cx| {
-            ws.view_model.as_mut().and_then(|vm| vm.redo())
+            let change = ws.view_model.as_mut().and_then(|vm| vm.redo());
+            // Refresh the ColumnView off the new active stack (P4c T5);
+            // symmetric to `dispatch_undo` — see the rationale there.
+            ws.refresh_column_view();
+            change
         });
         (engine, base_table, change, ws_weak)
     };

@@ -535,6 +535,13 @@ pub struct WorkspaceShell {
     /// until then it persists after a copy/cut.
     // T11/polish: render marching-ants from this stored range + clear on selection change.
     pub(crate) copied_range: Option<crate::grid::selection::CellRange>,
+    /// Folded visible columns (source→display, display order, deletes excluded),
+    /// recomputed from the active stack whenever it changes (P4c T5). Drives the
+    /// header labels + order and the screen-col→source addressing used by every
+    /// mutating path. Empty until a data source binds; with no projection ops
+    /// active it is the identity over `ds.visible_column_names()`, so screen-col
+    /// index == schema index and existing behaviour is unchanged.
+    pub(crate) column_view: Vec<dat0_engine::transform::ProjectionColumn>,
     /// GPUI focus handle for the workspace shell (T11). The outer container
     /// element tracks this handle so that `on_key_down` receives key events
     /// when the workspace has focus.  Constructed once in `new`; the element
@@ -560,6 +567,7 @@ impl WorkspaceShell {
             cell_editor: None,
             cell_editor_sub: None,
             copied_range: None,
+            column_view: Vec::new(),
             focus_handle: cx.focus_handle(),
         }
     }
@@ -575,6 +583,12 @@ impl WorkspaceShell {
         // `selection.active().col` could point past the new schema.
         self.selection = None;
         self.data_source = Some(ds);
+        // Re-derive the ColumnView from the new source's visible columns + the
+        // active stack (P4c T5). On a fresh bind this is the identity over the
+        // visible columns (no projection ops yet); after a rebind that carries
+        // an active stack (e.g. a filter view) the source columns are unchanged,
+        // so the fold is still identity unless a projection op is present.
+        self.refresh_column_view();
     }
 
     /// Install or replace the active `GridDataSource` after a `ViewChange`
@@ -588,6 +602,10 @@ impl WorkspaceShell {
         // ever changes (e.g., a future hide-column transform).
         self.selection = None;
         self.data_source = Some(new_ds);
+        // A view-change rebind re-derives the source columns; recompute the
+        // ColumnView so the header labels/order and screen-col→source addressing
+        // track the (possibly new) active stack (P4c T5).
+        self.refresh_column_view();
         cx.notify();
     }
 
@@ -690,13 +708,40 @@ impl WorkspaceShell {
             .map(|vm| vm.base_table().to_string())
     }
 
-    /// Resolve a header column index to its bare column name via the active
-    /// `GridDataSource`'s Arrow schema (T0 / PD-016). Returns `None` if no
-    /// data source is mounted or `col_ix` is out of range.
-    fn column_name(&self, col_ix: usize) -> Option<String> {
-        self.data_source
+    /// Recompute `column_view` from the base columns (the visible source columns
+    /// of the active view) + the active transform stack (P4c T5). Called after
+    /// every stack change and after a data-source (re)bind so the view never
+    /// goes stale.
+    ///
+    /// With no projection ops in the stack the fold is the identity over the
+    /// visible columns, so `source_for_screen_col(&column_view, i)` returns the
+    /// same column `ds.column_name(i)` does — existing behaviour is unchanged.
+    pub(crate) fn refresh_column_view(&mut self) {
+        let base: Vec<String> = self
+            .data_source
             .as_ref()
-            .and_then(|ds| ds.column_name(col_ix))
+            .map(|ds| ds.visible_column_names())
+            .unwrap_or_default();
+        let ops: &[dat0_engine::Transformation] = self
+            .view_model
+            .as_ref()
+            .map(|vm| vm.active())
+            .unwrap_or(&[]);
+        self.column_view = crate::view::fold_columns(&base, ops);
+    }
+
+    /// Resolve a header (screen) column index to its bare SOURCE column name via
+    /// the active `ColumnView` (P4c T5). Returns `None` if no column maps to
+    /// `col_ix`.
+    ///
+    /// Screen-col→source is resolved through the folded `column_view` rather
+    /// than positionally over the Arrow schema, so after a display-only reorder
+    /// or delete a screen index still addresses the right source column. With no
+    /// projection ops the view is identity, so this is equivalent to the
+    /// previous `ds.column_name(col_ix)`.
+    fn column_name(&self, col_ix: usize) -> Option<String> {
+        crate::view::column_view::source_for_screen_col(&self.column_view, col_ix)
+            .map(str::to_string)
     }
 
     /// Drive the engine round-trip + grid rebind for a [`ViewChange`] (T6 —
@@ -711,7 +756,16 @@ impl WorkspaceShell {
     /// Preserves the dispatcher discipline established by `spawn_view_change`:
     /// the closure runs on the GPUI main thread via the `MainThreadDispatcher`,
     /// never `cx.update` from the tokio task.
-    fn spawn_rebind(&self, change: crate::view::ViewChange, cx: &mut Context<Self>) {
+    fn spawn_rebind(&mut self, change: crate::view::ViewChange, cx: &mut Context<Self>) {
+        // The ViewModel stack has already been mutated by the caller (set_sort /
+        // set_filter / edit_cells / delete_rows / a projection op). Refresh the
+        // ColumnView so the header labels/order + screen-col→source addressing
+        // reflect the new active stack immediately — a display-only change
+        // (Rename/Reorder/DeleteColumn, T6+) never round-trips through
+        // `apply_view_change`, so this is the only refresh hook for those. For a
+        // real data-view change this is harmless (the source columns are
+        // unchanged) and `apply_view_change` refreshes again on rebind (P4c T5).
+        self.refresh_column_view();
         let Some(base_table) = self.base_table() else {
             return;
         };
@@ -763,8 +817,11 @@ impl WorkspaceShell {
         let Some(ds) = self.data_source.as_ref() else {
             return;
         };
+        // Type the popover off the SOURCE column (resolved via the ColumnView)
+        // so a display-only reorder can't hand the funnel the wrong column's
+        // operator surface (P4c T5). Identity with no projection ops.
         let column_type = ds
-            .column_type(col_ix)
+            .column_type_for_source(&column)
             .unwrap_or(crate::view::filter_popover::ColumnType::String);
 
         // Pre-populate from any active filter on this column (edit-existing flow).
@@ -848,7 +905,11 @@ impl WorkspaceShell {
         let Some(key) = ds.row_key(active.row) else {
             return;
         };
-        let Some(col) = ds.column_name(active.col) else {
+        // Resolve the SCREEN column → its SOURCE identity via the ColumnView
+        // (P4c T5) so an edit addresses the right column even after a
+        // display-only reorder. With no projection ops this equals
+        // `ds.column_name(active.col)`.
+        let Some(col) = self.column_name(active.col) else {
             return;
         };
         let cell = dat0_engine::CellEdit {
@@ -899,8 +960,12 @@ impl WorkspaceShell {
             return;
         };
         let active = selection.active();
-        let column_type = ds
-            .column_type(active.col)
+        // Type the inline editor off the SOURCE column (resolved via the
+        // ColumnView) so a display-only reorder edits with the right type
+        // (P4c T5). Identity with no projection ops.
+        let column_type = self
+            .column_name(active.col)
+            .and_then(|source| ds.column_type_for_source(&source))
             .unwrap_or(crate::view::filter_popover::ColumnType::String);
 
         let editor = cx.new(|_| CellEditor::new(column_type));
@@ -976,7 +1041,8 @@ impl WorkspaceShell {
         // of range are skipped — they can't be addressed.
         let mut edits: Vec<dat0_engine::CellEdit> = Vec::new();
         for (row, col) in selection.resolved_cells() {
-            let (Some(id), Some(column)) = (ds.row_key(row), ds.column_name(col)) else {
+            // Resolve screen-col → source via the ColumnView (P4c T5).
+            let (Some(id), Some(column)) = (ds.row_key(row), self.column_name(col)) else {
                 continue;
             };
             edits.push(dat0_engine::CellEdit {
@@ -1043,12 +1109,15 @@ impl WorkspaceShell {
                     skipped += 1;
                     continue;
                 }
-                let (Some(id), Some(column), Some(ty)) = (
-                    ds.row_key(row),
-                    ds.column_name(col),
-                    ds.column_arrow_type(col),
-                ) else {
+                // Resolve screen-col → source via the ColumnView (P4c T5), then
+                // key the Arrow type off that source so paste coercion uses the
+                // right column's type even after a display-only reorder.
+                let (Some(id), Some(column)) = (ds.row_key(row), self.column_name(col)) else {
                     // Page not cached or index out of range — can't address it.
+                    skipped += 1;
+                    continue;
+                };
+                let Some(ty) = ds.column_arrow_type_for_source(&column) else {
                     skipped += 1;
                     continue;
                 };
@@ -1147,10 +1216,18 @@ impl WorkspaceShell {
             rows.sort_unstable();
             let top_row = rows[0];
 
+            // Resolve the SCREEN column → its SOURCE identity once via the
+            // ColumnView (P4c T5); all the per-column reads/writes below key off
+            // this source so a display-only reorder fills the right column.
+            let Some(source) = self.column_name(col) else {
+                continue;
+            };
+
             // Coerce the top cell's display value into a typed Scalar.
-            let fill_value = if let (Some(display), Some(arrow_type)) =
-                (ds.cell_display(top_row, col), ds.column_arrow_type(col))
-            {
+            let fill_value = if let (Some(display), Some(arrow_type)) = (
+                ds.cell_display_for_source(top_row, &source),
+                ds.column_arrow_type_for_source(&source),
+            ) {
                 match crate::grid::clipboard::coerce_cell(&display, &arrow_type) {
                     crate::grid::clipboard::CoerceResult::Ok(v) => v,
                     // Empty / NULL display or uncoercible → fill with NULL.
@@ -1163,12 +1240,12 @@ impl WorkspaceShell {
 
             // Apply fill_value to every lower selected cell in this column.
             for row in rows.into_iter().skip(1) {
-                let (Some(id), Some(column)) = (ds.row_key(row), ds.column_name(col)) else {
+                let Some(id) = ds.row_key(row) else {
                     continue;
                 };
                 edits.push(dat0_engine::CellEdit {
                     row: dat0_engine::RowKey::Surrogate { id },
-                    column,
+                    column: source.clone(),
                     value: fill_value.clone(),
                 });
             }
@@ -1203,7 +1280,8 @@ impl WorkspaceShell {
 
         let mut edits: Vec<dat0_engine::CellEdit> = Vec::new();
         for (row, col) in selection.resolved_cells() {
-            let (Some(id), Some(column)) = (ds.row_key(row), ds.column_name(col)) else {
+            // Resolve screen-col → source via the ColumnView (P4c T5).
+            let (Some(id), Some(column)) = (ds.row_key(row), self.column_name(col)) else {
                 continue;
             };
             edits.push(dat0_engine::CellEdit {
@@ -1241,7 +1319,8 @@ impl WorkspaceShell {
 
         let mut edits: Vec<dat0_engine::CellEdit> = Vec::new();
         for (row, col) in selection.resolved_cells() {
-            let (Some(id), Some(column)) = (ds.row_key(row), ds.column_name(col)) else {
+            // Resolve screen-col → source via the ColumnView (P4c T5).
+            let (Some(id), Some(column)) = (ds.row_key(row), self.column_name(col)) else {
                 continue;
             };
             edits.push(dat0_engine::CellEdit {
@@ -1313,18 +1392,29 @@ impl WorkspaceShell {
     /// cell, and each gap (a coordinate in the rect not in the selection, or a
     /// cell whose page isn't cached) becomes an empty string.
     fn build_selection_tsv(&mut self) -> Option<String> {
+        let cells: Vec<(usize, usize)> = self.selection.as_ref()?.resolved_cells().collect();
+        let (r0, c0, r1, c1) = bounding_rect(&cells)?;
+
+        // Pre-resolve each screen column in the bounding rect to its SOURCE name
+        // via the ColumnView (P4c T5) so the copy reads the right column even
+        // after a display-only reorder. Resolved up-front (indexed by screen
+        // column) to keep the inner render closures free of a `&self` borrow.
+        let sources: Vec<Option<String>> = (c0..=c1).map(|col| self.column_name(col)).collect();
+
         let ds = self.data_source.as_ref()?;
         let selection = self.selection.as_ref()?;
-
-        let cells: Vec<(usize, usize)> = selection.resolved_cells().collect();
-        let (r0, c0, r1, c1) = bounding_rect(&cells)?;
 
         let grid: Vec<Vec<String>> = (r0..=r1)
             .map(|row| {
                 (c0..=c1)
                     .map(|col| {
                         if selection.contains(row, col) {
-                            ds.cell_display(row, col).unwrap_or_default()
+                            // `sources` is indexed by `col - c0` over the rect.
+                            sources
+                                .get(col - c0)
+                                .and_then(Option::as_deref)
+                                .and_then(|source| ds.cell_display_for_source(row, source))
+                                .unwrap_or_default()
                         } else {
                             // Gap inside the bounding rect → empty cell.
                             String::new()
@@ -1408,7 +1498,15 @@ impl Render for WorkspaceShell {
                 }
             };
             if needs_rebuild {
-                let delegate = GridTableDelegate::new(Arc::clone(ds), cx.entity().downgrade());
+                // Build the delegate's columns from the active ColumnView so the
+                // header renders display labels in display order (P4c T5). With
+                // no projection ops the view is identity over the visible schema,
+                // so the columns match the pre-P4c schema-derived ones exactly.
+                let delegate = GridTableDelegate::new(
+                    Arc::clone(ds),
+                    cx.entity().downgrade(),
+                    &self.column_view,
+                );
                 self.table_state = Some(cx.new(|cx| TableState::new(delegate, window, cx)));
 
                 // PD-018 prefetch-on-bind: kick a background fetch of the first
