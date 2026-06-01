@@ -2,6 +2,7 @@
 
 pub mod column_view;
 pub mod distinct_values;
+pub mod export_dialog;
 pub mod filter_popover;
 pub mod filter_popover_entity;
 pub mod model;

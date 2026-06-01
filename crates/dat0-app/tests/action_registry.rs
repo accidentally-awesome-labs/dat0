@@ -70,12 +70,12 @@ fn lookup_returns_descriptor() {
 }
 
 #[test]
-fn builtins_register_eighteen() {
+fn builtins_register_nineteen() {
     let reg = ActionRegistry::new();
     dat0_app::actions::builtin::register_all(&reg).unwrap();
     // Ten from P3b/P4a + seven from P4b T9 (copy/cut/paste/fill_down/set_null/set_value/delete_rows)
-    // + one from P4c T8 (delete_column).
-    assert_eq!(reg.count(), 18);
+    // + one from P4c T8 (delete_column) + one from P4c T11 (view.export).
+    assert_eq!(reg.count(), 19);
     let titles: Vec<String> = reg.iter().map(|d| d.title).collect();
     assert!(titles.contains(&"New Window".to_string()));
     assert!(titles.contains(&"Open Settings".to_string()));
@@ -92,6 +92,8 @@ fn builtins_register_eighteen() {
     assert!(titles.contains(&"Delete Row(s)".to_string()));
     // T8 addition
     assert!(titles.contains(&"Delete Column".to_string()));
+    // P4c T11 addition
+    assert!(titles.contains(&"Export…".to_string()));
 }
 
 #[test]

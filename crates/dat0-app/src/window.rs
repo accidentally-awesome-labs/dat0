@@ -387,6 +387,32 @@ pub fn run_app(lock: AppLock, initial_paths: Vec<PathBuf>, main_loop: MainLoop) 
             });
         }
 
+        // Wire Cmd-E / Ctrl-E → Export (P4c T11). `Export` is a gpui action stub
+        // declared in `menu_macos.rs` (unconditional, so it resolves on Linux
+        // too). The handler dispatches through the ActionRegistry so the
+        // menu-click, keybind, and command-palette paths converge on
+        // `view.export` → `WorkspaceShell::open_export_dialog`.
+        {
+            #[cfg(target_os = "macos")]
+            let export_ks = "cmd-e";
+            #[cfg(not(target_os = "macos"))]
+            let export_ks = "ctrl-e";
+            cx.bind_keys([gpui::KeyBinding::new(
+                export_ks,
+                crate::menu_macos::Export,
+                None,
+            )]);
+            cx.on_action(|_action: &crate::menu_macos::Export, cx: &mut App| {
+                if let Some(reg) = crate::window_registry::action_registry() {
+                    if let Some(desc) = reg.get(&crate::actions::ActionId::from(
+                        crate::actions::builtin::ids::VIEW_EXPORT,
+                    )) {
+                        (desc.dispatch)(cx);
+                    }
+                }
+            });
+        }
+
         let first_window_id = session.lock().window_id;
         let bounds = Bounds::centered(None, size(px(1200.), px(800.)), cx);
         let session_for_window = Arc::clone(&session);
@@ -565,6 +591,18 @@ pub struct WorkspaceShell {
     /// timeline view is T10 — this stub stores the toggle flag so the `⌄`
     /// button can flip it and be rendered correctly on the next frame.
     pub(crate) pipeline_bar_state: crate::view::pipeline_bar::PipelineBarState,
+    /// Currently-mounted Export… dialog (P4c T11). `Some` while the File →
+    /// Export… dialog is open; cleared when its `ExportEvent` is routed
+    /// (Export → run + dismiss, or Cancel → dismiss). Rendered as an overlay
+    /// child in `render` when present.
+    export_dialog: Option<Entity<crate::view::export_dialog::ExportDialog>>,
+    /// Subscription to the active export dialog's [`ExportEvent`]. Stored so the
+    /// Export/Cancel callback stays registered — a dropped `Subscription`
+    /// deregisters silently (the P4a T10b trap). Cleared alongside
+    /// `export_dialog`.
+    ///
+    /// [`ExportEvent`]: crate::view::export_dialog::ExportEvent
+    export_dialog_sub: Option<Subscription>,
 }
 
 impl WorkspaceShell {
@@ -586,6 +624,8 @@ impl WorkspaceShell {
             header_rename: None,
             header_rename_sub: None,
             pipeline_bar_state: crate::view::pipeline_bar::PipelineBarState::default(),
+            export_dialog: None,
+            export_dialog_sub: None,
         }
     }
 
@@ -927,6 +967,151 @@ impl WorkspaceShell {
             return;
         };
         self.spawn_rebind(change, cx);
+    }
+
+    // ── Export… dialog + native save panel + streaming COPY (P4c T11) ─────────
+
+    /// Mount the File → Export… dialog (P4c T11).
+    ///
+    /// Follows the `on_funnel_click` popover pattern: build the entity via
+    /// `cx.new`, subscribe to its [`ExportEvent`], and STORE the subscription in
+    /// `export_dialog_sub` (a dropped `Subscription` deregisters the callback
+    /// silently — the P4a T10b trap). No-op (graceful) when no `ViewModel` is
+    /// mounted, so Export… off an empty workspace does nothing rather than
+    /// presenting a dialog that can't build a SELECT.
+    ///
+    /// [`ExportEvent`]: crate::view::export_dialog::ExportEvent
+    pub fn open_export_dialog(&mut self, cx: &mut Context<Self>) {
+        use crate::view::export_dialog::{ExportDialog, ExportEvent};
+
+        if self.view_model.is_none() {
+            tracing::debug!("open_export_dialog: no ViewModel (no file registered yet)");
+            return;
+        }
+
+        let dialog = cx.new(|_| ExportDialog::new());
+        // STORE the subscription — callbacks fire silently if the returned
+        // Subscription is dropped (P4a T10b post-review lesson; mirrors
+        // `on_funnel_click`'s `popover_sub`).
+        let sub = cx.subscribe(&dialog, |ws: &mut Self, _dialog, ev: &ExportEvent, cx| {
+            ws.route_export_event(ev.clone(), cx);
+        });
+        self.export_dialog_sub = Some(sub);
+        self.export_dialog = Some(dialog);
+        cx.notify();
+    }
+
+    /// Route an [`ExportEvent`] from the dialog: `Export` runs the save panel +
+    /// COPY (and dismisses); `Cancel` just dismisses.
+    ///
+    /// [`ExportEvent`]: crate::view::export_dialog::ExportEvent
+    fn route_export_event(
+        &mut self,
+        ev: crate::view::export_dialog::ExportEvent,
+        cx: &mut Context<Self>,
+    ) {
+        use crate::view::export_dialog::ExportEvent;
+        match ev {
+            ExportEvent::Export { scope, format } => {
+                self.run_export(scope, format, cx);
+            }
+            ExportEvent::Cancel => {
+                self.export_dialog = None;
+                self.export_dialog_sub = None;
+                cx.notify();
+            }
+        }
+    }
+
+    /// Open the native save panel, then stream the export via COPY (P4c T11).
+    ///
+    /// Builds the surrogate-stripped projection SELECT off `scope` + the live
+    /// view state (current-view applies rename/reorder/exclude via `column_view`;
+    /// full-table is the raw base columns minus the surrogate). The save panel
+    /// (`App::prompt_for_new_path`) returns a `oneshot::Receiver`, awaited on the
+    /// GPUI foreground executor inside `cx.spawn`; the async engine COPY
+    /// (`export_query_to_path`) is awaited directly because the tokio runtime is
+    /// entered for the whole `Application::run` closure (window.rs `runtime.enter()`),
+    /// mirroring the file-drop async-engine pattern. The result surfaces through
+    /// the `error_ux` banner queue (the same surface as the paste-reject banner).
+    pub fn run_export(
+        &mut self,
+        scope: crate::view::export_dialog::ExportScope,
+        format: dat0_engine::types::ExportFormat,
+        cx: &mut Context<Self>,
+    ) {
+        use crate::view::export_dialog::build_export;
+
+        let Some(base_table) = self.base_table() else {
+            self.export_dialog = None;
+            self.export_dialog_sub = None;
+            cx.notify();
+            return;
+        };
+        // Active view name, already-quoted (the inner SELECT reads it directly).
+        let active_view = self
+            .view_model
+            .as_ref()
+            .and_then(|vm| vm.active_view())
+            .map(|v| format!("\"{}\"", v.replace('"', "\"\"")));
+        let base_columns = self
+            .data_source
+            .as_ref()
+            .map(|ds| ds.visible_column_names())
+            .unwrap_or_default();
+        let (inner, cols) = build_export(
+            scope,
+            &base_table,
+            active_view.as_deref(),
+            &self.column_view,
+            &base_columns,
+        );
+        let select = dat0_engine::render::render_export_select(&inner, &cols);
+        let ext = match format {
+            dat0_engine::types::ExportFormat::Csv => "csv",
+            dat0_engine::types::ExportFormat::Json => "json",
+            dat0_engine::types::ExportFormat::Parquet => "parquet",
+        };
+        let suggested = format!("export.{ext}");
+        let engine = self.engine();
+
+        // GPUI native save panel (`App::prompt_for_new_path` derefs through
+        // `Context`). Returns a `oneshot::Receiver<Result<Option<PathBuf>>>`:
+        // `Ok(Some(path))` on confirm, `Ok(None)` on cancel.
+        let path_rx = cx.prompt_for_new_path(std::path::Path::new(""), Some(&suggested));
+        cx.spawn(async move |_this: gpui::WeakEntity<Self>, _async_cx| {
+            // `export_query_to_path` is a `QueryEngine` trait method.
+            use dat0_engine::QueryEngine as _;
+            // `await` yields `Result<Result<Option<PathBuf>>, oneshot::Canceled>`;
+            // collapse both layers to `Option<PathBuf>` (cancel / closed = None).
+            let dest = match path_rx.await {
+                Ok(Ok(Some(dest))) => dest,
+                _ => return,
+            };
+            // The engine COPY is async + Send; the tokio runtime is entered for
+            // the GPUI loop (window.rs `runtime.enter()`), so awaiting it here on
+            // the foreground executor drives the streaming COPY to completion.
+            match engine.export_query_to_path(&select, format, &dest).await {
+                Ok(()) => {
+                    let mut banner =
+                        crate::error_ux::Banner::info(dat0_i18n::t("export.done.title"));
+                    banner.body = format!("{}", dest.display());
+                    crate::error_ux::push(banner);
+                }
+                Err(e) => {
+                    crate::error_ux::push(crate::error_ux::Banner::error(
+                        dat0_i18n::t("export.failed.title"),
+                        e.to_string(),
+                    ));
+                }
+            }
+        })
+        .detach();
+
+        // Dismiss the dialog immediately — the save panel + COPY run async.
+        self.export_dialog = None;
+        self.export_dialog_sub = None;
+        cx.notify();
     }
 
     /// Commit the in-flight cell edit (T6). Resolves the active selection cell
@@ -1904,6 +2089,19 @@ impl Render for WorkspaceShell {
                 .into_any_element()
         });
 
+        // Export… dialog overlay (P4c T11). Mounted by `open_export_dialog`;
+        // emits `ExportEvent` routed via the stored `export_dialog_sub`
+        // subscription. Centred-ish near the top; a later polish task can centre
+        // it precisely in a modal scrim.
+        let export_overlay: Option<gpui::AnyElement> = self.export_dialog.as_ref().map(|d| {
+            div()
+                .absolute()
+                .top_16()
+                .left_1_2()
+                .child(d.clone())
+                .into_any_element()
+        });
+
         // T10: tab-strip with dirty-dot indicator. Shown whenever a ViewModel
         // is mounted (i.e. a file has been loaded). The "•" glyph appears next
         // to the tab label when `vm.is_dirty()` is true — meaning the active
@@ -2072,5 +2270,6 @@ impl Render for WorkspaceShell {
             .child(div().flex_1().child(body))
             .children(popover_overlay)
             .children(editor_overlay)
+            .children(export_overlay)
     }
 }

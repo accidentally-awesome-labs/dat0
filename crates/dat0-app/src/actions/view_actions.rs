@@ -44,6 +44,16 @@ pub fn register(reg: &ActionRegistry) -> Result<(), RegisterError> {
         }),
     })?;
 
+    reg.register(ActionDescriptor {
+        id: ActionId::from(ids::VIEW_EXPORT),
+        title: "Export…".into(),
+        group: ActionGroup::File,
+        keybinding: None, // keybind wired in window.rs (bind_keys + on_action)
+        dispatch: Arc::new(|app| {
+            dispatch_export(app);
+        }),
+    })?;
+
     Ok(())
 }
 
@@ -121,6 +131,21 @@ fn dispatch_undo(app: &mut gpui::App) {
             }
         }),
     );
+}
+
+/// Dispatch body for `view.export` (P4c T11).
+///
+/// Resolves the focused workspace and asks it to mount the File → Export…
+/// dialog. The dialog is a no-op (graceful) when no `ViewModel` is mounted
+/// (`WorkspaceShell::open_export_dialog` guards on that), so Export… off an
+/// empty workspace presents nothing rather than a dialog that can't build a
+/// SELECT.
+fn dispatch_export(app: &mut gpui::App) {
+    let Some(workspace) = focused_workspace(app) else {
+        tracing::debug!("view.export: no focused workspace");
+        return;
+    };
+    workspace.update(app, |ws, cx| ws.open_export_dialog(cx));
 }
 
 /// Dispatch body for `view.redo` (T13). Symmetric to `dispatch_undo`.
