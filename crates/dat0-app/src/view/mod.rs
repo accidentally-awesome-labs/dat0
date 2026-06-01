@@ -1,11 +1,13 @@
 //! Per-tab view state: active Transformation stack + undo cursor + active view name.
 
+pub mod column_view;
 pub mod distinct_values;
 pub mod filter_popover;
 pub mod filter_popover_entity;
 pub mod model;
 pub mod sort_header;
 
+pub use column_view::fold_columns;
 pub use model::{HISTORY_CAP, ViewChange, ViewModel, route_outcome};
 
 // ---------------------------------------------------------------------------
