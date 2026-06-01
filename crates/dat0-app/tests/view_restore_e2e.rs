@@ -72,23 +72,28 @@ async fn apply_change(engine: &DuckDBEngine, change: &dat0_app::view::ViewChange
 // Test 1: session.json v2 round-trip preserves transform_stack + undo_cursor
 // ---------------------------------------------------------------------------
 
-/// Verify that writing a ViewModel's stack + cursor to session.json v2 and
-/// reloading it via `migrate::load` preserves the exact stack contents and
-/// cursor position.
+/// Verify that writing a ViewModel's active stack + cursor to session.json v2
+/// and reloading it via `migrate::load` preserves the exact active-stack
+/// contents and cursor position.
+///
+/// P4c: session persists the ACTIVE stack only; cross-restart redo intentionally
+/// narrows (design §4.1). Under the zipper, `stack()` == the active `present`,
+/// so after apply×3 + undo the persisted stack is the 2 active ops (the undone
+/// op lives in the in-memory `future`, which is not persisted).
 #[tokio::test]
 async fn session_round_trip_preserves_stack() {
     let tmp = TempDir::new().unwrap();
     let (_, table) = engine_with_table(&tmp).await;
 
-    // Build a 3-op stack then undo once → cursor = 2.
+    // Build a 3-op stack then undo once → present is the active 2 ops.
     let base = format!("\"{}\"", table.replace('"', "\"\""));
     let mut vm = ViewModel::new("tab1".into(), base);
     vm.apply(filter_eq("a", 1));
     vm.apply(filter_eq("a", 2));
     vm.apply(filter_eq("a", 3));
-    vm.undo(); // cursor drops from 3 → 2
+    vm.undo(); // present drops from 3 → 2 active ops; the undone op moves to `future`
 
-    assert_eq!(vm.stack().len(), 3);
+    assert_eq!(vm.stack().len(), 2);
     assert_eq!(vm.cursor(), 2);
 
     // Persist to session.json.
@@ -117,21 +122,22 @@ async fn session_round_trip_preserves_stack() {
         "reloaded schema_version must be the current schema"
     );
     assert_eq!(restored.tabs.len(), 1);
+    // P4c: session persists the ACTIVE stack only; cross-restart redo
+    // intentionally narrows (design §4.1). The undone op (a=3) lived in the
+    // in-memory `future` and is not part of the persisted active stack.
     assert_eq!(
         restored.tabs[0].transform_stack.len(),
-        3,
-        "full stack (including redo entries) must be persisted"
+        2,
+        "only the active stack (present) is persisted; redo future is not"
     );
     assert_eq!(
         restored.tabs[0].undo_cursor, 2,
         "cursor at time of persist must be preserved"
     );
 
-    // Verify the first two entries match the applied transforms (the active slice).
+    // Verify the two entries match the active transforms.
     assert_eq!(restored.tabs[0].transform_stack[0], filter_eq("a", 1));
     assert_eq!(restored.tabs[0].transform_stack[1], filter_eq("a", 2));
-    // Entry [2] is the redo-able transform that was undone.
-    assert_eq!(restored.tabs[0].transform_stack[2], filter_eq("a", 3));
 }
 
 // ---------------------------------------------------------------------------

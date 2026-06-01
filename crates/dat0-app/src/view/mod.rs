@@ -67,6 +67,19 @@ async fn run_view_change_inner(
     change: ViewChange,
     on_rebind: RebindFn,
 ) -> anyhow::Result<()> {
+    // Display-only fast path (Option-B projection design): `new_active_view:
+    // Some` with `sql: None`. The data view is UNCHANGED — the engine already
+    // has this view bound to the current SQL. This shape is emitted when a
+    // projection op (Rename/Reorder/DeleteColumn, T6–T8) is applied, or when an
+    // undo/redo removes a redundant op and the new stack recompiles to identical
+    // SQL. No engine round-trip is needed: no create_or_replace_view, no rebind,
+    // no drop_view (`previous_active_view` is None here by construction). The
+    // grid header / ColumnView refresh happens at the WorkspaceShell layer in a
+    // later task, off the back of the returned change.
+    if change.is_display_only() {
+        return Ok(());
+    }
+
     // Phase 1: create (or rebind to base when cursor == 0).
     let table_name = match (&change.new_active_view, &change.sql) {
         (Some(view), Some(sql)) => {
@@ -74,11 +87,13 @@ async fn run_view_change_inner(
             view.clone()
         }
         (None, None) => base_table.clone(),
+        // `(Some, None)` is handled above (display-only). The only shape left
+        // here is `(None, Some)`, which is a genuine invariant violation: a base
+        // rebind must not carry SQL.
         _ => {
-            // ViewChange invariant: new_active_view ↔ sql appear together.
-            anyhow::bail!(
-                "ViewChange invariant violated: new_active_view and sql must both be Some or both None"
-            );
+            // ViewChange invariant: a view name and its SQL appear together
+            // (except the display-only `(Some, None)` short-circuited above).
+            anyhow::bail!("ViewChange invariant violated: sql present without a new_active_view");
         }
     };
 
@@ -105,4 +120,161 @@ async fn run_view_change_inner(
     }
 
     Ok(())
+}
+
+#[cfg(test)]
+mod consumer_tests {
+    //! Exercises `run_view_change_inner` (the already-wired undo/redo consumer)
+    //! against a real `DuckDBEngine`. The critical case is the display-only
+    //! `(Some, None)` shape produced by undo/redo of a projection or redundant
+    //! op: the consumer must return Ok WITHOUT bailing and WITHOUT dropping the
+    //! still-active view. No `MainThreadDispatcher` is installed in tests, so
+    //! Phase 3 logs a warn and skips — Phases 1/2/4 are what we assert here.
+
+    use super::*; // brings ViewModel, ViewChange, run_view_change_inner, RebindFn, engine types
+    use dat0_engine::{MemoryBudget, RegisterOpts, Transformation};
+    use tempfile::TempDir;
+
+    /// Build an in-memory DuckDB engine with a 100-row CSV (`a` INTEGER, `b` TEXT)
+    /// and return the engine plus the already-quoted base-table name.
+    async fn engine_with_table(tmp: &TempDir) -> (Arc<DuckDBEngine>, String) {
+        let csv = tmp.path().join("t.csv");
+        let mut s = String::from("a,b\n");
+        for i in 0..100_i64 {
+            s.push_str(&format!("{},x{}\n", i, i));
+        }
+        std::fs::write(&csv, s).unwrap();
+        let engine = DuckDBEngine::new(
+            tmp.path().join("scratch.duckdb"),
+            MemoryBudget {
+                bytes: 128 * 1024 * 1024,
+            },
+        )
+        .unwrap();
+        engine.init().await.unwrap();
+        let info = engine
+            .register_file(&csv, RegisterOpts::default())
+            .await
+            .unwrap();
+        let quoted = format!("\"{}\"", info.name.replace('"', "\"\""));
+        (Arc::new(engine), quoted)
+    }
+
+    /// A no-op rebind closure. It is never invoked in tests (no dispatcher is
+    /// installed), but `run_view_change_inner` requires one.
+    fn noop_rebind() -> RebindFn {
+        Arc::new(|_ds, _cx| {})
+    }
+
+    fn filter_a_gte(n: i64) -> Transformation {
+        use dat0_engine::{FilterOp, FilterValue, Scalar};
+        Transformation::Filter {
+            column: "a".into(),
+            op: FilterOp::Gte,
+            value: FilterValue::Scalar {
+                value: Scalar::Int(n),
+            },
+        }
+    }
+
+    #[tokio::test]
+    async fn display_only_change_does_not_bail_and_keeps_view_bound() {
+        let tmp = TempDir::new().unwrap();
+        let (engine, base) = engine_with_table(&tmp).await;
+        let mut vm = ViewModel::new("tab1".into(), base.clone());
+
+        // 1) A real data-view change: apply a filter. Route the (Some, Some)
+        //    change through the consumer so the engine actually binds the view.
+        let create = vm.apply(filter_a_gte(50));
+        assert!(!create.is_display_only());
+        let view_name = create.new_active_view.clone().expect("filter names a view");
+        run_view_change_inner(engine.clone(), base.clone(), create, noop_rebind())
+            .await
+            .expect("real data-view change must succeed");
+
+        // The view is bound and queryable.
+        engine
+            .execute_paged(&format!("SELECT * FROM \"{view_name}\""), 0, 10)
+            .await
+            .expect("view must exist after create");
+
+        // 2) Apply a projection Rename → display-only (Some, None) change.
+        let display_only = vm.apply(Transformation::Rename {
+            column: "a".into(),
+            to: "A".into(),
+        });
+        assert!(
+            display_only.is_display_only(),
+            "rename recompiles to identical SQL → display-only, got {display_only:?}"
+        );
+        assert_eq!(
+            display_only.new_active_view.as_deref(),
+            Some(view_name.as_str()),
+            "display-only change keeps the SAME view bound"
+        );
+        assert_eq!(display_only.previous_active_view, None);
+
+        // THE REGRESSION GUARD: routing the display-only change through the real
+        // consumer must return Ok (no bail) and must NOT drop the active view.
+        run_view_change_inner(engine.clone(), base.clone(), display_only, noop_rebind())
+            .await
+            .expect("display-only change must NOT bail in the consumer");
+
+        // The original view is still bound — nothing was dropped.
+        engine
+            .execute_paged(&format!("SELECT * FROM \"{view_name}\""), 0, 10)
+            .await
+            .expect("display-only change must NOT drop the still-active view");
+    }
+
+    #[tokio::test]
+    async fn display_only_change_from_undo_does_not_bail() {
+        // Undo of a projection op also yields the (Some, None) shape — the path
+        // reached from dispatch_undo. Prove it routes through the consumer Ok.
+        let tmp = TempDir::new().unwrap();
+        let (engine, base) = engine_with_table(&tmp).await;
+        let mut vm = ViewModel::new("tab1".into(), base.clone());
+
+        let create = vm.apply(filter_a_gte(50));
+        let view_name = create.new_active_view.clone().unwrap();
+        run_view_change_inner(engine.clone(), base.clone(), create, noop_rebind())
+            .await
+            .unwrap();
+
+        vm.apply(Transformation::Rename {
+            column: "a".into(),
+            to: "A".into(),
+        });
+        let undo = vm.undo().expect("undo yields a ViewChange");
+        assert!(undo.is_display_only(), "undo of rename is display-only");
+        assert_eq!(undo.previous_active_view, None);
+
+        run_view_change_inner(engine.clone(), base.clone(), undo, noop_rebind())
+            .await
+            .expect("display-only undo must NOT bail in the consumer");
+
+        engine
+            .execute_paged(&format!("SELECT * FROM \"{view_name}\""), 0, 10)
+            .await
+            .expect("display-only undo must NOT drop the still-active view");
+    }
+
+    #[tokio::test]
+    async fn invalid_sql_without_view_still_bails() {
+        // The only shape that remains a genuine invariant violation: (None, Some).
+        let tmp = TempDir::new().unwrap();
+        let (engine, base) = engine_with_table(&tmp).await;
+        let bad = ViewChange {
+            new_active_view: None,
+            previous_active_view: None,
+            sql: Some("SELECT 1".into()),
+        };
+        let err = run_view_change_inner(engine, base, bad, noop_rebind())
+            .await
+            .expect_err("(None, Some) must bail as an invariant violation");
+        assert!(
+            err.to_string().contains("invariant violated"),
+            "unexpected error: {err}"
+        );
+    }
 }

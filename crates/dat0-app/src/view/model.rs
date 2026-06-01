@@ -1,14 +1,15 @@
-//! ViewModel — one per open table tab. Owns the active Transformation stack,
-//! undo cursor, and current temp-view name. Mutators are pure; engine
-//! round-trips happen in the caller, driven by the returned ViewChange.
+//! ViewModel — one per open table tab. Owns the active Transformation stack
+//! (a past/present/future undo zipper) and current temp-view name. Mutators are
+//! pure; engine round-trips happen in the caller, driven by the returned
+//! ViewChange.
 
 use dat0_engine::{SortKey, Transformation, compile_view_sql};
 
 use crate::view::filter_popover_entity::Outcome;
 use crate::view::sort_header::ActiveSort;
 
-/// Maximum number of ops retained per tab. On overflow, oldest is dropped
-/// and the cursor decrements to stay aligned with surviving history.
+/// Maximum number of undo snapshots retained per tab (bounds `past`). On
+/// overflow, the oldest snapshot is evicted.
 pub const HISTORY_CAP: usize = 200;
 
 /// Per-tab state.
@@ -16,9 +17,17 @@ pub const HISTORY_CAP: usize = 200;
 pub struct ViewModel {
     tab_id: String,
     base_table: String, // already-quoted, e.g. "\"main\".\"orders\""
-    stack: Vec<Transformation>,
-    cursor: usize,               // active ops = stack[..cursor]
-    active_view: Option<String>, // None when cursor == 0
+    /// The active transform stack (what the view shows). In the zipper this is
+    /// the "present"; there is no in-stack redo tail (redo lives in `future`).
+    present: Vec<Transformation>,
+    /// Undo snapshots (most-recent last), bounded to HISTORY_CAP.
+    past: Vec<Vec<Transformation>>,
+    /// Redo snapshots (most-recent-undone last).
+    future: Vec<Vec<Transformation>>,
+    active_view: Option<String>,
+    /// Data SQL that produced `active_view` — lets `regenerate_view` detect a
+    /// display-only change (projection op) and skip the engine round-trip.
+    active_view_sql: Option<String>,
     nonce_seq: u32,
 }
 
@@ -34,14 +43,25 @@ pub struct ViewChange {
     pub sql: Option<String>,
 }
 
+impl ViewChange {
+    /// A change that needs no engine round-trip: the data SQL is unchanged
+    /// (a projection op) but the visible columns/header changed. The caller
+    /// refreshes the grid `ColumnView` + re-renders, without rebinding a view.
+    pub fn is_display_only(&self) -> bool {
+        self.new_active_view.is_some() && self.sql.is_none()
+    }
+}
+
 impl ViewModel {
     pub fn new(tab_id: String, base_table: String) -> Self {
         Self {
             tab_id,
             base_table,
-            stack: Vec::new(),
-            cursor: 0,
+            present: Vec::new(),
+            past: Vec::new(),
+            future: Vec::new(),
             active_view: None,
+            active_view_sql: None,
             nonce_seq: 0,
         }
     }
@@ -56,12 +76,15 @@ impl ViewModel {
         &self.base_table
     }
 
+    /// The active transform stack (alias of `active()`; kept for the session
+    /// layer + tests that persisted the full stack pre-P4c).
     pub fn stack(&self) -> &[Transformation] {
-        &self.stack
+        &self.present
     }
 
+    /// Active op count (== `active().len()`; replaces the old `cursor`).
     pub fn cursor(&self) -> usize {
-        self.cursor
+        self.present.len()
     }
 
     pub fn active_view(&self) -> Option<&str> {
@@ -71,35 +94,35 @@ impl ViewModel {
     // --- Pure predicates ---
 
     pub fn can_undo(&self) -> bool {
-        self.cursor > 0
+        !self.past.is_empty()
     }
 
     pub fn can_redo(&self) -> bool {
-        self.cursor < self.stack.len()
+        !self.future.is_empty()
     }
 
-    /// The active slice of transformations (stack[..cursor]).
+    /// The active slice of transformations (== `stack()` in the zipper model).
     pub fn active(&self) -> &[Transformation] {
-        &self.stack[..self.cursor]
+        &self.present
     }
 
     // --- Mutations (each returns ViewChange for the caller to drive) ---
 
-    /// Apply a new transformation: truncate redo history, push, bump cursor.
-    /// On history overflow, drop stack[0] and decrement cursor.
-    pub fn apply(&mut self, t: Transformation) -> ViewChange {
-        // Drop lost-redo entries.
-        self.stack.truncate(self.cursor);
-        self.stack.push(t);
-        self.cursor += 1;
-
-        // Enforce history cap.
-        if self.stack.len() > HISTORY_CAP {
-            let overflow = self.stack.len() - HISTORY_CAP;
-            self.stack.drain(0..overflow);
-            self.cursor -= overflow;
+    /// Snapshot `present` onto the undo stack and clear redo. Called by every
+    /// structural edit (apply / jump_to / remove_at / clear).
+    fn checkpoint(&mut self) {
+        self.past.push(self.present.clone());
+        if self.past.len() > HISTORY_CAP {
+            let overflow = self.past.len() - HISTORY_CAP;
+            self.past.drain(0..overflow);
         }
+        self.future.clear();
+    }
 
+    /// Apply a new transformation as one undo step.
+    pub fn apply(&mut self, t: Transformation) -> ViewChange {
+        self.checkpoint();
+        self.present.push(t);
         self.regenerate_view()
     }
 
@@ -129,58 +152,77 @@ impl ViewModel {
         })
     }
 
-    /// Undo: decrement cursor. Returns None if already at the bottom.
+    /// Undo: restore the previous snapshot. None if nothing to undo.
     pub fn undo(&mut self) -> Option<ViewChange> {
-        if !self.can_undo() {
-            return None;
-        }
-        self.cursor -= 1;
+        let prev = self.past.pop()?;
+        self.future.push(std::mem::replace(&mut self.present, prev));
         Some(self.regenerate_view())
     }
 
-    /// Redo: increment cursor. Returns None if already at the top.
-    ///
-    /// Special case: when called from `cursor == 0` (i.e., after a `clear`),
-    /// jumps directly to `stack.len()` so that the entire cleared stack is
-    /// restored in a single step ("one undo restores", design §5).
+    /// Redo: re-apply the next snapshot. None if nothing to redo.
     pub fn redo(&mut self) -> Option<ViewChange> {
-        if !self.can_redo() {
-            return None;
-        }
-        if self.cursor == 0 {
-            self.cursor = self.stack.len();
-        } else {
-            self.cursor += 1;
-        }
+        let next = self.future.pop()?;
+        self.past.push(std::mem::replace(&mut self.present, next));
         Some(self.regenerate_view())
     }
 
-    /// Clear all active ops (set cursor to 0). Stack is preserved so redo can
-    /// restore. Returns ViewChange that rebinds to base table.
+    /// Clear all active ops (undoable). Rebinds to the base table.
     pub fn clear(&mut self) -> ViewChange {
-        self.cursor = 0;
+        if self.present.is_empty() {
+            return self.regenerate_view();
+        }
+        self.checkpoint();
+        self.present.clear();
         self.regenerate_view()
     }
 
-    /// Replace `stack[cursor - 1]` in place (no new history entry). Used by
-    /// filter-popover edit + by `set_sort` when an existing Sort op is present.
-    /// No-op on the stack if cursor == 0; still returns a ViewChange.
+    /// PipelineBar scrubber: keep the first `k` ops (0..=len), as one undo step.
+    pub fn jump_to(&mut self, k: usize) -> ViewChange {
+        let k = k.min(self.present.len());
+        if k == self.present.len() {
+            return self.regenerate_view();
+        }
+        self.checkpoint();
+        self.present.truncate(k);
+        self.regenerate_view()
+    }
+
+    /// PipelineBar per-transform remove: drop `present[i]`, as one undo step.
+    pub fn remove_at(&mut self, i: usize) -> ViewChange {
+        if i >= self.present.len() {
+            return self.regenerate_view();
+        }
+        self.checkpoint();
+        self.present.remove(i);
+        self.regenerate_view()
+    }
+
+    /// Replace the top active op (`present[len - 1]`) in place (no new history
+    /// entry). Used by filter-popover edit + by `set_sort` when an existing
+    /// Sort op is present. No-op on the stack if `present` is empty; still
+    /// returns a ViewChange. In the zipper this is not a discrete undo step, so
+    /// it pushes nothing onto `past`; `future` is cleared to keep redo
+    /// consistent with the mutated present.
     pub fn replace_at_cursor(&mut self, t: Transformation) -> ViewChange {
-        if self.cursor > 0 {
-            self.stack[self.cursor - 1] = t;
+        if let Some(last) = self.present.last_mut() {
+            *last = t;
+            self.future.clear();
         }
         self.regenerate_view()
     }
 
     /// Upsert a Sort op into the active stack:
-    /// - If a `Sort` exists in stack[..cursor], replace it in place (single undo step).
+    /// - If a `Sort` exists in `present`, replace it in place (not a discrete
+    ///   undo step: no `past` push, but clear `future` to keep redo consistent).
     /// - Otherwise, append a new `Sort` via `apply`.
     pub fn set_sort(&mut self, keys: Vec<SortKey>) -> ViewChange {
-        if let Some(idx) = self.stack[..self.cursor]
+        if let Some(idx) = self
+            .present
             .iter()
             .position(|op| matches!(op, Transformation::Sort { .. }))
         {
-            self.stack[idx] = Transformation::Sort { keys };
+            self.present[idx] = Transformation::Sort { keys };
+            self.future.clear();
             self.regenerate_view()
         } else {
             self.apply(Transformation::Sort { keys })
@@ -188,7 +230,7 @@ impl ViewModel {
     }
 
     /// Upsert a `Filter` op into the active stack, keyed by *column*:
-    /// - If a `Filter` on the SAME column exists in stack[..cursor], replace it
+    /// - If a `Filter` on the SAME column exists in `present`, replace it
     ///   in place (single undo step, no new history entry).
     /// - Otherwise, append the filter via `apply`.
     ///
@@ -207,11 +249,15 @@ impl ViewModel {
             return self.apply(t);
         };
         let column = column.clone();
-        if let Some(idx) = self.stack[..self.cursor]
+        if let Some(idx) = self
+            .present
             .iter()
             .position(|op| matches!(op, Transformation::Filter { column: c, .. } if *c == column))
         {
-            self.stack[idx] = t;
+            // In-place replace: not a discrete undo step (no `past` push), but
+            // clear `future` to keep the redo stack consistent with the present.
+            self.present[idx] = t;
+            self.future.clear();
             self.regenerate_view()
         } else {
             self.apply(t)
@@ -223,14 +269,15 @@ impl ViewModel {
     /// Return the current Sort op (if any) as an [`ActiveSort`] for the header
     /// click handler to mutate.
     ///
-    /// Scans `stack[..cursor]` in reverse and returns the first
+    /// Scans `present` (the active stack) in reverse and returns the first
     /// `Transformation::Sort` found. If no Sort op is active, returns an
     /// empty `ActiveSort`.
     ///
     /// Used by the grid sort-zone click handler (T12): read current state →
     /// mutate via `ActiveSort::click` / `shift_click` → call `set_sort`.
     pub fn current_sort_as_active(&self) -> ActiveSort {
-        let keys = self.stack[..self.cursor]
+        let keys = self
+            .present
             .iter()
             .rev()
             .find_map(|op| match op {
@@ -244,13 +291,13 @@ impl ViewModel {
     // --- Filter query helpers ---
 
     /// Find the most recent `Transformation::Filter` on `column` in the active
-    /// stack (i.e., within `stack[..cursor]`). Returns the last (most recent)
-    /// matching entry, or `None` if no filter on that column is active.
+    /// stack (i.e., within `present`). Returns the last (most recent) matching
+    /// entry, or `None` if no filter on that column is active.
     ///
     /// Used by the filter-popover edit flow to pre-populate the popover when
     /// the user re-clicks the funnel on a column with an existing filter.
     pub fn find_filter_for(&self, column: &str) -> Option<&Transformation> {
-        self.stack[..self.cursor].iter().rfind(|op| match op {
+        self.present.iter().rfind(|op| match op {
             Transformation::Filter { column: c, .. } => c == column,
             _ => false,
         })
@@ -258,15 +305,40 @@ impl ViewModel {
 
     // --- Private helpers ---
 
-    /// Recompute active_view name + SQL given the current cursor.
+    /// Recompute active_view name + SQL from the current `present` stack.
+    ///
+    /// Display-only fast path: when the recompiled data SQL is byte-identical to
+    /// the SQL backing the current `active_view` (a projection op, or an
+    /// undo/redo that recompiles to the same SQL), keep the view and emit a
+    /// `ViewChange` with `sql: None` so the caller refreshes headers without an
+    /// engine round-trip. That change carries `previous_active_view: None`
+    /// because the view is unchanged — nothing must be dropped.
     fn regenerate_view(&mut self) -> ViewChange {
-        let previous = self.active_view.take();
+        let previous = self.active_view.clone();
 
-        if self.cursor == 0 {
-            // Bind to base; no view exists.
+        if self.present.is_empty() {
+            self.active_view = None;
+            self.active_view_sql = None;
             return ViewChange {
                 new_active_view: None,
                 previous_active_view: previous,
+                sql: None,
+            };
+        }
+
+        let body_sql = compile_view_sql(&self.base_table, &self.present)
+            .expect("compile_view_sql must succeed — UI must validate before apply");
+
+        // Display-only fast path: data SQL unchanged (a projection op, or an
+        // undo/redo whose new stack recompiles to identical SQL) → keep the
+        // current view, signal the caller to refresh headers without an engine
+        // hop. `previous_active_view` is None because the view stays bound to the
+        // same SQL: nothing is created and nothing must be dropped.
+        if self.active_view.is_some() && self.active_view_sql.as_deref() == Some(body_sql.as_str())
+        {
+            return ViewChange {
+                new_active_view: self.active_view.clone(),
+                previous_active_view: None,
                 sql: None,
             };
         }
@@ -277,12 +349,8 @@ impl ViewModel {
             sanitize_for_view_name(&self.tab_id),
             self.nonce_seq
         );
-
-        let ops = &self.stack[..self.cursor];
-        let body_sql = compile_view_sql(&self.base_table, ops)
-            .expect("compile_view_sql must succeed — UI must validate before apply");
-
         self.active_view = Some(new_name.clone());
+        self.active_view_sql = Some(body_sql.clone());
         ViewChange {
             new_active_view: Some(new_name),
             previous_active_view: previous,

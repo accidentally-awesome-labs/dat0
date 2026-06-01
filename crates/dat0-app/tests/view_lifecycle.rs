@@ -246,7 +246,11 @@ async fn replace_at_cursor_does_not_change_history_size() {
 }
 
 // ---------------------------------------------------------------------------
-// T6-5: clear → rebind to base → redo restores full stack in one step
+// T6-5: clear → rebind to base → undo restores full stack in one step
+//
+// P4c zipper: clear() is an undoable structural edit (checkpoints the pre-clear
+// present onto `past`, clears the redo future). Restoring the cleared stack is
+// therefore done via undo(), not redo().
 // ---------------------------------------------------------------------------
 
 #[tokio::test]
@@ -288,26 +292,26 @@ async fn clear_and_redo_restores_full_stack() {
         "base table untouched after clear"
     );
 
-    // One redo from cursor=0 jumps to stack.len() (design §5).
-    let c_redo = vm.redo().expect("redo must be available after clear");
+    // One undo restores the full pre-clear stack in a single step (design §5).
+    let c_undo = vm.undo().expect("undo must be available after clear");
     assert_eq!(
         vm.cursor(),
         2,
-        "redo from clear should restore cursor to stack.len()"
+        "undo of clear should restore the full pre-clear stack"
     );
-    apply_change(&engine, &c_redo).await;
+    apply_change(&engine, &c_undo).await;
 
-    let redo_view = c_redo.new_active_view.as_ref().unwrap();
-    let paged_redo = engine
+    let undo_view = c_undo.new_active_view.as_ref().unwrap();
+    let paged_undo = engine
         .execute_paged(
-            &format!("SELECT * FROM \"{}\"", redo_view.replace('"', "\"\"")),
+            &format!("SELECT * FROM \"{}\"", undo_view.replace('"', "\"\"")),
             0,
             200,
         )
         .await
         .unwrap();
     assert_eq!(
-        paged_redo.total_rows, 50,
+        paged_undo.total_rows, 50,
         "restored view must honour the filter"
     );
 }
