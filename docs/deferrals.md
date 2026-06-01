@@ -1116,6 +1116,38 @@ that's modifying it; merge conflicts are signals worth investigating.
 
 ---
 
+### PD-020 — Inline-editor `Tab` → move-RIGHT advance unwired (gpui-component `Input` exposes no Tab event)
+
+- **Status:** open
+- **Severity:** low (the `Enter` → move-DOWN advance + focus-on-mount are shipped; `Tab` still
+  works as the input's own tab-stop, it just doesn't commit-and-advance one cell right).
+- **Affected files:** `crates/dat0-app/src/grid/cell_editor.rs` (`CellEditor`),
+  `crates/dat0-app/src/grid/edit_ops.rs` (`commit_cell_edit_and_advance` only handles
+  `EditorAdvance::Down`).
+- **Symptom:** P4c T14 added a real `FocusHandle` + focus-on-mount and wired `Enter` → commit + move
+  the active cell DOWN one row + re-open the editor (spreadsheet semantics) by emitting
+  `CellEditorEvent::CommitAndMove(value, EditorAdvance::Down)` on `InputEvent::PressEnter`. The
+  matching `Tab` → commit + move RIGHT could NOT be wired: the gpui-component `Input` (rev `0f0ab35`)
+  consumes Tab internally for tab-stop focus navigation and surfaces it to subscribers only as
+  focus changes, NOT as an `InputEvent` variant — `InputEvent` is exactly `{ Change, PressEnter,
+  Focus, Blur }` (see `crates/ui/src/input/state.rs`). There is therefore no hook point on the
+  existing event surface for a Tab-advance.
+- **One alternative rejected:**
+  - **Wrapper-level `on_key_down` intercept:** attaching a key handler to the `CellEditor` container
+    (tracking its own `FocusHandle`) to catch Tab would require the wrapper to HOLD focus — but then
+    keystrokes route to the wrapper, not the inner `InputState`, so typing into the field would land
+    nowhere (focus contention). Shipping that would break the very focus-on-mount this task added.
+    Not usable.
+- **Current state:** `Enter` → down + focus-on-mount are fully wired and shipped; `EditorAdvance` is
+  an enum (currently single-variant `Down`) so adding `Right` later is a one-line extension once an
+  upstream Tab seam exists. `Esc` cancels (P4b). `Tab` falls through to the input's own behaviour.
+- **One clean future path:**
+  - **Upstream gpui-component PR:** add a `PressTab { shift: bool }` variant to `InputEvent` (emitted
+    alongside the existing tab-stop handling) so dat0 can subscribe and emit
+    `CommitAndMove(value, EditorAdvance::Right)` exactly like the `PressEnter` → `Down` path.
+- **Discovered:** P4c T14 implementation (2026-06-01).
+- **Originating doc:** `docs/plans/2026-05-31-dat0-p4c-plan.md` T14 (Step 3).
+- **Last touched:** 2026-06-01.
 
 ---
 

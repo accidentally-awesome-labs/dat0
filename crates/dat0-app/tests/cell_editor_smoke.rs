@@ -137,3 +137,24 @@ fn with_seed_constructs_without_panic() {
         let _entity = cx.new(|_| CellEditor::with_seed(ColumnType::String, "hello"));
     });
 }
+
+// ---------------------------------------------------------------------------
+// 4. Focus handle accessor — compile-level guard for the P4c T14 rework
+// ---------------------------------------------------------------------------
+
+/// `CellEditor` exposes a `focus_handle()` accessor (P4c T14).
+///
+/// Full focus *behaviour* (focus-on-mount, Enter→down advance) needs a real
+/// `&mut Window` and is manual UAT (T15). This test is the compile-level guard
+/// that the accessor exists and yields a usable [`gpui::FocusHandle`]: the
+/// handle is built lazily (since `new` is `cx`-free, mirroring the lazy widget
+/// mount), so calling the accessor twice returns the *same* handle.
+#[test]
+fn cell_editor_exposes_focus_handle() {
+    with_app(|cx| {
+        let entity = cx.new(|_| CellEditor::new(ColumnType::String));
+        let (h1, h2) = entity.update(cx, |ed, cx| (ed.focus_handle(cx), ed.focus_handle(cx)));
+        // The lazily-built handle is stable across calls (same focus identity).
+        assert_eq!(h1, h2, "focus_handle() must return a stable handle");
+    });
+}
