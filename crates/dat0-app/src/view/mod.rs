@@ -5,6 +5,7 @@ pub mod distinct_values;
 pub mod filter_popover;
 pub mod filter_popover_entity;
 pub mod model;
+pub mod pipeline_bar;
 pub mod sort_header;
 
 pub use column_view::fold_columns;

@@ -561,6 +561,10 @@ pub struct WorkspaceShell {
     /// fine-grained cell focus; this shell-level handle is sufficient for
     /// T11's keyboard map + selection navigation.
     focus_handle: FocusHandle,
+    /// PipelineBar expanded/collapsed toggle state (P4c T9). The expanded
+    /// timeline view is T10 — this stub stores the toggle flag so the `⌄`
+    /// button can flip it and be rendered correctly on the next frame.
+    pub(crate) pipeline_bar_state: crate::view::pipeline_bar::PipelineBarState,
 }
 
 impl WorkspaceShell {
@@ -581,6 +585,7 @@ impl WorkspaceShell {
             focus_handle: cx.focus_handle(),
             header_rename: None,
             header_rename_sub: None,
+            pipeline_bar_state: crate::view::pipeline_bar::PipelineBarState::default(),
         }
     }
 
@@ -1540,6 +1545,19 @@ impl WorkspaceShell {
         self.route_change(change, cx);
     }
 
+    /// PipelineBar scrubber: jump to state `k` (keep first `k` ops) as one undo
+    /// step (P4c T9). Refreshes the `ColumnView` and routes the resulting
+    /// `ViewChange` — display-only ops re-render immediately; data-view changes
+    /// spawn an engine round-trip. No-op when no `ViewModel` is mounted.
+    pub fn pipeline_jump_to(&mut self, k: usize, cx: &mut Context<Self>) {
+        let Some(vm) = self.view_model.as_mut() else {
+            return;
+        };
+        let change = vm.jump_to(k);
+        self.refresh_column_view();
+        self.route_change(change, cx);
+    }
+
     /// Return the active inline header-rename editor for `col_ix`, if one is
     /// mounted for that column. Used by `GridTableDelegate::render_th` to render
     /// the editor in-place instead of the column label (P4c T7).
@@ -2002,6 +2020,30 @@ impl Render for WorkspaceShell {
                 focus_handle_for_click.focus(window);
             });
 
+        // PipelineBar collapsed pill strip (P4c T9). Shown when the active
+        // transform stack is non-empty. Uses the render fn from
+        // `view::pipeline_bar` with the current active stack + a weak shell
+        // handle so pill clicks can call `pipeline_jump_to`. The `⌄` toggle
+        // flips `pipeline_bar_state.expanded` (expanded timeline is T10).
+        let pipeline_bar: Option<gpui::AnyElement> = {
+            if let Some(vm) = self.view_model.as_ref() {
+                let stack = vm.active();
+                if !stack.is_empty() {
+                    let ws_weak = cx.entity().downgrade();
+                    crate::view::pipeline_bar::render_pipeline_bar(
+                        stack,
+                        &mut self.pipeline_bar_state,
+                        ws_weak,
+                        cx,
+                    )
+                } else {
+                    None
+                }
+            } else {
+                None
+            }
+        };
+
         div()
             .id("workspace-shell")
             .size_full()
@@ -2014,6 +2056,7 @@ impl Render for WorkspaceShell {
             .drag_over::<ExternalPaths>(|style, _, _, _| style.bg(gpui::rgba(0x0088_ff22)))
             .on_drop::<ExternalPaths>(drop_listener)
             .children(tab_strip)
+            .children(pipeline_bar)
             .child(div().flex_1().child(body))
             .children(popover_overlay)
             .children(editor_overlay)
