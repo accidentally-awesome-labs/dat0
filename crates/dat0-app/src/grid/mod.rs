@@ -477,19 +477,27 @@ impl TableDelegate for GridTableDelegate {
         // small and this is the only place the active/selected state is known at
         // cell-render time. Tests build the delegate with an invalid `ws`, so
         // `upgrade` returns `None` and no ring is drawn.
-        let (is_active, is_selected) = self
+        //
+        // T12: also read `copied_range` for the marching-ants dashed border.
+        let (is_active, is_selected, copied) = self
             .ws
             .upgrade()
-            .and_then(|ws| {
-                ws.read(cx).selection.as_ref().map(|sel| {
-                    let active = sel.active();
-                    (
-                        active.row == row_ix && active.col == col_ix,
-                        sel.contains(row_ix, col_ix),
-                    )
-                })
+            .map(|ws| {
+                let shell = ws.read(cx);
+                let (active, selected) = shell
+                    .selection
+                    .as_ref()
+                    .map(|sel| {
+                        let active = sel.active();
+                        (
+                            active.row == row_ix && active.col == col_ix,
+                            sel.contains(row_ix, col_ix),
+                        )
+                    })
+                    .unwrap_or((false, false));
+                (active, selected, shell.copied_range)
             })
-            .unwrap_or((false, false));
+            .unwrap_or((false, false, None));
 
         // ElementId only accepts (&str, usize) tuples (gpui 0.2.2), not
         // 3-tuples. Encode (row_ix, col_ix) into a single index so each
@@ -505,7 +513,50 @@ impl TableDelegate for GridTableDelegate {
         if is_selected && !is_active {
             el = el.bg(gpui::rgba(0x3b82f622));
         }
+
+        // T12: Marching-ants dashed border on the boundary cells of the last
+        // copied/cut range. `copied` is in screen-space (same space as
+        // `col_ix`); we apply a 1-px dashed green border on each boundary
+        // edge of the inclusive rectangle [r0..r1] × [c0..c1].
+        //
+        // GPUI 0.2.2 has `border_dashed()` which sets `BorderStyle::Dashed`
+        // globally for all four edges. We control which edges are VISIBLE by
+        // setting their width to 1 (visible) or leaving them at 0 (hidden).
+        // The active-cell ring applied below overrides this with `border_2()`
+        // so the focus ring wins when the active cell coincides with a boundary.
+        if let Some(cr) = copied {
+            // Normalise so r0 ≤ r1 and c0 ≤ c1 (the selection geometry
+            // already normalises, but copied_range mirrors it verbatim).
+            let (rmin, rmax) = (cr.r0.min(cr.r1), cr.r0.max(cr.r1));
+            let (cmin, cmax) = (cr.c0.min(cr.c1), cr.c0.max(cr.c1));
+
+            let on_top = row_ix == rmin && col_ix >= cmin && col_ix <= cmax;
+            let on_bottom = row_ix == rmax && col_ix >= cmin && col_ix <= cmax;
+            let on_left = col_ix == cmin && row_ix >= rmin && row_ix <= rmax;
+            let on_right = col_ix == cmax && row_ix >= rmin && row_ix <= rmax;
+
+            if on_top || on_bottom || on_left || on_right {
+                // Dashed green accent, 1-px per visible boundary edge.
+                // `.border_dashed()` sets the style; per-edge width methods
+                // control which edges are visible (0-width edges are invisible).
+                el = el.border_color(gpui::rgb(0x22c55e)).border_dashed();
+                if on_top {
+                    el = el.border_t_1();
+                }
+                if on_bottom {
+                    el = el.border_b_1();
+                }
+                if on_left {
+                    el = el.border_l_1();
+                }
+                if on_right {
+                    el = el.border_r_1();
+                }
+            }
+        }
+
         // Active-cell focus ring: 2-px blue border anchored on the exact cell.
+        // Applied after marching-ants so it wins when both apply.
         if is_active {
             el = el
                 .border_2()

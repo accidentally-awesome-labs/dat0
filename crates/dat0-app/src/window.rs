@@ -1458,6 +1458,10 @@ impl WorkspaceShell {
             cx.notify();
         }
 
+        // Paste dismisses the marching-ants border (T12): once data has been
+        // pasted the dashed outline no longer conveys useful information.
+        self.copied_range = None;
+
         if skipped > 0 {
             // Structured title + body (P3b Banner shape), not a flat string. The
             // banner is `dismissible` by default (the X closes it); a paste-reject
@@ -2155,7 +2159,7 @@ impl Render for WorkspaceShell {
         // Undo/Redo (Cmd-Z / Cmd-Shift-Z) are bound globally via cx.on_action
         // in run_app — do NOT rebind here.
         let key_handler = cx.listener(|ws: &mut Self, ev: &KeyDownEvent, window, cx| {
-            use crate::grid::keymap::{apply_key, key_from_event};
+            use crate::grid::keymap::{Key, apply_key, key_from_event};
 
             let ks = &ev.keystroke;
             let mods = &ks.modifiers;
@@ -2219,6 +2223,14 @@ impl Render for WorkspaceShell {
                 // SelectAll (Cmd+A) is in the keymap but we still need cx.notify().
                 if let Some(sel) = ws.selection.as_mut() {
                     apply_key(sel, nav_key);
+                }
+                // Marching-ants border (T12): clear ONLY on Escape so the user
+                // can navigate to a paste target while the marquee is visible.
+                // Paste clears it via `paste_clipboard`; a new copy/cut overwrites
+                // it via `build_selection_tsv`.  Plain arrows / Shift+arrow /
+                // Cmd+arrow / Cmd+A must NOT clear it.
+                if nav_key == Key::Escape {
+                    ws.copied_range = None;
                 }
                 cx.notify();
             }
