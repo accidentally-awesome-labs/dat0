@@ -1,19 +1,24 @@
 //! DataGrid: gpui-component Table wrapper over duckdb::arrow batches.
 
+pub mod cell_editor;
+pub mod clipboard;
+pub mod context_menu;
 pub mod data_source;
+pub mod keymap;
 pub mod renderers;
+pub mod selection;
 
 pub use data_source::GridDataSource;
 
 use std::sync::Arc;
 
-use duckdb::arrow::datatypes::DataType;
 use gpui::{
-    App, Context, IntoElement, ParentElement, SharedString, Styled, Window, div, prelude::*,
+    App, Context, IntoElement, ParentElement, SharedString, Styled, WeakEntity, Window, div,
+    prelude::*,
 };
 use gpui_component::table::{Column, TableDelegate, TableState};
 
-use renderers::{CellAlignment, render_cell, type_badge};
+use renderers::{CellAlignment, type_badge};
 
 // ── Four-zone header geometry ─────────────────────────────────────────────────
 //
@@ -31,9 +36,9 @@ use renderers::{CellAlignment, render_cell, type_badge};
 // x-position → zone mapping.  A pure zone-from-x helper (for hit-testing in
 // tests or future pointer-event work) is provided alongside these constants.
 //
-// T9 stub: grip / body are invisible no-ops.
+// Remaining stubs: grip / body zones are still no-ops.
 //   Grip → column-resize (P4c)
-//   Body → row-selection toggle (P4b)
+//   Body → row-selection toggle (future P4b task)
 
 /// Width of the left-edge drag-grip in logical pixels.
 /// P4c (column resize) will replace the invisible stub with a real handle.
@@ -57,9 +62,9 @@ pub const HEADER_SORT_PX: f32 = 20.0;
 ///   `(cell_width - HEADER_FUNNEL_PX) .. cell_width`    → Funnel
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ColumnHeaderZone {
-    /// Left-edge resize grip.  T9 stub: no-op (P4c will fill).
+    /// Left-edge resize grip.  Stub: no-op click (P4c column-resize will fill).
     Grip,
-    /// Column-name / body click area.  T9 stub: no-op (P4b will fill).
+    /// Column-name / body click area.  Stub: no-op click (future P4b row-selection will fill).
     Body,
     /// Sort-direction toggle icon.  Live in P4a (cycles Asc/Desc via T12).
     Sort,
@@ -96,16 +101,14 @@ pub fn zone_from_x(x: f32, cell_width: f32) -> ColumnHeaderZone {
 /// Per `docs/internal/gpui-table-api-notes.md` §4.1: the delegate is
 /// `Sized + 'static` — no `Send`/`Sync` bounds — so it lives on the GPUI
 /// main thread alongside the parent view. The `Arc<GridDataSource>` field
-/// is the only cross-thread handle; pages are still fetched off-thread
-/// by P3a's async paging layer (later P3b tasks will wire `load_more`).
+/// is the only cross-thread handle; pages are fetched off-thread by the
+/// async paging layer wired up in PD-018 (`prefetch_visible_rows`).
 ///
-/// For T4 this is a minimum-viable delegate: columns are derived from the
-/// `GridDataSource` schema at construction, and `render_td` renders the
-/// in-memory page-0 batch via [`renderers::render_cell`]. `load_more` /
-/// `visible_rows_changed` will land in a follow-up task that wires the
-/// async paged fetch back into a per-page cache — until then any row
-/// outside the initial page renders as an em-dash placeholder so the
-/// widget mounts cleanly.
+/// As of PD-018 this is a fully paged delegate: `render_td` reads real values
+/// from the LRU page cache via [`GridDataSource::cell_render`] (synchronous,
+/// never triggers a DuckDB fetch). Pages that haven't loaded yet fall back to
+/// an em-dash placeholder for that cell only; real values appear as pages
+/// stream in via the background prefetch path.
 pub struct GridTableDelegate {
     /// Shared paging source. `Arc` so the same source can be inspected by
     /// other views (e.g., status bar row-count badge in a later task).
@@ -114,25 +117,45 @@ pub struct GridTableDelegate {
     /// hand a `&Column` to the widget on each `column()` call without
     /// re-deriving from the Arrow schema every frame.
     columns: Vec<Column>,
+    /// Weak handle to the owning `WorkspaceShell` (T0 / PD-016). The header
+    /// sort/funnel click closures upgrade this and dispatch into
+    /// `WorkspaceShell::on_sort_zone_click` / `on_funnel_click`. Weak so the
+    /// delegate never keeps the shell alive; `None` only in unit tests that
+    /// build a delegate without a shell.
+    ws: WeakEntity<crate::window::WorkspaceShell>,
 }
 
 impl GridTableDelegate {
     /// Build a delegate over `source`, deriving column metadata from the
     /// Arrow schema. Columns get a small default width and a type-badge
     /// suffix in their display name (e.g., `id (INT64)`).
-    pub fn new(source: Arc<GridDataSource>) -> Self {
+    ///
+    /// `ws` is a weak handle to the owning `WorkspaceShell` so the header
+    /// sort/funnel click closures (T0 / PD-016) can dispatch into it. Tests
+    /// that build a delegate without a shell pass `WeakEntity::new_invalid()`.
+    pub fn new(source: Arc<GridDataSource>, ws: WeakEntity<crate::window::WorkspaceShell>) -> Self {
+        // Columns are derived from the VISIBLE schema fields only: the hidden
+        // `__dat0_rowid` surrogate (T5) is plumbed through the Arrow schema for
+        // `row_key` resolution but must never paint. We index each visible
+        // column back into the Arrow schema via `schema_index_for_visible` so
+        // the type badge reflects the right field; a user's renamed-collision
+        // column `__dat0_rowid__src` stays visible (it was the user's data).
         let schema = source.schema.clone();
-        let columns = schema
-            .fields()
-            .iter()
-            .map(|f| {
+        let columns = (0..source.visible_column_count())
+            .filter_map(|visible_ix| {
+                let schema_ix = source.schema_index_for_visible(visible_ix)?;
+                let f = schema.fields().get(schema_ix)?;
                 let badge = type_badge(f.data_type());
                 let name: SharedString = format!("{} ({})", f.name(), badge).into();
                 let key: SharedString = f.name().to_string().into();
-                Column::new(key, name)
+                Some(Column::new(key, name))
             })
             .collect();
-        Self { source, columns }
+        Self {
+            source,
+            columns,
+            ws,
+        }
     }
 
     /// `Arc::ptr_eq` shortcut for the parent view's "rebuild on data-source
@@ -145,17 +168,18 @@ impl GridTableDelegate {
 
     /// Renders the sort-icon zone (right-of-center).
     ///
-    /// T12 live: the on_click closure reads the shift modifier from the GPUI
-    /// `ClickEvent` and logs the intended state-machine transition. The actual
-    /// `ViewModel::current_sort_as_active → click/shift_click → set_sort`
-    /// engine round-trip is wired in T13, which plumbs `ViewModel` access and
-    /// `spawn_view_change` into the delegate.
+    /// T0 (PD-016) live: the on_click closure reads the shift modifier from the
+    /// GPUI `ClickEvent` and dispatches into
+    /// [`crate::window::WorkspaceShell::on_sort_zone_click`], which runs the
+    /// `current_sort_as_active → click/shift_click → set_sort` cycle and the
+    /// `spawn_view_change` engine round-trip.
     ///
     /// The element must carry a unique `id` so GPUI can track click events
     /// across reframes; we encode `("th-sort", col_ix)`.
     fn render_sort_icon(&self, col_ix: usize) -> impl IntoElement {
-        // "⇅" is the neutral sort indicator; T13 will swap in "↑"/"↓" once
-        // ActiveSort state is readable from the delegate.
+        // "⇅" is the neutral sort indicator. A later P4b polish task can swap
+        // in "↑"/"↓" once ActiveSort state is read back into the delegate.
+        let ws = self.ws.clone();
         div()
             .id(("th-sort", col_ix))
             .w(gpui::px(HEADER_SORT_PX))
@@ -164,31 +188,25 @@ impl GridTableDelegate {
             .items_center()
             .justify_center()
             .cursor_pointer()
-            .on_click(move |ev, _window, _cx| {
-                // T12: read shift modifier so the state-machine transition is
-                // observable in logs. T13 replaces this with the real dispatch:
-                //   let col_name = self.columns[col_ix].name.clone();
-                //   let active = vm.current_sort_as_active();
-                //   let active = if shift { active.shift_click(&col_name) }
-                //                else     { active.click(&col_name) };
-                //   spawn_view_change(engine, base_table, vm.set_sort(active.keys), rebind);
-                let shift_held = ev.modifiers().shift;
-                tracing::debug!(
-                    col_ix,
-                    shift_held,
-                    "header sort zone clicked — T13 will dispatch to ViewModel::set_sort"
-                );
+            .on_click(move |ev, _window, cx| {
+                let shift = ev.modifiers().shift;
+                if let Some(h) = ws.upgrade() {
+                    h.update(cx, |ws, cx| ws.on_sort_zone_click(col_ix, shift, cx));
+                }
             })
             .child("⇅")
     }
 
     /// Renders the funnel-icon zone (rightmost).
     ///
-    /// T9 live: clicking logs the intent and calls a placeholder that T10 will
-    /// replace with the real filter-popover open.
+    /// T0 (PD-016) live: clicking dispatches into
+    /// [`crate::window::WorkspaceShell::on_funnel_click`], which mounts the
+    /// filter popover for `col_ix` and routes its `Outcome` back into the
+    /// ViewModel + engine round-trip.
     ///
     /// The element must carry a unique `id`; we encode `("th-funnel", col_ix)`.
     fn render_funnel_icon(&self, col_ix: usize) -> impl IntoElement {
+        let ws = self.ws.clone();
         div()
             .id(("th-funnel", col_ix))
             .w(gpui::px(HEADER_FUNNEL_PX))
@@ -197,11 +215,10 @@ impl GridTableDelegate {
             .items_center()
             .justify_center()
             .cursor_pointer()
-            .on_click(move |_ev, _window, _cx| {
-                // T9 stub: placeholder invocation for "open filter popover for
-                // column col_ix".  T10 replaces this closure with the real
-                // popover-open dispatch via the WorkspaceShell event channel.
-                tracing::debug!(col_ix, "header funnel zone clicked — T10 will wire popover");
+            .on_click(move |_ev, window, cx| {
+                if let Some(h) = ws.upgrade() {
+                    h.update(cx, |ws, cx| ws.on_funnel_click(col_ix, window, cx));
+                }
             })
             .child("⌄")
     }
@@ -227,14 +244,14 @@ impl TableDelegate for GridTableDelegate {
     /// Four-zone column header per P4a spec §6.
     ///
     /// Layout (left → right):
-    ///   1. **Grip** — invisible `HEADER_GRIP_PX`-wide strip for future column
-    ///      resize (P4c).  T9 stub: no-op + `cursor_col_resize` hint only.
+    ///   1. **Grip** — invisible `HEADER_GRIP_PX`-wide strip.  Stub: no-op +
+    ///      `cursor_col_resize` hint only (P4c column-resize will fill).
     ///   2. **Body** — column-name text, flex-grows to fill remaining space.
-    ///      T9 stub: no-op click (P4b row-selection will claim this zone).
-    ///   3. **Sort icon** — `HEADER_SORT_PX`-wide `⇅` button.  Live in P4a:
-    ///      clicking logs a placeholder that T12 wires to Asc/Desc/None cycle.
-    ///   4. **Funnel icon** — `HEADER_FUNNEL_PX`-wide `⌄` button.  Live in P4a:
-    ///      clicking logs a placeholder that T10 wires to the filter popover.
+    ///      Stub: no-op click (future P4b row-selection will claim this zone).
+    ///   3. **Sort icon** — `HEADER_SORT_PX`-wide `⇅` button.  Live (P4a):
+    ///      dispatches to `WorkspaceShell::on_sort_zone_click` (Asc/Desc/None).
+    ///   4. **Funnel icon** — `HEADER_FUNNEL_PX`-wide `⌄` button.  Live (P4a):
+    ///      dispatches to `WorkspaceShell::on_funnel_click` (filter popover).
     fn render_th(
         &mut self,
         col_ix: usize,
@@ -249,16 +266,16 @@ impl TableDelegate for GridTableDelegate {
             .items_center()
             .w_full()
             .h_full()
-            // ── Zone 1: Grip (T9 stub — P4c column-resize will fill) ──────────
+            // ── Zone 1: Grip (stub — P4c column-resize will fill) ────────────
             .child(
                 div()
                     .id(("th-grip", col_ix))
                     .w(gpui::px(HEADER_GRIP_PX))
                     .h_full()
                     .cursor_col_resize(),
-                // T9 stub: no click handler; P4c (column resize) claims this zone.
+                // Stub: no click handler; P4c (column resize) will claim this zone.
             )
-            // ── Zone 2: Body / column name (T9 stub — P4b selection will fill) ─
+            // ── Zone 2: Body / column name (stub — future P4b row-selection) ──
             .child(
                 div()
                     .id(("th-body", col_ix))
@@ -268,7 +285,7 @@ impl TableDelegate for GridTableDelegate {
                     .items_center()
                     .overflow_hidden()
                     .child(col_name),
-                // T9 stub: no click handler; P4b (row selection) claims this zone.
+                // Stub: no click handler; future P4b (row selection) will claim this zone.
             )
             // ── Zone 3: Sort icon (live — T12 replaces closure) ───────────────
             .child(self.render_sort_icon(col_ix))
@@ -281,36 +298,41 @@ impl TableDelegate for GridTableDelegate {
         row_ix: usize,
         col_ix: usize,
         _window: &mut Window,
-        _cx: &mut Context<TableState<Self>>,
+        cx: &mut Context<TableState<Self>>,
     ) -> impl IntoElement {
-        // Per §4.4: `render_td` must return synchronously from in-memory
-        // data. P3a's `GridDataSource::page_for` is async; we can't await
-        // here. The proper fix (background prefetch + cached page lookup)
-        // is the next task in P3b — for T4 we read the Arrow schema for
-        // column type and, when the cache happens to hold the row's page,
-        // render the cell. Otherwise we emit a placeholder.
+        // PD-018: `render_td` reads the real value from the LRU page cache
+        // synchronously (`cell_render` never triggers a DuckDB fetch). When the
+        // row's page is already cached — prefetched on bind / on scroll via the
+        // background path — the cell paints its real value with numeric
+        // right-alignment and NULL styling. When the page hasn't loaded yet, we
+        // fall back to the em-dash placeholder for THAT cell only; the
+        // virtualized-table pattern means real values appear as pages load.
         //
-        // Page-0 is the only page that's "guaranteed" available because
-        // `GridDataSource::new` probes the schema via `LIMIT 1` — that
-        // call does not populate the LRU. Hence "—" is the expected
-        // render for every cell at T4. The follow-up task replaces this
-        // with a synchronous cache lookup.
-        let text = self
-            .source
-            .schema
-            .fields()
-            .get(col_ix)
-            .map(|f| match f.data_type() {
-                DataType::Int32 | DataType::Int64 | DataType::UInt64 | DataType::Float64 => "—",
-                _ => "—",
-            })
-            .unwrap_or("—");
+        // `col_ix` is a VISIBLE-column index (the hidden `__dat0_rowid` never
+        // paints, T5); `cell_render` maps it to the underlying Arrow schema
+        // index internally so the cell reflects the right column.
+        let cell = self.source.cell_render(row_ix, col_ix);
 
-        // Note: the explicit numeric/right-align branch will land alongside
-        // the cache lookup; we keep the visual API (`render_cell` →
-        // `CellDisplay`) live below to ensure dead-code linters do not strip
-        // it, but the rendered output here is the placeholder.
-        let _ = (render_cell, CellAlignment::Right);
+        // PD-018 focus ring: now that cells paint real values we can anchor a
+        // per-cell ring on the active selection cell (replacing the T11
+        // bottom-left floating badge). Read the live selection through the weak
+        // `WorkspaceShell` handle — a cheap `read` per cell; selection sizes are
+        // small and this is the only place the active/selected state is known at
+        // cell-render time. Tests build the delegate with an invalid `ws`, so
+        // `upgrade` returns `None` and no ring is drawn.
+        let (is_active, is_selected) = self
+            .ws
+            .upgrade()
+            .and_then(|ws| {
+                ws.read(cx).selection.as_ref().map(|sel| {
+                    let active = sel.active();
+                    (
+                        active.row == row_ix && active.col == col_ix,
+                        sel.contains(row_ix, col_ix),
+                    )
+                })
+            })
+            .unwrap_or((false, false));
 
         // ElementId only accepts (&str, usize) tuples (gpui 0.2.2), not
         // 3-tuples. Encode (row_ix, col_ix) into a single index so each
@@ -318,7 +340,61 @@ impl TableDelegate for GridTableDelegate {
         let cell_ix = row_ix
             .saturating_mul(self.columns.len())
             .saturating_add(col_ix);
-        div().id(("td", cell_ix)).size_full().child(text)
+
+        let mut el = div().id(("td", cell_ix)).size_full().flex().items_center();
+
+        // Selected-cell tint (lighter than the active ring) so a multi-cell
+        // selection is visible for UAT.
+        if is_selected && !is_active {
+            el = el.bg(gpui::rgba(0x3b82f622));
+        }
+        // Active-cell focus ring: 2-px blue border anchored on the exact cell.
+        if is_active {
+            el = el
+                .border_2()
+                .border_color(gpui::rgb(0x3b82f6))
+                .bg(gpui::rgba(0x3b82f611));
+        }
+
+        match cell {
+            Some(display) => {
+                // Numeric / big-int cells right-align; text + NULL left-align.
+                el = match display.alignment {
+                    CellAlignment::Right => el.justify_end(),
+                    CellAlignment::Left => el.justify_start(),
+                };
+                if display.is_null {
+                    // NULL renders dimmed so it reads as "absent value", not the
+                    // literal string the user typed.
+                    el = el.text_color(gpui::rgb(0x9ca3af));
+                }
+                el.child(display.text)
+            }
+            // Page not yet cached (or out-of-range): placeholder for this cell.
+            None => el.justify_start().child("—".to_string()),
+        }
+    }
+
+    /// Background-fetch the page(s) covering `visible_range` so the next render
+    /// paints real values for the rows the user can see (PD-018 scroll-paging).
+    ///
+    /// Called by the gpui-component `Table` widget whenever the visible row
+    /// range changes. The fetch runs OFF the GPUI main thread (`page_for` is
+    /// async DuckDB I/O); the re-render notify is posted back onto the main
+    /// thread via the `MainThreadDispatcher` (never `cx.update` from the tokio
+    /// task — the canonical `spawn_view_change` discipline). Delegated to the
+    /// owning `WorkspaceShell` (it holds the dispatcher-friendly weak entity).
+    fn visible_rows_changed(
+        &mut self,
+        visible_range: std::ops::Range<usize>,
+        _window: &mut Window,
+        cx: &mut Context<TableState<Self>>,
+    ) {
+        if let Some(ws) = self.ws.upgrade() {
+            ws.update(cx, |ws, cx| {
+                ws.prefetch_visible_rows(visible_range.start, visible_range.end, cx);
+            });
+        }
     }
 }
 
@@ -358,8 +434,10 @@ mod tests {
     #[tokio::test]
     async fn delegate_columns_match_schema() {
         let (_tmp, ds) = build_source(8).await;
-        let delegate = GridTableDelegate::new(Arc::clone(&ds));
-        assert_eq!(delegate.columns.len(), ds.schema.fields().len());
+        let delegate = GridTableDelegate::new(Arc::clone(&ds), gpui::WeakEntity::new_invalid());
+        // Delegate paints VISIBLE columns only (the `__dat0_rowid` surrogate, when
+        // present, is hidden) — assert against the visible count, not the raw schema.
+        assert_eq!(delegate.columns.len(), ds.visible_column_count());
         // Column name carries the type badge suffix.
         let first = &delegate.columns[0];
         assert!(
@@ -372,7 +450,7 @@ mod tests {
     #[tokio::test]
     async fn delegate_source_ptr_eq() {
         let (_tmp, ds) = build_source(4).await;
-        let delegate = GridTableDelegate::new(Arc::clone(&ds));
+        let delegate = GridTableDelegate::new(Arc::clone(&ds), gpui::WeakEntity::new_invalid());
         assert!(delegate.source_ptr_eq(&ds));
     }
 }

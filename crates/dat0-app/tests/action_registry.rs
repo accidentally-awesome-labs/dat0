@@ -1,13 +1,14 @@
-//! `ActionRegistry` + built-in action descriptors (P3b T3 + T8).
+//! `ActionRegistry` + built-in action descriptors (P3b T3 + T8 + P4b T9).
 //!
 //! Verifies the registry shape and the baseline `register_all` built-ins.
 //! T3 shipped seven descriptors; T8 added `sample_data.retry_taxi` (banner
 //! Retry button for the offline fetch-failed UX), bringing the count to
-//! eight. Banner action_ids (T2) reference these stable strings.
-//! Downstream tasks (T5 recovery panel, T7 empty-state hero,
-//! T10 import cancel, T11 file dialog, T12 theme toggle) will replace
-//! stub dispatch bodies with real wiring — registry shape itself is
-//! frozen here.
+//! eight. P4a T13 added `view.undo` + `view.redo` → ten. P4b T9 adds seven
+//! edit / clipboard / bulk-op actions → seventeen. Banner action_ids (T2)
+//! reference these stable strings. Downstream tasks (T5 recovery panel,
+//! T7 empty-state hero, T10 import cancel, T11 file dialog, T12 theme
+//! toggle) will replace stub dispatch bodies with real wiring — registry
+//! shape itself is frozen here.
 
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -69,14 +70,38 @@ fn lookup_returns_descriptor() {
 }
 
 #[test]
-fn builtins_register_ten() {
+fn builtins_register_seventeen() {
     let reg = ActionRegistry::new();
     dat0_app::actions::builtin::register_all(&reg).unwrap();
-    assert_eq!(reg.count(), 10);
+    // Ten from P3b/P4a + seven from P4b T9 (copy/cut/paste/fill_down/set_null/set_value/delete_rows).
+    assert_eq!(reg.count(), 17);
     let titles: Vec<String> = reg.iter().map(|d| d.title).collect();
     assert!(titles.contains(&"New Window".to_string()));
     assert!(titles.contains(&"Open Settings".to_string()));
     assert!(titles.contains(&"Retry NYC Taxi download".to_string()));
     assert!(titles.contains(&"Undo".to_string()));
     assert!(titles.contains(&"Redo".to_string()));
+    // T9 additions
+    assert!(titles.contains(&"Copy".to_string()));
+    assert!(titles.contains(&"Cut".to_string()));
+    assert!(titles.contains(&"Paste".to_string()));
+    assert!(titles.contains(&"Fill Down".to_string()));
+    assert!(titles.contains(&"Set NULL".to_string()));
+    assert!(titles.contains(&"Set Value…".to_string()));
+    assert!(titles.contains(&"Delete Row(s)".to_string()));
+}
+
+#[test]
+fn edit_actions_are_registered() {
+    let reg = dat0_app::actions::test_registry();
+    for id in [
+        "view.copy",
+        "view.cut",
+        "view.paste",
+        "view.fill_down",
+        "view.delete_rows",
+        "view.set_null",
+    ] {
+        assert!(reg.contains(id), "missing {id}");
+    }
 }

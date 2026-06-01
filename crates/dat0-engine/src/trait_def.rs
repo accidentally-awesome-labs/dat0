@@ -15,6 +15,31 @@ pub trait QueryEngine: Send + Sync {
     fn status(&self) -> EngineStatus;
 
     async fn register_file(&self, path: &Path, opts: RegisterOpts) -> Result<TableInfo>;
+
+    /// Like [`register_file`](Self::register_file), but MATERIALIZES the import
+    /// into a DuckDB BASE TABLE that eagerly carries the `__dat0_rowid`
+    /// surrogate, instead of registering a lazy VIEW.
+    ///
+    /// This is the app's import path (PD-017, Path A): a VIEW cannot be
+    /// `ALTER TABLE … ADD COLUMN`-ed, so the surrogate the P4b edit/delete
+    /// overlay references (`WHERE __dat0_rowid = …`) only reaches imports when
+    /// they are base tables. Implementations REUSE the same `read_csv` /
+    /// `read_json` / `read_parquet(…)` SQL `register_file` produces (all P3b
+    /// delimiter/type sniffing preserved), materialize it via CTAS, then run the
+    /// `ensure_rowid` injection — under one lock so the table is never
+    /// observable without its surrogate.
+    ///
+    /// Trade-off vs `register_file`: the file's data is loaded into the scratch
+    /// DuckDB base table rather than read lazily on each scan. For dat0 Scratch
+    /// mode this is the accepted behavior (the base table is on-disk in
+    /// `scratch.duckdb`, not a RAM-resident copy).
+    ///
+    /// # Errors
+    /// - `EngineError::EngineClosed` — if the engine has been closed.
+    /// - `EngineError::UnsupportedFormat` — if the format cannot be resolved.
+    /// - `EngineError::DuckDb` — if the read SQL or materialization fails.
+    async fn register_file_as_table(&self, path: &Path, opts: RegisterOpts) -> Result<TableInfo>;
+
     async fn create_table(&self, name: &str, sql: &str, origin: DerivedOrigin)
     -> Result<TableInfo>;
     async fn drop_table(&self, name: &str, schema: Option<&str>) -> Result<()>;
@@ -57,4 +82,23 @@ pub trait QueryEngine: Send + Sync {
 
     async fn attach(&self, dsn: &str, alias: &str, opts: AttachOpts) -> Result<()>;
     async fn detach(&self, alias: &str) -> Result<()>;
+
+    /// Ensure `table` carries the `__dat0_rowid` surrogate (idempotent). Injected
+    /// at import; back-filled lazily for pre-P4b tables. See design §5.
+    ///
+    /// The surrogate is a gap-free `0..n-1` BIGINT key in physical scan order
+    /// (stable across reads), tagged with a `dat0:surrogate` column COMMENT that
+    /// makes this call idempotent and disambiguates our key from a user column
+    /// of the same name. A pre-existing UNMARKED `__dat0_rowid` source column is
+    /// renamed to `__dat0_rowid__src` (preserving the user's data) before the
+    /// surrogate is injected.
+    ///
+    /// `table` is a plain (unquoted) identifier; quoting is applied internally.
+    ///
+    /// # Errors
+    /// - `EngineError::EngineClosed` — if the engine has been closed.
+    /// - `EngineError::DuckDb` — if `table` is a VIEW or does not exist
+    ///   (`ALTER TABLE` only applies to base tables).
+    /// - `EngineError::EnginePoisoned` — if the connection mutex was poisoned.
+    async fn ensure_rowid(&self, table: &str) -> Result<()>;
 }

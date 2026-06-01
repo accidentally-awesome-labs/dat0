@@ -225,16 +225,38 @@ impl FilterPopoverEntity {
 
     // --- Outcome emission ---
 
-    /// Emit an outcome to all registered subscribers.
+    /// Emit an outcome to all registered subscribers (the `on_outcome`
+    /// callbacks).
     ///
-    /// `pub` so smoke tests and the render-button closures can drive the
-    /// signal path directly. Production callers should prefer the Apply /
-    /// Cancel / Clear button closures baked into `render()`; this is the
-    /// escape hatch used by tests.
+    /// This is now a **test-only** signal path: after T0's dual-path addition,
+    /// production routes outcomes via [`Self::emit_outcome_cx`] → `cx.emit`
+    /// (the `FilterPopoverEvent` GPUI event that `WorkspaceShell` subscribes
+    /// to). The `on_outcome` callback path has no production caller — only the
+    /// headless smoke tests, which cannot subscribe to GPUI events without a
+    /// real window, use it.
+    ///
+    // TODO: collapse the dual signal path (drop `on_outcome` + this method)
+    // once the smoke tests migrate to event-based assertions on
+    // `FilterPopoverEvent::OutcomeEmitted`.
     pub fn emit_outcome(&self, outcome: Outcome) {
         for cb in &self.outcome_callbacks {
             cb(outcome.clone());
         }
+    }
+
+    /// Emit an outcome through **both** signal paths:
+    /// 1. the `on_outcome` callbacks (used by the headless smoke tests), and
+    /// 2. a GPUI [`FilterPopoverEvent::OutcomeEmitted`] event so subscribers
+    ///    registered via `cx.subscribe` (T0 / PD-016 — `WorkspaceShell`)
+    ///    receive the outcome with a `&mut Context` they can drive
+    ///    `spawn_view_change` from.
+    ///
+    /// The `on_outcome` callback path has no `&mut cx`, so it cannot reach the
+    /// engine round-trip on its own; the GPUI event is the production routing
+    /// path for the funnel-click wiring.
+    pub fn emit_outcome_cx(&self, outcome: Outcome, cx: &mut Context<Self>) {
+        self.emit_outcome(outcome.clone());
+        cx.emit(FilterPopoverEvent::OutcomeEmitted(outcome));
     }
 
     // --- Read-only state accessors (for render) ---
@@ -545,9 +567,9 @@ impl Render for FilterPopoverEntity {
             .primary()
             .disabled(!can_apply)
             .on_click(move |_ev, _window, cx| {
-                entity_apply.update(cx, |this, _cx| {
+                entity_apply.update(cx, |this, cx| {
                     if let Some(t) = this.state.apply_transformation() {
-                        this.emit_outcome(Outcome::Apply(t));
+                        this.emit_outcome_cx(Outcome::Apply(t), cx);
                     }
                 });
             });
@@ -556,9 +578,9 @@ impl Render for FilterPopoverEntity {
             .label("Cancel")
             .ghost()
             .on_click(move |_ev, _window, cx| {
-                entity_cancel.update(cx, |this, _cx| {
+                entity_cancel.update(cx, |this, cx| {
                     this.state.cancel();
-                    this.emit_outcome(Outcome::Cancel);
+                    this.emit_outcome_cx(Outcome::Cancel, cx);
                 });
             });
 
@@ -567,11 +589,14 @@ impl Render for FilterPopoverEntity {
                 .label("Clear")
                 .ghost()
                 .on_click(move |_ev, _window, cx| {
-                    entity_clear.update(cx, |this, _cx| {
+                    entity_clear.update(cx, |this, cx| {
                         let pre_pop = this.state.clear_filter();
-                        this.emit_outcome(Outcome::Clear {
-                            pre_populated: pre_pop,
-                        });
+                        this.emit_outcome_cx(
+                            Outcome::Clear {
+                                pre_populated: pre_pop,
+                            },
+                            cx,
+                        );
                     });
                 });
 

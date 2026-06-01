@@ -172,6 +172,80 @@ fn set_sort_upserts_when_present() {
     }
 }
 
+// ---------------------------------------------------------------------------
+// set_filter tests (T0 — filter-popover edit-apply, column-aware upsert)
+// ---------------------------------------------------------------------------
+
+#[test]
+fn set_filter_appends_when_column_absent() {
+    let mut v = vm();
+    v.apply(filter_eq("a", 1));
+    v.set_filter(filter_eq("b", 2));
+    // New column → append.
+    assert_eq!(v.stack().len(), 2);
+    assert_eq!(v.cursor(), 2);
+    match &v.stack()[1] {
+        Transformation::Filter { column, .. } => assert_eq!(column, "b"),
+        _ => panic!("expected Filter on b"),
+    }
+}
+
+#[test]
+fn set_filter_replaces_in_place_for_same_column() {
+    let mut v = vm();
+    v.set_filter(filter_eq("a", 1));
+    assert_eq!(v.stack().len(), 1);
+    // Re-edit the same column: replace in place, no new history entry.
+    v.set_filter(filter_eq("a", 99));
+    assert_eq!(v.stack().len(), 1, "same column must replace, not stack");
+    assert_eq!(v.cursor(), 1, "replace is a single undo step");
+    match &v.stack()[0] {
+        Transformation::Filter { column, value, .. } => {
+            assert_eq!(column, "a");
+            assert!(matches!(
+                value,
+                FilterValue::Scalar {
+                    value: Scalar::Int(99)
+                }
+            ));
+        }
+        _ => panic!("expected Filter on a"),
+    }
+}
+
+#[test]
+fn set_filter_replaces_filter_buried_under_a_sort() {
+    let mut v = vm();
+    // Filter on `a`, then a sort on top — the filter is no longer the TOP op,
+    // so `replace_at_cursor` would be wrong; `set_filter` must find it by column.
+    v.apply(filter_eq("a", 1));
+    v.set_sort(vec![SortKey {
+        column: "ts".into(),
+        direction: SortDirection::Desc,
+    }]);
+    assert_eq!(v.stack().len(), 2);
+
+    v.set_filter(filter_eq("a", 42));
+    assert_eq!(
+        v.stack().len(),
+        2,
+        "must replace the buried filter, not append a third op"
+    );
+    match &v.stack()[0] {
+        Transformation::Filter { value, .. } => assert!(matches!(
+            value,
+            FilterValue::Scalar {
+                value: Scalar::Int(42)
+            }
+        )),
+        _ => panic!("expected the Filter on a to be replaced in place at index 0"),
+    }
+    assert!(
+        matches!(v.stack()[1], Transformation::Sort { .. }),
+        "sort op must be untouched"
+    );
+}
+
 #[test]
 fn history_cap_drops_oldest_when_exceeded() {
     let mut v = vm();
@@ -220,6 +294,58 @@ fn view_name_strips_unsafe_chars_from_tab_id() {
     let change = v.apply(filter_eq("a", 1));
     let name = change.new_active_view.unwrap();
     assert!(name.starts_with("v_tab7withspecial_"));
+}
+
+// ---------------------------------------------------------------------------
+// edit_cells / delete_rows / is_dirty tests (T6 — inline cell editor)
+// ---------------------------------------------------------------------------
+
+#[test]
+fn edit_cells_pushes_one_undo_step_and_marks_dirty() {
+    use dat0_engine::{CellEdit, RowKey, Scalar, Transformation};
+    let mut vm = dat0_app::view::ViewModel::new("t".into(), "\"main\".\"t\"".into());
+    assert!(!vm.is_dirty());
+    let _ = vm.edit_cells(vec![CellEdit {
+        row: RowKey::Surrogate { id: 1 },
+        column: "a".into(),
+        value: Scalar::Int(5),
+    }]);
+    assert!(vm.is_dirty());
+    assert_eq!(vm.active().len(), 1);
+    assert!(matches!(vm.active()[0], Transformation::Edit { .. }));
+    vm.undo();
+    assert!(!vm.is_dirty());
+}
+
+#[test]
+fn delete_rows_pushes_edit_op_and_marks_dirty() {
+    use dat0_engine::{RowKey, Transformation};
+    let mut vm = dat0_app::view::ViewModel::new("t".into(), "\"main\".\"t\"".into());
+    assert!(!vm.is_dirty());
+    let _ = vm.delete_rows(vec![
+        RowKey::Surrogate { id: 2 },
+        RowKey::Surrogate { id: 3 },
+    ]);
+    assert!(vm.is_dirty());
+    assert_eq!(vm.active().len(), 1);
+    assert!(matches!(vm.active()[0], Transformation::RowDelete { .. }));
+    vm.undo();
+    assert!(!vm.is_dirty());
+}
+
+#[test]
+fn is_dirty_is_false_for_filter_and_sort_only() {
+    use dat0_engine::{SortDirection, SortKey};
+    let mut vm = vm();
+    vm.apply(filter_eq("a", 1));
+    vm.set_sort(vec![SortKey {
+        column: "a".into(),
+        direction: SortDirection::Asc,
+    }]);
+    assert!(
+        !vm.is_dirty(),
+        "filter/sort-only stacks are not dirty (no Edit/RowDelete)"
+    );
 }
 
 // ---------------------------------------------------------------------------

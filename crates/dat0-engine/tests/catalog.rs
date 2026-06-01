@@ -1,9 +1,17 @@
-use dat0_engine::{DerivedOrigin, DuckDBEngine, MemoryBudget, QueryEngine};
+use dat0_engine::{DerivedOrigin, DuckDBEngine, MemoryBudget, QueryEngine, ROWID_COL};
 
 fn budget() -> MemoryBudget {
     MemoryBudget {
         bytes: 256 * 1024 * 1024,
     }
+}
+
+/// True if `cols` contains the eagerly-injected `__dat0_rowid` surrogate.
+/// `create_table` (CTAS) injects it at create time (P4b T3, design §5), so the
+/// physical schema reported by `describe_table` carries it (the grid hides it
+/// at the UI layer — design §8).
+fn has_rowid(cols: &[dat0_engine::ColumnInfo]) -> bool {
+    cols.iter().any(|c| c.name == ROWID_COL)
 }
 
 #[tokio::test]
@@ -21,17 +29,24 @@ async fn create_describe_drop_cycle() {
         .await
         .unwrap();
     assert_eq!(info.name, "things");
-    assert_eq!(info.columns.len(), 2);
+    // 2 user columns (id, name) + the eagerly-injected __dat0_rowid surrogate.
+    assert_eq!(info.columns.len(), 3);
+    assert!(
+        has_rowid(&info.columns),
+        "create_table must inject surrogate"
+    );
 
     let cols = engine.describe_table("things", None).await.unwrap();
-    assert_eq!(cols.len(), 2);
+    assert_eq!(cols.len(), 3);
+    assert!(has_rowid(&cols));
 
     let tables = engine.get_tables().await.unwrap();
     assert!(tables.iter().any(|t| t.name == "things"));
 
     engine.rename_table("things", "stuff", None).await.unwrap();
     let cols2 = engine.describe_table("stuff", None).await.unwrap();
-    assert_eq!(cols2.len(), 2);
+    assert_eq!(cols2.len(), 3);
+    assert!(has_rowid(&cols2));
 
     engine.drop_table("stuff", None).await.unwrap();
     let err = engine
@@ -62,8 +77,11 @@ async fn create_table_with_embedded_quote_in_name() {
         .unwrap();
     assert_eq!(info.name, evil_name);
 
+    // 1 user column (id) + the surrogate. This also proves ensure_rowid's
+    // ALTER/UPDATE SQL correctly quotes a table name containing a literal `"`.
     let cols = engine.describe_table(evil_name, None).await.unwrap();
-    assert_eq!(cols.len(), 1);
+    assert_eq!(cols.len(), 2);
+    assert!(has_rowid(&cols));
 
     engine.drop_table(evil_name, None).await.unwrap();
 

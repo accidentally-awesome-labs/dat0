@@ -54,13 +54,14 @@ that's modifying it; merge conflicts are signals worth investigating.
 | D-012 | Engine catalog `TableInfo` synthesis (origin + schema) | closed | P2   | P3a    |
 | D-013 | Self-hosted macOS CI runner (cut hosted macos-14 10× billing) | open | P2 | TBD |
 | D-014 | Memory Budget Settings section | open | P3b | P3c / P9c |
+| D-015 | AccessKit / screen-reader selection-tree exposure | open | P4b | P10 |
 
 ## At-a-glance — Plan defects
 
 | ID     | Title                                                              | Status | Severity |
 |--------|--------------------------------------------------------------------|--------|----------|
 | PD-001 | tracing EnvFilter directive `dat0=debug` doesn't match dat0 crates | open   | low      |
-| PD-002 | Settings store atomic-write missing `fsync` before rename          | open   | low      |
+| PD-002 | Settings store atomic-write missing `fsync` before rename          | closed | low      |
 | PD-003 | cargo-about NOTICE output not deterministic across host platforms  | open   | low      |
 | PD-004 | Linux Secret Service backend not reachable from CI keychain tests  | open   | low      |
 | PD-011 | P3b plan §3.7 ambiguity rule references sniff outputs that don't exist: no candidate-delimiter scores, no encoding column, no per-column confidence in `sniff_csv` | open | low |
@@ -68,7 +69,9 @@ that's modifying it; merge conflicts are signals worth investigating.
 | PD-013 | P4a T0 plan-snippet drifts: `dat0-fixtures` assumed to be a lib crate; `dat0-engine` assumed to have a `benches/` dir + criterion dev-dep; plan snippet pinned `criterion = "0.5"` instead of using workspace inheritance | closed | low |
 | PD-014 | P4a design §3 used `#[serde(untagged)]` on `FilterValue` + `Scalar`, causing Str/Date/Timestamp collisions and FilterValue::None/Scalar::Null collision; reworked to tagged wire shapes | closed | low |
 | PD-015 | P4a plan T2–T15 snippets still use the pre-PD-014 tuple form `FilterValue::Scalar(...)` + `FilterValue::List(vec![...])` (~57 occurrences); implementers must read variants as struct form `FilterValue::Scalar { value }` + `FilterValue::List { values }` | closed | low |
-| PD-016 | P4a UI-click → ViewChange wirings unowned by plan T13: funnel-click → open popover, popover `Outcome::Apply` → `vm.apply`, sort-zone-click → `vm.set_sort`. T7/T9/T10b/T12 implementers each commented "T13 wires" but plan T13 Steps 1-4 cover only keybind undo/redo + supersede-cancel test. T14 E2E either pulls in the missing glue or tests via direct VM API; P4b/c may inherit if not closed at T15. | open | medium |
+| PD-016 | P4a UI-click → ViewChange wirings unowned by plan T13: funnel-click → open popover, popover `Outcome::Apply` → `vm.apply`, sort-zone-click → `vm.set_sort`. T7/T9/T10b/T12 implementers each commented "T13 wires" but plan T13 Steps 1-4 cover only keybind undo/redo + supersede-cancel test. Closed by P4b T0: `on_sort_zone_click`/`on_funnel_click`/`route_outcome` → `spawn_view_change`; `click_wiring.rs` (7 tests). | closed | medium |
+| PD-017 | P4b T3 plan premise wrong: it assumed `register_file` "finalizes a CTAS import", but `register_file` emits `CREATE OR REPLACE VIEW … AS SELECT * FROM read_csv/json/parquet(…)` — a VIEW, which cannot be `ALTER TABLE`-d, so the eager `__dat0_rowid` surrogate only lands via `create_table` (base tables). The app imports files exclusively via `register_file` (`file_drop.rs:133`), so imported grids are VIEWs with no `__dat0_rowid`, and the P4b edit/delete overlay (`WHERE __dat0_rowid NOT IN …`, `CASE WHEN __dat0_rowid = …`) references a non-existent column → edit/delete fail on real imports. T3 engine work is correct + complete; resolution is app-side (materialize imports to base tables, or back-fill via `ensure_rowid` on first bind). **Closed via Path A:** new `QueryEngine::register_file_as_table` materializes imports into rowid-bearing base tables (reusing all P3b sniffing); `file_drop.rs` now calls it. | closed | high |
+| PD-018 | Pre-existing (P3a-era) grid-render gap surfaced during P4b T7: `GridTableDelegate::render_td` (`grid/mod.rs`) renders the em-dash placeholder for EVERY cell — it never calls `render_cell` or `page_for`, and `page_for` (the only method that populates the page LRU from DuckDB) has ZERO production callers (no `load_more`/visible-range/prefetch). So in the running app the grid shows `—` and the cache is empty. P4b's cache-only reads (`cell_display`/`row_key`/`column_arrow_type`) resolve nothing on screen, so copy reads empty strings and paste/cut/edit skip every cell. P4b edit/select/clipboard LOGIC is correct + fully test-green (engine round-trips), but the headline T14 manual Excel/Sheets UAT is BLOCKED until the paged-render cache is wired (render_td → real values via the page LRU + prefetch visible page on bind). Out of every P4b plan task's scope. **Closed (Path A):** `render_td` now does a synchronous LRU lookup → real `render_cell` value; the LRU is populated off-thread by `WorkspaceShell::prefetch_visible_rows` (page-0 prefetch on grid bind + the gpui-component `TableDelegate::visible_rows_changed` scroll hook), notifying the main thread via the `MainThreadDispatcher`. Also wired the right-click context menu (`ContextMenuExt`), a per-cell focus ring, and the forward-incompat recover banner. | closed | high |
 
 ## At-a-glance — Closed plan defects
 
@@ -434,6 +437,29 @@ that's modifying it; merge conflicts are signals worth investigating.
 
 ---
 
+### D-015 — AccessKit / screen-reader selection-tree exposure
+
+- **Status:** open
+- **Deferred from:** P4b (T0 probe finding; design decision 5)
+- **Target phase:** P10 (hardening)
+- **Reason:** The P4b T0 probe (`docs/internal/dat0-p4b-t0-probe.md` §2) verified
+  that AccessKit is **entirely absent** from the pinned GPUI 0.2.2 and
+  gpui-component 0.5.1 — no `accesskit` dependency, no `AccessibilityNode`, no
+  adapter. A screen-reader-navigable selection tree is therefore not exposable
+  on these pins without forking GPUI.
+- **What P4b ships:** the **operability-only** a11y baseline (design decision 5)
+  — full keyboard navigation of every selection variant (arrows, shift-extend,
+  cmd-jump, select-all/row/column, escape) as pure input handling via
+  `grid::keymap` + `SelectionModel`, with a visible focus ring. No AccessKit
+  dependency.
+- **What target phase delivers:** a screen-reader selection/cell semantics tree,
+  contingent on a GPUI version that ships an AccessKit adapter (or a dat0-side
+  fork). Revisit when the GPUI pin advances.
+- **Originating doc:** `docs/internal/dat0-p4b-t0-probe.md` §2.
+- **Last touched:** 2026-05-31.
+
+---
+
 ## Plan defects
 
 ### PD-001 — tracing EnvFilter directive `dat0=debug` doesn't match dat0 crates
@@ -457,37 +483,27 @@ that's modifying it; merge conflicts are signals worth investigating.
 
 ### PD-002 — Settings store atomic-write missing `fsync` before rename
 
-- **Status:** open (partial — session.json side closed; settings.toml side still open)
+- **Status:** closed
 - **Severity:** low (durability, not correctness)
 - **Affected files:**
-  - `crates/dat0-app/src/settings/store.rs:save` — **still open** (settings.toml path)
-  - `crates/dat0-app/src/session/store.rs:save` — **closed by T8** (session.json path)
-- **Symptom:** Comment claims "Atomic write: write to .tmp, fsync, rename." but
-  the code uses `std::fs::write` (which only writes + closes, no fsync). On
+  - `crates/dat0-app/src/settings/store.rs:save` — **closed by T12** (settings.toml path)
+  - `crates/dat0-app/src/session/mod.rs:persist` — **closed by T8** (session.json path)
+- **Symptom:** Comment claimed "Atomic write: write to .tmp, fsync, rename." but
+  the code used `std::fs::write` (which only writes + closes, no fsync). On
   macOS the rename is atomic at the directory-entry level, but the new file's
   data blocks may not be durable before the rename completes if the kernel
   hasn't flushed the page cache. On power loss the user could see a
   zero-length `settings.toml`.
 - **Discovered:** P1 T8 implementer report
 - **Originating doc:** `docs/plans/2026-04-26-dat0-p1-foundation-plan.md` Step 8.3
-- **Suggested fix (for remaining settings.toml path):**
-  ```rust
-  let tmp = self.path.with_extension("toml.tmp");
-  let mut f = std::fs::OpenOptions::new()
-      .write(true).create(true).truncate(true).open(&tmp)?;
-  use std::io::Write;
-  f.write_all(serialized.as_bytes())?;
-  f.sync_all()?;
-  drop(f);
-  std::fs::rename(&tmp, &self.path)?;
-  // Optional: fsync the parent directory for durable rename:
-  // std::fs::File::open(self.path.parent().unwrap_or(Path::new("/")))?.sync_all()?;
-  ```
-- **Acceptable when:** dat0 begins storing recoverable state in settings (e.g.,
-  workspace pointers a user would lose if the file zeroed). Until then the cost
-  of a corrupt settings file is "user re-enters preferences," which is low.
-- **Session.json side closed by:** commit `e295cd5` (T8 post-review, P4a) — `session/store.rs` now uses `OpenOptions` + `write_all` + `sync_all` + `rename` + optional parent-dir fsync. Only `settings/store.rs` remains.
-- **Last touched:** 2026-05-29
+- **Session.json side closed by:** commit `e295cd5` (T8 post-review, P4a) — `session/mod.rs::persist` now uses `OpenOptions` + `write_all` + `sync_all` + `rename` + parent-dir fsync.
+- **Closed by:** P4b T12 — `settings/store.rs::save` now uses the same durable
+  write pattern as the session-side twin: `OpenOptions` + `BufWriter` +
+  `write_all` + `sync_all` (file) + `rename` + `sync_all` (parent dir). Three
+  durability regression tests added to `crates/dat0-app/tests/settings_store.rs`:
+  `save_no_tmp_file_left_after_successful_save`, `save_overwrite_yields_complete_valid_toml`,
+  `save_durability_round_trip_all_fields`. Both sides now fully closed.
+- **Last touched:** 2026-05-31
 
 ---
 
@@ -976,8 +992,9 @@ that's modifying it; merge conflicts are signals worth investigating.
 
 ### PD-016 — P4a UI-click → ViewChange wirings unowned by plan T13
 
-- **Status:** open
-- **Severity:** medium (P4a is functionally incomplete on the UI-click path: funnel + sort-zone clicks log but don't actually trigger ViewChanges; only the keybind undo/redo path is wired end-to-end)
+- **Status:** closed
+- **Closed by:** P4b T0 (`p4b-edit` branch). `WorkspaceShell::on_sort_zone_click` + `on_funnel_click` + the shared `route_outcome` decision drive the funnel + sort header clicks through `spawn_view_change` → `apply_view_change`; the grid delegate's click closures upgrade the `WeakEntity<WorkspaceShell>` and dispatch into them. Verified by `crates/dat0-app/tests/click_wiring.rs` (7 tests). The funnel popover's `Outcome` is routed via a stored subscription (`emit_outcome_cx` → `cx.emit`), and the right-click context-menu trigger was mounted at the PD-018 closure. T0 also fixed a latent bug the plan snippet would have shipped (funnel-editing a column that already had a filter stacked a second `AND` predicate instead of replacing — closed with `ViewModel::set_filter` column-aware upsert).
+- **Severity:** medium (P4a was functionally incomplete on the UI-click path: funnel + sort-zone clicks logged but didn't trigger ViewChanges; only the keybind undo/redo path was wired end-to-end — now resolved)
 - **Affected files:**
   - `crates/dat0-app/src/grid/mod.rs` — sort-zone + funnel-zone click handlers still log debug + leave wiring comments
   - `crates/dat0-app/src/view/filter_popover_entity.rs` — `Outcome::Apply` / `Outcome::Clear` emit but have no upper-layer consumer wired to `vm.apply` / `vm.replace_at_cursor` + `spawn_view_change`
@@ -995,7 +1012,75 @@ that's modifying it; merge conflicts are signals worth investigating.
 - **Next phase:** P4b T0 must wire: (1) `grid/mod.rs` funnel-zone click → `filter_popover_entity.rs` mount + present via `WorkspaceShell`; (2) `filter_popover_entity.rs` `Outcome::Apply` → `vm.apply` + `spawn_view_change`; (3) `grid/mod.rs` sort-zone click (plain + shift) → `vm.set_sort` + `spawn_view_change`; (4) a click-path integration test covering the full UI-click → ViewChange → rebind loop.
 - **Discovered:** T13 implementation review (2026-05-29). Documented by the controller after the T13 implementer correctly noted plan §T13 Steps 1-4 don't cover these wirings.
 - **Originating doc:** `docs/plans/2026-05-27-dat0-p4a-plan.md` §T13.
-- **Last touched:** 2026-05-29
+- **Last touched:** 2026-05-31 (closed by P4b T0 — see `click_wiring.rs`)
+
+---
+
+### PD-017 — Imported files are VIEWs, so the `__dat0_rowid` surrogate never reaches them
+
+- **Status:** closed
+- **Closed by:** Path A (materialize at import). The engine grew a new
+  `QueryEngine::register_file_as_table` (in `crates/dat0-engine/src/duckdb_engine.rs` +
+  `src/trait_def.rs`) that REUSES the exact `CREATE OR REPLACE VIEW … AS SELECT *
+  FROM read_csv/json/parquet(…)` SQL `register_file` builds (so all P3b
+  delimiter/type sniffing is preserved), materializes it into a base table via
+  `CREATE TABLE <name> AS SELECT * FROM <tmp_view>; DROP VIEW <tmp_view>`, then
+  injects `__dat0_rowid` via `ensure_rowid_blocking` — all under one connection
+  lock so the table is never observable without its surrogate. The app's sole
+  import path (`crates/dat0-app/src/file_drop.rs`) now calls
+  `register_file_as_table` instead of `register_file`. `register_file` (view)
+  remains available for read-only callers (the grid `mod.rs`/`data_source.rs`
+  unit tests still use it). Session restore needed NO change: restore re-opens
+  the persistent `scratch.duckdb` rather than re-running the import, so the
+  materialized base table (with its surrogate) survives recovery as-is. Tests:
+  `crates/dat0-engine/tests/import_materialize.rs` (base-table + gap-free
+  surrogate + sniffing preserved + ALTER-TABLE-able + no leftover view),
+  `crates/dat0-app/src/file_drop.rs::csv_drop_yields_rowid_bearing_base_table`,
+  and `crates/dat0-app/tests/scratch_lifecycle.rs` (recovered import is still a
+  rowid-bearing base table). Closed by this commit (the `P4b: close PD-017 …
+  (Path A)` commit on branch `p4b-edit`).
+- **Severity:** high (the P4b edit/selection/clipboard headline feature does not work on real file imports until resolved; engine + test paths are correct, but the running app's grids are views without the surrogate)
+- **Affected files:**
+  - `crates/dat0-engine/src/duckdb_engine.rs` — `ensure_rowid` is correctly wired into `create_table` (the only CTAS→base-table path); `register_file` carries a hand-off comment explaining why it is NOT wired there.
+  - `crates/dat0-engine/src/register/{csv,json,parquet}.rs` — all emit `CREATE OR REPLACE VIEW … AS SELECT * FROM read_*(…)`.
+  - `crates/dat0-app/src/file_drop.rs:133` — the app's sole import path; calls `engine.register_file(...)` (a VIEW). No `create_table` or `ensure_rowid` call exists anywhere in the app crate.
+  - Consumers of the surrogate: `crates/dat0-engine/src/render.rs` (overlay references `__dat0_rowid`); `crates/dat0-app/src/grid/{mod,data_source}.rs` (T5 hidden-key plumbing).
+- **Symptom:** P4b plan T3 Step 3 says "Call `ensure_rowid` at the end of the existing table-create path … where `register_file` finalizes a CTAS import." That premise is false — `register_file` finalizes a VIEW, not a CTAS. A VIEW cannot be `ALTER TABLE … ADD COLUMN`-ed, so calling `ensure_rowid` there would error on every import. The eager surrogate therefore only lands for base tables built via `create_table`, which the app never calls for imports.
+- **Net effect:** the engine surrogate + `ensure_rowid` migration + all T2/T3 tests are correct (tests use `create_table` base tables). But an imported CSV/JSON/Parquet becomes a DuckDB VIEW with no `__dat0_rowid`; when P4b edit/delete renders its overlay against that view's name, the query references a column that does not exist → runtime SQL error. The headline edit/selection/clipboard flow cannot work end-to-end on real imports until closed. T14 manual UAT (Excel/Sheets round-trip via in-app edits) depends on this.
+- **Fix paths:**
+  - **Path A (materialize on import):** change the app import path to `create_table` (CTAS materializing `read_*(…)` into a base table) instead of `register_file` (view), so `ensure_rowid` runs eagerly. Trade-off: loads the file into a DuckDB base table rather than a lazy view over the source file — memory/behavior change for large files. The design's "surrogate injected at import" language implies materialization was intended.
+  - **Path B (back-fill on first bind):** keep views for browsing; when the grid first binds a view for editing, materialize-or-back-fill that table via `ensure_rowid`. More surgical but adds a view→table promotion step.
+- **Decision:** RESOLVED — Path A (materialize at import), user-approved. Chose A1 (materialize the sniffing view) over A2 (direct CTAS) because A1 reuses 100% of the existing `register/*.rs` view-builder SQL with zero changes to those builders (smallest blast radius); the view is a transient intermediate dropped within the same lock. Session restore needed no change (recovery re-opens the persistent scratch.duckdb, not a re-import).
+- **Discovered:** P4b T3 implementation (2026-05-30), confirmed independently by the T3 spec review (quoted the `register/*.rs` VIEW DDL).
+- **Originating doc:** `docs/plans/2026-05-30-dat0-p4b-plan.md` §T3 Step 3.
+- **Last touched:** 2026-05-30 (closed via Path A — see the `P4b: close PD-017 … (Path A)` commit on `p4b-edit`)
+### PD-018 — Grid renders placeholders; paged-render cache never populated (blocks P4b UAT)
+
+- **Status:** closed
+- **Severity:** high (P4b's edit/select/clipboard logic is correct + fully test-green, but the running app cannot demonstrate it: the grid shows em-dashes and copy/paste/edit have no real cell values to act on; the headline T14 Excel/Sheets UAT gate is blocked)
+- **Closed by:** the `P4b: close PD-018 — wire paged-render cache + mount deferred triggers` commit on `p4b-edit` (Path A, user-approved scope addition). What was wired:
+  - **render_td → real values:** `GridTableDelegate::render_td` now calls the new `GridDataSource::cell_render(row, col)` — a synchronous LRU lookup mirroring `cell_display`/`row_key` (never triggers a DuckDB fetch). Cached cells paint their real value with numeric right-alignment + dimmed NULL styling; rows whose page isn't loaded yet keep the `"—"` placeholder for THAT cell only (virtualized-table pattern — values appear as pages load). The byte-identical-render parity tests (`delegate_columns_match_schema`, etc.) still pass.
+  - **Cache population (prefetch-on-bind + scroll-paging, both complete):** `WorkspaceShell::prefetch_visible_rows(start, end, cx)` runs `page_for` OFF the GPUI thread (tokio task), then posts a `cx.notify()` back via the `MainThreadDispatcher` — the canonical `spawn_view_change` discipline, NEVER `cx.update` from the tokio task. It is called (a) on grid bind when the `TableState` is first promoted (`render`), seeding the first PAGE_ROWS window, and (b) from the gpui-component `TableDelegate::visible_rows_changed(range, …)` scroll hook the delegate now implements, which delegates into the shell via its weak handle. `page_for` is idempotent (cache hit on resident pages), so re-entrant calls are nearly free. Scroll-paging is COMPLETE (not partial): the `visible_rows_changed` hook fetches both the start-of-range and end-of-range page so a range straddling a page boundary loads both.
+  - **Right-click context menu (T9):** mounted via `gpui_component::menu::ContextMenuExt::context_menu` on a `div` wrapping the `Table` in `WorkspaceShell::render` (the `Table` is `RenderOnce`, not `ParentElement + Styled`, so the menu hangs off the wrapping div). The builder is the existing `crate::grid::context_menu::build_menu(ws_weak, selection)`.
+  - **Focus ring (per-cell, replaces the T11 badge):** `render_td` reads the live selection through the delegate's weak `WorkspaceShell` handle and draws a 2-px blue border on the cell at `selection.active()`, plus a lighter tint on selected cells. The previous bottom-left floating-badge placeholder in `render` was removed.
+  - **Forward-incompat banner routing (T13 review Important 2):** `Session::recover` now routes a `SessionLoadError` where `is_forward_incompat()` is true to a dedicated `error_ux::Banner` (pushed to the pending queue) AND propagates the error — so the caller does NOT fall back to default state + eagerly persist the older schema over the user's newer file. Malformed-JSON / other errors keep their prior generic-propagation handling.
+  - **Tests:** `tests/edit_lifecycle.rs::prefetch_populates_cache_so_cell_display_resolves_real_values` asserts `cell_display`/`cell_render` are `None` before a prefetch and resolve the REAL values after `page_for(0)`; `session::tests::forward_incompat_banner_describes_both_shapes` + `recover_forward_incompat_pushes_banner_and_errors` cover the banner routing. Full `dat0-app` + `dat0-engine` suite green; clippy `-D warnings` clean; fmt clean.
+- **Affected files:**
+  - `crates/dat0-app/src/grid/mod.rs` — `GridTableDelegate::render_td` returns the `"—"` placeholder for every cell (both `match` arms + fallback). Its own doc comment says `"—"` is the expected T4 (P3a) render and "the follow-up task replaces this with a synchronous cache lookup." That follow-up never happened.
+  - `crates/dat0-app/src/grid/data_source.rs` — `page_for` (the only method that loads a page from DuckDB into the LRU) has ZERO production callers; it is exercised only by its own unit tests. There is no `load_more` / visible-range / prefetch wiring on the delegate.
+- **Symptom:** With `render_td` painting placeholders and the page LRU never populated by the display path, the P4b cache-only synchronous reads added for clipboard/edit — `cell_display`, `row_key`, `column_arrow_type` — return `None`/empty for essentially every on-screen cell. Copy serializes empty strings; paste/cut/cell-edit resolve `row_key(row) == None` and skip every cell (paste raises the reject banner having applied nothing).
+- **Net effect:** P4b is logic-complete and test-green (every transform/codec/migration is validated via real engine round-trips against base-table harnesses), but **not demonstrable in the running app** until the grid renders real values. The T14 manual Excel/Sheets round-trip + keyboard-sweep UAT cannot pass.
+- **Not a P4b defect:** this is pre-existing debt from the P3a minimum-viable grid delegate (render + paging cache deliberately stubbed). It is outside the scope of every P4b plan task and the plan's "Files NOT touched" list; the P4b plan implicitly assumed the grid already rendered real data.
+- **Fix paths (controller to decide with the user before T14):**
+  - **Path A (wire it, scope addition):** make `render_td` do a synchronous LRU lookup → `render_cell(real value)`; populate the LRU for visible rows (prefetch page 0 on bind, and `load_more`/visible-range on scroll). Unblocks UAT and makes the whole app usable. Larger than a typical P4b task; ideally its own reviewed task.
+  - **Path B (defer):** ship P4b as logic-complete + test-green, mark T14 UAT as blocked-by-PD-018, and schedule the grid-render-cache wiring as a dedicated follow-up (P4c or a hotfix phase).
+- **Discovered:** P4b T7 implementation + spec review (2026-05-30); the T7 implementer flagged it and the spec reviewer confirmed it with the quoted `render_td` body and the zero-caller `page_for`.
+- **Originating doc:** P3a grid delegate task (render_td placeholder); surfaced against `docs/plans/2026-05-30-dat0-p4b-plan.md` §T14 (UAT gate).
+- **Last touched:** 2026-05-31 (closed via Path A — render-cache wiring + 3 deferred triggers; see the `P4b: close PD-018 …` commit on `p4b-edit`)
+- **Follow-up (not blocking):** the gpui-component `Table` also exposes a built-in `TableDelegate::context_menu(row_ix, …)` hook (row-aware) that we did NOT use — we mounted the decoupled `ContextMenuExt` on the body to reuse the existing `build_menu`. If a future polish pass wants the right-clicked ROW reflected in the menu (e.g. "Delete this row" vs. the current selection-based delete), switching to the delegate hook is the path. The P10 AccessKit / screen-reader exposure D-NNN from the T0 probe is T14's job, intentionally NOT filed here.
+
+---
+
 
 ---
 

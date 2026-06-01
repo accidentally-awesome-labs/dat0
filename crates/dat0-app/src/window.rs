@@ -35,10 +35,12 @@
 use anyhow::Result;
 use dat0_i18n::t;
 use gpui::{
-    App, Application, Bounds, Context, Entity, ExternalPaths, IntoElement, Render, Subscription,
-    TitlebarOptions, Window, WindowBounds, WindowOptions, div, prelude::*, px, size,
+    App, Application, Bounds, Context, Entity, ExternalPaths, FocusHandle, IntoElement,
+    KeyDownEvent, Render, Subscription, TitlebarOptions, Window, WindowBounds, WindowOptions, div,
+    prelude::*, px, size,
 };
 use gpui_component::Root;
+use gpui_component::h_flex;
 use gpui_component::table::{Table, TableState};
 use parking_lot::Mutex;
 use std::path::PathBuf;
@@ -102,7 +104,7 @@ pub(crate) fn spawn_window(
             ..Default::default()
         },
         move |window, cx| {
-            let view = cx.new(|_| WorkspaceShell::new(Arc::clone(&session)));
+            let view = cx.new(|cx| WorkspaceShell::new(Arc::clone(&session), cx));
             // T13: register this workspace as the focused one so that
             // view.undo / view.redo dispatch closures can reach it.
             crate::window_registry::install_focused_workspace(view.downgrade().into());
@@ -242,6 +244,15 @@ pub fn run_app(lock: AppLock, initial_paths: Vec<PathBuf>, main_loop: MainLoop) 
     // Used by the orphan scan (all platforms) and the macOS Cmd-N handler.
     let state_root_for_action = state_root.clone();
     let registry_for_run = Arc::clone(&registry);
+    // Enter the tokio runtime for the lifetime of the GPUI event loop. GPUI's
+    // foreground executor (`cx.spawn`) runs its tasks on THIS main thread, and
+    // the app's async engine work invoked from GPUI handlers uses tokio
+    // primitives — `handle_drop`'s `spawn_blocking` (cold-start CLI file load +
+    // drag-drop) and `spawn_view_change` / prefetch's `tokio::spawn`. Without an
+    // active runtime context on the main thread those panic ("must be called
+    // from the context of a Tokio runtime"). The guard drops before `runtime`
+    // (declared earlier), so teardown order is correct.
+    let _rt_guard = runtime.enter();
     Application::new().run(move |cx: &mut App| {
         // Required before opening any window: initialises the gpui-component
         // theme, global state, and (in debug builds) the inspector. Without
@@ -390,7 +401,8 @@ pub fn run_app(lock: AppLock, initial_paths: Vec<PathBuf>, main_loop: MainLoop) 
                     ..Default::default()
                 },
                 |window, cx| {
-                    let view = cx.new(|_| WorkspaceShell::new(Arc::clone(&session_for_window)));
+                    let view =
+                        cx.new(|cx| WorkspaceShell::new(Arc::clone(&session_for_window), cx));
                     // T13: register this workspace as the focused one so that
                     // view.undo / view.redo dispatch closures can reach it.
                     crate::window_registry::install_focused_workspace(view.downgrade().into());
@@ -492,16 +504,63 @@ pub struct WorkspaceShell {
     /// per tab) is P4b. The field is `Option` so it can be None before
     /// any file is dropped.
     pub(crate) view_model: Option<ViewModel>,
+    /// Currently-mounted filter popover (T0 / PD-016 funnel-click wiring).
+    /// `Some` while a popover is open for some column; cleared when its
+    /// `Outcome` is routed (apply / clear / cancel). Rendered as an overlay
+    /// child in `render` when present.
+    active_popover: Option<Entity<crate::view::filter_popover_entity::FilterPopoverEntity>>,
+    /// Subscription to the active popover's `FilterPopoverEvent`. Stored so
+    /// the callback stays registered — a dropped `Subscription` deregisters
+    /// silently (P4a T10b post-review lesson). Cleared alongside
+    /// `active_popover`.
+    popover_sub: Option<Subscription>,
+    /// Ephemeral grid selection (T4 pure-logic model). `None` until a data
+    /// source is mounted; `SelectionModel::new` requires non-empty grid
+    /// dimensions, so it is constructed lazily on the first render after a
+    /// source lands (see `render`). T11 wires keyboard movers to it; T6 reads
+    /// `selection.active()` to locate the cell being edited.
+    pub(crate) selection: Option<crate::grid::selection::SelectionModel>,
+    /// Currently-mounted inline cell editor (T6). `Some` while editing the
+    /// active cell; cleared on commit / cancel. Rendered as an overlay child
+    /// in `render` when present.
+    cell_editor: Option<Entity<crate::grid::cell_editor::CellEditor>>,
+    /// Subscription to the active cell editor's `CellEditorEvent`. Stored so
+    /// the commit/cancel callback stays registered — a dropped `Subscription`
+    /// deregisters silently (the P4a T10b trap). Cleared alongside
+    /// `cell_editor`.
+    cell_editor_sub: Option<Subscription>,
+    /// Marching-ants range set by the most recent copy/cut (T7). Stored in
+    /// screen-space; T7 only records the range. T11/polish will render the
+    /// animated dashed border and clear this on the next selection change —
+    /// until then it persists after a copy/cut.
+    // T11/polish: render marching-ants from this stored range + clear on selection change.
+    pub(crate) copied_range: Option<crate::grid::selection::CellRange>,
+    /// GPUI focus handle for the workspace shell (T11). The outer container
+    /// element tracks this handle so that `on_key_down` receives key events
+    /// when the workspace has focus.  Constructed once in `new`; the element
+    /// receives focus on the first click or programmatic request.
+    ///
+    /// PD-018 note: the grid render-cache work (PD-018) may later gate
+    /// fine-grained cell focus; this shell-level handle is sufficient for
+    /// T11's keyboard map + selection navigation.
+    focus_handle: FocusHandle,
 }
 
 impl WorkspaceShell {
-    pub fn new(session: Arc<Mutex<Session>>) -> Self {
+    pub fn new(session: Arc<Mutex<Session>>, cx: &mut Context<Self>) -> Self {
         Self {
             session,
             data_source: None,
             table_state: None,
             theme_subscription: None,
             view_model: None,
+            active_popover: None,
+            popover_sub: None,
+            selection: None,
+            cell_editor: None,
+            cell_editor_sub: None,
+            copied_range: None,
+            focus_handle: cx.focus_handle(),
         }
     }
 
@@ -510,6 +569,11 @@ impl WorkspaceShell {
         // delegate's `Arc<GridDataSource>` and would render stale rows.
         // The next `render` call rebuilds one against the new source.
         self.table_state = None;
+        // Clear the selection so it is rebuilt against the new source's
+        // dimensions on the next render.  Without this a second file drop
+        // would leave SelectionModel with the old row/column counts, and
+        // `selection.active().col` could point past the new schema.
+        self.selection = None;
         self.data_source = Some(ds);
     }
 
@@ -518,8 +582,93 @@ impl WorkspaceShell {
     /// next `render` promotes the new source into a fresh `Entity<TableState>`.
     pub fn apply_view_change(&mut self, new_ds: Arc<GridDataSource>, cx: &mut Context<Self>) {
         self.table_state = None;
+        // Defensively clear the selection — a view-change is the rebind path
+        // and, while P4b preserves the schema, clearing keeps the selection
+        // model consistent and prevents stale-dimension bugs if column count
+        // ever changes (e.g., a future hide-column transform).
+        self.selection = None;
         self.data_source = Some(new_ds);
         cx.notify();
+    }
+
+    /// Prefetch the page(s) covering screen rows `[start, end)` into the
+    /// `GridDataSource` LRU so the grid's synchronous `render_td` paints real
+    /// values for the rows the user can see (PD-018).
+    ///
+    /// The fetch runs OFF the GPUI main thread — `GridDataSource::page_for` is
+    /// async DuckDB I/O and must never block the 60 fps render loop. Once the
+    /// page is in the LRU, the re-render `notify` is posted back onto the main
+    /// thread via the [`crate::main_bridge::MainThreadDispatcher`] (the canonical
+    /// `spawn_view_change` discipline — NEVER `cx.update` from the tokio task).
+    /// Re-rendering the shell re-renders the mounted `Table`, whose `render_td`
+    /// now finds the cached page.
+    ///
+    /// Called on grid bind (page 0) and from the delegate's
+    /// `visible_rows_changed` hook (scroll-paging).  When both boundary pages
+    /// are already resident in the LRU, the spawn is skipped entirely — no
+    /// tokio task, no `cx.notify()` — eliminating the gratuitous task/notify
+    /// storm on fast scroll over already-loaded data.
+    pub fn prefetch_visible_rows(&self, start: usize, end: usize, cx: &mut Context<Self>) {
+        let Some(ds) = self.data_source.as_ref() else {
+            return;
+        };
+
+        // Cheap resident guard: if both boundary pages are already in the LRU
+        // cache, the synchronous `render_td` will already paint real values —
+        // there is nothing to fetch and no notify to post.  This eliminates the
+        // gratuitous task + notify storm when the user scrolls quickly over
+        // pages that were prefetched on an earlier tick.
+        //
+        // The guard does NOT perturb LRU eviction order (`contains` is
+        // non-mutating) and is O(1).
+        //
+        // Prefetch-on-bind path: on first render, page 0 is absent, so
+        // `pages_resident` returns false and the spawn proceeds as normal.
+        let last = end.saturating_sub(1);
+        if ds.pages_resident(start, last) {
+            return;
+        }
+
+        let ds = Arc::clone(ds);
+        let ws_weak = cx.entity().downgrade();
+
+        // Page-align the range to the rows actually requested; `page_for`
+        // internally aligns each `row` to its `PAGE_ROWS` boundary, so issuing
+        // one fetch per visible row would be wasteful. We sample the start and
+        // (inclusive) last row so a visible range that straddles a page boundary
+        // loads both pages.
+        let start = start as u64;
+        let last = last as u64;
+
+        tokio::spawn(async move {
+            // Load the page covering the first visible row, then (if different)
+            // the page covering the last visible row. `page_for` is idempotent
+            // (cache hit on the second call for the same page).
+            let mut any_loaded = false;
+            for row in [start, last] {
+                match ds.page_for(row).await {
+                    Ok(_) => any_loaded = true,
+                    Err(e) => {
+                        tracing::warn!(row, error = %e, "prefetch_visible_rows: page_for failed");
+                    }
+                }
+            }
+            if !any_loaded {
+                return;
+            }
+            // Post the re-render onto the GPUI main thread via the dispatcher.
+            if let Some(dispatcher) = crate::window_registry::dispatcher() {
+                let _ = dispatcher.dispatch(move |app_cx: &mut gpui::App| {
+                    if let Some(h) = ws_weak.upgrade() {
+                        h.update(app_cx, |_ws, cx| cx.notify());
+                    }
+                });
+            } else {
+                tracing::warn!(
+                    "prefetch_visible_rows: no MainThreadDispatcher installed; grid will not refresh"
+                );
+            }
+        });
     }
 
     /// Mutable access to the per-tab `ViewModel` (T13). Returns `None` if
@@ -539,6 +688,654 @@ impl WorkspaceShell {
         self.view_model
             .as_ref()
             .map(|vm| vm.base_table().to_string())
+    }
+
+    /// Resolve a header column index to its bare column name via the active
+    /// `GridDataSource`'s Arrow schema (T0 / PD-016). Returns `None` if no
+    /// data source is mounted or `col_ix` is out of range.
+    fn column_name(&self, col_ix: usize) -> Option<String> {
+        self.data_source
+            .as_ref()
+            .and_then(|ds| ds.column_name(col_ix))
+    }
+
+    /// Drive the engine round-trip + grid rebind for a [`ViewChange`] (T6 —
+    /// extracted from `on_sort_zone_click` / `route_filter_outcome` so the
+    /// `spawn_view_change` + `apply_view_change` boilerplate is written once;
+    /// reused by T6/T7/T8 mutation handlers).
+    ///
+    /// Reads the base-table name from the active `ViewModel` (the round-trip
+    /// rebinds to it when `change` clears the stack). No-op if no `ViewModel`
+    /// is mounted yet.
+    ///
+    /// Preserves the dispatcher discipline established by `spawn_view_change`:
+    /// the closure runs on the GPUI main thread via the `MainThreadDispatcher`,
+    /// never `cx.update` from the tokio task.
+    fn spawn_rebind(&self, change: crate::view::ViewChange, cx: &mut Context<Self>) {
+        let Some(base_table) = self.base_table() else {
+            return;
+        };
+        let engine = self.engine();
+        let ws_weak = cx.entity().downgrade();
+        crate::view::spawn_view_change(
+            engine,
+            base_table,
+            change,
+            Arc::new(move |new_ds, app_cx| {
+                if let Some(h) = ws_weak.upgrade() {
+                    h.update(app_cx, |ws, cx| ws.apply_view_change(new_ds, cx));
+                }
+            }),
+        );
+    }
+
+    /// Sort-zone click (T0 / PD-016). Reads the current sort, cycles the
+    /// clicked column (plain `click` or `shift_click` extend), writes it back
+    /// via [`ViewModel::set_sort`], and drives the engine round-trip exactly
+    /// like `dispatch_undo` in `actions/view_actions.rs`.
+    pub fn on_sort_zone_click(&mut self, col_ix: usize, shift: bool, cx: &mut Context<Self>) {
+        let Some(column) = self.column_name(col_ix) else {
+            return;
+        };
+        let Some(vm) = self.view_model.as_mut() else {
+            return;
+        };
+        let active = vm.current_sort_as_active();
+        let active = if shift {
+            active.shift_click(&column)
+        } else {
+            active.click(&column)
+        };
+        let change = vm.set_sort(active.keys().to_vec());
+        self.spawn_rebind(change, cx);
+    }
+
+    /// Funnel-zone click (T0 / PD-016). Mounts the filter popover for
+    /// `col_ix`, pre-populated from any active filter on that column, and
+    /// subscribes to its `FilterPopoverEvent` so the terminal `Outcome` is
+    /// routed back into the `ViewModel` + engine round-trip.
+    pub fn on_funnel_click(&mut self, col_ix: usize, _window: &mut Window, cx: &mut Context<Self>) {
+        use crate::view::filter_popover_entity::{FilterPopoverEntity, FilterPopoverEvent};
+
+        let Some(column) = self.column_name(col_ix) else {
+            return;
+        };
+        let Some(ds) = self.data_source.as_ref() else {
+            return;
+        };
+        let column_type = ds
+            .column_type(col_ix)
+            .unwrap_or(crate::view::filter_popover::ColumnType::String);
+
+        // Pre-populate from any active filter on this column (edit-existing flow).
+        let pre = self
+            .view_model
+            .as_ref()
+            .and_then(|vm| vm.find_filter_for(&column).cloned());
+
+        let popover = cx.new(|_| match &pre {
+            Some(existing) => {
+                FilterPopoverEntity::from_existing(column.clone(), column_type, existing)
+            }
+            None => FilterPopoverEntity::new(column.clone(), column_type),
+        });
+
+        // STORE the subscription — callbacks fire silently if the returned
+        // Subscription is dropped (P4a T10b post-review lesson).
+        let sub = cx.subscribe(
+            &popover,
+            move |ws: &mut Self, _pop, ev: &FilterPopoverEvent, cx| {
+                let FilterPopoverEvent::OutcomeEmitted(outcome) = ev;
+                ws.route_filter_outcome(outcome.clone(), cx);
+            },
+        );
+        self.popover_sub = Some(sub);
+        self.active_popover = Some(popover);
+        cx.notify();
+    }
+
+    /// Route a filter-popover [`Outcome`] into the ViewModel + engine
+    /// round-trip, then dismiss the popover (T0 / PD-016).
+    ///
+    /// [`Outcome`]: crate::view::filter_popover_entity::Outcome
+    fn route_filter_outcome(
+        &mut self,
+        outcome: crate::view::filter_popover_entity::Outcome,
+        cx: &mut Context<Self>,
+    ) {
+        // Dismiss the popover regardless of the outcome.
+        self.active_popover = None;
+        self.popover_sub = None;
+
+        let change = {
+            let Some(vm) = self.view_model.as_mut() else {
+                cx.notify();
+                return;
+            };
+            // Pure decision lives in `view::route_outcome` (shared with the
+            // click_wiring integration test); the engine round-trip below stays
+            // in this GPUI handler.
+            crate::view::route_outcome(vm, outcome)
+        };
+        let Some(change) = change else {
+            cx.notify();
+            return;
+        };
+        self.spawn_rebind(change, cx);
+    }
+
+    /// Commit the in-flight cell edit (T6). Resolves the active selection cell
+    /// to a [`dat0_engine::RowKey::Surrogate`] + column name via the active
+    /// `GridDataSource`, builds a single-cell [`dat0_engine::CellEdit`], pushes
+    /// it through [`ViewModel::edit_cells`], and drives the engine round-trip
+    /// via [`Self::spawn_rebind`].
+    ///
+    /// No-op (graceful) when no data source / view model is mounted, when the
+    /// selected row's page isn't cached (so `row_key` returns `None`), or when
+    /// the column index is out of range.
+    ///
+    /// Called by the inline [`crate::grid::cell_editor::CellEditor`] on commit
+    /// (Enter / focus-out). T11 wires the Enter/F2 keystroke that mounts the
+    /// editor over the active cell.
+    pub fn commit_cell_edit(&mut self, value: dat0_engine::Scalar, cx: &mut Context<Self>) {
+        let (Some(ds), Some(_vm)) = (self.data_source.as_ref(), self.view_model.as_ref()) else {
+            return;
+        };
+        let Some(selection) = self.selection.as_ref() else {
+            return;
+        };
+        let active = selection.active();
+        let Some(key) = ds.row_key(active.row) else {
+            return;
+        };
+        let Some(col) = ds.column_name(active.col) else {
+            return;
+        };
+        let cell = dat0_engine::CellEdit {
+            row: dat0_engine::RowKey::Surrogate { id: key },
+            column: col,
+            value,
+        };
+        // `view_model` is `Some` per the guard above; `unwrap` mirrors the plan.
+        let change = self
+            .view_model
+            .as_mut()
+            .expect("view_model checked above")
+            .edit_cells(vec![cell]);
+        // Drive the engine round-trip FIRST (spawn_rebind does not touch
+        // `cell_editor` / `cell_editor_sub`), then tear down the editor so the
+        // teardown order is: submit → dismiss (defensive; avoids any hypothetical
+        // future dependency on the editor still being mounted at rebind time).
+        self.spawn_rebind(change, cx);
+        self.cell_editor = None;
+        self.cell_editor_sub = None;
+    }
+
+    /// Mount the inline cell editor over the active selection cell (T6).
+    ///
+    /// Constructs a [`crate::grid::cell_editor::CellEditor`] entity typed for
+    /// the active column's Arrow type, subscribes to its commit/cancel events
+    /// (the subscription is **stored** in `self.cell_editor_sub` — a dropped
+    /// `Subscription` deregisters silently, the P4a T10b trap), and asks the
+    /// view to re-render so the editor mounts as an overlay.
+    ///
+    /// No-op when no data source / selection is available. T11 wires the
+    /// Enter/F2 keystroke that calls this; T6 provides the editor + commit path.
+    pub fn begin_cell_edit(&mut self, _window: &mut Window, cx: &mut Context<Self>) {
+        use crate::grid::cell_editor::{CellEditor, CellEditorEvent};
+
+        // Guard: both the filter popover and the cell editor render as absolute
+        // overlay children.  Mounting the editor while a popover is open would
+        // stack two overlays and leave no obvious dismiss path for the popover.
+        // The user must close the popover before starting an edit.
+        if self.active_popover.is_some() {
+            return;
+        }
+
+        let Some(ds) = self.data_source.as_ref() else {
+            return;
+        };
+        let Some(selection) = self.selection.as_ref() else {
+            return;
+        };
+        let active = selection.active();
+        let column_type = ds
+            .column_type(active.col)
+            .unwrap_or(crate::view::filter_popover::ColumnType::String);
+
+        let editor = cx.new(|_| CellEditor::new(column_type));
+
+        // STORE the subscription — callbacks fire silently if the returned
+        // Subscription is dropped (P4a T10b post-review lesson; mirrors
+        // `on_funnel_click`'s `popover_sub`).
+        let sub = cx.subscribe(
+            &editor,
+            move |ws: &mut Self, _editor, ev: &CellEditorEvent, cx| match ev {
+                CellEditorEvent::Commit(value) => {
+                    ws.commit_cell_edit(value.clone(), cx);
+                }
+                CellEditorEvent::Cancel => {
+                    ws.cell_editor = None;
+                    ws.cell_editor_sub = None;
+                    // Intentionally NOT clearing `ws.selection` here — cancel
+                    // must leave the cursor on the cell the user was editing so
+                    // they can immediately retry or navigate away.
+                    cx.notify();
+                }
+            },
+        );
+        self.cell_editor_sub = Some(sub);
+        self.cell_editor = Some(editor);
+        cx.notify();
+    }
+
+    // ── Clipboard: copy / cut / paste (T7) ───────────────────────────────────
+    //
+    // T11 wires the Cmd+C / Cmd+X / Cmd+V (Ctrl on Linux) keybinds → these
+    // handlers; T7 only exposes them. The pure-logic TSV codec + coerce live in
+    // `crate::grid::clipboard`; these handlers are the thin GPUI glue (clipboard
+    // I/O + ViewModel round-trip) — build+clippy verified, with the real Excel /
+    // Sheets round-trip exercised in T14 manual UAT.
+
+    /// Build the bounding-rectangle grid of the current selection's display
+    /// values, serialize it as spreadsheet-TSV, and write it to the system
+    /// clipboard (T7 copy). Gaps in a discontiguous selection become empty
+    /// cells (the bounding-rect convention; mirrors Excel / Sheets). Records the
+    /// copied range for the marching-ants border (rendered in T11/polish).
+    ///
+    /// No-op (graceful) when no data source / selection is mounted or the
+    /// selection is empty. Cells whose page isn't cached read as empty strings
+    /// (the synchronous-only contract — copy never blocks on a DuckDB fetch).
+    pub fn copy_selection(&mut self, cx: &mut Context<Self>) {
+        let Some(tsv) = self.build_selection_tsv() else {
+            return;
+        };
+        cx.write_to_clipboard(gpui::ClipboardItem::new_string(tsv));
+        cx.notify();
+    }
+
+    /// Copy the selection, then clear every selected cell to NULL in a single
+    /// undo step (T7 cut). The NULL edits are coerced through one
+    /// [`ViewModel::edit_cells`] call (one undo step) + one
+    /// [`Self::spawn_rebind`], exactly like paste.
+    ///
+    /// No-op when no data source / view model / selection is mounted.
+    pub fn cut_selection(&mut self, cx: &mut Context<Self>) {
+        // Copy first (sets the clipboard + marching-ants range).
+        self.copy_selection(cx);
+
+        let (Some(ds), Some(_vm)) = (self.data_source.as_ref(), self.view_model.as_ref()) else {
+            return;
+        };
+        let Some(selection) = self.selection.as_ref() else {
+            return;
+        };
+
+        // One CellEdit setting each selected cell to NULL. Cells whose page
+        // isn't cached (so `row_key` returns None) or whose column index is out
+        // of range are skipped — they can't be addressed.
+        let mut edits: Vec<dat0_engine::CellEdit> = Vec::new();
+        for (row, col) in selection.resolved_cells() {
+            let (Some(id), Some(column)) = (ds.row_key(row), ds.column_name(col)) else {
+                continue;
+            };
+            edits.push(dat0_engine::CellEdit {
+                row: dat0_engine::RowKey::Surrogate { id },
+                column,
+                value: dat0_engine::Scalar::Null,
+            });
+        }
+        if edits.is_empty() {
+            return;
+        }
+
+        let change = self
+            .view_model
+            .as_mut()
+            .expect("view_model checked above")
+            .edit_cells(edits);
+        self.spawn_rebind(change, cx);
+    }
+
+    /// Paste the clipboard's TSV block, anchored at the active selection cell
+    /// (T7). Parses the clipboard text, clamps the pasted block to the grid edge
+    /// (`row_count` × visible-column-count — out-of-range cells are dropped),
+    /// coerces each cell against its column's Arrow type (coerce-or-skip), and
+    /// applies the `Ok` cells as ONE [`ViewModel::edit_cells`] undo step + one
+    /// [`Self::spawn_rebind`]. If any cells were skipped (bad coercion) or
+    /// dropped (clamped past the edge), raises a paste-reject [`Banner`].
+    ///
+    /// No-op when no data source / view model / selection is mounted, or when
+    /// the clipboard holds no string (e.g. an image).
+    pub fn paste_clipboard(&mut self, cx: &mut Context<Self>) {
+        let Some(text) = cx.read_from_clipboard().and_then(|item| item.text()) else {
+            return;
+        };
+        let grid = crate::grid::clipboard::tsv_parse(&text);
+        // `tsv_parse` always returns at least one row of one cell, so a truly
+        // empty (or whitespace-only single-cell) clipboard payload decodes to
+        // `[[""]]` — guard against pasting that as an unintended empty-string
+        // write rather than relying on `grid.is_empty()` (which never fires).
+        if grid.iter().all(|row| row.iter().all(String::is_empty)) {
+            return;
+        }
+
+        let (Some(ds), Some(_vm), Some(selection)) = (
+            self.data_source.as_ref(),
+            self.view_model.as_ref(),
+            self.selection.as_ref(),
+        ) else {
+            return;
+        };
+
+        let anchor = selection.active();
+        let max_row = usize::try_from(ds.row_count).unwrap_or(usize::MAX);
+        let max_col = ds.visible_column_count();
+
+        let mut edits: Vec<dat0_engine::CellEdit> = Vec::new();
+        let mut skipped: usize = 0;
+        for (dr, paste_row) in grid.iter().enumerate() {
+            let row = anchor.row + dr;
+            for (dc, cell) in paste_row.iter().enumerate() {
+                let col = anchor.col + dc;
+                // Clamp-at-edge: drop cells that fall past the grid edge.
+                if row >= max_row || col >= max_col {
+                    skipped += 1;
+                    continue;
+                }
+                let (Some(id), Some(column), Some(ty)) = (
+                    ds.row_key(row),
+                    ds.column_name(col),
+                    ds.column_arrow_type(col),
+                ) else {
+                    // Page not cached or index out of range — can't address it.
+                    skipped += 1;
+                    continue;
+                };
+                match crate::grid::clipboard::coerce_cell(cell, &ty) {
+                    crate::grid::clipboard::CoerceResult::Ok(value) => {
+                        edits.push(dat0_engine::CellEdit {
+                            row: dat0_engine::RowKey::Surrogate { id },
+                            column,
+                            value,
+                        });
+                    }
+                    crate::grid::clipboard::CoerceResult::Skip => skipped += 1,
+                }
+            }
+        }
+
+        if !edits.is_empty() {
+            let change = self
+                .view_model
+                .as_mut()
+                .expect("view_model checked above")
+                .edit_cells(edits);
+            self.spawn_rebind(change, cx);
+        } else {
+            // Nothing applied — still re-render (e.g. to clear any prior state).
+            cx.notify();
+        }
+
+        if skipped > 0 {
+            // Structured title + body (P3b Banner shape), not a flat string. The
+            // banner is `dismissible` by default (the X closes it); a paste-reject
+            // has no natural primary action, so none is wired (unlike the
+            // recovery banner's "Review"). Surfaced via the boot-time pending
+            // queue, drained by the banner host like every other Banner.
+            crate::error_ux::push(crate::error_ux::Banner::error(
+                format!(
+                    "{skipped} cell{} couldn't be pasted",
+                    if skipped == 1 { "" } else { "s" }
+                ),
+                "Values that don't match the column type (or fall outside the grid) \
+                 were skipped. The rest were pasted."
+                    .to_string(),
+            ));
+        }
+    }
+
+    // ── Bulk ops: fill-down / set-null / set-value / delete-rows (T8) ──────────
+    //
+    // T9 wires these to the context menu and T11 wires Ctrl+D / Delete keys;
+    // T8 only exposes the `pub` handlers. Each resolves the current selection
+    // → ONE transform → `spawn_rebind`. Empty / unresolvable selections are
+    // silent no-ops (no empty Edit/RowDelete emitted — the render layer errors
+    // on those).
+
+    /// Fill every selected cell in each column with the value of the top-most
+    /// selected cell in that column (T8 Ctrl+D behaviour).
+    ///
+    /// For each selected column:
+    ///   1. Find the minimum selected row in that column — the "source" cell.
+    ///   2. Read its display string via `ds.cell_display(top_row, col)` and
+    ///      coerce it through `clipboard::coerce_cell(display, column_arrow_type)`
+    ///      (same coercion path as paste, so the filled value matches the type).
+    ///      If coercion returns `Skip` (e.g. the top cell is NULL / empty), the
+    ///      fill value is `Scalar::Null`.
+    ///   3. Apply the coerced value to every *lower* selected cell in that column
+    ///      (the top cell itself is NOT overwritten — fill-down starts below the
+    ///      source).
+    ///
+    /// All columns' fills are bundled into ONE [`ViewModel::edit_cells`] call →
+    /// ONE undo step. No-op when no data source / view model / selection is
+    /// mounted, or when the resolved set is empty.
+    pub fn fill_down(&mut self, cx: &mut Context<Self>) {
+        let (Some(ds), Some(_vm)) = (self.data_source.as_ref(), self.view_model.as_ref()) else {
+            return;
+        };
+        let Some(selection) = self.selection.as_ref() else {
+            return;
+        };
+
+        // Collect all resolved (row, col) pairs.
+        let cells: Vec<(usize, usize)> = selection.resolved_cells().collect();
+        if cells.is_empty() {
+            return;
+        }
+
+        // Group cells by column; find the top row per column.
+        // BTreeMap preserves column order for deterministic behaviour.
+        use std::collections::BTreeMap;
+        let mut col_rows: BTreeMap<usize, Vec<usize>> = BTreeMap::new();
+        for (row, col) in &cells {
+            col_rows.entry(*col).or_default().push(*row);
+        }
+
+        let mut edits: Vec<dat0_engine::CellEdit> = Vec::new();
+        for (col, mut rows) in col_rows {
+            rows.sort_unstable();
+            let top_row = rows[0];
+
+            // Coerce the top cell's display value into a typed Scalar.
+            let fill_value = if let (Some(display), Some(arrow_type)) =
+                (ds.cell_display(top_row, col), ds.column_arrow_type(col))
+            {
+                match crate::grid::clipboard::coerce_cell(&display, &arrow_type) {
+                    crate::grid::clipboard::CoerceResult::Ok(v) => v,
+                    // Empty / NULL display or uncoercible → fill with NULL.
+                    crate::grid::clipboard::CoerceResult::Skip => dat0_engine::Scalar::Null,
+                }
+            } else {
+                // Page not cached or col out of range for the top cell: skip column.
+                continue;
+            };
+
+            // Apply fill_value to every lower selected cell in this column.
+            for row in rows.into_iter().skip(1) {
+                let (Some(id), Some(column)) = (ds.row_key(row), ds.column_name(col)) else {
+                    continue;
+                };
+                edits.push(dat0_engine::CellEdit {
+                    row: dat0_engine::RowKey::Surrogate { id },
+                    column,
+                    value: fill_value.clone(),
+                });
+            }
+        }
+
+        if edits.is_empty() {
+            return;
+        }
+
+        let change = self
+            .view_model
+            .as_mut()
+            .expect("view_model checked above")
+            .edit_cells(edits);
+        self.spawn_rebind(change, cx);
+    }
+
+    /// Set every selected cell to `Scalar::Null` in ONE undo step (T8).
+    ///
+    /// Resolves the current selection → one [`ViewModel::edit_cells`] call
+    /// → one [`Self::spawn_rebind`]. Cells whose page isn't cached (so
+    /// `row_key` returns `None`) or whose column index is out of range are
+    /// skipped gracefully. No-op when no data source / view model / selection
+    /// is mounted or the selection resolves to nothing.
+    pub fn set_null_selection(&mut self, cx: &mut Context<Self>) {
+        let (Some(ds), Some(_vm)) = (self.data_source.as_ref(), self.view_model.as_ref()) else {
+            return;
+        };
+        let Some(selection) = self.selection.as_ref() else {
+            return;
+        };
+
+        let mut edits: Vec<dat0_engine::CellEdit> = Vec::new();
+        for (row, col) in selection.resolved_cells() {
+            let (Some(id), Some(column)) = (ds.row_key(row), ds.column_name(col)) else {
+                continue;
+            };
+            edits.push(dat0_engine::CellEdit {
+                row: dat0_engine::RowKey::Surrogate { id },
+                column,
+                value: dat0_engine::Scalar::Null,
+            });
+        }
+        if edits.is_empty() {
+            return;
+        }
+
+        let change = self
+            .view_model
+            .as_mut()
+            .expect("view_model checked above")
+            .edit_cells(edits);
+        self.spawn_rebind(change, cx);
+    }
+
+    /// Set every selected cell to `value` in ONE undo step (T8).
+    ///
+    /// Resolves the current selection → one [`ViewModel::edit_cells`] call
+    /// → one [`Self::spawn_rebind`]. Cells whose page isn't cached (so
+    /// `row_key` returns `None`) or whose column index is out of range are
+    /// skipped gracefully. No-op when no data source / view model / selection
+    /// is mounted or the selection resolves to nothing.
+    pub fn set_value_selection(&mut self, value: dat0_engine::Scalar, cx: &mut Context<Self>) {
+        let (Some(ds), Some(_vm)) = (self.data_source.as_ref(), self.view_model.as_ref()) else {
+            return;
+        };
+        let Some(selection) = self.selection.as_ref() else {
+            return;
+        };
+
+        let mut edits: Vec<dat0_engine::CellEdit> = Vec::new();
+        for (row, col) in selection.resolved_cells() {
+            let (Some(id), Some(column)) = (ds.row_key(row), ds.column_name(col)) else {
+                continue;
+            };
+            edits.push(dat0_engine::CellEdit {
+                row: dat0_engine::RowKey::Surrogate { id },
+                column,
+                value: value.clone(),
+            });
+        }
+        if edits.is_empty() {
+            return;
+        }
+
+        let change = self
+            .view_model
+            .as_mut()
+            .expect("view_model checked above")
+            .edit_cells(edits);
+        self.spawn_rebind(change, cx);
+    }
+
+    /// Delete the distinct rows represented in the current selection in ONE
+    /// undo step (T8).
+    ///
+    /// Semantics: any selected cell's row is a candidate for deletion (not
+    /// just full-row selections). Distinct `RowKey`s are collected across all
+    /// selected cells and issued as one [`ViewModel::delete_rows`] call →
+    /// ONE undo step. Cells whose page isn't cached (so `row_key` returns
+    /// `None`) are skipped. No-op when no data source / view model / selection
+    /// is mounted or the selection resolves to nothing.
+    pub fn delete_selected_rows(&mut self, cx: &mut Context<Self>) {
+        let (Some(ds), Some(_vm)) = (self.data_source.as_ref(), self.view_model.as_ref()) else {
+            return;
+        };
+        let Some(selection) = self.selection.as_ref() else {
+            return;
+        };
+
+        // Collect distinct row IDs (one per selected row regardless of how
+        // many columns are selected in that row).
+        use std::collections::BTreeSet;
+        let mut seen_ids: BTreeSet<i64> = BTreeSet::new();
+        let mut keys: Vec<dat0_engine::RowKey> = Vec::new();
+        for (row, _col) in selection.resolved_cells() {
+            let Some(id) = ds.row_key(row) else {
+                continue;
+            };
+            if seen_ids.insert(id) {
+                keys.push(dat0_engine::RowKey::Surrogate { id });
+            }
+        }
+        if keys.is_empty() {
+            return;
+        }
+
+        let change = self
+            .view_model
+            .as_mut()
+            .expect("view_model checked above")
+            .delete_rows(keys);
+        self.spawn_rebind(change, cx);
+    }
+
+    /// Build the bounding-rect TSV blob of the current selection's display
+    /// values, recording the copied range for marching-ants. Returns `None`
+    /// when no data source / selection is mounted or the selection is empty.
+    ///
+    /// Shared by [`Self::copy_selection`] and [`Self::cut_selection`]; the
+    /// bounding rectangle spans `min..=max` row / column over every selected
+    /// cell, and each gap (a coordinate in the rect not in the selection, or a
+    /// cell whose page isn't cached) becomes an empty string.
+    fn build_selection_tsv(&mut self) -> Option<String> {
+        let ds = self.data_source.as_ref()?;
+        let selection = self.selection.as_ref()?;
+
+        let cells: Vec<(usize, usize)> = selection.resolved_cells().collect();
+        let (r0, c0, r1, c1) = bounding_rect(&cells)?;
+
+        let grid: Vec<Vec<String>> = (r0..=r1)
+            .map(|row| {
+                (c0..=c1)
+                    .map(|col| {
+                        if selection.contains(row, col) {
+                            ds.cell_display(row, col).unwrap_or_default()
+                        } else {
+                            // Gap inside the bounding rect → empty cell.
+                            String::new()
+                        }
+                    })
+                    .collect()
+            })
+            .collect();
+
+        self.copied_range = Some(crate::grid::selection::CellRange { r0, c0, r1, c1 });
+        Some(crate::grid::clipboard::tsv_serialize(&grid))
     }
 }
 
@@ -560,6 +1357,23 @@ impl WorkspaceShell {
     pub fn child_widget_type_name() -> &'static str {
         std::any::type_name::<Table<GridTableDelegate>>()
     }
+}
+
+/// Inclusive bounding rectangle `(r0, c0, r1, c1)` over a set of `(row, col)`
+/// cells, or `None` when the set is empty (T7 copy/cut). Used to build the
+/// dense bounding-rect grid a discontiguous selection serializes to (gaps in
+/// the rect become empty cells).
+fn bounding_rect(cells: &[(usize, usize)]) -> Option<(usize, usize, usize, usize)> {
+    let mut it = cells.iter();
+    let &(r, c) = it.next()?;
+    let (mut r0, mut c0, mut r1, mut c1) = (r, c, r, c);
+    for &(row, col) in it {
+        r0 = r0.min(row);
+        c0 = c0.min(col);
+        r1 = r1.max(row);
+        c1 = c1.max(col);
+    }
+    Some((r0, c0, r1, c1))
 }
 
 impl Render for WorkspaceShell {
@@ -594,8 +1408,28 @@ impl Render for WorkspaceShell {
                 }
             };
             if needs_rebuild {
-                let delegate = GridTableDelegate::new(Arc::clone(ds));
+                let delegate = GridTableDelegate::new(Arc::clone(ds), cx.entity().downgrade());
                 self.table_state = Some(cx.new(|cx| TableState::new(delegate, window, cx)));
+
+                // PD-018 prefetch-on-bind: kick a background fetch of the first
+                // visible page so the grid paints real values on the next frame
+                // instead of em-dash placeholders. The delegate's
+                // `visible_rows_changed` hook takes over on scroll. We seed a
+                // generous first window (PAGE_ROWS worth) so the initial viewport
+                // is fully covered even before the first scroll event fires.
+                let initial_rows = usize::try_from(ds.row_count).unwrap_or(usize::MAX);
+                self.prefetch_visible_rows(0, initial_rows.min(1024), cx);
+            }
+
+            // Lazily construct the selection model once a non-empty source is
+            // mounted (T4/T6). `SelectionModel::new` debug-asserts non-empty
+            // dimensions, so we only build it when the grid actually has cells.
+            // T11 wires keyboard movers; T6 reads `selection.active()` on edit
+            // commit. Rebuilt when the dimensions change (data-source swap).
+            let rows = usize::try_from(ds.row_count).unwrap_or(usize::MAX);
+            let cols = ds.visible_column_count();
+            if rows > 0 && cols > 0 && self.selection.is_none() {
+                self.selection = Some(crate::grid::selection::SelectionModel::new(rows, cols));
             }
         }
 
@@ -703,9 +1537,22 @@ impl Render for WorkspaceShell {
                 //   `Table::new(state: &Entity<TableState<D>>) -> Self`
                 // Theming flows implicitly via `cx.theme()` inside the
                 // widget (spike §1.3); no prop to pass.
-                Table::new(state)
-                    .stripe(true)
-                    .bordered(true)
+                let table = Table::new(state).stripe(true).bordered(true);
+
+                // T9: mount the selection-aware right-click context menu on the
+                // grid body. `ContextMenuExt::context_menu` requires
+                // `ParentElement + Styled`, which the `Table` (a `RenderOnce`
+                // widget) does not implement directly — so we wrap it in a
+                // `div` and hang the menu off that. `build_menu` snapshots the
+                // current selection flag and captures a weak handle to this
+                // shell so the items dispatch into the live edit handlers.
+                use crate::grid::context_menu::{ContextMenuExt, build_menu};
+                let ws_weak = cx.entity().downgrade();
+                let menu_builder = build_menu(ws_weak, self.selection.as_ref());
+                div()
+                    .size_full()
+                    .child(table)
+                    .context_menu(menu_builder)
                     .into_any_element()
             }
             (Some(_), None) => {
@@ -727,10 +1574,175 @@ impl Render for WorkspaceShell {
             }
         };
 
+        // Funnel-click filter popover overlay (T0 / PD-016). Anchored top-right
+        // while open; the entity drives its own Apply/Cancel/Clear buttons,
+        // whose `Outcome` routes back via the stored subscription. A later P4b
+        // polish task can anchor it precisely under the clicked funnel icon.
+        let popover_overlay: Option<gpui::AnyElement> = self.active_popover.as_ref().map(|p| {
+            div()
+                .absolute()
+                .top_8()
+                .right_4()
+                .child(p.clone())
+                .into_any_element()
+        });
+
+        // Inline cell-editor overlay (T6). Mounted by `begin_cell_edit` over the
+        // active cell; commits via the stored `cell_editor_sub` subscription. A
+        // later P4b polish task can anchor it precisely over the active cell —
+        // T6 mounts it top-left so the widget is reachable for UAT (T14).
+        let editor_overlay: Option<gpui::AnyElement> = self.cell_editor.as_ref().map(|e| {
+            div()
+                .absolute()
+                .top_8()
+                .left_4()
+                .child(e.clone())
+                .into_any_element()
+        });
+
+        // T10: tab-strip with dirty-dot indicator. Shown whenever a ViewModel
+        // is mounted (i.e. a file has been loaded). The "•" glyph appears next
+        // to the tab label when `vm.is_dirty()` is true — meaning the active
+        // transformation stack contains at least one Edit or RowDelete op.
+        // Undo clears the stack back past the dirty ops and the dot disappears
+        // on the next render (cx.notify() fires after every rebind).
+        let tab_strip: Option<gpui::AnyElement> = self.view_model.as_ref().map(|vm| {
+            let is_dirty = vm.is_dirty();
+            let label = vm.tab_id().to_string();
+            let tab_label = h_flex()
+                .gap_1()
+                .items_center()
+                .child(div().child(label))
+                .children(is_dirty.then(|| div().child("•")));
+            h_flex()
+                .w_full()
+                .px_3()
+                .py_1()
+                .border_b_1()
+                .child(tab_label)
+                .into_any_element()
+        });
+
+        // ── T11 / PD-018: focus ring for the active cell ─────────────────────────
+        //
+        // PD-018 closed the render-cache gap, so the focus ring is now drawn
+        // PER-CELL inside `GridTableDelegate::render_td` (a 2-px blue border on
+        // the cell at `selection.active()`, plus a lighter tint on selected
+        // cells). It reads the live selection through the delegate's weak
+        // `WorkspaceShell` handle, so it always tracks the current cursor and
+        // re-renders whenever the selection changes (`cx.notify()` after every
+        // mover / mutation). The previous bottom-left floating badge is therefore
+        // removed — there is no overlay element here anymore.
+
+        // ── T11: key-down handler — navigation keys → SelectionModel movers ──────
+        //
+        // The handler is attached to the outer container so it fires whenever
+        // the shell has focus (tracked via `focus_handle`).
+        //
+        // Keys handled here:
+        //   arrows (plain/shift/cmd) → `apply_key` → `SelectionModel` movers
+        //   Escape                   → `apply_key(Escape)` → `SelectionModel::clear`
+        //   Cmd/Ctrl+A               → `apply_key(SelectAll)`
+        //   Enter / F2               → `begin_cell_edit` (T6)
+        //   Cmd/Ctrl+C               → `copy_selection` (T7)
+        //   Cmd/Ctrl+X               → `cut_selection` (T7)
+        //   Cmd/Ctrl+V               → `paste_clipboard` (T7)
+        //   Delete / Backspace       → `set_null_selection` (T8)
+        //   Cmd/Ctrl+D               → `fill_down` (T8)
+        //
+        // Undo/Redo (Cmd-Z / Cmd-Shift-Z) are bound globally via cx.on_action
+        // in run_app — do NOT rebind here.
+        let key_handler = cx.listener(|ws: &mut Self, ev: &KeyDownEvent, window, cx| {
+            use crate::grid::keymap::{apply_key, key_from_event};
+
+            let ks = &ev.keystroke;
+            let mods = &ks.modifiers;
+            let key_str = ks.key.as_str();
+
+            // ── Check for non-navigation keys first ───────────────────────────
+            // secondary = Cmd on macOS, Ctrl on Linux/Windows.
+            let secondary = mods.secondary();
+            let secondary_only = secondary && !mods.shift && !mods.alt;
+            let no_mods = !mods.shift && !mods.platform && !mods.control && !mods.alt;
+
+            // Enter / F2 → begin cell edit (T6).
+            if (key_str == "enter" || key_str == "f2") && no_mods {
+                ws.begin_cell_edit(window, cx);
+                return;
+            }
+
+            // Cmd/Ctrl+C → copy (T7).
+            if key_str == "c" && secondary_only {
+                ws.copy_selection(cx);
+                return;
+            }
+
+            // Cmd/Ctrl+X → cut (T7).
+            if key_str == "x" && secondary_only {
+                ws.cut_selection(cx);
+                return;
+            }
+
+            // Cmd/Ctrl+V → paste (T7).
+            if key_str == "v" && secondary_only {
+                ws.paste_clipboard(cx);
+                return;
+            }
+
+            // Delete / Backspace → set null (T8).
+            if (key_str == "delete" || key_str == "backspace") && no_mods {
+                ws.set_null_selection(cx);
+                return;
+            }
+
+            // Cmd/Ctrl+D → fill down (T8).
+            if key_str == "d" && secondary_only {
+                ws.fill_down(cx);
+                return;
+            }
+
+            // Escape with an open cell editor → cancel the edit and keep the
+            // cursor on the cell (do NOT clear the selection). With no editor
+            // open, Escape falls through to the keymap below and clears the
+            // selection.
+            if key_str == "escape" && no_mods && ws.cell_editor.is_some() {
+                ws.cell_editor = None;
+                ws.cell_editor_sub = None;
+                cx.notify();
+                return;
+            }
+
+            // ── Navigation keys via the pure keymap ───────────────────────────
+            if let Some(nav_key) = key_from_event(ev) {
+                // SelectAll (Cmd+A) is in the keymap but we still need cx.notify().
+                if let Some(sel) = ws.selection.as_mut() {
+                    apply_key(sel, nav_key);
+                }
+                cx.notify();
+            }
+        });
+
+        // Request focus on click so the shell captures key events.
+        let focus_handle_for_click = self.focus_handle.clone();
+        let click_to_focus =
+            cx.listener(move |_ws: &mut Self, _ev: &gpui::ClickEvent, window, _cx| {
+                focus_handle_for_click.focus(window);
+            });
+
         div()
+            .id("workspace-shell")
             .size_full()
+            .flex()
+            .flex_col()
+            .relative()
+            .track_focus(&self.focus_handle)
+            .on_key_down(key_handler)
+            .on_click(click_to_focus)
             .drag_over::<ExternalPaths>(|style, _, _, _| style.bg(gpui::rgba(0x0088_ff22)))
             .on_drop::<ExternalPaths>(drop_listener)
-            .child(body)
+            .children(tab_strip)
+            .child(div().flex_1().child(body))
+            .children(popover_overlay)
+            .children(editor_overlay)
     }
 }

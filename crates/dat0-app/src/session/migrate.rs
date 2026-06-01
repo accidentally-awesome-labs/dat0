@@ -1,13 +1,23 @@
-//! session.json schema migration. v1 (no version field) → v2 (typed transforms).
+//! session.json schema migration. v1 (no version field) → v2 (typed transforms)
+//! → v3 (additive `Edit`/`RowDelete` transform variants, P4b).
 //!
-//! Migration is load-and-write-back (eager): a successful v1 → v2 migration is
-//! immediately followed by the caller's `Session::persist` call to land the v2
-//! file atomically. `load` returns the migrated in-memory `SessionState`; the
-//! caller (`Session::recover`) unconditionally persists the returned state before
-//! returning.
+//! Migration is load-and-write-back (eager): a successful migration is
+//! immediately followed by the caller's `Session::persist` call to land the
+//! current-version file atomically. `load` returns the migrated in-memory
+//! `SessionState`; the caller (`Session::recover`) unconditionally persists the
+//! returned state before returning.
 //!
-//! Forward-incompat (v > current) is a hard error so the caller can surface
-//! a Banner instead of silently dropping state.
+//! Forward-incompat is a hard error so the caller can surface a Banner instead
+//! of silently dropping state. There are TWO forward-incompat shapes:
+//!   - [`SessionLoadError::UnsupportedVersion`] — `schema_version` is newer than
+//!     this build knows.
+//!   - [`SessionLoadError::ForwardIncompatTransform`] — the version is known but
+//!     a tab's `transform_stack` carries a transform `kind` this build doesn't
+//!     recognize (a newer binary wrote a variant we don't have). Detected by an
+//!     allowlist pre-check, NOT by deserializing and pattern-matching serde's
+//!     error text.
+//!
+//! Both route to the banner via [`SessionLoadError::is_forward_incompat`].
 
 use std::path::Path;
 
@@ -19,7 +29,7 @@ use super::{SESSION_SCHEMA_VERSION, SessionState};
 // Error type
 // ---------------------------------------------------------------------------
 
-/// Errors returned by [`load`].
+/// Errors returned by [`load`] / [`load_str`].
 #[derive(Debug, thiserror::Error)]
 pub enum SessionLoadError {
     /// I/O error reading the file (includes `NotFound` for absent files).
@@ -34,6 +44,31 @@ pub enum SessionLoadError {
     /// version (schema vN). Open with that version or discard."
     #[error("session was written by a newer dat0 version (schema v{0}); refusing to read")]
     UnsupportedVersion(u32),
+    /// The schema version is known, but a tab's transform stack carries a
+    /// transform `kind` this build does not recognize — i.e. a newer dat0 wrote
+    /// a `Transformation` variant we don't have. Surfaces the SAME
+    /// forward-incompat Banner as [`Self::UnsupportedVersion`] rather than a
+    /// confusing "malformed JSON" error.
+    #[error(
+        "session contains an unknown transform kind '{0}' written by a newer dat0 version; refusing to read"
+    )]
+    ForwardIncompatTransform(String),
+}
+
+impl SessionLoadError {
+    /// Whether this error means "written by a newer dat0 version" — the signal
+    /// for the upper layer to surface the forward-incompat Banner (rather than
+    /// treating it as corruption / falling back to default state).
+    ///
+    /// Covers both a newer top-level `schema_version`
+    /// ([`Self::UnsupportedVersion`]) and a known version carrying an unknown
+    /// transform variant ([`Self::ForwardIncompatTransform`]).
+    pub fn is_forward_incompat(&self) -> bool {
+        matches!(
+            self,
+            SessionLoadError::UnsupportedVersion(_) | SessionLoadError::ForwardIncompatTransform(_)
+        )
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -52,6 +87,51 @@ fn version_one() -> u32 {
 }
 
 // ---------------------------------------------------------------------------
+// Known transform `kind` discriminators (forward-incompat allowlist)
+// ---------------------------------------------------------------------------
+
+/// The set of `Transformation` `kind` discriminators this build understands.
+///
+/// `Transformation` is `#[serde(tag = "kind", rename_all = "snake_case")]`, so
+/// each stack element is a JSON object with a `"kind"` string. A value outside
+/// this set means a newer dat0 wrote a variant we don't have — a
+/// forward-incompat condition, not corruption.
+///
+/// MUST stay in sync with `dat0_engine::Transformation`. When a variant is
+/// added there, add its snake_case tag here (a stale allowlist would reject a
+/// transform this build CAN handle).
+const KNOWN_TRANSFORM_KINDS: &[&str] = &["filter", "sort", "edit", "row_delete"];
+
+/// Scan a parsed session document for any tab whose `transform_stack` contains
+/// a transform with an unrecognized top-level `kind`. Returns the offending
+/// kind string if found.
+///
+/// This is the allowlist PRE-CHECK: it runs before strict deserialization so an
+/// unknown variant maps to [`SessionLoadError::ForwardIncompatTransform`]
+/// instead of a generic serde "unknown variant" `Json` error. Pre-checking is
+/// more robust than matching serde's error text (which is not part of serde's
+/// stable API and varies by representation).
+///
+/// Only the TOP-LEVEL transform `kind` is checked (the variant a newer binary
+/// would add). Malformed inner shapes still surface as `Json` errors downstream.
+fn find_unknown_transform_kind(doc: &serde_json::Value) -> Option<String> {
+    let tabs = doc.get("tabs")?.as_array()?;
+    for tab in tabs {
+        let Some(stack) = tab.get("transform_stack").and_then(|s| s.as_array()) else {
+            continue;
+        };
+        for op in stack {
+            if let Some(kind) = op.get("kind").and_then(|k| k.as_str()) {
+                if !KNOWN_TRANSFORM_KINDS.contains(&kind) {
+                    return Some(kind.to_string());
+                }
+            }
+        }
+    }
+    None
+}
+
+// ---------------------------------------------------------------------------
 // Public API
 // ---------------------------------------------------------------------------
 
@@ -59,32 +139,65 @@ fn version_one() -> u32 {
 ///
 /// Returns the live [`SessionState`]. The caller (`Session::recover`)
 /// unconditionally persists the returned state via the existing atomic-write
-/// path, landing the v2 file on disk on first open (eager write-back).
+/// path, landing the current-version file on disk on first open (eager
+/// write-back).
 ///
 /// # Errors
 ///
 /// - [`SessionLoadError::Io`] — file not found or unreadable (NotFound is
 ///   the caller's signal to fall back to `SessionState::default()`).
 /// - [`SessionLoadError::Json`] — malformed JSON.
-/// - [`SessionLoadError::UnsupportedVersion`] — schema_version is not a known
-///   version handled by this function.
+/// - [`SessionLoadError::UnsupportedVersion`] — schema_version is newer than
+///   this build handles.
+/// - [`SessionLoadError::ForwardIncompatTransform`] — a known version carrying
+///   an unknown transform `kind` written by a newer dat0.
 pub fn load(path: &Path) -> Result<SessionState, SessionLoadError> {
     let raw = std::fs::read_to_string(path)?;
-    let probe: VersionProbe = serde_json::from_str(&raw)?;
+    load_str(&raw)
+}
+
+/// Parse + migrate a session.json **string** (no I/O). Used by [`load`] and by
+/// tests that drive migration directly from in-memory fixtures.
+///
+/// Runs the forward-incompat transform-`kind` allowlist pre-check before any
+/// strict deserialization so an unrecognized variant becomes
+/// [`SessionLoadError::ForwardIncompatTransform`] rather than a bare serde
+/// error.
+///
+/// # Errors
+/// Same as [`load`], minus the I/O cases.
+pub fn load_str(raw: &str) -> Result<SessionState, SessionLoadError> {
+    let probe: VersionProbe = serde_json::from_str(raw)?;
 
     // IMPORTANT: use literal version arms, NOT `n if n == SESSION_SCHEMA_VERSION`.
     // The guard form breaks whenever SESSION_SCHEMA_VERSION is bumped: a valid
-    // v2 file would fall through to UnsupportedVersion(2) once the const is 3.
-    // Literal arms also force the future implementer to add a migration path
-    // (e.g. `2 => migrate_v2_to_v3(&raw)`) or get a compile-time inexhaustive
-    // match error instead of a silent runtime failure.
+    // current-version file would fall through to UnsupportedVersion once the
+    // const advances. Literal arms also force the future implementer to add a
+    // migration path (e.g. `3 => migrate_v3_to_v4(raw)`) or get an
+    // inexhaustive-match error instead of a silent runtime failure.
     match probe.schema_version {
-        1 => migrate_v1_to_v2(&raw),
-        2 => {
-            let state: SessionState = serde_json::from_str(&raw)?;
+        1 => migrate_v1_to_v3(raw),
+        2 => migrate_v2_to_v3(raw),
+        3 => {
+            // Forward-incompat guard: a NEWER dat0 (writing the same v3 schema)
+            // may have introduced a transform variant this build doesn't know.
+            // Scan the current-version document's transform stacks and map any
+            // unknown TOP-LEVEL `kind` to the forward-incompat banner path BEFORE
+            // strict deserialization (which would otherwise fail with a generic
+            // "unknown variant" Json error). Only meaningful for the current
+            // version: past-version files predate every future variant, so an
+            // unknown `kind` there is genuine corruption and is correctly left to
+            // surface as a plain parse error in the migration helper. Future
+            // versions are rejected by the catch-all arm below before we pay for
+            // the extra `Value` parse.
+            let doc: serde_json::Value = serde_json::from_str(raw)?;
+            if let Some(kind) = find_unknown_transform_kind(&doc) {
+                return Err(SessionLoadError::ForwardIncompatTransform(kind));
+            }
+            let state: SessionState = serde_json::from_str(raw)?;
             Ok(state)
         }
-        // When SESSION_SCHEMA_VERSION advances, add: N => migrate_vN_to_v(N+1)(&raw)
+        // When SESSION_SCHEMA_VERSION advances, add: N => migrate_vN_to_v(N+1)(raw)
         // The current-version arm becomes the new "load as-is" target.
         n => Err(SessionLoadError::UnsupportedVersion(n)),
     }
@@ -94,13 +207,17 @@ pub fn load(path: &Path) -> Result<SessionState, SessionLoadError> {
 // Private migration helpers
 // ---------------------------------------------------------------------------
 
-/// Migrate a raw v1 JSON string into a v2 `SessionState`.
+/// Migrate a raw v1 JSON string straight to the current (v3) `SessionState`.
 ///
 /// v1 had no `schema_version` + no `transform_stack` + no `undo_cursor` on
 /// `Tab`. The `#[serde(default)]` attrs on those fields handle the gaps; we
 /// just re-parse the whole document (which now has the serde defaults applied)
 /// and stamp `schema_version = SESSION_SCHEMA_VERSION`.
-fn migrate_v1_to_v2(raw: &str) -> Result<SessionState, SessionLoadError> {
+///
+/// v2 → v3 is an identity reshape (see [`migrate_v2_to_v3`]), so the v1 → v3 path
+/// is the same single re-parse + version stamp the v1 → v2 path always was — no
+/// intermediate v2 hop is needed.
+fn migrate_v1_to_v3(raw: &str) -> Result<SessionState, SessionLoadError> {
     let mut state: SessionState = serde_json::from_str(raw)?;
     state.schema_version = SESSION_SCHEMA_VERSION;
     // serde(default) on Tab fields ensures:
@@ -108,5 +225,17 @@ fn migrate_v1_to_v2(raw: &str) -> Result<SessionState, SessionLoadError> {
     //   undo_cursor     = 0
     //   extra           = serde_json::Map::new()   (via flatten)
     // No further field-level work is needed.
+    Ok(state)
+}
+
+/// Migrate a raw v2 JSON string to a v3 `SessionState` — IDENTITY.
+///
+/// v3 adds the `Edit` / `RowDelete` `Transformation` variants, which are purely
+/// additive tagged-enum cases: a v2 file (filter/sort only) parses into the
+/// exact same in-memory shape, with NO field added/removed/renamed. The only
+/// change is the version stamp. Re-parse and bump `schema_version`.
+fn migrate_v2_to_v3(raw: &str) -> Result<SessionState, SessionLoadError> {
+    let mut state: SessionState = serde_json::from_str(raw)?;
+    state.schema_version = SESSION_SCHEMA_VERSION;
     Ok(state)
 }

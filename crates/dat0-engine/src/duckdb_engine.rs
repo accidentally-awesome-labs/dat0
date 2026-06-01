@@ -206,6 +206,120 @@ impl crate::QueryEngine for DuckDBEngine {
             .write()
             .expect("table_origins poisoned")
             .insert(info.name.clone(), TableOrigin::File(path));
+        // NOTE: `register_file` does NOT eagerly inject `__dat0_rowid`. Unlike
+        // `create_table` (a real CTAS → base table), every register path builds a
+        // `CREATE OR REPLACE VIEW ... AS SELECT * FROM read_csv/read_json/
+        // read_parquet(...)` (see `crate::register`). A VIEW cannot be
+        // `ALTER TABLE ... ADD COLUMN`-ed, so `ensure_rowid` is inapplicable to a
+        // file-registered view as-is.
+        //
+        // The eager surrogate is injected on the CTAS path (`create_table`); the
+        // file-registered view gains row identity when it is materialized into a
+        // base table (or via the app-side lazy back-fill once the relation is a
+        // base table).
+        //
+        // T5/T6: pre-P4b tables back-fill via ensure_rowid on first view bind
+        // (WorkspaceShell) — app-side, out of T3 engine scope. See hand-off note
+        // in the T3 report. Materializing file imports to base tables (so the
+        // grid's edit overlay can reference `__dat0_rowid`) is the related
+        // app/import-path decision tracked there.
+        Ok(info)
+    }
+
+    #[instrument(skip(self), fields(path = %path.display()))]
+    async fn register_file_as_table(
+        &self,
+        path: &std::path::Path,
+        opts: crate::types::RegisterOpts,
+    ) -> Result<crate::types::TableInfo> {
+        self.assert_open()?;
+        let conn = self.conn.clone();
+        let table_name = crate::register::derive_table_name(path);
+
+        // PD-017 Path A1: build the SAME `CREATE OR REPLACE VIEW … AS SELECT *
+        // FROM read_*(…)` SQL that `register_file` uses — reusing 100% of the
+        // P3b CSV/JSON delimiter+type sniffing — but target a transient
+        // intermediate view name. We then CTAS the view into a real base table
+        // under the final `table_name`, drop the intermediate view, and inject
+        // the `__dat0_rowid` surrogate. All of this runs under a single
+        // connection lock so the table is never observable mid-materialization
+        // (mirrors the `create_table` invariant).
+        //
+        // NOTE: `dispatch_register_sql` emits `CREATE OR REPLACE VIEW` for the
+        // transient, so we rewrite the leading statement to target `tmp_view`.
+        let tmp_view = format!("__dat0_import_tmp_{table_name}");
+        let view_sql = crate::register::dispatch_register_sql(path, &opts, &tmp_view)?;
+        let path = path.to_path_buf();
+
+        let columns = tokio::task::spawn_blocking({
+            let conn = conn.clone();
+            let table_name = table_name.clone();
+            let tmp_view = tmp_view.clone();
+            move || -> Result<Vec<crate::types::ColumnInfo>> {
+                let conn = conn.lock().map_err(|_| EngineError::EnginePoisoned)?;
+                let qt = quote_ident(&table_name);
+                let qv = quote_ident(&tmp_view);
+                // Materialize the import atomically:
+                //   1) Build the sniffing view (transient intermediate). This is
+                //      `CREATE OR REPLACE VIEW` (see `register::*::build_*_view_sql`),
+                //      so a leftover transient from a crashed pre-transaction-era
+                //      import is overwritten in place and cannot wedge a fresh
+                //      import — no separate defensive DROP needed.
+                //   2) Materialize it into a base table via `CREATE OR REPLACE
+                //      TABLE … AS SELECT` — idempotent, so re-importing the same
+                //      filename overwrites rather than erroring (restores the
+                //      old view-based `register_file` re-import semantics).
+                //   3) Drop the intermediate view.
+                //
+                // We wrap the sequence in `BEGIN … COMMIT` AND explicitly
+                // `ROLLBACK` on any error. This explicit rollback is REQUIRED:
+                // in duckdb-rs 1.4.4 a statement error mid-transaction does NOT
+                // auto-abort the txn — the already-applied `CREATE OR REPLACE
+                // VIEW` would otherwise survive a later `COMMIT`/autocommit and
+                // leak `__dat0_import_tmp_<name>` permanently (verified against
+                // 1.4.4: error→COMMIT leaks; error→ROLLBACK is clean). With the
+                // ROLLBACK, ANY failure (CTAS name-clash, disk full, malformed
+                // file) unwinds the transient-view create — no leak.
+                let batch = format!(
+                    "BEGIN TRANSACTION;\n\
+                     {view_sql}\n\
+                     CREATE OR REPLACE TABLE {qt} AS SELECT * FROM {qv};\n\
+                     DROP VIEW {qv};\n\
+                     COMMIT;",
+                    view_sql = view_sql,
+                    qt = qt,
+                    qv = qv,
+                );
+                if let Err(e) = conn.execute_batch(&batch) {
+                    // Best-effort rollback; ignore its own error (e.g. if the
+                    // failure was on `BEGIN` itself and no txn is open).
+                    let _ = conn.execute_batch("ROLLBACK;");
+                    return Err(e.into());
+                }
+                // Inject the surrogate EAGERLY (design §5: "at import"). Runs
+                // only on batch success (after COMMIT), under the same lock, so
+                // the base table is never visible without its `__dat0_rowid`.
+                // `ensure_rowid_blocking` is itself idempotent; running it
+                // outside the materialization txn is fine since it only fires on
+                // a committed base table.
+                ensure_rowid_blocking(&conn, &table_name)?;
+                crate::catalog::describe_table(&conn, &table_name, None)
+            }
+        })
+        .await
+        .map_err(|e| EngineError::TaskJoin(e.to_string()))??;
+
+        let info = crate::types::TableInfo {
+            name: table_name,
+            schema: "main".to_string(),
+            columns,
+            row_count_estimate: None,
+            origin: crate::types::TableOrigin::File(path.clone()),
+        };
+        self.table_origins
+            .write()
+            .expect("table_origins poisoned")
+            .insert(info.name.clone(), TableOrigin::File(path));
         Ok(info)
     }
 
@@ -225,7 +339,17 @@ impl crate::QueryEngine for DuckDBEngine {
             let sql = sql.clone();
             move || -> Result<crate::types::TableInfo> {
                 let conn = conn.lock().map_err(|_| EngineError::EnginePoisoned)?;
-                crate::catalog::create_table(&conn, &name, &sql)
+                // CTAS first, then inject the `__dat0_rowid` surrogate EAGERLY so
+                // fresh derived tables carry row identity at create time (design
+                // §5: "at import / table create"). Done under the same lock so
+                // the table is never observable without its surrogate. The
+                // returned `TableInfo.columns` is re-derived after injection so
+                // the catalog reflects the column (catalog::create_table
+                // describes before we add it, so re-describe here).
+                let mut info = crate::catalog::create_table(&conn, &name, &sql)?;
+                ensure_rowid_blocking(&conn, &name)?;
+                info.columns = crate::catalog::describe_table(&conn, &name, None)?;
+                Ok(info)
             }
         })
         .await
@@ -419,6 +543,20 @@ impl crate::QueryEngine for DuckDBEngine {
         .map_err(|e| EngineError::TaskJoin(e.to_string()))?
     }
 
+    #[instrument(skip(self), fields(table = table))]
+    async fn ensure_rowid(&self, table: &str) -> Result<()> {
+        self.assert_open()?;
+        let conn = self.conn.clone();
+        // Raw (unquoted) name for catalog lookups; quoted form for DDL.
+        let raw = table.to_owned();
+        tokio::task::spawn_blocking(move || -> Result<()> {
+            let conn = conn.lock().map_err(|_| EngineError::EnginePoisoned)?;
+            ensure_rowid_blocking(&conn, &raw)
+        })
+        .await
+        .map_err(|e| EngineError::TaskJoin(e.to_string()))?
+    }
+
     #[instrument(skip(self, sql), fields(name = name, sql_len = sql.len()))]
     async fn create_or_replace_view(&self, name: &str, sql: &str) -> Result<()> {
         self.assert_open()?;
@@ -480,5 +618,129 @@ impl DuckDBEngine {
             .expect("table_origins poisoned")
             .get(name)
             .cloned()
+    }
+}
+
+/// Synchronous core of `ensure_rowid`, run inside `spawn_blocking`.
+///
+/// Idempotent. Disambiguates our injected key from a colliding user source
+/// column via a `dat0:surrogate` column COMMENT:
+///   - column present + marked  → no-op (already injected by us)
+///   - column present + unmarked → rename source col to `<ROWID_COL>__src`,
+///     then inject our surrogate
+///   - column absent             → inject our surrogate
+///
+/// `table` is the raw (unquoted) identifier.
+fn ensure_rowid_blocking(conn: &duckdb::Connection, table: &str) -> Result<()> {
+    let qt = quote_ident(table);
+
+    if column_exists(conn, table, crate::ROWID_COL)? {
+        if is_marked_rowid(conn, table)? {
+            return Ok(()); // already our surrogate — idempotent no-op
+        }
+        // A user's source column collides with our sentinel name. Move it out of
+        // the way (preserving their data) before injecting our key.
+        conn.execute_batch(&format!(
+            "ALTER TABLE {qt} RENAME COLUMN {rowid} TO {rowid}__src;",
+            qt = qt,
+            rowid = crate::ROWID_COL,
+        ))?;
+    }
+
+    // Inject the deterministic surrogate in physical scan order. This is the
+    // T0-probe-verified SQL (docs/internal/dat0-p4b-t0-probe.md §3): gap-free
+    // 0..n-1, keyed off `rowid` (scan order), stable across reads. The
+    // `dat0:surrogate` COMMENT marks the column so future calls are no-ops.
+    conn.execute_batch(&format!(
+        "ALTER TABLE {qt} ADD COLUMN {rowid} BIGINT;\n\
+         UPDATE {qt} SET {rowid} = seq.rn FROM (\n\
+           SELECT rowid AS rid, (row_number() OVER (ORDER BY rowid)) - 1 AS rn FROM {qt}\n\
+         ) seq WHERE {qt}.rowid = seq.rid;\n\
+         COMMENT ON COLUMN {qt}.{rowid} IS 'dat0:surrogate';",
+        qt = qt,
+        rowid = crate::ROWID_COL,
+    ))?;
+    Ok(())
+}
+
+/// True if `table` has a column named `column`. Queries `duckdb_columns()`
+/// (the DuckDB-native catalog table function) filtered to non-internal objects.
+fn column_exists(conn: &duckdb::Connection, table: &str, column: &str) -> Result<bool> {
+    let count: i64 = conn.query_row(
+        "SELECT count(*) FROM duckdb_columns() \
+         WHERE NOT internal AND schema_name = 'main' AND table_name = ?1 AND column_name = ?2",
+        duckdb::params![table, column],
+        |r| r.get::<_, i64>(0),
+    )?;
+    Ok(count > 0)
+}
+
+/// True if `table`'s `__dat0_rowid` column carries our `dat0:surrogate` COMMENT
+/// marker (i.e. it was injected by us, not a colliding user column).
+fn is_marked_rowid(conn: &duckdb::Connection, table: &str) -> Result<bool> {
+    let comment: Option<String> = conn.query_row(
+        "SELECT comment FROM duckdb_columns() \
+         WHERE NOT internal AND schema_name = 'main' AND table_name = ?1 AND column_name = ?2",
+        duckdb::params![table, crate::ROWID_COL],
+        |r| r.get::<_, Option<String>>(0),
+    )?;
+    Ok(comment.as_deref() == Some("dat0:surrogate"))
+}
+
+/// Integration-test hooks. `#[doc(hidden)] pub` (not `#[cfg(test)]`) so the
+/// crate's `tests/*.rs` integration suites — which compile against the crate as
+/// an external dependency, where `#[cfg(test)]` items are absent — can read raw
+/// SQL off the pooled connection. Mirrors the `__test_only_*` convention in
+/// `crate::migrations`. Not part of the stable API.
+#[doc(hidden)]
+impl DuckDBEngine {
+    /// Test hook: run a raw SQL batch on the pooled connection.
+    pub async fn __test_execute_batch(&self, sql: &str) -> Result<()> {
+        let conn = self.conn.clone();
+        let sql = sql.to_owned();
+        tokio::task::spawn_blocking(move || -> Result<()> {
+            let conn = conn.lock().map_err(|_| EngineError::EnginePoisoned)?;
+            conn.execute_batch(&sql)?;
+            Ok(())
+        })
+        .await
+        .map_err(|e| EngineError::TaskJoin(e.to_string()))?
+    }
+
+    /// Test hook: read a single BIGINT column into a `Vec<i64>`.
+    pub async fn __test_query_i64_col(&self, sql: &str) -> Result<Vec<i64>> {
+        let conn = self.conn.clone();
+        let sql = sql.to_owned();
+        tokio::task::spawn_blocking(move || -> Result<Vec<i64>> {
+            let conn = conn.lock().map_err(|_| EngineError::EnginePoisoned)?;
+            let mut stmt = conn.prepare(&sql)?;
+            let vals: Vec<i64> = stmt
+                .query_map([], |r| r.get::<_, i64>(0))?
+                .filter_map(std::result::Result::ok)
+                .collect();
+            Ok(vals)
+        })
+        .await
+        .map_err(|e| EngineError::TaskJoin(e.to_string()))?
+    }
+
+    /// Test hook: list a table's column names via `duckdb_columns()`.
+    pub async fn __test_column_names(&self, table: &str) -> Result<Vec<String>> {
+        let conn = self.conn.clone();
+        let table = table.to_owned();
+        tokio::task::spawn_blocking(move || -> Result<Vec<String>> {
+            let conn = conn.lock().map_err(|_| EngineError::EnginePoisoned)?;
+            let mut stmt = conn.prepare(
+                "SELECT column_name FROM duckdb_columns() \
+                 WHERE NOT internal AND schema_name = 'main' AND table_name = ?1 ORDER BY column_index",
+            )?;
+            let names: Vec<String> = stmt
+                .query_map(duckdb::params![table], |r| r.get::<_, String>(0))?
+                .filter_map(std::result::Result::ok)
+                .collect();
+            Ok(names)
+        })
+        .await
+        .map_err(|e| EngineError::TaskJoin(e.to_string()))?
     }
 }
