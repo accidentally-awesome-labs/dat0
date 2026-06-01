@@ -21,7 +21,7 @@ pub mod types;
 
 pub use duckdb_engine::DuckDBEngine;
 pub use error::EngineError;
-pub use render::{RenderError, compile_view_sql};
+pub use render::{RenderError, compile_view_sql, render_export_select};
 pub use trait_def::QueryEngine;
 pub use transform::{
     CellEdit, FilterOp, FilterValue, ProjectionColumn, ROWID_COL, RowKey, Scalar, SortDirection,
