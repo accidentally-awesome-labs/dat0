@@ -19,6 +19,32 @@
 | 4 | **Export = streaming COPY-to-path** | Reuse in-memory `export_table -> Vec<u8>` | Matches the 2GB–TB files-at-scale thesis; existing export is already COPY-to-tempfile + read-back, so this just drops the read-back |
 | 5 | **SQL transform stays P5** (enum-absent; ships with the SQL Console) | Land a SQL transform node now | No SQL UI until P5; the enum comment already reserves only Reorder/Rename/Delete for P4c |
 
+## 0a. REVISION (plan-time grounding, 2026-05-31)
+
+During plan grounding, the **projection-render approach (decision 2 / §2.2) was
+switched from Option A to Option B** — equivalent semantics, much less engine churn.
+
+- **Why:** the grid derives all column names/types from the **active view's Arrow
+  schema**, and every data-mutating path (`commit_cell_edit`, `cut`, `fill_down`,
+  filter/sort/delete build) addresses columns by the **source name read from that
+  schema**. Rendering rename/reorder/delete into the view SQL (Option A) makes the
+  view's columns *display*-named, forcing a display→source remap into the engine AND
+  every mutating path.
+- **Option B (chosen):** `compile_view_sql` is **untouched** — the DuckDB view stays
+  in **source columns**, so filter/sort/edit/delete keep working with zero golden/perf
+  churn. Rename/Reorder/DeleteColumn become:
+  1. a **grid display-layer fold** — a `ColumnView` of `(source, display)` in display
+     order, deletes excluded — that drives header labels, column order, and the
+     screen-col→source mapping; and
+  2. an **export-time projection SELECT** (`render_export_select`) that strips the
+     surrogate and applies rename/reorder/exclude for "current view" exports.
+- Projection transforms are **display-only applies**: they push to history (undoable,
+  shown in PipelineBar) but recompile to **identical data SQL**, so they re-render the
+  header from the refreshed `ColumnView` with **no engine round-trip**.
+- The sections below (§2.1 payloads, §4 PipelineBar, §5 session, §8 exit criteria) are
+  unchanged. §2.2/§2.3/§3.2/§6/§9 are superseded by the plan
+  (`2026-05-31-dat0-p4c-plan.md`), which is authored against Option B.
+
 ## 1. Scope
 
 **In:**
