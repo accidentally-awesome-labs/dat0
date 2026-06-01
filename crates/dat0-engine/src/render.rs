@@ -70,6 +70,14 @@ pub fn compile_view_sql(base: &str, ops: &[Transformation]) -> Result<String, Re
                     delete_ids.push(*id);
                 }
             }
+            // Projection transforms (Reorder / Rename / DeleteColumn) are
+            // display-only (design Option B). They never contribute to the data
+            // view SQL; the grid `ColumnView` and the export projection apply
+            // them. No-op here keeps the match exhaustive + the flat fast-path
+            // byte-identical when only projection (+ filter/sort) ops are present.
+            Transformation::Reorder { .. }
+            | Transformation::Rename { .. }
+            | Transformation::DeleteColumn { .. } => {}
         }
     }
 

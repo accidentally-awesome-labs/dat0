@@ -166,6 +166,37 @@ fn edit_and_delete_coexist_in_one_overlay() {
 }
 
 #[test]
+fn projection_ops_are_sql_noops_flat_parity() {
+    use dat0_engine::transform::{FilterOp, FilterValue, Scalar, Transformation};
+    // A stack with projection ops + a filter must emit the EXACT flat P4a SQL
+    // (projection is display-only in Option B — invisible to the data view).
+    let ops = vec![
+        Transformation::Rename {
+            column: "city".into(),
+            to: "City".into(),
+        },
+        Transformation::Filter {
+            column: "amt".into(),
+            op: FilterOp::Gt,
+            value: FilterValue::Scalar {
+                value: Scalar::Int(10),
+            },
+        },
+        Transformation::Reorder {
+            columns: vec!["amt".into(), "city".into()],
+        },
+        Transformation::DeleteColumn {
+            columns: vec!["notes".into()],
+        },
+    ];
+    let sql = compile_view_sql(BASE, &ops).unwrap();
+    assert_eq!(
+        sql,
+        "SELECT * FROM \"main\".\"orders\" WHERE (\"amt\" > 10)"
+    );
+}
+
+#[test]
 fn multi_column_edit_preserves_first_seen_order() {
     // Determinism contract: REPLACE columns render in first-seen order (the
     // golden SQL pins exact text, so any reordering would be a flake).

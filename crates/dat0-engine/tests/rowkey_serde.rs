@@ -57,3 +57,28 @@ fn edit_kind_tag_is_self_describing() {
     let j = serde_json::to_value(&t).unwrap();
     assert_eq!(j["kind"], "edit");
 }
+
+#[test]
+fn projection_variants_roundtrip_and_tag() {
+    use dat0_engine::transform::Transformation;
+    let reorder = Transformation::Reorder {
+        columns: vec!["b".into(), "a".into()],
+    };
+    let rename = Transformation::Rename {
+        column: "a".into(),
+        to: "A".into(),
+    };
+    let delete = Transformation::DeleteColumn {
+        columns: vec!["c".into()],
+    };
+    assert_eq!(roundtrip(&reorder), reorder);
+    assert_eq!(roundtrip(&rename), rename);
+    assert_eq!(roundtrip(&delete), delete);
+    // Externally tagged on "kind", snake_case.
+    assert_eq!(serde_json::to_value(&reorder).unwrap()["kind"], "reorder");
+    assert_eq!(serde_json::to_value(&rename).unwrap()["kind"], "rename");
+    assert_eq!(
+        serde_json::to_value(&delete).unwrap()["kind"],
+        "delete_column"
+    );
+}
