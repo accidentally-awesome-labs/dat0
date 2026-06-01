@@ -12,14 +12,18 @@
 //! directly via the captured `WeakEntity` — this avoids the registry lookup
 //! overhead and works even when no `App`-level focus is set.
 //!
-//! | Always shown        | Only when selection is non-empty    |
+//! | Always shown        | Gated                               |
 //! |---------------------|-------------------------------------|
-//! | Copy                | Delete Row(s)                       |
+//! | Copy                |                                     |
 //! | Cut                 |                                     |
 //! | Paste               |                                     |
 //! | ── separator ──     |                                     |
 //! | Fill Down           |                                     |
 //! | Set NULL            |                                     |
+//! | ── separator ──     |                                     |
+//! | Delete Row(s)       | disabled when selection is empty    |
+//! | ── separator ──     |                                     |
+//! | Delete Column       |                                     |
 //!
 //! # Right-click trigger wiring (PD-018)
 //!
@@ -37,7 +41,7 @@
 //!
 //! Menu item labels come from [`dat0_i18n::t`]:
 //! `menu.copy`, `menu.cut`, `menu.paste`, `menu.fill_down`, `menu.set_null`,
-//! `menu.delete_rows`.
+//! `menu.delete_rows`, `menu.delete_column`.
 
 use gpui::{Context, WeakEntity, Window};
 use gpui_component::menu::PopupMenu;
@@ -51,10 +55,15 @@ use crate::window::WorkspaceShell;
 /// mounted yet) the edit items are still shown but will be silent no-ops (the
 /// `WorkspaceShell` handlers guard against a missing selection internally).
 ///
+/// `col_ix` is the screen-column index of the right-clicked cell/header.  It is
+/// passed to `WorkspaceShell::delete_column` as the fallback column when no
+/// column selection is active.  In the body-level menu the active cell's column
+/// is used as the fallback (see the call site in `WorkspaceShell::render`).
+///
 /// Returns a function compatible with [`gpui_component::menu::ContextMenuExt::context_menu`]:
 ///
 /// ```ignore
-/// some_element.context_menu(build_menu(ws_weak, selection.as_ref()))
+/// some_element.context_menu(build_menu(ws_weak, selection.as_ref(), col_ix))
 /// ```
 ///
 /// # Wiring status (PD-018)
@@ -65,6 +74,7 @@ use crate::window::WorkspaceShell;
 pub fn build_menu(
     ws: WeakEntity<WorkspaceShell>,
     selection: Option<&SelectionModel>,
+    col_ix: usize,
 ) -> impl Fn(PopupMenu, &mut Window, &mut Context<PopupMenu>) -> PopupMenu + 'static {
     // Snapshot the selection flag now (before the closure captures anything).
     // The closure is 'static, so we cannot hold a reference into `selection`.
@@ -76,6 +86,7 @@ pub fn build_menu(
     let ws_fill = ws.clone();
     let ws_null = ws.clone();
     let ws_delete = ws.clone();
+    let ws_del_col = ws.clone();
 
     move |menu: PopupMenu, _window: &mut Window, _cx: &mut Context<PopupMenu>| {
         use gpui_component::menu::PopupMenuItem;
@@ -134,7 +145,7 @@ pub fn build_menu(
         // "cell" selection — any selected cell's row is a deletion candidate
         // (see `delete_selected_rows` semantics). We show the item always and
         // disable it only when there is demonstrably nothing selected.
-        menu.separator().item(
+        let menu = menu.separator().item(
             PopupMenuItem::new(dat0_i18n::t("menu.delete_rows"))
                 .disabled(!has_selection)
                 .on_click({
@@ -145,6 +156,19 @@ pub fn build_menu(
                         }
                     }
                 }),
+        );
+
+        // "Delete Column" is always shown; the handler hides the right-clicked
+        // column (or all selected distinct columns when a selection is active).
+        menu.separator().item(
+            PopupMenuItem::new(dat0_i18n::t("menu.delete_column")).on_click({
+                let ws = ws_del_col.clone();
+                move |_ev, _window, cx| {
+                    if let Some(h) = ws.upgrade() {
+                        h.update(cx, |ws, cx| ws.delete_column(col_ix, cx));
+                    }
+                }
+            }),
         )
     }
 }
@@ -168,7 +192,7 @@ mod tests {
         fn assert_static<F: 'static>(_: F) {}
 
         let weak: WeakEntity<WorkspaceShell> = gpui::WeakEntity::new_invalid();
-        let closure = build_menu(weak, None);
+        let closure = build_menu(weak, None, 0);
         assert_static(closure);
     }
 }

@@ -1505,6 +1505,41 @@ impl WorkspaceShell {
         self.spawn_rebind(change, cx);
     }
 
+    /// Hide a column via `DeleteColumn` (display-only; the underlying data column
+    /// is unchanged so filters/sorts that reference it still compile).
+    ///
+    /// `col_ix` is the screen column of the right-clicked header (used as the
+    /// fallback when no column selection is active). If a column selection is
+    /// active, all distinct selected columns are deleted instead.
+    pub fn delete_column(&mut self, col_ix: usize, cx: &mut Context<Self>) {
+        let mut columns: Vec<String> = Vec::new();
+        if let Some(sel) = self.selection.as_ref() {
+            use std::collections::BTreeSet;
+            let mut seen: BTreeSet<usize> = BTreeSet::new();
+            for (_row, c) in sel.resolved_cells() {
+                if seen.insert(c) {
+                    if let Some(src) = self.column_name(c) {
+                        columns.push(src);
+                    }
+                }
+            }
+        }
+        if columns.is_empty() {
+            if let Some(src) = self.column_name(col_ix) {
+                columns.push(src);
+            }
+        }
+        if columns.is_empty() {
+            return;
+        }
+        let Some(vm) = self.view_model.as_mut() else {
+            return;
+        };
+        let change = vm.apply(dat0_engine::Transformation::DeleteColumn { columns });
+        self.refresh_column_view();
+        self.route_change(change, cx);
+    }
+
     /// Return the active inline header-rename editor for `col_ix`, if one is
     /// mounted for that column. Used by `GridTableDelegate::render_th` to render
     /// the editor in-place instead of the column label (P4c T7).
@@ -1781,7 +1816,12 @@ impl Render for WorkspaceShell {
                 // shell so the items dispatch into the live edit handlers.
                 use crate::grid::context_menu::{ContextMenuExt, build_menu};
                 let ws_weak = cx.entity().downgrade();
-                let menu_builder = build_menu(ws_weak, self.selection.as_ref());
+                // Use the active cell's column as the fallback for "Delete
+                // Column" when no column selection is active (body-level menu;
+                // the header right-click handler passes the header's col_ix
+                // directly when that wiring lands in a later task).
+                let active_col = self.selection.as_ref().map(|s| s.active().col).unwrap_or(0);
+                let menu_builder = build_menu(ws_weak, self.selection.as_ref(), active_col);
                 div()
                     .size_full()
                     .child(table)

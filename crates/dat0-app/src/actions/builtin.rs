@@ -40,6 +40,7 @@ pub mod ids {
     pub const VIEW_DELETE_ROWS: &str = "view.delete_rows";
     pub const VIEW_SET_NULL: &str = "view.set_null";
     pub const VIEW_SET_VALUE: &str = "view.set_value";
+    pub const VIEW_DELETE_COLUMN: &str = "view.delete_column";
 }
 
 /// Register every built-in action onto `reg`. Returns an error if any id

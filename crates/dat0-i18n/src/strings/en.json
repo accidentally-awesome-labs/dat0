@@ -20,6 +20,7 @@
   "menu.fill_down": "Fill Down",
   "menu.set_null": "Set NULL",
   "menu.delete_rows": "Delete Row(s)",
+  "menu.delete_column": "Delete Column",
   "menu.view": "View",
   "menu.view.command_palette": "Command Palette…",
   "menu.view.settings": "Settings…",
