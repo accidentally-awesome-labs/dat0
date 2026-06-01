@@ -38,30 +38,32 @@ pub fn describe_transform(t: &Transformation) -> String {
 
 /// State for the PipelineBar toggle (expanded vs. collapsed).
 ///
-/// `expanded` is `false` by default; clicking `⌄` flips it. The expanded
-/// timeline view is T10 — the stub is stored here but only the collapsed strip
-/// is rendered.
+/// `expanded` is `false` by default; clicking `⌄` flips it to show the
+/// vertical timeline; clicking `⌃` collapses back to the pill strip.
 #[derive(Debug, Default, Clone)]
 pub struct PipelineBarState {
     pub expanded: bool,
 }
 
-/// Render the collapsed PipelineBar pill strip.
+/// Render the PipelineBar — collapsed pill strip or expanded vertical timeline,
+/// depending on `state.expanded`.
 ///
-/// Returns a horizontal flex of pills: a leading `▣ base` chip, then one chip
-/// per `describe_transform(t)` with `›` separators, and a trailing `⌄` toggle.
+/// **Collapsed:** horizontal flex of pills: a leading `▣ base` chip (clickable
+/// → `jump_to(0)`), then one chip per `describe_transform(t)` with `›`
+/// separators, and a trailing `⌄` toggle. Clicking a pill calls
+/// `ws.pipeline_jump_to(i + 1)`.
 ///
-/// Each transform pill is `cursor_pointer`; clicking it calls
-/// `ws.pipeline_jump_to(i + 1)` via the weak handle so that pill becomes the
-/// last applied transform. The `⌄` button flips `state.expanded` (the expanded
-/// timeline is T10).
+/// **Expanded:** a vertical list with one row per active transform. Each row
+/// shows `[icon] describe_transform(t)` (clickable → `jump_to(i + 1)`) and a
+/// trailing `✕` remove button (`ws.pipeline_remove_at(i)`). Above the rows a
+/// `▣ base` entry (clickable → `jump_to(0)`) anchors the timeline. A `⌃`
+/// toggle collapses back to the pill strip.
 ///
 /// Returns `None` when the stack is empty (no bar shown until a transform is
 /// applied), so the caller can use `.children(render_pipeline_bar(...))`.
 pub fn render_pipeline_bar(
     stack: &[Transformation],
     state: &mut PipelineBarState,
-    ws_weak: gpui::WeakEntity<crate::window::WorkspaceShell>,
     cx: &mut gpui::Context<crate::window::WorkspaceShell>,
 ) -> Option<gpui::AnyElement> {
     // Only render when there is at least one transform on the stack.
@@ -71,81 +73,199 @@ pub fn render_pipeline_bar(
 
     use gpui::div;
 
-    // ── base chip ────────────────────────────────────────────────────────────
-    let base_chip = div()
-        .px_2()
-        .py_0p5()
-        .rounded_md()
-        .text_sm()
-        .bg(gpui::rgba(0x3b82_f640)) // blue-500/25
-        .child("▣ base");
+    if state.expanded {
+        // ── EXPANDED: vertical timeline ───────────────────────────────────────
 
-    // ── transform pills ───────────────────────────────────────────────────────
-    let mut pill_children: Vec<gpui::AnyElement> = Vec::new();
-    pill_children.push(base_chip.into_any_element());
+        // `▣ base` row — clickable → jump_to(0)
+        let base_row = div()
+            .px_3()
+            .py_1()
+            .flex()
+            .items_center()
+            .gap_2()
+            .cursor_pointer()
+            .child(
+                div()
+                    .text_sm()
+                    .text_color(gpui::rgba(0x6b72_80ff)) // gray-500
+                    .child("▣"),
+            )
+            .child(
+                div()
+                    .text_sm()
+                    .text_color(gpui::rgba(0x3b82_f6ff)) // blue-500
+                    .child("base"),
+            )
+            .on_mouse_up(
+                gpui::MouseButton::Left,
+                cx.listener(|ws, _ev, _window, cx| {
+                    ws.pipeline_jump_to(0, cx);
+                }),
+            );
 
-    for (i, t) in stack.iter().enumerate() {
-        // Separator `›`
-        pill_children.push(
+        // One row per transform.
+        let rows: Vec<gpui::AnyElement> = stack
+            .iter()
+            .enumerate()
+            .map(|(i, t)| {
+                let label = describe_transform(t);
+                let jump_k = i + 1;
+
+                // Row body (icon + label) → jump_to(i+1)
+                let row_body = div()
+                    .flex_1()
+                    .flex()
+                    .items_center()
+                    .gap_2()
+                    .cursor_pointer()
+                    .child(
+                        div()
+                            .text_sm()
+                            .text_color(gpui::rgba(0x6b72_80ff)) // gray-500
+                            .child("›"),
+                    )
+                    .child(div().text_sm().child(label))
+                    .on_mouse_up(
+                        gpui::MouseButton::Left,
+                        cx.listener(move |ws, _ev, _window, cx| {
+                            ws.pipeline_jump_to(jump_k, cx);
+                        }),
+                    );
+
+                // ✕ remove button → pipeline_remove_at(i)
+                let remove_btn = div()
+                    .px_2()
+                    .py_0p5()
+                    .rounded_md()
+                    .text_sm()
+                    .text_color(gpui::rgba(0xef44_44ff)) // red-500
+                    .cursor_pointer()
+                    .child("✕")
+                    .on_mouse_up(
+                        gpui::MouseButton::Left,
+                        cx.listener(move |ws, _ev, _window, cx| {
+                            ws.pipeline_remove_at(i, cx);
+                        }),
+                    );
+
+                div()
+                    .px_3()
+                    .py_0p5()
+                    .flex()
+                    .items_center()
+                    .gap_1()
+                    .child(row_body)
+                    .child(remove_btn)
+                    .into_any_element()
+            })
+            .collect();
+
+        // `⌃` collapse toggle
+        let toggle_btn = div().px_3().py_1().flex().justify_end().child(
             div()
-                .px_1()
+                .px_2()
+                .py_0p5()
+                .rounded_md()
                 .text_sm()
-                .text_color(gpui::rgba(0x6b72_80ff)) // gray-500
-                .child("›")
-                .into_any_element(),
+                .cursor_pointer()
+                .child("⌃")
+                .on_mouse_up(
+                    gpui::MouseButton::Left,
+                    cx.listener(|ws, _ev, _window, _cx| {
+                        ws.pipeline_bar_state.expanded = false;
+                    }),
+                ),
         );
 
-        let label = describe_transform(t);
-        let ws_weak_clone = ws_weak.clone();
-        let jump_k = i + 1; // clicking pill i makes it the last applied (0-based → 1-based)
-        let pill = div()
+        let bar = div()
+            .w_full()
+            .border_b_1()
+            .child(base_row)
+            .children(rows)
+            .child(toggle_btn)
+            .into_any_element();
+
+        Some(bar)
+    } else {
+        // ── COLLAPSED: horizontal pill strip ─────────────────────────────────
+
+        // ▣ base chip — clickable → jump_to(0)
+        let base_chip = div()
             .px_2()
             .py_0p5()
             .rounded_md()
             .text_sm()
-            .bg(gpui::rgba(0xf3f4_f6ff)) // gray-100
+            .bg(gpui::rgba(0x3b82_f640)) // blue-500/25
             .cursor_pointer()
-            .child(label)
+            .child("▣ base")
             .on_mouse_up(
                 gpui::MouseButton::Left,
-                cx.listener(move |ws, _ev, _window, cx| {
-                    let _ = &ws_weak_clone; // silence unused-capture lint
-                    ws.pipeline_jump_to(jump_k, cx);
+                cx.listener(|ws, _ev, _window, cx| {
+                    ws.pipeline_jump_to(0, cx);
                 }),
             );
-        pill_children.push(pill.into_any_element());
+
+        // Transform pills
+        let mut pill_children: Vec<gpui::AnyElement> = Vec::new();
+        pill_children.push(base_chip.into_any_element());
+
+        for (i, t) in stack.iter().enumerate() {
+            // Separator `›`
+            pill_children.push(
+                div()
+                    .px_1()
+                    .text_sm()
+                    .text_color(gpui::rgba(0x6b72_80ff)) // gray-500
+                    .child("›")
+                    .into_any_element(),
+            );
+
+            let label = describe_transform(t);
+            let jump_k = i + 1;
+            let pill = div()
+                .px_2()
+                .py_0p5()
+                .rounded_md()
+                .text_sm()
+                .bg(gpui::rgba(0xf3f4_f6ff)) // gray-100
+                .cursor_pointer()
+                .child(label)
+                .on_mouse_up(
+                    gpui::MouseButton::Left,
+                    cx.listener(move |ws, _ev, _window, cx| {
+                        ws.pipeline_jump_to(jump_k, cx);
+                    }),
+                );
+            pill_children.push(pill.into_any_element());
+        }
+
+        // `⌄` expand toggle
+        let toggle_btn = div()
+            .ml_2()
+            .px_2()
+            .py_0p5()
+            .rounded_md()
+            .text_sm()
+            .cursor_pointer()
+            .child("⌄")
+            .on_mouse_up(
+                gpui::MouseButton::Left,
+                cx.listener(|ws, _ev, _window, _cx| {
+                    ws.pipeline_bar_state.expanded = true;
+                }),
+            );
+
+        let bar = h_flex()
+            .w_full()
+            .px_3()
+            .py_1()
+            .border_b_1()
+            .gap_0p5()
+            .items_center()
+            .children(pill_children)
+            .child(toggle_btn)
+            .into_any_element();
+
+        Some(bar)
     }
-
-    // ── trailing `⌄` toggle (stub — expanded view is T10) ────────────────────
-    let _is_expanded = state.expanded; // stored but not yet used to switch views (T10)
-    let ws_weak_for_toggle = ws_weak.clone();
-    let toggle_btn = div()
-        .ml_2()
-        .px_2()
-        .py_0p5()
-        .rounded_md()
-        .text_sm()
-        .cursor_pointer()
-        .child("⌄")
-        .on_mouse_up(
-            gpui::MouseButton::Left,
-            cx.listener(move |ws, _ev, _window, _cx| {
-                let _ = &ws_weak_for_toggle; // silence unused-capture lint
-                ws.pipeline_bar_state.expanded = !ws.pipeline_bar_state.expanded;
-                // T10 will render the expanded timeline here; stub for now.
-            }),
-        );
-
-    let bar = h_flex()
-        .w_full()
-        .px_3()
-        .py_1()
-        .border_b_1()
-        .gap_0p5()
-        .items_center()
-        .children(pill_children)
-        .child(toggle_btn)
-        .into_any_element();
-
-    Some(bar)
 }

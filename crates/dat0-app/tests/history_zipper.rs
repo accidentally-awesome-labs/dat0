@@ -135,3 +135,17 @@ fn apply_clears_redo_future() {
         "applying after undo must clear the redo future"
     );
 }
+
+#[test]
+fn remove_rename_keeps_later_filter_valid() {
+    // Removing a Rename must not orphan a later Filter (source-identity binding).
+    let mut v = vm();
+    v.apply(Transformation::Rename {
+        column: "a".into(),
+        to: "A".into(),
+    });
+    v.apply(filter_eq("a", 1)); // filter binds source "a", not display "A"
+    v.remove_at(0); // drop the rename
+    assert_eq!(v.active().len(), 1);
+    assert_eq!(v.active()[0], filter_eq("a", 1)); // filter intact + still on "a"
+}

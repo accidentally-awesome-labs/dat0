@@ -1558,6 +1558,19 @@ impl WorkspaceShell {
         self.route_change(change, cx);
     }
 
+    /// PipelineBar expanded timeline: remove the transform at stack position `i`
+    /// in ONE undo step (P4c T10). Refreshes the `ColumnView` and routes the
+    /// resulting `ViewChange` — display-only ops re-render immediately; data-view
+    /// changes spawn an engine round-trip. No-op when no `ViewModel` is mounted.
+    pub fn pipeline_remove_at(&mut self, i: usize, cx: &mut Context<Self>) {
+        let Some(vm) = self.view_model.as_mut() else {
+            return;
+        };
+        let change = vm.remove_at(i);
+        self.refresh_column_view();
+        self.route_change(change, cx);
+    }
+
     /// Return the active inline header-rename editor for `col_ix`, if one is
     /// mounted for that column. Used by `GridTableDelegate::render_th` to render
     /// the editor in-place instead of the column label (P4c T7).
@@ -2020,20 +2033,19 @@ impl Render for WorkspaceShell {
                 focus_handle_for_click.focus(window);
             });
 
-        // PipelineBar collapsed pill strip (P4c T9). Shown when the active
-        // transform stack is non-empty. Uses the render fn from
-        // `view::pipeline_bar` with the current active stack + a weak shell
-        // handle so pill clicks can call `pipeline_jump_to`. The `⌄` toggle
-        // flips `pipeline_bar_state.expanded` (expanded timeline is T10).
+        // PipelineBar (P4c T9 collapsed pills / T10 expanded timeline). Shown
+        // when the active transform stack is non-empty. The render fn from
+        // `view::pipeline_bar` takes the current active stack; pill/row clicks
+        // and the ✕ remove use `cx.listener` (which supplies `&mut self`), so no
+        // weak handle is threaded. The `⌄`/`⌃` toggle flips
+        // `pipeline_bar_state.expanded` (collapsed pills ↔ expanded timeline).
         let pipeline_bar: Option<gpui::AnyElement> = {
             if let Some(vm) = self.view_model.as_ref() {
                 let stack = vm.active();
                 if !stack.is_empty() {
-                    let ws_weak = cx.entity().downgrade();
                     crate::view::pipeline_bar::render_pipeline_bar(
                         stack,
                         &mut self.pipeline_bar_state,
-                        ws_weak,
                         cx,
                     )
                 } else {
