@@ -1760,6 +1760,33 @@ impl WorkspaceShell {
         self.route_change(change, cx);
     }
 
+    // ── Header-click-to-select column / row (P4c T13) ─────────────────────────
+
+    /// Select the whole screen column `col_ix` (P4c T13).
+    ///
+    /// Delegates to [`crate::grid::selection::SelectionModel::select_column`],
+    /// which was built and unit-tested in P4b but was unreachable from the UI
+    /// until this wiring task. No-op when no selection model is mounted yet.
+    pub fn select_column_at(&mut self, col_ix: usize, cx: &mut Context<Self>) {
+        if let Some(sel) = self.selection.as_mut() {
+            sel.select_column(col_ix);
+            cx.notify();
+        }
+    }
+
+    /// Select the whole screen row `row_ix`.
+    ///
+    /// Delegates to [`crate::grid::selection::SelectionModel::select_row`].
+    /// Reachable programmatically (tests, keyboard bindings); UI row-gutter
+    /// click wiring is deferred — see PD-019 in `docs/deferrals.md`.
+    /// No-op when no selection model is mounted yet.
+    pub fn select_row_at(&mut self, row_ix: usize, cx: &mut Context<Self>) {
+        if let Some(sel) = self.selection.as_mut() {
+            sel.select_row(row_ix);
+            cx.notify();
+        }
+    }
+
     /// Return the active inline header-rename editor for `col_ix`, if one is
     /// mounted for that column. Used by `GridTableDelegate::render_th` to render
     /// the editor in-place instead of the column label (P4c T7).

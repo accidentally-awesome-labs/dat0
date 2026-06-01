@@ -93,9 +93,8 @@ impl gpui::Render for ReorderDrag {
 // x-position → zone mapping.  A pure zone-from-x helper (for hit-testing in
 // tests or future pointer-event work) is provided alongside these constants.
 //
-// Remaining stubs: body zone is still a no-op for single-click.
 //   Grip → column drag-reorder (P4c T6, live)
-//   Body single-click → column select (T13, future)
+//   Body single-click → column select (P4c T13, live)
 //   Body double-click → inline header rename (P4c T7, live)
 
 /// Width of the left-edge drag-grip in logical pixels.
@@ -337,8 +336,8 @@ impl TableDelegate for GridTableDelegate {
     ///   1. **Grip** — invisible `HEADER_GRIP_PX`-wide strip.  Live (P4c T6):
     ///      drag source + drop target for column reorder.
     ///   2. **Body** — column-name text, flex-grows to fill remaining space.
+    ///      Single-click live (P4c T13): selects the whole column.
     ///      Double-click live (P4c T7): opens inline header rename.
-    ///      Single-click stub (T13 future): column select.
     ///   3. **Sort icon** — `HEADER_SORT_PX`-wide `⇅` button.  Live (P4a):
     ///      dispatches to `WorkspaceShell::on_sort_zone_click` (Asc/Desc/None).
     ///   4. **Funnel icon** — `HEADER_FUNNEL_PX`-wide `⌄` button.  Live (P4a):
@@ -386,9 +385,8 @@ impl TableDelegate for GridTableDelegate {
         //
         // If a header-rename editor is active for this column, render the editor
         // in-place instead of the label (P4c T7). Otherwise render the label with
-        // an on_click handler that guards on double-click to begin a rename.
-        // Single-click on the body is reserved for column-select (T13) — we
-        // branch on click_count and no-op on single-click for now.
+        // an on_click handler: single-click → select the whole column (P4c T13);
+        // double-click → begin inline rename (P4c T7).
         let ws_for_body = self.ws.clone();
         let rename_editor: Option<gpui::AnyElement> = self
             .ws
@@ -404,11 +402,15 @@ impl TableDelegate for GridTableDelegate {
             .items_center()
             .overflow_hidden()
             .on_click(move |ev, _window, cx| {
+                // Single-click → select the whole column (P4c T13).
                 // Double-click → begin inline rename (P4c T7).
-                // Single-click → reserved for T13 column-select (no-op for now).
                 if ev.click_count() == 2 {
                     if let Some(h) = ws_for_body.upgrade() {
                         h.update(cx, |ws, cx| ws.begin_column_rename(col_ix, cx));
+                    }
+                } else if ev.click_count() == 1 {
+                    if let Some(h) = ws_for_body.upgrade() {
+                        h.update(cx, |ws, cx| ws.select_column_at(col_ix, cx));
                     }
                 }
             });

@@ -72,6 +72,7 @@ that's modifying it; merge conflicts are signals worth investigating.
 | PD-016 | P4a UI-click → ViewChange wirings unowned by plan T13: funnel-click → open popover, popover `Outcome::Apply` → `vm.apply`, sort-zone-click → `vm.set_sort`. T7/T9/T10b/T12 implementers each commented "T13 wires" but plan T13 Steps 1-4 cover only keybind undo/redo + supersede-cancel test. Closed by P4b T0: `on_sort_zone_click`/`on_funnel_click`/`route_outcome` → `spawn_view_change`; `click_wiring.rs` (7 tests). | closed | medium |
 | PD-017 | P4b T3 plan premise wrong: it assumed `register_file` "finalizes a CTAS import", but `register_file` emits `CREATE OR REPLACE VIEW … AS SELECT * FROM read_csv/json/parquet(…)` — a VIEW, which cannot be `ALTER TABLE`-d, so the eager `__dat0_rowid` surrogate only lands via `create_table` (base tables). The app imports files exclusively via `register_file` (`file_drop.rs:133`), so imported grids are VIEWs with no `__dat0_rowid`, and the P4b edit/delete overlay (`WHERE __dat0_rowid NOT IN …`, `CASE WHEN __dat0_rowid = …`) references a non-existent column → edit/delete fail on real imports. T3 engine work is correct + complete; resolution is app-side (materialize imports to base tables, or back-fill via `ensure_rowid` on first bind). **Closed via Path A:** new `QueryEngine::register_file_as_table` materializes imports into rowid-bearing base tables (reusing all P3b sniffing); `file_drop.rs` now calls it. | closed | high |
 | PD-018 | Pre-existing (P3a-era) grid-render gap surfaced during P4b T7: `GridTableDelegate::render_td` (`grid/mod.rs`) renders the em-dash placeholder for EVERY cell — it never calls `render_cell` or `page_for`, and `page_for` (the only method that populates the page LRU from DuckDB) has ZERO production callers (no `load_more`/visible-range/prefetch). So in the running app the grid shows `—` and the cache is empty. P4b's cache-only reads (`cell_display`/`row_key`/`column_arrow_type`) resolve nothing on screen, so copy reads empty strings and paste/cut/edit skip every cell. P4b edit/select/clipboard LOGIC is correct + fully test-green (engine round-trips), but the headline T14 manual Excel/Sheets UAT is BLOCKED until the paged-render cache is wired (render_td → real values via the page LRU + prefetch visible page on bind). Out of every P4b plan task's scope. **Closed (Path A):** `render_td` now does a synchronous LRU lookup → real `render_cell` value; the LRU is populated off-thread by `WorkspaceShell::prefetch_visible_rows` (page-0 prefetch on grid bind + the gpui-component `TableDelegate::visible_rows_changed` scroll hook), notifying the main thread via the `MainThreadDispatcher`. Also wired the right-click context menu (`ContextMenuExt`), a per-cell focus ring, and the forward-incompat recover banner. | closed | high |
+| PD-019 | P4c T13 wired header single-click → select-column but could NOT wire row-gutter click → select-row: the gpui-component `TableDelegate` trait (rev `0f0ab35`) has no `render_row_header`/gutter seam, and `TableState::render_table_row` owns the row layout internally. Two alternatives were rejected: (a) subscribing to `TableEvent::SelectRow` makes every row-body click select a whole row, clobbering the single-cell click selection wired in T5; (b) a fake first column holding row numbers corrupts the `col_ix` passed to `render_td` and breaks column addressing. `WorkspaceShell::select_row_at` IS implemented + reachable programmatically; the click wiring is unwired. | open | low |
 
 ## At-a-glance — Closed plan defects
 
@@ -1078,6 +1079,40 @@ that's modifying it; merge conflicts are signals worth investigating.
 - **Originating doc:** P3a grid delegate task (render_td placeholder); surfaced against `docs/plans/2026-05-30-dat0-p4b-plan.md` §T14 (UAT gate).
 - **Last touched:** 2026-05-31 (closed via Path A — render-cache wiring + 3 deferred triggers; see the `P4b: close PD-018 …` commit on `p4b-edit`)
 - **Follow-up (not blocking):** the gpui-component `Table` also exposes a built-in `TableDelegate::context_menu(row_ix, …)` hook (row-aware) that we did NOT use — we mounted the decoupled `ContextMenuExt` on the body to reuse the existing `build_menu`. If a future polish pass wants the right-clicked ROW reflected in the menu (e.g. "Delete this row" vs. the current selection-based delete), switching to the delegate hook is the path. The P10 AccessKit / screen-reader exposure D-NNN from the T0 probe is T14's job, intentionally NOT filed here.
+
+---
+
+### PD-019 — Row-gutter click → select-row unwired (no `render_row_header` seam in gpui-component)
+
+- **Status:** open
+- **Severity:** low (column-select fully wired; select-row reachable programmatically + via keyboard)
+- **Affected files:** `crates/dat0-app/src/window.rs` (`WorkspaceShell::select_row_at`)
+- **Symptom:** P4c T13 wired header single-click → `select_column_at` (column-select) but could NOT
+  provide a matching row-gutter click → `select_row_at`. The gpui-component `TableDelegate` trait
+  (rev `0f0ab35`) has no `render_row_header` / row-gutter seam — `TableState::render_table_row` owns
+  the row-number layout internally and does not call through to the delegate. There is therefore no
+  hook point in the existing trait surface for attaching a click handler.
+- **Two alternatives rejected:**
+  - **(a) Subscribe to `TableEvent::SelectRow`:** this event fires on ANY row-body click, which would
+    make every single-cell click select a whole row — clobbering the per-cell `SelectionModel`
+    click wiring from T5 (P4b). Not usable.
+  - **(b) Fake first column holding row numbers:** mounting a synthetic column at index 0 to act as
+    a visual row-number gutter would corrupt the `col_ix` argument passed to `render_td` and
+    `render_th` for all real data columns (+1 off everywhere), breaking column addressing end-to-end.
+    Not usable.
+- **Current state:** `WorkspaceShell::select_row_at` is fully implemented and correct; it is
+  reachable programmatically (e.g., from tests and keyboard bindings) but has no UI click wiring.
+  Column-select (`select_column_at`, wired in T13) is fully functional.
+- **Two clean future paths:**
+  - **(1) Upstream gpui-component PR:** add a `render_row_header(&self, row_ix, cx) ->
+    impl IntoElement` hook to `TableDelegate` and call it from `render_table_row`. dat0 then
+    implements the hook to return a labelled div with `on_click → select_row_at`.
+  - **(2) Absolute-positioned per-row overlay:** paint a zero-width `div` at x=0 with `position:
+    absolute`, height matching one row, its own `on_click`, iterated over the visible row range.
+    Fragile (must track row height + scroll offset), but requires no upstream change.
+- **Discovered:** P4c T13 implementation review (2026-06-01).
+- **Originating doc:** `docs/plans/2026-05-31-dat0-p4c-plan.md` T13.
+- **Last touched:** 2026-06-01.
 
 ---
 
