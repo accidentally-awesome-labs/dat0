@@ -116,7 +116,7 @@ fn inject_unknown_kind(sample: String) -> String {
 // ---------------------------------------------------------------------------
 
 #[test]
-fn v1_fixture_migrates_to_v3() {
+fn v1_fixture_migrates_to_v5() {
     let tmp = TempDir::new().unwrap();
     let p = write_temp(&tmp, V1_FIXTURE_JSON);
 
@@ -141,8 +141,8 @@ fn v1_fixture_migrates_to_v3() {
 }
 
 #[test]
-fn v2_fixture_migrates_to_v3_preserving_content() {
-    // v2 → v3 is an identity migration (T13): the version stamp bumps to the
+fn v2_fixture_migrates_to_v5_preserving_content() {
+    // v2 → v5 is an identity migration (T13): the version stamp bumps to the
     // current schema, but the transform stack + cursor pass through unchanged.
     let tmp = TempDir::new().unwrap();
     let p = write_temp(&tmp, V2_FIXTURE_JSON);
@@ -231,7 +231,7 @@ fn v2_round_trip_through_serialization() {
 }
 
 /// Session::recover eagerly calls persist() after loading, so a v1 file is
-/// rewritten as the current schema (v3) on the first open — no subsequent
+/// rewritten as the current schema (v5) on the first open — no subsequent
 /// mutation required.
 #[tokio::test]
 async fn recover_eagerly_writes_back_current_version_on_first_open() {
@@ -289,13 +289,13 @@ fn v1_migration_write_back_produces_current_version_on_disk() {
 }
 
 // ---------------------------------------------------------------------------
-// T13 — v2 → v3 identity migration + unknown-`kind` forward-incompat guard
+// T13 — v2 → v5 identity migration + unknown-`kind` forward-incompat guard
 // ---------------------------------------------------------------------------
 
 #[test]
-fn v2_session_migrates_to_v3_identity() {
+fn v2_session_migrates_to_v5_identity() {
     // A v2 session.json (no Edit/RowDelete — filter + sort only) loads and is
-    // stamped v3 with NO field reshape: the stack + cursor pass through unchanged.
+    // stamped v5 with NO field reshape: the stack + cursor pass through unchanged.
     let v2 = sample_v2_session_json();
     let migrated = migrate::load_str(&v2).unwrap();
 
@@ -342,9 +342,9 @@ fn unknown_transform_kind_triggers_forward_incompat_banner_not_panic() {
 // ---------------------------------------------------------------------------
 
 #[test]
-fn v3_with_projection_transform_loads_as_v4() {
+fn v3_with_projection_transform_loads_as_v5() {
     // A v3 file that ALSO carries a P4c projection transform must load (the
-    // kinds are now known) and stamp v4.
+    // kinds are now known) and stamp v5 (current).
     let json = r#"{
       "schema_version": 3,
       "tabs": [{

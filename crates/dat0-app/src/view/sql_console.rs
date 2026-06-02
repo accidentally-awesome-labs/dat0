@@ -152,13 +152,6 @@ impl SqlConsole {
         }
     }
 
-    /// The currently-active tab.
-    // Used by T6 (Run reads the active tab's editor buffer).
-    #[allow(dead_code)]
-    pub fn active_tab(&self) -> &ConsoleTab {
-        &self.tabs[self.active]
-    }
-
     /// The active tab's full SQL + the editor cursor byte offset. Cursor-only
     /// (T0 spike: no public selection accessor exists at this gpui-component
     /// rev — `selected_range`/`selected_text()` are `pub(super)`; only
