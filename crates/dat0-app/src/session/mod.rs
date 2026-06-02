@@ -34,7 +34,10 @@ pub use migrate::SessionLoadError;
 /// DeleteColumn) and changes persistence to the ACTIVE stack only (the P4c
 /// history zipper drops the in-stack redo tail). Migration truncates each tab's
 /// `transform_stack` to `undo_cursor` (its active slice).
-pub const SESSION_SCHEMA_VERSION: u32 = 4;
+///
+/// v4 → v5 (P5a) adds SQL console tabs (`sql_tabs` + `active_sql_tab`) alongside
+/// the existing table `tabs`. Purely additive: v4 files default both to empty.
+pub const SESSION_SCHEMA_VERSION: u32 = 5;
 
 /// A single tab within a scratch session.
 ///
@@ -58,6 +61,15 @@ pub struct Tab {
     pub extra: serde_json::Map<String, serde_json::Value>,
 }
 
+/// A single SQL console tab persisted in `session.json` (v5+). The editor
+/// buffer text only — the live `InputState` is reconstructed on load.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SqlTabState {
+    pub id: uuid::Uuid,
+    pub title: String,
+    pub sql: String,
+}
+
 // ---------------------------------------------------------------------------
 // Private persistence shape
 // ---------------------------------------------------------------------------
@@ -72,6 +84,10 @@ pub struct SessionState {
     pub tabs: Vec<Tab>,
     #[serde(default)]
     pub active_tab: Option<usize>,
+    #[serde(default)]
+    pub sql_tabs: Vec<SqlTabState>,
+    #[serde(default)]
+    pub active_sql_tab: Option<usize>,
 }
 
 fn default_schema_version_v1() -> u32 {
@@ -84,6 +100,8 @@ impl Default for SessionState {
             schema_version: SESSION_SCHEMA_VERSION,
             tabs: Vec::new(),
             active_tab: None,
+            sql_tabs: Vec::new(),
+            active_sql_tab: None,
         }
     }
 }
@@ -103,6 +121,8 @@ pub struct Session {
     pub engine: Arc<DuckDBEngine>,
     tabs: Vec<Tab>,
     active_tab: Option<usize>,
+    sql_tabs: Vec<SqlTabState>,
+    active_sql_tab: Option<usize>,
 }
 
 impl Session {
@@ -135,6 +155,8 @@ impl Session {
             engine: Arc::new(engine),
             tabs: Vec::new(),
             active_tab: None,
+            sql_tabs: Vec::new(),
+            active_sql_tab: None,
         };
         sess.persist()
             .context("session::new: initial persist failed")?;
@@ -204,6 +226,8 @@ impl Session {
             engine: Arc::new(engine),
             tabs: state.tabs,
             active_tab: state.active_tab,
+            sql_tabs: state.sql_tabs,
+            active_sql_tab: state.active_sql_tab,
         };
 
         // Eagerly persist after recovery. This matches Session::new's pattern and
@@ -233,6 +257,16 @@ impl Session {
         self.active_tab.and_then(|i| self.tabs.get(i))
     }
 
+    /// All persisted SQL console tabs (buffer text + title).
+    pub fn sql_tabs(&self) -> &[SqlTabState] {
+        &self.sql_tabs
+    }
+
+    /// Index of the currently active SQL console tab, if any.
+    pub fn active_sql_tab(&self) -> Option<usize> {
+        self.active_sql_tab
+    }
+
     // -----------------------------------------------------------------------
     // Mutators
     // -----------------------------------------------------------------------
@@ -257,6 +291,15 @@ impl Session {
             .context("session::set_active: persist failed")
     }
 
+    /// Replace the entire SQL-tab set + active index and persist. Called by the
+    /// SqlConsole on run / tab add-remove-switch / blur / window close (P5a §4).
+    pub fn set_sql_tabs(&mut self, tabs: Vec<SqlTabState>, active: Option<usize>) -> Result<()> {
+        self.sql_tabs = tabs;
+        self.active_sql_tab = active;
+        self.persist()
+            .context("session::set_sql_tabs: persist failed")
+    }
+
     // -----------------------------------------------------------------------
     // Persistence
     // -----------------------------------------------------------------------
@@ -273,6 +316,8 @@ impl Session {
             schema_version: SESSION_SCHEMA_VERSION,
             tabs: self.tabs.clone(),
             active_tab: self.active_tab,
+            sql_tabs: self.sql_tabs.clone(),
+            active_sql_tab: self.active_sql_tab,
         };
 
         let bytes =

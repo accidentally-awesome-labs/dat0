@@ -97,11 +97,11 @@ fn sample_v2_session_json() -> String {
 /// Take a v2 sample JSON and splice an unrecognized transform `kind` into the
 /// first tab's `transform_stack` — simulating a session a newer dat0 binary
 /// wrote with a variant this build doesn't know. The `schema_version` is also
-/// bumped to 4 so the doc looks like a real current v4 file (the unknown-kind
-/// guard, not the version arm, is what must reject it).
+/// bumped to the current version (5) so the doc looks like a real current file
+/// (the unknown-kind guard, not the version arm, is what must reject it).
 fn inject_unknown_kind(sample: String) -> String {
     let mut doc: serde_json::Value = serde_json::from_str(&sample).unwrap();
-    doc["schema_version"] = serde_json::json!(4);
+    doc["schema_version"] = serde_json::json!(5);
     let stack = doc["tabs"][0]["transform_stack"].as_array_mut().unwrap();
     stack.push(serde_json::json!({
         "kind": "frobnicate",
@@ -150,7 +150,7 @@ fn v2_fixture_migrates_to_v3_preserving_content() {
     let state: SessionState = migrate::load(&p).unwrap();
 
     assert_eq!(state.schema_version, SESSION_SCHEMA_VERSION);
-    assert_eq!(state.schema_version, 4);
+    assert_eq!(state.schema_version, 5);
     assert_eq!(state.tabs.len(), 1);
     assert_eq!(state.tabs[0].transform_stack.len(), 2);
     assert_eq!(state.tabs[0].undo_cursor, 2);
@@ -255,12 +255,12 @@ async fn recover_eagerly_writes_back_current_version_on_first_open() {
         .await
         .expect("Session::recover should succeed on a v1 file");
 
-    // The on-disk file must now be the current schema (v4) without any further
+    // The on-disk file must now be the current schema (v5) without any further
     // persist() call.
     let after = fs::read_to_string(&session_path).unwrap();
     assert!(
-        after.contains("\"schema_version\": 4") || after.contains("\"schema_version\":4"),
-        "post-recover file should be current schema (v4), got: {}",
+        after.contains("\"schema_version\": 5") || after.contains("\"schema_version\":5"),
+        "post-recover file should be current schema (v5), got: {}",
         &after[..after.len().min(300)]
     );
 }
@@ -299,7 +299,7 @@ fn v2_session_migrates_to_v3_identity() {
     let v2 = sample_v2_session_json();
     let migrated = migrate::load_str(&v2).unwrap();
 
-    assert_eq!(migrated.schema_version, 4);
+    assert_eq!(migrated.schema_version, 5);
     // Identity: the active stack contents and cursor are preserved verbatim.
     assert_eq!(migrated.tabs.len(), 1);
     assert_eq!(migrated.tabs[0].transform_stack.len(), 2);
@@ -388,4 +388,47 @@ fn v3_redo_tail_is_dropped_on_v4_upgrade() {
         "v4 upgrade truncates to the active slice (undo_cursor)"
     );
     assert_eq!(state.tabs[0].undo_cursor, 1);
+}
+
+// ---------------------------------------------------------------------------
+// T3 — session v5 (additive SQL console tabs `sql_tabs` + `active_sql_tab`)
+// ---------------------------------------------------------------------------
+
+#[test]
+fn v4_migration_to_v5_defaults_sql_tabs() {
+    let v4_json = r#"{
+      "schema_version": 4,
+      "tabs": [
+        { "table_name": "orders", "source_path": null, "transform_stack": [], "undo_cursor": 0 }
+      ],
+      "active_tab": 0
+    }"#;
+    let state = migrate::load_str(v4_json).unwrap();
+    assert_eq!(state.schema_version, SESSION_SCHEMA_VERSION);
+    assert_eq!(state.tabs.len(), 1);
+    assert_eq!(state.active_tab, Some(0));
+    assert!(state.sql_tabs.is_empty(), "v4->v5: sql_tabs defaults empty");
+    assert_eq!(
+        state.active_sql_tab, None,
+        "v4->v5: active_sql_tab defaults None"
+    );
+}
+
+#[test]
+fn v5_round_trips_sql_tabs() {
+    let v5_json = r#"{
+      "schema_version": 5,
+      "tabs": [],
+      "active_tab": null,
+      "sql_tabs": [
+        { "id": "018f9a00-0000-7000-8000-000000000000", "title": "Query 1", "sql": "SELECT 1" }
+      ],
+      "active_sql_tab": 0
+    }"#;
+    let state = migrate::load_str(v5_json).unwrap();
+    assert_eq!(state.schema_version, 5);
+    assert_eq!(state.sql_tabs.len(), 1);
+    assert_eq!(state.sql_tabs[0].title, "Query 1");
+    assert_eq!(state.sql_tabs[0].sql, "SELECT 1");
+    assert_eq!(state.active_sql_tab, Some(0));
 }
