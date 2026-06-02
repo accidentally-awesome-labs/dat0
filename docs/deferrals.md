@@ -46,8 +46,8 @@ that's modifying it; merge conflicts are signals worth investigating.
 | D-004 | AppImageUpdate subprocess invocation               | open | P1   | P10    |
 | D-005 | Linux Secret Service "setup banner" UX             | open | P1   | TBD    |
 | D-006 | macOS x86_64 (Intel) CI matrix coverage            | open | P1   | TBD    |
-| D-007 | MotherDuck ATTACH end-to-end                       | open | P2   | P5     |
-| D-008 | Cancellation-token wiring through `QueryEngine` trait | open | P2 | P5     |
+| D-007 | MotherDuck ATTACH end-to-end                       | open | P2   | P5c    |
+| D-008 | Cancellation-token wiring through `QueryEngine` trait (→ token-free in P5a) | in-progress | P2 | P5a |
 | D-009 | Bundle `sqlite_scanner` static when duckdb-rs exposes a feature | open | P2 | TBD |
 | D-010 | Non-UTF-8 file encoding handling                   | open | P2   | TBD    |
 | D-011 | Remove `__debug_query_scalar` test-only helper     | closed | P2   | P3a    |
@@ -214,7 +214,13 @@ that's modifying it; merge conflicts are signals worth investigating.
 
 - **Status:** open
 - **Deferred from:** P2
-- **Target phase:** P5 (SQL Console)
+- **Target phase:** P5c (credential-gated MotherDuck slice)
+- **P5 split (2026-06-02):** P5 (SQL Console) was split three ways —
+  **P5a** = editor + run + cancel + multi-tab (D-008); **P5b** = completion +
+  command palette; **P5c** = the credential-gated MotherDuck slice. D-007
+  retargets from P5 → **P5c** because the `md:` ATTACH path needs a provisioned
+  MotherDuck dev credential and a `MotherDuckTokenStore` consumer of the P1
+  keychain primitive — neither is in P5a/P5b scope.
 - **Reason:** The `motherduck` Cargo feature does not exist in duckdb-rs as of
   the P2.T0 spike (verified 2026-04-27 against duckdb-rs `v1.4.4` —
   `crates/duckdb/Cargo.toml` feature graph contains no `motherduck` entry).
@@ -233,14 +239,32 @@ that's modifying it; merge conflicts are signals worth investigating.
   status bar.
 - **Originating doc:** `docs/specs/2026-04-27-dat0-p2-engine-design.md` §7
 - **Closes:** spec §6.5 entirely (partial closure — `sqlite:` lands in P2;
-  `md:` lands in P5).
-- **Last touched:** 2026-04-28
+  `md:` lands in P5c).
+- **Last touched:** 2026-06-02 (retarget P5 → P5c on the P5 three-way split).
 
 ### D-008 — Cancellation-token wiring through `QueryEngine` trait
 
-- **Status:** open
+- **Status:** in-progress (P5a)
 - **Deferred from:** P2
-- **Target phase:** P5 (SQL Console)
+- **Target phase:** P5a (SQL Console — editor + run + cancel + multi-tab)
+- **What P5a delivers (2026-06-02):** Query cancellation for the SQL Console,
+  wired **token-free**. The original "add `cancel: CancellationToken` param on
+  every `execute*` trait method" path (see "What target phase delivers" below)
+  was **rejected against the real call-site**: each window owns a single
+  `Mutex`'d DuckDB connection, and at most one query runs against it at a time,
+  so the engine's connection-wide `Engine::interrupt()` (backed by
+  `Arc<duckdb::InterruptHandle>`, already shipped in P2) is exact — there is no
+  ambiguity about *which* query a token would cancel. P5a therefore ships a
+  `QueryCancel` RAII drop-guard that calls `engine.interrupt()` on drop (so
+  `Cmd+.`, the Cancel button, or dropping the in-flight task all interrupt the
+  live query) with **no `QueryEngine` trait amendment** — the trait shape is
+  unchanged. P5a also ships, alongside the cancel path, the SQL highlight
+  (runtime-registered `tree-sitter-sequel`), multi-tab persistence (session v5),
+  and run-statement-under-cursor — but cancellation is the D-008 outcome proper.
+  Keybinds: `Cmd+Enter` run / `Cmd+.` cancel / `Cmd+Shift+C` toggle console.
+- **Will flip to `closed`** in the P5a retro with the closing commit (squash
+  SHA), once the manual UAT cancel-path check (`docs/plans/2026-06-02-dat0-p5a-uat.md`)
+  is run.
 - **Reason:** P2 has zero callers passing tokens — adding a
   `cancel: CancellationToken` parameter on every `execute*` trait method now
   would ship dead-weight ergonomics that can't be evaluated against a real
@@ -260,7 +284,8 @@ that's modifying it; merge conflicts are signals worth investigating.
   channel; Cmd+. UX wiring in the P5 SQL Console.
 - **Originating doc:** `docs/specs/2026-04-27-dat0-p2-engine-design.md` §7
   + §2.2.
-- **Last touched:** 2026-04-28
+- **Last touched:** 2026-06-02 (status → in-progress; token-free cancel via
+  `QueryCancel` drop-guard + `engine.interrupt()`, no trait change).
 
 ### D-009 — Bundle `sqlite_scanner` static when duckdb-rs exposes a feature
 
