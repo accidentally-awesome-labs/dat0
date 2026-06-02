@@ -127,14 +127,40 @@ impl SqlConsole {
         &self.tabs[self.active]
     }
 
+    /// The active tab's full SQL + the editor cursor byte offset. Cursor-only
+    /// (T0 spike: no public selection accessor exists at this gpui-component
+    /// rev — `selected_range`/`selected_text()` are `pub(super)`; only
+    /// `cursor() -> usize` is public).
+    ///
+    /// Takes `&gpui::App` (not `&Context<Self>`) for the same reason as
+    /// [`snapshot`](Self::snapshot): `WorkspaceShell::spawn_sql_run` calls it
+    /// with its own `Context<WorkspaceShell>` after a `console.read(cx)`, where
+    /// `Entity::read` on the tab's `InputState` only needs `&App`.
+    pub fn active_sql_and_cursor(&self, cx: &gpui::App) -> (String, usize) {
+        let st = self.tabs[self.active].input.read(cx);
+        (st.value().to_string(), st.cursor())
+    }
+
+    /// Replace the result-region state and request a re-render (T6 run path).
+    pub fn set_region(&mut self, region: ResultRegion, cx: &mut Context<Self>) {
+        self.region = region;
+        cx.notify();
+    }
+
+    /// Toggle the running spinner / Run↔Cancel button label (T6 run path).
+    pub fn set_running(&mut self, running: bool, cx: &mut Context<Self>) {
+        self.running = running;
+        cx.notify();
+    }
+
     /// Snapshot all tabs to the persistable shape (for `Session::set_sql_tabs`).
     ///
     /// Takes `&App` (not `&Context<Self>`) so `WorkspaceShell` can call it with
     /// its own `Context<WorkspaceShell>` (which derefs to `App`) after a
     /// `console.read(cx)` — `Entity::read` for each tab's `InputState` only
     /// needs `&App`.
-    // Used by T6/T10 (persist on run / tab mutation).
-    #[allow(dead_code)]
+    // Used by T6/T10 (persist on run / tab mutation). LIVE as of T6 (called by
+    // `WorkspaceShell::persist_sql_console` after every run).
     pub fn snapshot(&self, cx: &gpui::App) -> (Vec<crate::session::SqlTabState>, Option<usize>) {
         let tabs = self
             .tabs

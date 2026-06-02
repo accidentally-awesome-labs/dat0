@@ -628,6 +628,12 @@ pub struct WorkspaceShell {
     /// `toggle_sql_console`; the render gate respects this independently of
     /// whether `sql_console` is `Some`.
     pub(crate) sql_console_visible: bool,
+    /// Cancellation guard for the in-flight SQL console run (P5a T6). `Some`
+    /// while a run is executing; dropped/disarmed in `finish_sql_run`. The
+    /// guard's `Drop` (or an explicit `cancel()` in T7) fires the engine's
+    /// connection-wide `interrupt()`.
+    #[allow(dead_code)] // wired in T11 (actions/keybinds); cancel surface lands in T7
+    pub(crate) active_query_cancel: Option<crate::query::QueryCancel>,
 }
 
 impl WorkspaceShell {
@@ -654,6 +660,7 @@ impl WorkspaceShell {
             sql_console: None,
             sql_console_sub: None,
             sql_console_visible: false,
+            active_query_cancel: None,
         }
     }
 
@@ -1064,33 +1071,169 @@ impl WorkspaceShell {
 
     /// Route a [`SqlConsoleEvent`] from the console.
     ///
-    /// Stub for T5 — only `Persist` is serviced. `Run`/`Cancel` are implemented
-    /// in P5a T6/T7.
+    /// T5 stubbed `Run`/`Cancel`; T6 implements `Run` (statement resolve →
+    /// VIEW/EXEC → bind grid). `Cancel` lands in T7.
     ///
     /// [`SqlConsoleEvent`]: crate::view::sql_console::SqlConsoleEvent
     #[allow(dead_code)] // reached via the toggle's subscription, wired in P5a T11
     pub(crate) fn on_sql_console_event(
         &mut self,
-        _console: Entity<crate::view::sql_console::SqlConsole>,
+        console: Entity<crate::view::sql_console::SqlConsole>,
         ev: crate::view::sql_console::SqlConsoleEvent,
         cx: &mut Context<Self>,
     ) {
         use crate::view::sql_console::SqlConsoleEvent::*;
         match ev {
             Persist => self.persist_sql_console(cx),
-            // T6 implements Run; T7 implements Cancel.
-            Run { .. } | Cancel => {}
+            Run { target } => self.spawn_sql_run(console, target, cx),
+            // T7 implements Cancel.
+            Cancel => {}
         }
     }
 
     /// Snapshot the console's tabs into the session and persist (P5a T5).
-    #[allow(dead_code)] // reached via on_sql_console_event, wired in P5a T11
+    /// Now LIVE — called from `finish_sql_run` after every run (T6).
     pub(crate) fn persist_sql_console(&mut self, cx: &mut Context<Self>) {
         if let Some(console) = &self.sql_console {
             let app: &gpui::App = cx;
             let (tabs, active) = console.read(app).snapshot(app);
             let _ = self.session.lock().set_sql_tabs(tabs, active);
         }
+    }
+
+    /// Short, stable per-window discriminator for the TEMP VIEW name. The
+    /// session `window_id` is a `Uuid`; its canonical `to_string()` always
+    /// renders `8-4-4-4-12` hex, so the first 4 chars are always ASCII hex.
+    fn window_disc(&self) -> String {
+        self.session.lock().window_id.to_string()[..4].to_string()
+    }
+
+    /// Execute the SQL statement under the cursor OFF the GPUI main thread and
+    /// bind the result to the grid (P5a T6). Structurally mirrors
+    /// [`crate::view::spawn_view_change`] / `run_view_change_inner`: the engine
+    /// round-trip + `GridDataSource::new` run inside a `tokio::spawn`, then the
+    /// main-thread apply is posted back via the [`MainThreadDispatcher`]
+    /// (`crate::window_registry::dispatcher`). NEVER `cx.update` from the task.
+    ///
+    /// **Cursor-only** (T0 spike): there is no public selection accessor on
+    /// `InputState` at this gpui-component rev, so the run statement is resolved
+    /// via [`crate::query::statement::statement_at`] from the editor cursor.
+    ///
+    /// [`MainThreadDispatcher`]: crate::main_bridge::MainThreadDispatcher
+    #[allow(dead_code)] // wired in T11 (actions/keybinds)
+    pub(crate) fn spawn_sql_run(
+        &mut self,
+        console: gpui::Entity<crate::view::sql_console::SqlConsole>,
+        target: crate::query::ResultTarget,
+        cx: &mut Context<Self>,
+    ) {
+        use crate::query::statement::{ResultKind, classify, statement_at};
+        use crate::view::sql_console::ResultRegion;
+
+        // Resolve the statement under the cursor (cursor-only; no selection).
+        let (sql, cursor) = console.read(cx).active_sql_and_cursor(cx);
+        let span = statement_at(&sql, cursor);
+        let stmt = sql[span.start..span.end].trim().to_string();
+        if stmt.is_empty() {
+            return;
+        }
+        let kind = classify(&stmt);
+
+        let engine = self.engine();
+        let win_disc = self.window_disc();
+        let tab_ix = console.read(cx).active;
+        let view_name = crate::query::result_view_name(&win_disc, tab_ix);
+
+        // Flip the console into the running state immediately.
+        console.update(cx, |c, cx| {
+            c.set_running(true, cx);
+            c.set_region(ResultRegion::Empty, cx);
+        });
+        self.active_query_cancel = Some(crate::query::QueryCancel::new(&engine));
+
+        let ws_weak = cx.entity().downgrade();
+        let console_weak = console.downgrade();
+        let engine_for_task = std::sync::Arc::clone(&engine);
+
+        tokio::spawn(async move {
+            // `create_or_replace_view` / `execute` are `QueryEngine` trait methods.
+            use dat0_engine::QueryEngine as _;
+            let outcome: SqlRunOutcome = match kind {
+                ResultKind::Result => match engine_for_task
+                    .create_or_replace_view(&view_name, &stmt)
+                    .await
+                {
+                    Ok(()) => match crate::grid::GridDataSource::new(
+                        std::sync::Arc::clone(&engine_for_task),
+                        view_name.clone(),
+                    )
+                    .await
+                    {
+                        Ok(ds) => SqlRunOutcome::Bound(std::sync::Arc::new(ds)),
+                        Err(e) => SqlRunOutcome::Error(e.to_string()),
+                    },
+                    Err(e) => classify_run_err(e),
+                },
+                ResultKind::Exec => match engine_for_task.execute(&stmt).await {
+                    Ok(r) => SqlRunOutcome::Status(format_exec_status(&r)),
+                    Err(e) => classify_run_err(e),
+                },
+            };
+            // Post the apply onto the GPUI main thread. Matches the dispatcher
+            // discipline of `run_view_change_inner` / `prefetch_visible_rows`.
+            if let Some(dispatcher) = crate::window_registry::dispatcher() {
+                let _ = dispatcher.dispatch(move |app_cx: &mut gpui::App| {
+                    if let (Some(ws), Some(console)) = (ws_weak.upgrade(), console_weak.upgrade()) {
+                        ws.update(app_cx, |ws, cx| {
+                            ws.finish_sql_run(&console, target, outcome, cx);
+                        });
+                    }
+                });
+            } else {
+                tracing::warn!("spawn_sql_run: no MainThreadDispatcher installed; result dropped");
+            }
+        });
+    }
+
+    /// Apply a completed SQL run on the GPUI main thread (P5a T6). Disarms the
+    /// cancel guard, clears the running flag, then routes the outcome: a bound
+    /// result rebinds the grid; status/error/cancelled render the inline strip.
+    #[allow(dead_code)] // reached via spawn_sql_run, wired in T11
+    fn finish_sql_run(
+        &mut self,
+        console: &gpui::Entity<crate::view::sql_console::SqlConsole>,
+        target: crate::query::ResultTarget,
+        outcome: SqlRunOutcome,
+        cx: &mut Context<Self>,
+    ) {
+        use crate::view::sql_console::ResultRegion;
+
+        // Normal completion: disarm so the dropped guard does NOT interrupt.
+        if let Some(mut g) = self.active_query_cancel.take() {
+            g.disarm();
+        }
+        console.update(cx, |c, cx| c.set_running(false, cx));
+
+        match outcome {
+            SqlRunOutcome::Bound(ds) => match target {
+                crate::query::ResultTarget::MainGrid | crate::query::ResultTarget::Pane => {
+                    // T9 renders a dedicated results pane; until then `Pane`
+                    // falls back to the main grid.
+                    self.apply_view_change(ds, cx);
+                    console.update(cx, |c, cx| c.set_region(ResultRegion::BoundToGrid, cx));
+                }
+            },
+            SqlRunOutcome::Status(s) => {
+                console.update(cx, |c, cx| c.set_region(ResultRegion::Status(s), cx))
+            }
+            SqlRunOutcome::Error(e) => {
+                console.update(cx, |c, cx| c.set_region(ResultRegion::Error(e), cx))
+            }
+            SqlRunOutcome::Cancelled => {
+                console.update(cx, |c, cx| c.set_region(ResultRegion::Cancelled, cx))
+            }
+        }
+        self.persist_sql_console(cx);
     }
 
     /// Open the native save panel, then stream the export via COPY (P4c T11).
@@ -1222,6 +1365,45 @@ impl WorkspaceShell {
             .filter(|(c, _)| *c == col_ix)
             .map(|(_, e)| e.clone())
     }
+}
+
+// ---------------------------------------------------------------------------
+// SQL console run-path support types (P5a T6)
+// ---------------------------------------------------------------------------
+
+/// The terminal state of one SQL console run, computed OFF the GPUI main thread
+/// inside `spawn_sql_run` and applied on the main thread by `finish_sql_run`.
+#[allow(dead_code)] // constructed in spawn_sql_run, consumed in finish_sql_run (T11-wired)
+pub(crate) enum SqlRunOutcome {
+    /// A result-producing statement bound to a fresh `GridDataSource`.
+    Bound(std::sync::Arc<crate::grid::GridDataSource>),
+    /// A DDL/DML statement completed; carries the status line.
+    Status(String),
+    /// The run failed; carries the DuckDB error message.
+    Error(String),
+    /// The run was interrupted (cooperative cancel).
+    Cancelled,
+}
+
+/// Map a `dat0_engine::EngineError` onto a run outcome. The dedicated
+/// `EngineError::Interrupted` variant (engine `execute/mod.rs` surfaces it when
+/// `Engine::interrupt()` fires) maps to `Cancelled`; everything else is an
+/// inline error.
+#[allow(dead_code)] // reached via spawn_sql_run, wired in T11
+fn classify_run_err(e: dat0_engine::EngineError) -> SqlRunOutcome {
+    if matches!(e, dat0_engine::EngineError::Interrupted) {
+        SqlRunOutcome::Cancelled
+    } else {
+        SqlRunOutcome::Error(e.to_string())
+    }
+}
+
+/// Build the status line for a completed EXEC statement. DuckDB does not
+/// uniformly expose an affected-row count through `QueryResult` here, so a
+/// generic localized "OK" is used for P5a.
+#[allow(dead_code)] // reached via spawn_sql_run, wired in T11
+fn format_exec_status(_r: &dat0_engine::QueryResult) -> String {
+    dat0_i18n::t("sql.ok")
 }
 
 impl WorkspaceShell {

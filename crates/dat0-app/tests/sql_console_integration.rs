@@ -1,0 +1,74 @@
+//! Engine-level round-trip for the SQL console run paths (no GPUI). Validates
+//! the VIEW path (result-producing -> create_or_replace_view -> execute_paged)
+//! and the EXEC path (DDL/DML -> execute), plus the bad-SQL error contract.
+//!
+//! The real engine has no `open_in_memory` constructor: it is built via
+//! `DuckDBEngine::new(scratch_path, MemoryBudget)` against an on-disk scratch
+//! file in a `TempDir`, then `init().await`ed — mirroring every other app/engine
+//! integration test (`view_lifecycle.rs`, `projection_e2e.rs`). `execute`,
+//! `execute_paged`, and `create_or_replace_view` are `QueryEngine` trait methods,
+//! so the trait is imported. Both `QueryResult` and `PagedQueryResult` expose a
+//! `batches: Vec<RecordBatch>` field whose elements have `.num_rows()`.
+use std::sync::Arc;
+
+use dat0_app::query::statement::{ResultKind, classify};
+use dat0_engine::{DuckDBEngine, MemoryBudget, QueryEngine};
+use tempfile::TempDir;
+
+/// Build a fresh in-scratch engine (on-disk scratch file under `tmp`), matching
+/// the construction every existing engine-backed app test uses.
+async fn engine(tmp: &TempDir) -> Arc<DuckDBEngine> {
+    let e = DuckDBEngine::new(
+        tmp.path().join("scratch.duckdb"),
+        MemoryBudget {
+            bytes: 128 * 1024 * 1024,
+        },
+    )
+    .expect("DuckDBEngine::new");
+    e.init().await.expect("init");
+    Arc::new(e)
+}
+
+#[tokio::test]
+async fn view_path_binds_select_result() {
+    let tmp = TempDir::new().unwrap();
+    let e = engine(&tmp).await;
+    e.execute("CREATE TABLE t AS SELECT * FROM range(5) AS r(id)")
+        .await
+        .unwrap();
+    let stmt = "SELECT id FROM t WHERE id >= 2";
+    assert_eq!(classify(stmt), ResultKind::Result);
+    e.create_or_replace_view("__dat0_qr_test_0", stmt)
+        .await
+        .unwrap();
+    let paged = e
+        .execute_paged("SELECT * FROM \"__dat0_qr_test_0\"", 0, 100)
+        .await
+        .unwrap();
+    let rows: usize = paged.batches.iter().map(|b| b.num_rows()).sum();
+    assert_eq!(rows, 3, "id in {{2,3,4}}");
+}
+
+#[tokio::test]
+async fn exec_path_runs_ddl() {
+    let tmp = TempDir::new().unwrap();
+    let e = engine(&tmp).await;
+    assert_eq!(classify("CREATE TABLE t2 (a INT)"), ResultKind::Exec);
+    e.execute("CREATE TABLE t2 (a INT)").await.unwrap();
+    e.execute("INSERT INTO t2 VALUES (1)").await.unwrap();
+    let r = e.execute("SELECT count(*) FROM t2").await.unwrap();
+    assert_eq!(r.batches.iter().map(|b| b.num_rows()).sum::<usize>(), 1);
+}
+
+#[tokio::test]
+async fn bad_sql_surfaces_engine_error() {
+    let tmp = TempDir::new().unwrap();
+    let e = engine(&tmp).await;
+    let err = e
+        .create_or_replace_view("__dat0_qr_test_1", "SELECT * FROM nonesuch")
+        .await;
+    assert!(
+        err.is_err(),
+        "binding a bad query must error (-> inline error strip)"
+    );
+}
