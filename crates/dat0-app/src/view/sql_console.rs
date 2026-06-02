@@ -285,11 +285,30 @@ impl Render for SqlConsole {
                 .py_1()
                 .child(SharedString::from(s.clone()))
                 .into_any_element(),
-            ResultRegion::Error(e) => div()
-                .px_2()
-                .py_1()
-                .child(SharedString::from(e.clone()))
-                .into_any_element(),
+            ResultRegion::Error(e) => {
+                let title = self.tabs[self.active].meta.title.clone();
+                let msg = format!("{title}: {e}");
+                div()
+                    .flex()
+                    .flex_row()
+                    .justify_between()
+                    .items_center()
+                    .px_2()
+                    .py_1()
+                    .child(SharedString::from(msg))
+                    .child(
+                        div()
+                            .id("sql-err-dismiss")
+                            .cursor_pointer()
+                            .px_1()
+                            .child(SharedString::from("✕"))
+                            .on_click(cx.listener(|this, _ev, _window, cx| {
+                                this.region = ResultRegion::Empty;
+                                cx.notify();
+                            })),
+                    )
+                    .into_any_element()
+            }
             ResultRegion::Cancelled => div()
                 .px_2()
                 .py_1()
