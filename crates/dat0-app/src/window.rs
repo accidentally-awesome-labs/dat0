@@ -1232,11 +1232,23 @@ impl WorkspaceShell {
 
         match outcome {
             SqlRunOutcome::Bound(ds) => match target {
-                crate::query::ResultTarget::MainGrid | crate::query::ResultTarget::Pane => {
-                    // T9 renders a dedicated results pane; until then `Pane`
-                    // falls back to the main grid.
+                crate::query::ResultTarget::MainGrid => {
                     self.apply_view_change(ds, cx);
                     console.update(cx, |c, cx| c.set_region(ResultRegion::BoundToGrid, cx));
+                }
+                crate::query::ResultTarget::Pane => {
+                    // T9 (Tier 2): route into the console-owned results grid
+                    // instead of the main DataGrid. `set_pane_source` stores the
+                    // `Arc` + this shell's weak handle (for the pane delegate's
+                    // header/scroll closures) and kicks a first-page prefetch;
+                    // the console's `render` lazily promotes it to a `TableState`
+                    // (it owns the `&mut Window` this callback lacks). The main
+                    // grid / table tab is left untouched.
+                    let ws_weak = cx.entity().downgrade();
+                    console.update(cx, |c, cx| {
+                        c.set_pane_source(ds, ws_weak, cx);
+                        c.set_region(ResultRegion::Pane, cx);
+                    });
                 }
             },
             SqlRunOutcome::Status(s) => {

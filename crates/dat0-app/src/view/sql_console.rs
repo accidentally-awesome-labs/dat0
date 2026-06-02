@@ -17,14 +17,20 @@
 //! The "sql" grammar was registered at boot (P5a T4 — `query::highlight`), so
 //! the runtime `LanguageRegistry` drives tree-sitter-sequel highlighting.
 
+use std::sync::Arc;
+
 use gpui::prelude::*;
 use gpui::{
-    Context, Entity, EventEmitter, IntoElement, ParentElement, SharedString, Styled, Window, div,
+    Context, Entity, EventEmitter, IntoElement, ParentElement, SharedString, Styled, WeakEntity,
+    Window, div,
 };
 use gpui_component::input::{Input, InputState};
 use gpui_component::spinner::Spinner;
+use gpui_component::table::{Table, TableState};
 
+use crate::grid::{GridDataSource, GridTableDelegate};
 use crate::query::{ResultTarget, SqlTabMeta};
+use crate::window::WorkspaceShell;
 
 /// One open console tab: persistable metadata + the live editor buffer.
 pub struct ConsoleTab {
@@ -43,6 +49,10 @@ pub enum ResultRegion {
     Cancelled,
     /// The result is showing in the main DataGrid (no inline region needed).
     BoundToGrid,
+    /// The result is showing in the console-owned results pane (P5a T9). The
+    /// bound `GridDataSource` lives in `SqlConsole::pane_source`; `render`
+    /// lazily promotes it to a `TableState` and mounts the pane grid.
+    Pane,
 }
 
 /// The SQL Console GPUI entity. Owns the open tabs + the result-region state.
@@ -55,6 +65,20 @@ pub struct SqlConsole {
     /// When the active run started, for the live elapsed-seconds counter (T7).
     /// `Some` while `running`, `None` otherwise. Read in `render`.
     pub started_at: Option<std::time::Instant>,
+    /// The `GridDataSource` bound by a `Run { target: Pane }` result (P5a T9).
+    /// Stored by [`set_pane_source`](Self::set_pane_source); `render` lazily
+    /// promotes it into `pane_table_state` (the `TableState::new` call needs a
+    /// `&mut Window`, only available inside `render` — mirrors the main grid's
+    /// lazy-promotion discipline in `WorkspaceShell::render`).
+    pub(crate) pane_source: Option<Arc<GridDataSource>>,
+    /// The console-owned results grid built from `pane_source` (P5a T9).
+    /// `None` until the first render after a Pane result lands, then rebuilt
+    /// whenever `pane_source` swaps to a different `Arc`.
+    pub(crate) pane_table_state: Option<Entity<TableState<GridTableDelegate>>>,
+    /// Weak handle to the owning `WorkspaceShell`, passed in by `set_pane_source`
+    /// so the pane delegate's header/scroll closures can dispatch into the shell
+    /// (P5a T9). `new_invalid()` until a Pane result binds.
+    pub(crate) pane_ws: WeakEntity<WorkspaceShell>,
 }
 
 /// Events the console emits up to `WorkspaceShell`.
@@ -122,6 +146,9 @@ impl SqlConsole {
             region: ResultRegion::Empty,
             running: false,
             started_at: None,
+            pane_source: None,
+            pane_table_state: None,
+            pane_ws: WeakEntity::new_invalid(),
         }
     }
 
@@ -166,6 +193,58 @@ impl SqlConsole {
         cx.notify();
     }
 
+    /// Bind a result-producing run's `GridDataSource` to the console-owned
+    /// results pane (P5a T9, `Run { target: Pane }`). Stores the `Arc` + the
+    /// owning shell's weak handle, drops any stale `TableState` (it wrapped the
+    /// previous source), and kicks a background prefetch of the first page so
+    /// the pane paints real values rather than em-dash placeholders on the next
+    /// frame.
+    ///
+    /// `TableState::new` is NOT called here: it needs a `&mut Window`, which
+    /// this method (reached from `WorkspaceShell::finish_sql_run`, a
+    /// dispatcher callback with only `&mut App`) does not have. The actual
+    /// `TableState` promotion happens lazily in [`render`](Self::render), which
+    /// owns a `&mut Window` — exactly the discipline the main grid uses in
+    /// `WorkspaceShell::render`.
+    pub fn set_pane_source(
+        &mut self,
+        ds: Arc<GridDataSource>,
+        ws_weak: WeakEntity<WorkspaceShell>,
+        cx: &mut Context<Self>,
+    ) {
+        // Drop the stale state — it wrapped the previous run's delegate/source
+        // and would paint stale rows. `render` rebuilds from the new `Arc`.
+        self.pane_table_state = None;
+        self.pane_ws = ws_weak;
+
+        // Prefetch the first page of the new source so the synchronous
+        // `render_td` finds cached rows on the next frame. The fetch runs OFF
+        // the GPUI main thread; the re-render notify is posted back via the
+        // canonical `MainThreadDispatcher` (same discipline as
+        // `WorkspaceShell::prefetch_visible_rows`). Scroll-paging is handled by
+        // the delegate's `visible_rows_changed` hook via the shell.
+        if !ds.is_empty() {
+            let ds_for_task = Arc::clone(&ds);
+            let this = cx.entity().downgrade();
+            tokio::spawn(async move {
+                if let Err(e) = ds_for_task.page_for(0).await {
+                    tracing::warn!(error = %e, "set_pane_source: first-page prefetch failed");
+                    return;
+                }
+                if let Some(dispatcher) = crate::window_registry::dispatcher() {
+                    let _ = dispatcher.dispatch(move |app_cx: &mut gpui::App| {
+                        if let Some(h) = this.upgrade() {
+                            h.update(app_cx, |_c, cx| cx.notify());
+                        }
+                    });
+                }
+            });
+        }
+
+        self.pane_source = Some(ds);
+        cx.notify();
+    }
+
     /// Snapshot all tabs to the persistable shape (for `Session::set_sql_tabs`).
     ///
     /// Takes `&App` (not `&Context<Self>`) so `WorkspaceShell` can call it with
@@ -189,8 +268,27 @@ impl SqlConsole {
 }
 
 impl Render for SqlConsole {
-    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let active = self.active;
+
+        // ── Lazy-promote the Pane result source → TableState (P5a T9) ───────
+        // Mirrors `WorkspaceShell::render`: `set_pane_source` stored the bound
+        // `Arc<GridDataSource>` (no `Window` in that dispatcher callback); here
+        // — inside `render`, where a `&mut Window` exists — we build the
+        // delegate + `TableState`. Rebuilt only when the stored state wraps a
+        // different source (a new Pane run). The delegate's columns derive from
+        // the visible schema (empty `column_view` = identity), the read-only
+        // fallback the unit-test path uses.
+        if let Some(ds) = self.pane_source.as_ref() {
+            let needs_rebuild = match self.pane_table_state.as_ref() {
+                None => true,
+                Some(state) => !state.read(cx).delegate().source_ptr_eq(ds),
+            };
+            if needs_rebuild {
+                let delegate = GridTableDelegate::new(Arc::clone(ds), self.pane_ws.clone(), &[]);
+                self.pane_table_state = Some(cx.new(|cx| TableState::new(delegate, window, cx)));
+            }
+        }
 
         // ── Tab strip ──────────────────────────────────────────────────────
         let tab_strip = div()
@@ -216,13 +314,17 @@ impl Render for SqlConsole {
                 tab
             }));
 
-        // ── Run / Cancel button ────────────────────────────────────────────
+        // ── Run / Cancel split-button (primary Run + ▾ "run in pane") ───────
+        // The primary segment runs Cancel while in flight, else Run→MainGrid.
+        // The caret segment (idle only) runs Run→Pane, routing the result into
+        // the console-owned results pane (P5a T9, Tier 1). A full dropdown menu
+        // would be cosmetic; the caret directly emits the Pane target.
         let run_label = if self.running {
             dat0_i18n::t("sql.cancel")
         } else {
             dat0_i18n::t("sql.run")
         };
-        let run_btn = div()
+        let primary_btn = div()
             .id("sql-run")
             .px_3()
             .py_1()
@@ -237,6 +339,34 @@ impl Render for SqlConsole {
                     });
                 }
             }));
+        // The caret is only meaningful when idle (running shows Cancel only).
+        let run_caret: gpui::AnyElement = if self.running {
+            div().into_any_element()
+        } else {
+            // No `.tooltip()` helper exists at this gpui-component rev, so the
+            // caret itself is the affordance for "Run in results pane"
+            // (`dat0_i18n::t("sql.run_in_pane")`, from T5). A later polish task
+            // can add a hover tooltip / full PopupMenu.
+            div()
+                .id("sql-run-pane")
+                .px_2()
+                .py_1()
+                .cursor_pointer()
+                .border_l_1()
+                .child(SharedString::from("▾"))
+                .on_click(cx.listener(move |_this, _ev, _window, cx| {
+                    cx.emit(SqlConsoleEvent::Run {
+                        target: ResultTarget::Pane,
+                    });
+                }))
+                .into_any_element()
+        };
+        let run_btn = div()
+            .flex()
+            .flex_row()
+            .items_center()
+            .child(primary_btn)
+            .child(run_caret);
 
         // ── Progress indicator (spinner + live elapsed seconds) ─────────────
         // Shown only while a run is in flight. The `Spinner` self-animates via
@@ -277,9 +407,27 @@ impl Render for SqlConsole {
         // ── Editor for the active tab ───────────────────────────────────────
         let editor = Input::new(&self.tabs[active].input).h_full();
 
-        // ── Result region (inline status / error strip) ─────────────────────
+        // ── Result region (inline status / error strip; or pane grid) ───────
         let region: gpui::AnyElement = match &self.region {
             ResultRegion::Empty | ResultRegion::BoundToGrid => div().into_any_element(),
+            ResultRegion::Pane => {
+                // P5a T9 (Tier 2): render the console-owned results grid. The
+                // `TableState` was promoted above; while it is still being built
+                // (first frame after bind, or a zero-row result) show a brief
+                // placeholder mirroring the main grid's `(Some(_), None)` arm.
+                match self.pane_table_state.as_ref() {
+                    Some(state) => div()
+                        .flex_1()
+                        .min_h(gpui::px(120.0))
+                        .child(Table::new(state).stripe(true).bordered(true))
+                        .into_any_element(),
+                    None => div()
+                        .px_2()
+                        .py_1()
+                        .child(SharedString::from(dat0_i18n::t("sql.running")))
+                        .into_any_element(),
+                }
+            }
             ResultRegion::Status(s) => div()
                 .px_2()
                 .py_1()
