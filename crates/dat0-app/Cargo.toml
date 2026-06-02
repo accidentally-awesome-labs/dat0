@@ -40,6 +40,14 @@ lru = { workspace = true }
 futures = { workspace = true }
 reqwest = { workspace = true }
 sha2 = { workspace = true }
+# SQL syntax highlighting in the P5 console. Registered at runtime via
+# gpui-component's LanguageRegistry (P5a §0 decision 6) — we deliberately do
+# NOT enable gpui-component's all-or-nothing `tree-sitter-languages` feature
+# (~28 grammars; CI OOM/disk cost). One grammar, full SQL highlight.
+# Requirement string is byte-identical to the one gpui-component (rev 0f0ab35)
+# declares so both unify to a SINGLE resolved copy (currently 0.3.11, sharing
+# the same tree-sitter 0.25 core) — LANGUAGE/HIGHLIGHTS_QUERY are ABI-identical.
+tree-sitter-sequel = "0.3.8"
 
 [dev-dependencies]
 tempfile = { workspace = true }
