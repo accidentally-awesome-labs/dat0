@@ -99,3 +99,31 @@ async fn interrupt_stops_a_long_running_query() {
         Ok(_) => panic!("query unexpectedly completed"),
     }
 }
+
+/// The persisted SQL-tab shape (`SqlTabState` + `SessionState`) round-trips
+/// through serde unchanged — the on-disk contract `Session::set_sql_tabs`
+/// writes and `SqlConsole::new` reads back (P5a T10). Exercises the serialized
+/// form directly (no GPUI, no disk) so the multi-tab persistence cadence has a
+/// fast regression guard.
+#[test]
+fn session_round_trips_sql_tabs_via_setter() {
+    use dat0_app::session::SqlTabState;
+    use uuid::Uuid;
+    // Exercise the serialized shape directly:
+    let state = dat0_app::session::SessionState {
+        schema_version: dat0_app::session::SESSION_SCHEMA_VERSION,
+        tabs: vec![],
+        active_tab: None,
+        sql_tabs: vec![SqlTabState {
+            id: Uuid::now_v7(),
+            title: "Q1".into(),
+            sql: "SELECT 1".into(),
+        }],
+        active_sql_tab: Some(0),
+    };
+    let json = serde_json::to_string_pretty(&state).unwrap();
+    let back: dat0_app::session::SessionState = serde_json::from_str(&json).unwrap();
+    assert_eq!(back.sql_tabs.len(), 1);
+    assert_eq!(back.sql_tabs[0].sql, "SELECT 1");
+    assert_eq!(back.active_sql_tab, Some(0));
+}

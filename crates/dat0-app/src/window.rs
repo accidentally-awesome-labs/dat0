@@ -628,6 +628,10 @@ pub struct WorkspaceShell {
     /// `toggle_sql_console`; the render gate respects this independently of
     /// whether `sql_console` is `Some`.
     pub(crate) sql_console_visible: bool,
+    /// Whether the window-close `Persist` backstop has been registered (P5a
+    /// T10). Set the first time the console is built so the
+    /// `on_window_should_close` hook is installed exactly once per window.
+    pub(crate) sql_console_close_hooked: bool,
     /// Cancellation guard for the in-flight SQL console run (P5a T6). `Some`
     /// while a run is executing; dropped/disarmed in `finish_sql_run`. The
     /// guard's `Drop` (or an explicit `cancel()` in T7) fires the engine's
@@ -660,6 +664,7 @@ impl WorkspaceShell {
             sql_console: None,
             sql_console_sub: None,
             sql_console_visible: false,
+            sql_console_close_hooked: false,
             active_query_cancel: None,
         }
     }
@@ -1082,6 +1087,25 @@ impl WorkspaceShell {
             self.sql_console_sub = Some(sub);
             self.sql_console = Some(console);
             self.sql_console_visible = true;
+
+            // Persist the console one last time on window close (P5a T10). This
+            // is a best-effort backstop ON TOP OF the guaranteed per-mutation
+            // persists (Run / tab add / close / active-switch each emit
+            // `Persist` → `set_sql_tabs` → disk), so disk is already current;
+            // the close hook flushes any edit-buffer text typed since the last
+            // mutation. Registered once, the first time the console is built
+            // (we hold the only `&mut Window` here). `should_close` returns
+            // `true` so the default close proceeds.
+            if !self.sql_console_close_hooked {
+                self.sql_console_close_hooked = true;
+                let ws_weak = cx.entity().downgrade();
+                window.on_window_should_close(cx, move |_window, app| {
+                    if let Some(ws) = ws_weak.upgrade() {
+                        ws.update(app, |ws, cx| ws.persist_sql_console(cx));
+                    }
+                    true
+                });
+            }
         } else {
             self.sql_console_visible = !self.sql_console_visible;
         }
@@ -1128,6 +1152,15 @@ impl WorkspaceShell {
 
     /// Snapshot the console's tabs into the session and persist (P5a T5).
     /// Now LIVE — called from `finish_sql_run` after every run (T6).
+    ///
+    /// Persistence cadence (P5a T10): every console mutation that emits
+    /// `SqlConsoleEvent::Persist` routes here — Run, tab add (`new_tab`), tab
+    /// close (`close_tab`), and active-tab switch — plus a window-close backstop
+    /// registered in `toggle_sql_console`. Editor-buffer text typed between
+    /// mutations is captured by the next mutation or the close backstop. Blur is
+    /// intentionally NOT wired: `InputState` owns its focus handle internally
+    /// (no clean seam to subscribe its blur at this gpui-component rev), and the
+    /// guaranteed per-mutation + close triggers already keep disk current.
     pub(crate) fn persist_sql_console(&mut self, cx: &mut Context<Self>) {
         if let Some(console) = &self.sql_console {
             let app: &gpui::App = cx;

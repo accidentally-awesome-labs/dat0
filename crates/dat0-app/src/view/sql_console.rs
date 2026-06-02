@@ -245,6 +245,46 @@ impl SqlConsole {
         cx.notify();
     }
 
+    /// Append a fresh empty tab and focus it (P5a T10). Eagerly builds the new
+    /// editor's `InputState` (needs `&mut Window` — same construction as
+    /// [`SqlConsole::new`]) and emits [`SqlConsoleEvent::Persist`] so the new
+    /// tab set reaches `session.json` immediately.
+    pub fn new_tab(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let n = self.tabs.len() + 1;
+        let input = cx.new(|cx| {
+            InputState::new(window, cx)
+                .code_editor("sql")
+                .line_number(true)
+                .placeholder(dat0_i18n::t("sql.placeholder"))
+        });
+        self.tabs.push(ConsoleTab {
+            meta: SqlTabMeta::new(format!("Query {n}")),
+            input,
+        });
+        self.active = self.tabs.len() - 1;
+        cx.emit(SqlConsoleEvent::Persist);
+        cx.notify();
+    }
+
+    /// Remove the tab at `ix`, keeping at least one open (P5a T10). Clamps the
+    /// active index if the closed tab was at/after it, and emits
+    /// [`SqlConsoleEvent::Persist`] so the trimmed tab set reaches `session.json`.
+    ///
+    /// The closed tab's `last_result_view` TEMP VIEW is not explicitly dropped:
+    /// it is connection-scoped, so it is reclaimed on connection teardown
+    /// (P5a leaves the GC to app/connection close — no engine DROP wiring here).
+    pub fn close_tab(&mut self, ix: usize, cx: &mut Context<Self>) {
+        if self.tabs.len() == 1 {
+            return; // keep at least one — never an empty console
+        }
+        self.tabs.remove(ix);
+        if self.active >= self.tabs.len() {
+            self.active = self.tabs.len() - 1;
+        }
+        cx.emit(SqlConsoleEvent::Persist);
+        cx.notify();
+    }
+
     /// Snapshot all tabs to the persistable shape (for `Session::set_sql_tabs`).
     ///
     /// Takes `&App` (not `&Context<Self>`) so `WorkspaceShell` can call it with
@@ -291,28 +331,70 @@ impl Render for SqlConsole {
         }
 
         // ── Tab strip ──────────────────────────────────────────────────────
+        // Each tab is a clickable label (→ set active + Persist) with a small
+        // "✕" close glyph (→ `close_tab`, which keeps ≥1 tab). A trailing "+"
+        // appends a fresh tab via `new_tab`. No `.tooltip()` helper exists at
+        // this gpui-component rev (T9), so the glyphs are the affordance; the
+        // `sql.new_tab` / `sql.close_tab` i18n strings (T5) back a later tooltip
+        // polish task.
+        let tab_count = self.tabs.len();
         let tab_strip = div()
             .flex()
             .flex_row()
+            .items_center()
             .gap_1()
             .children(self.tabs.iter().enumerate().map(|(i, t)| {
                 let title: SharedString = t.meta.title.clone().into();
                 let mut tab = div()
                     .id(("sql-tab", i))
+                    .flex()
+                    .flex_row()
+                    .items_center()
+                    .gap_1()
                     .px_2()
                     .py_1()
                     .cursor_pointer()
-                    .child(title)
-                    .on_click(cx.listener(move |this, _ev, _window, cx| {
-                        this.active = i;
-                        cx.emit(SqlConsoleEvent::Persist);
-                        cx.notify();
-                    }));
+                    .child(
+                        div()
+                            .id(("sql-tab-label", i))
+                            .cursor_pointer()
+                            .child(title)
+                            .on_click(cx.listener(move |this, _ev, _window, cx| {
+                                this.active = i;
+                                cx.emit(SqlConsoleEvent::Persist);
+                                cx.notify();
+                            })),
+                    );
+                // Show the close glyph only when more than one tab is open —
+                // `close_tab` is a no-op on the last tab, so hiding it avoids a
+                // dead control.
+                if tab_count > 1 {
+                    tab = tab.child(
+                        div()
+                            .id(("sql-tab-close", i))
+                            .cursor_pointer()
+                            .child(SharedString::from("✕"))
+                            .on_click(cx.listener(move |this, _ev, _window, cx| {
+                                this.close_tab(i, cx);
+                            })),
+                    );
+                }
                 if i == active {
                     tab = tab.border_b_1();
                 }
                 tab
-            }));
+            }))
+            .child(
+                div()
+                    .id("sql-tab-add")
+                    .px_2()
+                    .py_1()
+                    .cursor_pointer()
+                    .child(SharedString::from("+"))
+                    .on_click(cx.listener(move |this, _ev, window, cx| {
+                        this.new_tab(window, cx);
+                    })),
+            );
 
         // ── Run / Cancel split-button (primary Run + ▾ "run in pane") ───────
         // The primary segment runs Cancel while in flight, else Run→MainGrid.
