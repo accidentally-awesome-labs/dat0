@@ -413,6 +413,11 @@ pub fn run_app(lock: AppLock, initial_paths: Vec<PathBuf>, main_loop: MainLoop) 
             });
         }
 
+        // Register the SQL grammar for the P5 console editor (runtime-registered,
+        // single grammar — see query::highlight). T0 spike confirmed the runtime
+        // path; decision-7 fallback NOT triggered.
+        crate::query::highlight::register_sql_language();
+
         let first_window_id = session.lock().window_id;
         let bounds = Bounds::centered(None, size(px(1200.), px(800.)), cx);
         let session_for_window = Arc::clone(&session);

@@ -1,4 +1,5 @@
 //! SQL console query model + statement utilities (P5a).
+pub mod highlight;
 pub mod statement;
 
 use std::sync::Weak;
