@@ -609,6 +609,25 @@ pub struct WorkspaceShell {
     ///
     /// [`ExportEvent`]: crate::view::export_dialog::ExportEvent
     export_dialog_sub: Option<Subscription>,
+    /// SQL Console panel (P5a T5). Lazily constructed on the first
+    /// `toggle_sql_console` call (which has the `&mut Window` that the per-tab
+    /// code editors need). `None` until first toggled; visibility is gated by
+    /// `sql_console_visible` so a second toggle hides without tearing it down.
+    pub(crate) sql_console: Option<Entity<crate::view::sql_console::SqlConsole>>,
+    /// Subscription to the console's [`SqlConsoleEvent`]. Stored so the
+    /// run/cancel/persist callback stays registered — a dropped `Subscription`
+    /// deregisters silently (the P4a T10b trap).
+    ///
+    /// Only written (never read) until P5a T11 wires the toggle action; the
+    /// field's purpose is to keep the subscription alive for the entity's life.
+    ///
+    /// [`SqlConsoleEvent`]: crate::view::sql_console::SqlConsoleEvent
+    #[allow(dead_code)] // read indirectly (keep-alive); toggle wired in P5a T11
+    pub(crate) sql_console_sub: Option<Subscription>,
+    /// Whether the SQL Console panel is currently shown. Toggled by
+    /// `toggle_sql_console`; the render gate respects this independently of
+    /// whether `sql_console` is `Some`.
+    pub(crate) sql_console_visible: bool,
 }
 
 impl WorkspaceShell {
@@ -632,6 +651,9 @@ impl WorkspaceShell {
             pipeline_bar_state: crate::view::pipeline_bar::PipelineBarState::default(),
             export_dialog: None,
             export_dialog_sub: None,
+            sql_console: None,
+            sql_console_sub: None,
+            sql_console_visible: false,
         }
     }
 
@@ -995,6 +1017,79 @@ impl WorkspaceShell {
                 self.export_dialog_sub = None;
                 cx.notify();
             }
+        }
+    }
+
+    // ── SQL Console panel (P5a T5) ────────────────────────────────────────────
+
+    /// Toggle the SQL Console bottom panel (P5a T5).
+    ///
+    /// On the first toggle, lazily constructs the [`SqlConsole`] from the
+    /// session's persisted SQL tabs (which needs the `&mut Window` for the
+    /// per-tab code editors) and subscribes to its [`SqlConsoleEvent`]. The
+    /// subscription is STORED in `sql_console_sub` — a dropped `Subscription`
+    /// deregisters the callback silently (the P4a T10b trap). Subsequent
+    /// toggles just flip `sql_console_visible` without tearing the console
+    /// down, preserving the editor buffers.
+    ///
+    /// Run/Cancel are wired in P5a T6/T7; for now the event handler only
+    /// services `Persist`.
+    ///
+    /// [`SqlConsole`]: crate::view::sql_console::SqlConsole
+    /// [`SqlConsoleEvent`]: crate::view::sql_console::SqlConsoleEvent
+    #[allow(dead_code)] // wired to an action/keybind/menu in P5a T11
+    pub(crate) fn toggle_sql_console(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.sql_console.is_none() {
+            let (persisted, active) = {
+                let s = self.session.lock();
+                (s.sql_tabs().to_vec(), s.active_sql_tab())
+            };
+            let console = cx.new(|cx| {
+                crate::view::sql_console::SqlConsole::new(&persisted, active, window, cx)
+            });
+            let sub = cx.subscribe(
+                &console,
+                |ws: &mut Self, console, ev: &crate::view::sql_console::SqlConsoleEvent, cx| {
+                    ws.on_sql_console_event(console.clone(), ev.clone(), cx);
+                },
+            );
+            self.sql_console_sub = Some(sub);
+            self.sql_console = Some(console);
+            self.sql_console_visible = true;
+        } else {
+            self.sql_console_visible = !self.sql_console_visible;
+        }
+        cx.notify();
+    }
+
+    /// Route a [`SqlConsoleEvent`] from the console.
+    ///
+    /// Stub for T5 — only `Persist` is serviced. `Run`/`Cancel` are implemented
+    /// in P5a T6/T7.
+    ///
+    /// [`SqlConsoleEvent`]: crate::view::sql_console::SqlConsoleEvent
+    #[allow(dead_code)] // reached via the toggle's subscription, wired in P5a T11
+    pub(crate) fn on_sql_console_event(
+        &mut self,
+        _console: Entity<crate::view::sql_console::SqlConsole>,
+        ev: crate::view::sql_console::SqlConsoleEvent,
+        cx: &mut Context<Self>,
+    ) {
+        use crate::view::sql_console::SqlConsoleEvent::*;
+        match ev {
+            Persist => self.persist_sql_console(cx),
+            // T6 implements Run; T7 implements Cancel.
+            Run { .. } | Cancel => {}
+        }
+    }
+
+    /// Snapshot the console's tabs into the session and persist (P5a T5).
+    #[allow(dead_code)] // reached via on_sql_console_event, wired in P5a T11
+    pub(crate) fn persist_sql_console(&mut self, cx: &mut Context<Self>) {
+        if let Some(console) = &self.sql_console {
+            let app: &gpui::App = cx;
+            let (tabs, active) = console.read(app).snapshot(app);
+            let _ = self.session.lock().set_sql_tabs(tabs, active);
         }
     }
 
@@ -1576,6 +1671,23 @@ impl Render for WorkspaceShell {
             }
         };
 
+        // SQL Console bottom panel (P5a T5). Mounted between the PipelineBar and
+        // the grid body when the console exists AND is visible. A fixed-height
+        // panel with a top border; the inner `SqlConsole` entity renders the tab
+        // strip + code editor + result region.
+        let sql_console_panel: Option<gpui::AnyElement> = self
+            .sql_console
+            .as_ref()
+            .filter(|_| self.sql_console_visible)
+            .map(|c| {
+                div()
+                    .h(px(260.))
+                    .w_full()
+                    .border_t_1()
+                    .child(c.clone())
+                    .into_any_element()
+            });
+
         div()
             .id("workspace-shell")
             .size_full()
@@ -1589,6 +1701,7 @@ impl Render for WorkspaceShell {
             .on_drop::<ExternalPaths>(drop_listener)
             .children(tab_strip)
             .children(pipeline_bar)
+            .children(sql_console_panel)
             .child(div().flex_1().child(body))
             .children(popover_overlay)
             .children(editor_overlay)
