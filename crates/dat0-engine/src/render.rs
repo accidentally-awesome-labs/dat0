@@ -10,8 +10,8 @@
 
 use crate::catalog::quote_ident;
 use crate::transform::{
-    CellEdit, FilterOp, FilterValue, ROWID_COL, RowKey, Scalar, SortDirection, SortKey,
-    Transformation,
+    CellEdit, FilterOp, FilterValue, ProjectionColumn, ROWID_COL, RowKey, Scalar, SortDirection,
+    SortKey, Transformation,
 };
 
 #[derive(Debug, thiserror::Error, PartialEq)]
@@ -70,6 +70,14 @@ pub fn compile_view_sql(base: &str, ops: &[Transformation]) -> Result<String, Re
                     delete_ids.push(*id);
                 }
             }
+            // Projection transforms (Reorder / Rename / DeleteColumn) are
+            // display-only (design Option B). They never contribute to the data
+            // view SQL; the grid `ColumnView` and the export projection apply
+            // them. No-op here keeps the match exhaustive + the flat fast-path
+            // byte-identical when only projection (+ filter/sort) ops are present.
+            Transformation::Reorder { .. }
+            | Transformation::Rename { .. }
+            | Transformation::DeleteColumn { .. } => {}
         }
     }
 
@@ -370,4 +378,26 @@ fn filter_value_shape(v: &FilterValue) -> &'static str {
         FilterValue::List { .. } => "List",
         FilterValue::None => "None",
     }
+}
+
+/// Build a surrogate-stripped projection SELECT over `inner_sql` for export.
+///
+/// `cols` are the visible columns in display order (`source` → `display`); the
+/// caller's `cols` never includes `__dat0_rowid` (so the surrogate is stripped
+/// by omission). When `display == source` no alias is emitted (stable output).
+/// `inner_sql` is a complete SELECT (already-quoted relation), wrapped as a
+/// subquery so any filter/sort in it is preserved.
+pub fn render_export_select(inner_sql: &str, cols: &[ProjectionColumn]) -> String {
+    let list = cols
+        .iter()
+        .map(|c| {
+            if c.display == c.source {
+                quote_ident(&c.source)
+            } else {
+                format!("{} AS {}", quote_ident(&c.source), quote_ident(&c.display))
+            }
+        })
+        .collect::<Vec<_>>()
+        .join(", ");
+    format!("SELECT {} FROM ({})", list, inner_sql)
 }

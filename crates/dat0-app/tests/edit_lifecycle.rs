@@ -237,3 +237,95 @@ async fn prefetch_populates_cache_so_cell_display_resolves_real_values() {
     assert_eq!(rendered.text, "2");
     assert!(!rendered.is_null);
 }
+
+/// P4c T5 fix — the body-cell PAINT path must address by `ColumnView` SOURCE,
+/// not by display/schema ordinal, so a (future T6) `Reorder`/`DeleteColumn`
+/// paints each header's OWN column underneath it.
+///
+/// This is the non-identity lock. The `orders` table's VISIBLE schema order is
+/// `[id, amount]` with values `(1,100),(2,200),(3,300)`. We model a display-only
+/// reorder to `[amount, id]` exactly the way `GridTableDelegate::new`'s
+/// `ColumnView` branch does — each rendered `Column`'s `key` is set to the
+/// `ProjectionColumn::source`. `render_td` then reads `columns[col_ix].key` and
+/// calls `cell_render_for_source(row, key)`. We drive that mapping directly here
+/// (no UI gesture, no Reorder dispatch — T6 owns those) and assert that:
+///
+///   display col 0 (source "amount") paints amount's value (100/200/300), and
+///   display col 1 (source "id")     paints id's value (1/2/3),
+///
+/// i.e. the painted column tracks the source, NOT the ordinal.
+///
+/// FAILS BEFORE the fix: the unfixed `render_td` read `cell_render(row, col_ix)`,
+/// which resolves `col_ix` as a VISIBLE index — so display col 0 would have
+/// painted visible col 0 ("id" → 1/2/3) under the "amount" header, and display
+/// col 1 would have painted "amount" (100/200/300) under the "id" header — the
+/// exact wrong-column defect. `cell_render_for_source` did not even exist, so the
+/// new addressing path is what makes the source-keyed reads resolve correctly.
+#[tokio::test]
+async fn reordered_column_view_paints_by_source_not_ordinal() {
+    let (engine, base, _tmp) = test_engine_with_orders_rowid().await;
+    let ds = dat0_app::grid::GridDataSource::new(engine, base)
+        .await
+        .unwrap();
+
+    // Prefetch page 0 so the synchronous render-path readers resolve real values
+    // (mirrors `WorkspaceShell::prefetch_visible_rows` on bind).
+    ds.page_for(0).await.unwrap();
+
+    // Sanity: in SCHEMA/VISIBLE order, col 0 is `id` and col 1 is `amount`.
+    assert_eq!(ds.cell_render(0, 0).expect("id cell").text, "1");
+    assert_eq!(ds.cell_render(0, 1).expect("amount cell").text, "100");
+
+    // Model the display-only reorder `[amount, id]` exactly as the delegate's
+    // `ColumnView` branch does: the rendered column's `key` is its source name.
+    // `render_td` reads `columns[col_ix].key` and calls `cell_render_for_source`.
+    // This is the precise display→source→schema mapping the paint path relies on.
+    let display_order_sources = ["amount", "id"]; // reversed vs. schema [id, amount]
+
+    // display col 0 → source "amount" → must paint amount's column (100/200/300),
+    // NOT the schema-ordinal-0 column ("id"). A schema-index bug returns "1".
+    for (row, expected) in [(0usize, "100"), (1, "200"), (2, "300")] {
+        let cell = ds
+            .cell_render_for_source(row, display_order_sources[0])
+            .expect("amount cell after prefetch");
+        assert_eq!(
+            cell.text, expected,
+            "display col 0 (source amount) row {row} must paint amount's value, not id's"
+        );
+    }
+
+    // display col 1 → source "id" → must paint id's column (1/2/3), NOT the
+    // schema-ordinal-1 column ("amount"). A schema-index bug returns "100".
+    for (row, expected) in [(0usize, "1"), (1, "2"), (2, "3")] {
+        let cell = ds
+            .cell_render_for_source(row, display_order_sources[1])
+            .expect("id cell after prefetch");
+        assert_eq!(
+            cell.text, expected,
+            "display col 1 (source id) row {row} must paint id's value, not amount's"
+        );
+    }
+
+    // Cross-check the exact `render_td` fallback contract: the source-keyed read
+    // for "amount" must DIFFER from the index-based read at the same display
+    // ordinal (col 0), proving the reorder is actually exercised (not a no-op
+    // where source order == schema order).
+    let by_ordinal_0 = ds.cell_render(0, 0).expect("ordinal-0 cell").text;
+    let by_source_amount = ds
+        .cell_render_for_source(0, "amount")
+        .expect("source amount cell")
+        .text;
+    assert_ne!(
+        by_ordinal_0, by_source_amount,
+        "reorder must be non-identity: ordinal-0 (id=1) != source amount (100)"
+    );
+
+    // Unknown source → None (no panic), matching the empty/defensive contract.
+    assert!(ds.cell_render_for_source(0, "no_such_col").is_none());
+    // The hidden surrogate is never a ColumnView source.
+    assert!(
+        ds.cell_render_for_source(0, dat0_engine::ROWID_COL)
+            .is_none(),
+        "the __dat0_rowid surrogate is never addressable as a ColumnView source"
+    );
+}

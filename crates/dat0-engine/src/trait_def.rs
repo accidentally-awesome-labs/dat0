@@ -80,6 +80,23 @@ pub trait QueryEngine: Send + Sync {
 
     async fn export_table(&self, name: &str, format: ExportFormat) -> Result<Vec<u8>>;
 
+    /// Stream a SELECT to `dest` via DuckDB `COPY … TO`. Writes straight to
+    /// disk (no in-RAM buffering), so it scales to multi-GB exports. `select_sql`
+    /// is a complete SELECT — the caller (export dialog) builds it via
+    /// [`crate::render::render_export_select`] to strip the surrogate and apply
+    /// any column projection.
+    ///
+    /// # Errors
+    /// - `EngineError::EngineClosed` — if the engine has been closed.
+    /// - `EngineError::InvalidPath` — if `dest` is not valid UTF-8.
+    /// - `EngineError::DuckDb` — if the COPY fails (bad SQL, unwritable path).
+    async fn export_query_to_path(
+        &self,
+        select_sql: &str,
+        format: ExportFormat,
+        dest: &std::path::Path,
+    ) -> Result<()>;
+
     async fn attach(&self, dsn: &str, alias: &str, opts: AttachOpts) -> Result<()>;
     async fn detach(&self, alias: &str) -> Result<()>;
 

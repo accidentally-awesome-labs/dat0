@@ -9,8 +9,9 @@
 //! | `view.paste`      | `WorkspaceShell::paste_clipboard`        |
 //! | `view.fill_down`  | `WorkspaceShell::fill_down`              |
 //! | `view.set_null`   | `WorkspaceShell::set_null_selection`     |
-//! | `view.set_value`  | `WorkspaceShell::set_value_selection`    |
-//! | `view.delete_rows`| `WorkspaceShell::delete_selected_rows`   |
+//! | `view.set_value`      | `WorkspaceShell::set_value_selection`    |
+//! | `view.delete_rows`   | `WorkspaceShell::delete_selected_rows`   |
+//! | `view.delete_column` | `WorkspaceShell::delete_column` (stub dispatch; col_ix via closure) |
 //!
 //! Dispatch pattern mirrors `view_actions.rs` (T13): resolve the focused
 //! `WorkspaceShell` via [`crate::window_registry::focused_workspace_weak`],
@@ -107,6 +108,25 @@ pub fn register(reg: &ActionRegistry) -> Result<(), RegisterError> {
         keybinding: None, // T11 wires Delete / Backspace in row-selection mode
         dispatch: Arc::new(|app| {
             dispatch_delete_rows(app);
+        }),
+    })?;
+
+    reg.register(ActionDescriptor {
+        id: ActionId::from(ids::VIEW_DELETE_COLUMN),
+        title: "Delete Column".into(),
+        group: ActionGroup::Edit,
+        keybinding: None, // no-arg dispatch; context menu uses direct closure with col_ix
+        dispatch: Arc::new(|app| {
+            // T8: no-arg dispatch cannot carry a column index. The context menu
+            // bypasses the registry for this action and calls
+            // `WorkspaceShell::delete_column` directly via a closure with the
+            // right-clicked `col_ix`. This descriptor serves command-palette
+            // discoverability only.
+            tracing::debug!(
+                "view.delete_column dispatched via registry \
+                 (no col_ix arg — context menu uses direct closure)"
+            );
+            let _ = app;
         }),
     })?;
 

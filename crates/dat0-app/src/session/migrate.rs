@@ -1,5 +1,6 @@
 //! session.json schema migration. v1 (no version field) → v2 (typed transforms)
-//! → v3 (additive `Edit`/`RowDelete` transform variants, P4b).
+//! → v3 (additive `Edit`/`RowDelete` transform variants, P4b) → v4 (projection
+//! variants allowlist + active-stack-only persistence, P4c).
 //!
 //! Migration is load-and-write-back (eager): a successful migration is
 //! immediately followed by the caller's `Session::persist` call to land the
@@ -100,7 +101,15 @@ fn version_one() -> u32 {
 /// MUST stay in sync with `dat0_engine::Transformation`. When a variant is
 /// added there, add its snake_case tag here (a stale allowlist would reject a
 /// transform this build CAN handle).
-const KNOWN_TRANSFORM_KINDS: &[&str] = &["filter", "sort", "edit", "row_delete"];
+const KNOWN_TRANSFORM_KINDS: &[&str] = &[
+    "filter",
+    "sort",
+    "edit",
+    "row_delete",
+    "reorder",
+    "rename",
+    "delete_column",
+];
 
 /// Scan a parsed session document for any tab whose `transform_stack` contains
 /// a transform with an unrecognized top-level `kind`. Returns the offending
@@ -176,10 +185,11 @@ pub fn load_str(raw: &str) -> Result<SessionState, SessionLoadError> {
     // migration path (e.g. `3 => migrate_v3_to_v4(raw)`) or get an
     // inexhaustive-match error instead of a silent runtime failure.
     match probe.schema_version {
-        1 => migrate_v1_to_v3(raw),
-        2 => migrate_v2_to_v3(raw),
-        3 => {
-            // Forward-incompat guard: a NEWER dat0 (writing the same v3 schema)
+        1 => migrate_v1_to_v4(raw),
+        2 => migrate_v2_to_v4(raw),
+        3 => migrate_v3_to_v4(raw),
+        4 => {
+            // Forward-incompat guard: a NEWER dat0 (writing the same v4 schema)
             // may have introduced a transform variant this build doesn't know.
             // Scan the current-version document's transform stacks and map any
             // unknown TOP-LEVEL `kind` to the forward-incompat banner path BEFORE
@@ -207,17 +217,18 @@ pub fn load_str(raw: &str) -> Result<SessionState, SessionLoadError> {
 // Private migration helpers
 // ---------------------------------------------------------------------------
 
-/// Migrate a raw v1 JSON string straight to the current (v3) `SessionState`.
+/// Migrate a raw v1 JSON string straight to the current (v4) `SessionState`.
 ///
 /// v1 had no `schema_version` + no `transform_stack` + no `undo_cursor` on
 /// `Tab`. The `#[serde(default)]` attrs on those fields handle the gaps; we
 /// just re-parse the whole document (which now has the serde defaults applied)
 /// and stamp `schema_version = SESSION_SCHEMA_VERSION`.
 ///
-/// v2 → v3 is an identity reshape (see [`migrate_v2_to_v3`]), so the v1 → v3 path
-/// is the same single re-parse + version stamp the v1 → v2 path always was — no
-/// intermediate v2 hop is needed.
-fn migrate_v1_to_v3(raw: &str) -> Result<SessionState, SessionLoadError> {
+/// v2 → v3 → v4 are identity reshapes (see [`migrate_v2_to_v4`],
+/// [`migrate_v3_to_v4`]), so the v1 → v4 path is the same single re-parse +
+/// version stamp — no intermediate hops are needed (v1 stacks are always
+/// empty, so the v4 redo-truncation is a no-op).
+fn migrate_v1_to_v4(raw: &str) -> Result<SessionState, SessionLoadError> {
     let mut state: SessionState = serde_json::from_str(raw)?;
     state.schema_version = SESSION_SCHEMA_VERSION;
     // serde(default) on Tab fields ensures:
@@ -228,14 +239,33 @@ fn migrate_v1_to_v3(raw: &str) -> Result<SessionState, SessionLoadError> {
     Ok(state)
 }
 
-/// Migrate a raw v2 JSON string to a v3 `SessionState` — IDENTITY.
+/// Migrate a raw v2 JSON string to a v4 `SessionState` — IDENTITY.
 ///
 /// v3 adds the `Edit` / `RowDelete` `Transformation` variants, which are purely
-/// additive tagged-enum cases: a v2 file (filter/sort only) parses into the
-/// exact same in-memory shape, with NO field added/removed/renamed. The only
-/// change is the version stamp. Re-parse and bump `schema_version`.
-fn migrate_v2_to_v3(raw: &str) -> Result<SessionState, SessionLoadError> {
+/// additive tagged-enum cases. v4 adds the projection variants (Reorder/Rename/
+/// DeleteColumn) and truncates to the active slice. A v2 file (filter/sort only)
+/// parses into the exact same in-memory shape; stacks parsed from v2 are by
+/// definition "active only" (no redo tail in v2 format). The only change is the
+/// version stamp. Re-parse and bump `schema_version`.
+fn migrate_v2_to_v4(raw: &str) -> Result<SessionState, SessionLoadError> {
     let mut state: SessionState = serde_json::from_str(raw)?;
+    state.schema_version = SESSION_SCHEMA_VERSION;
+    Ok(state)
+}
+
+/// Migrate a raw v3 JSON string to a v4 `SessionState`.
+///
+/// v4 adds the display-only projection variants (Reorder/Rename/DeleteColumn) —
+/// additive tagged-enum cases — AND changes persistence to the ACTIVE stack only
+/// (the P4c history zipper drops the in-stack redo tail). So we truncate each
+/// tab's `transform_stack` to `undo_cursor` (its active slice) and stamp v4.
+fn migrate_v3_to_v4(raw: &str) -> Result<SessionState, SessionLoadError> {
+    let mut state: SessionState = serde_json::from_str(raw)?;
+    for tab in &mut state.tabs {
+        let keep = tab.undo_cursor.min(tab.transform_stack.len());
+        tab.transform_stack.truncate(keep);
+        tab.undo_cursor = keep;
+    }
     state.schema_version = SESSION_SCHEMA_VERSION;
     Ok(state)
 }

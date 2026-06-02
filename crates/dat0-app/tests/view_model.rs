@@ -98,11 +98,17 @@ fn clear_drops_to_empty_and_one_undo_restores() {
     v.clear();
     assert_eq!(v.cursor(), 0);
     assert!(v.active_view().is_none());
-    // Stack is preserved so one redo restores. (Design §5: "one undo restores".)
-    // redo() from cursor==0 jumps to stack.len() so the whole clear is undone in one step.
-    assert!(v.can_redo());
-    let change = v.redo().unwrap();
-    assert_eq!(v.cursor(), 2, "redo from clear restores both ops");
+    // P4c zipper: clear() is a normal undoable structural edit — it checkpoints
+    // the pre-clear present onto `past` (and clears the redo future). The whole
+    // clear is therefore undone in one step via undo() (Design §5: "one undo
+    // restores"). Redo is NOT used to restore a clear anymore.
+    assert!(v.can_undo());
+    let change = v.undo().unwrap();
+    assert_eq!(
+        v.cursor(),
+        2,
+        "one undo restores both ops cleared in one step"
+    );
     assert!(change.new_active_view.is_some());
 }
 
@@ -248,18 +254,43 @@ fn set_filter_replaces_filter_buried_under_a_sort() {
 
 #[test]
 fn history_cap_drops_oldest_when_exceeded() {
+    // P4c zipper: HISTORY_CAP bounds the `past` (undo snapshots), not the active
+    // `present` stack. Drive HISTORY_CAP + 1 applies, then verify the oldest
+    // snapshot (the empty base state) was evicted: we can undo exactly
+    // HISTORY_CAP times, and the earliest *retained* snapshot is non-empty so
+    // undo can never reach the empty base again.
     let mut v = vm();
-    for i in 0..HISTORY_CAP as i64 {
+    // HISTORY_CAP + 1 applies → a=0 .. a=HISTORY_CAP on the present stack.
+    for i in 0..=(HISTORY_CAP as i64) {
         v.apply(filter_eq("a", i));
     }
-    assert_eq!(v.stack().len(), HISTORY_CAP);
-    assert_eq!(v.cursor(), HISTORY_CAP);
+    assert_eq!(
+        v.stack().len(),
+        HISTORY_CAP + 1,
+        "present holds every applied op (the cap is on `past`, not `present`)"
+    );
+    assert!(v.can_undo(), "snapshots remain after the cap eviction");
 
-    // One more — oldest entry drops, cursor stays at cap.
-    v.apply(filter_eq("a", HISTORY_CAP as i64));
-    assert_eq!(v.stack().len(), HISTORY_CAP);
-    assert_eq!(v.cursor(), HISTORY_CAP);
-    // The first entry (a=0) is gone; first surviving entry is a=1.
+    // Undo HISTORY_CAP times — pops every retained snapshot.
+    for _ in 0..HISTORY_CAP {
+        assert!(
+            v.can_undo(),
+            "must be able to undo back through every snapshot"
+        );
+        v.undo();
+    }
+
+    // The oldest *retained* snapshot is [a=0] (the empty base snapshot was the
+    // one evicted), so we land on a single-op present, not the empty base.
+    assert_eq!(
+        v.stack().len(),
+        1,
+        "earliest retained snapshot is the single-op [a=0], not the evicted empty base"
+    );
+    assert!(
+        !v.can_undo(),
+        "the empty base snapshot was evicted by the cap — cannot undo further"
+    );
     match &v.stack()[0] {
         Transformation::Filter {
             value: FilterValue::Scalar {
@@ -267,7 +298,10 @@ fn history_cap_drops_oldest_when_exceeded() {
             },
             ..
         } => {
-            assert_eq!(*n, 1);
+            assert_eq!(
+                *n, 0,
+                "earliest retained op is a=0; the empty base was evicted"
+            );
         }
         _ => panic!("unexpected first entry after cap"),
     }

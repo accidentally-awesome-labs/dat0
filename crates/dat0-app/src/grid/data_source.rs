@@ -110,6 +110,28 @@ impl GridDataSource {
             .nth(visible_ix)
     }
 
+    /// Map a VISIBLE column's SOURCE NAME to its index in the underlying Arrow
+    /// schema (which still contains the hidden surrogate). Returns `None` if no
+    /// visible field has that exact name.
+    ///
+    /// Mirror of [`Self::schema_index_for_visible`], keyed on the column's
+    /// stable source identity rather than its screen position. The grid's
+    /// `ColumnView` (P4c) can reorder/delete columns so that a screen index no
+    /// longer matches the schema index; the mutating paths resolve `screen →
+    /// source` through the `ColumnView` and then `source → schema index` through
+    /// this method, so a cell read/write always hits the right Arrow column even
+    /// after a display-only reorder. The hidden `__dat0_rowid` surrogate is
+    /// excluded from the match (it is never a `ColumnView` source).
+    pub fn schema_index_for_source(&self, source: &str) -> Option<usize> {
+        if source == dat0_engine::ROWID_COL {
+            return None;
+        }
+        self.schema
+            .fields()
+            .iter()
+            .position(|f| f.name().as_str() == source)
+    }
+
     /// Number of VISIBLE columns the grid paints (schema columns minus the
     /// hidden surrogate). Convenience for the delegate's `columns_count`.
     pub fn visible_column_count(&self) -> usize {
@@ -184,9 +206,86 @@ impl GridDataSource {
     /// Unknown / unhandled Arrow types fall back to `String` (the safe,
     /// non-destructive default — Contains/Regex rather than numeric ops).
     pub fn column_type(&self, ix: usize) -> Option<crate::view::filter_popover::ColumnType> {
+        let schema_ix = self.schema_index_for_visible(ix)?;
+        self.column_type_at_schema_ix(schema_ix)
+    }
+
+    /// Coarse [`crate::view::filter_popover::ColumnType`] of the visible column
+    /// whose SOURCE NAME is `source`, or `None` when no such column exists.
+    ///
+    /// Source-keyed twin of [`Self::column_type`] (P4c). After a `ColumnView`
+    /// reorder the screen-col order no longer matches the schema order, so the
+    /// edit/clipboard paths resolve `screen → source` through the `ColumnView`
+    /// and call this rather than the index-based [`Self::column_type`].
+    pub fn column_type_for_source(
+        &self,
+        source: &str,
+    ) -> Option<crate::view::filter_popover::ColumnType> {
+        let schema_ix = self.schema_index_for_source(source)?;
+        // Reuse the index-based mapping via the schema position. We already
+        // hold the schema index, so we read the field directly here to avoid a
+        // second visible→schema translation.
+        self.column_type_at_schema_ix(schema_ix)
+    }
+
+    /// Real Arrow [`DataType`] of the visible column whose SOURCE NAME is
+    /// `source`, or `None` when no such column exists (P4c — source-keyed twin
+    /// of [`Self::column_arrow_type`], used by paste/fill coercion so the
+    /// precise int/float type survives a display-only reorder).
+    pub fn column_arrow_type_for_source(
+        &self,
+        source: &str,
+    ) -> Option<duckdb::arrow::datatypes::DataType> {
+        let schema_ix = self.schema_index_for_source(source)?;
+        self.schema
+            .fields()
+            .get(schema_ix)
+            .map(|f| f.data_type().clone())
+    }
+
+    /// Synchronously read the rendered DISPLAY string of the cell at
+    /// (`screen_row`, source column `source`) for copy/fill (P4c), or `None`
+    /// when the row's page is not cached or no column has that source name.
+    ///
+    /// Source-keyed twin of [`Self::cell_display`]: identical semantics (NULL →
+    /// empty string, synchronous LRU-only read) but addresses the column by its
+    /// `ColumnView` source identity rather than its screen index, so a reorder
+    /// can't make `fill_down` read the wrong column.
+    pub fn cell_display_for_source(&self, screen_row: usize, source: &str) -> Option<String> {
+        let schema_ix = self.schema_index_for_source(source)?;
+
+        let screen_row_u64 = u64::try_from(screen_row).ok()?;
+        let key = PageKey {
+            start: (screen_row_u64 / PAGE_ROWS) * PAGE_ROWS,
+        };
+        let offset = usize::try_from(screen_row_u64 - key.start).ok()?;
+
+        let batch = {
+            let mut cache = self.cache.lock().expect("grid cache poisoned");
+            Arc::clone(cache.get(&key)?)
+        };
+
+        if offset >= batch.num_rows() {
+            return None;
+        }
+
+        let display = crate::grid::renderers::render_cell(&batch, schema_ix, offset);
+        if display.is_null {
+            Some(String::new())
+        } else {
+            Some(display.text)
+        }
+    }
+
+    /// Coarse [`crate::view::filter_popover::ColumnType`] of the Arrow field at
+    /// raw `schema_ix`. Shared body for [`Self::column_type`] (visible-index
+    /// keyed) and [`Self::column_type_for_source`] (source keyed).
+    fn column_type_at_schema_ix(
+        &self,
+        schema_ix: usize,
+    ) -> Option<crate::view::filter_popover::ColumnType> {
         use crate::view::filter_popover::ColumnType;
         use duckdb::arrow::datatypes::DataType;
-        let schema_ix = self.schema_index_for_visible(ix)?;
         self.schema
             .fields()
             .get(schema_ix)
@@ -281,13 +380,54 @@ impl GridDataSource {
     ///
     /// `visible_col` indexes over VISIBLE columns (the hidden `__dat0_rowid`
     /// surrogate is skipped) — consistent with [`Self::column_name`].
+    ///
+    /// Retained alongside the source-keyed [`Self::cell_render_for_source`] for
+    /// callers that genuinely hold a visible index (e.g. the `edit_lifecycle`
+    /// cache-contract test). The grid's paint path (`render_td`) addresses by
+    /// SOURCE, so a `ColumnView` reorder/delete can't paint the wrong column.
     pub fn cell_render(
         &self,
         screen_row: usize,
         visible_col: usize,
     ) -> Option<crate::grid::renderers::CellDisplay> {
         let schema_ix = self.schema_index_for_visible(visible_col)?;
+        self.cell_render_at_schema_ix(screen_row, schema_ix)
+    }
 
+    /// Synchronously read the full [`crate::grid::renderers::CellDisplay`] of the
+    /// cell at (`screen_row`, source column `source`) for the paged render path,
+    /// or `None` when the row's page is not cached or no visible column has that
+    /// source name.
+    ///
+    /// Source-keyed twin of [`Self::cell_render`] (P4c): identical page/Arrow
+    /// render logic (shared via [`Self::cell_render_at_schema_ix`]) but resolves
+    /// the column by its `ColumnView` SOURCE identity rather than its screen
+    /// index. The grid's `render_td` calls this so that after a display-only
+    /// reorder/delete the body cell painted under a header reflects THAT header's
+    /// column, not whatever schema column happens to sit at the same ordinal.
+    /// The hidden `__dat0_rowid` surrogate is never a `ColumnView` source and so
+    /// is excluded by [`Self::schema_index_for_source`].
+    pub fn cell_render_for_source(
+        &self,
+        screen_row: usize,
+        source: &str,
+    ) -> Option<crate::grid::renderers::CellDisplay> {
+        let schema_ix = self.schema_index_for_source(source)?;
+        self.cell_render_at_schema_ix(screen_row, schema_ix)
+    }
+
+    /// Synchronously read the [`crate::grid::renderers::CellDisplay`] of the cell
+    /// at (`screen_row`, raw Arrow `schema_ix`). Shared body for the
+    /// visible-index-keyed [`Self::cell_render`] and the source-keyed
+    /// [`Self::cell_render_for_source`] — mirrors how
+    /// [`Self::column_type_at_schema_ix`] is shared. Returns `None` when the
+    /// row's page is not resident in the LRU (graceful — never blocks the render
+    /// loop / never triggers a DuckDB fetch) or the row is past the page's rows.
+    fn cell_render_at_schema_ix(
+        &self,
+        screen_row: usize,
+        schema_ix: usize,
+    ) -> Option<crate::grid::renderers::CellDisplay> {
         let screen_row_u64 = u64::try_from(screen_row).ok()?;
         let key = PageKey {
             start: (screen_row_u64 / PAGE_ROWS) * PAGE_ROWS,

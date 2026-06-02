@@ -29,7 +29,12 @@ pub use migrate::SessionLoadError;
 /// `Transformation` variants are purely additive tagged-enum cases, so no
 /// field reshape is needed — a v2 file (filter/sort only) loads byte-identically
 /// except for the bumped version.
-pub const SESSION_SCHEMA_VERSION: u32 = 3;
+///
+/// v3 → v4 (P4c) adds the display-only projection variants (Reorder/Rename/
+/// DeleteColumn) and changes persistence to the ACTIVE stack only (the P4c
+/// history zipper drops the in-stack redo tail). Migration truncates each tab's
+/// `transform_stack` to `undo_cursor` (its active slice).
+pub const SESSION_SCHEMA_VERSION: u32 = 4;
 
 /// A single tab within a scratch session.
 ///

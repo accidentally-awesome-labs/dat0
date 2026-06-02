@@ -4,6 +4,7 @@ pub mod cell_editor;
 pub mod clipboard;
 pub mod context_menu;
 pub mod data_source;
+pub mod edit_ops;
 pub mod keymap;
 pub mod renderers;
 pub mod selection;
@@ -13,12 +14,69 @@ pub use data_source::GridDataSource;
 use std::sync::Arc;
 
 use gpui::{
-    App, Context, IntoElement, ParentElement, SharedString, Styled, WeakEntity, Window, div,
-    prelude::*,
+    App, Context, IntoElement, ParentElement, Pixels, Point, SharedString, Styled, WeakEntity,
+    Window, div, prelude::*,
 };
 use gpui_component::table::{Column, TableDelegate, TableState};
 
 use renderers::{CellAlignment, type_badge};
+
+// ── Internal drag payload for column-header reorder (T6) ─────────────────────
+//
+// GPUI 0.2.2 `on_drag` / `on_drop` require a payload type that:
+//   1. Is `Clone` (GPUI clones the value on drag start).
+//   2. Implements `Render` (GPUI renders the drag ghost from this entity).
+//
+// Pattern mirrors the `DragInfo` struct in
+// `gpui-0.2.2/examples/drag_drop.rs` (the real internal-drag example):
+//   `.on_drag(value, |val, position, _, cx| cx.new(|_| val.position(position)))`
+// The drag source calls the constructor; `on_drop` receives a `&ReorderDrag`.
+
+/// Drag payload for a column-header reorder gesture.
+///
+/// `from` is the screen column index that started the drag. On drop the
+/// target header's index is used as `to`, and `WorkspaceShell::on_reorder_columns`
+/// is called to apply the display-only `Reorder` transform.
+#[derive(Clone, Copy)]
+pub(crate) struct ReorderDrag {
+    /// Screen column index of the dragged header.
+    pub from: usize,
+    /// Current drag-ghost position (updated by the `on_drag` constructor so
+    /// the ghost follows the pointer).
+    position: Point<Pixels>,
+}
+
+impl ReorderDrag {
+    fn new(from: usize) -> Self {
+        Self {
+            from,
+            position: Point::default(),
+        }
+    }
+
+    fn with_position(mut self, pos: Point<Pixels>) -> Self {
+        self.position = pos;
+        self
+    }
+}
+
+impl gpui::Render for ReorderDrag {
+    fn render(&mut self, _window: &mut Window, _cx: &mut Context<'_, Self>) -> impl IntoElement {
+        // Ghost: a small labelled pill that follows the pointer. Offset from the
+        // pointer so the drop-target hit test lands on the target rather than on
+        // the ghost itself (mirroring the drag_drop.rs example's pl/pt approach).
+        div().pl(self.position.x).pt(self.position.y).child(
+            div()
+                .px_2()
+                .py_1()
+                .bg(gpui::rgba(0x3b82f6aa))
+                .text_color(gpui::white())
+                .text_xs()
+                .rounded_md()
+                .child(format!("col {}", self.from)),
+        )
+    }
+}
 
 // ── Four-zone header geometry ─────────────────────────────────────────────────
 //
@@ -36,9 +94,9 @@ use renderers::{CellAlignment, type_badge};
 // x-position → zone mapping.  A pure zone-from-x helper (for hit-testing in
 // tests or future pointer-event work) is provided alongside these constants.
 //
-// Remaining stubs: grip / body zones are still no-ops.
-//   Grip → column-resize (P4c)
-//   Body → row-selection toggle (future P4b task)
+//   Grip → column drag-reorder (P4c T6, live)
+//   Body single-click → column select (P4c T13, live)
+//   Body double-click → inline header rename (P4c T7, live)
 
 /// Width of the left-edge drag-grip in logical pixels.
 /// P4c (column resize) will replace the invisible stub with a real handle.
@@ -126,31 +184,63 @@ pub struct GridTableDelegate {
 }
 
 impl GridTableDelegate {
-    /// Build a delegate over `source`, deriving column metadata from the
-    /// Arrow schema. Columns get a small default width and a type-badge
-    /// suffix in their display name (e.g., `id (INT64)`).
+    /// Build a delegate over `source`, deriving column metadata from the active
+    /// `ColumnView` (`column_view`) — its display label, order, and the deletes
+    /// it excludes (P4c T5). Each column's name carries the type-badge suffix of
+    /// its underlying Arrow field (e.g., `id (INT64)`); the badge is resolved by
+    /// the column's SOURCE identity, so a display-only reorder keeps the right
+    /// badge with the right column.
+    ///
+    /// When `column_view` is empty — no data source bound yet (pre-bind), a
+    /// delegate built without a shell in unit tests, OR a genuine
+    /// zero-visible-column state — the columns fall back to the raw VISIBLE
+    /// schema order (which is itself empty in the zero-column case), the identity
+    /// the pre-P4c delegate produced, so existing behaviour and tests are
+    /// unchanged. The hidden `__dat0_rowid` surrogate is never a `ColumnView`
+    /// source and never a visible field, so it never paints either way.
     ///
     /// `ws` is a weak handle to the owning `WorkspaceShell` so the header
     /// sort/funnel click closures (T0 / PD-016) can dispatch into it. Tests
-    /// that build a delegate without a shell pass `WeakEntity::new_invalid()`.
-    pub fn new(source: Arc<GridDataSource>, ws: WeakEntity<crate::window::WorkspaceShell>) -> Self {
-        // Columns are derived from the VISIBLE schema fields only: the hidden
-        // `__dat0_rowid` surrogate (T5) is plumbed through the Arrow schema for
-        // `row_key` resolution but must never paint. We index each visible
-        // column back into the Arrow schema via `schema_index_for_visible` so
-        // the type badge reflects the right field; a user's renamed-collision
-        // column `__dat0_rowid__src` stays visible (it was the user's data).
+    /// that build a delegate without a shell pass `WeakEntity::new_invalid()`
+    /// (and `&[]` for `column_view`).
+    pub fn new(
+        source: Arc<GridDataSource>,
+        ws: WeakEntity<crate::window::WorkspaceShell>,
+        column_view: &[dat0_engine::transform::ProjectionColumn],
+    ) -> Self {
         let schema = source.schema.clone();
-        let columns = (0..source.visible_column_count())
-            .filter_map(|visible_ix| {
-                let schema_ix = source.schema_index_for_visible(visible_ix)?;
-                let f = schema.fields().get(schema_ix)?;
-                let badge = type_badge(f.data_type());
-                let name: SharedString = format!("{} ({})", f.name(), badge).into();
-                let key: SharedString = f.name().to_string().into();
-                Some(Column::new(key, name))
-            })
-            .collect();
+        let columns: Vec<Column> = if column_view.is_empty() {
+            // Identity fallback: derive from the VISIBLE schema fields in schema
+            // order (the pre-P4c behaviour). The hidden `__dat0_rowid` surrogate
+            // is excluded by `schema_index_for_visible`.
+            (0..source.visible_column_count())
+                .filter_map(|visible_ix| {
+                    let schema_ix = source.schema_index_for_visible(visible_ix)?;
+                    let f = schema.fields().get(schema_ix)?;
+                    let badge = type_badge(f.data_type());
+                    let name: SharedString = format!("{} ({})", f.name(), badge).into();
+                    let key: SharedString = f.name().to_string().into();
+                    Some(Column::new(key, name))
+                })
+                .collect()
+        } else {
+            // ColumnView-driven: display label + order from the fold; the badge
+            // is resolved off the SOURCE field so a reorder keeps it aligned. The
+            // `key` stays the SOURCE identity (the header renders `name`, the
+            // display label). A source absent from the schema (defensive) is
+            // skipped rather than panicking.
+            column_view
+                .iter()
+                .filter_map(|c| {
+                    let schema_ix = source.schema_index_for_source(&c.source)?;
+                    let f = schema.fields().get(schema_ix)?;
+                    let badge = type_badge(f.data_type());
+                    let name: SharedString = format!("{} ({})", c.display, badge).into();
+                    let key: SharedString = c.source.clone().into();
+                    Some(Column::new(key, name))
+                })
+                .collect()
+        };
         Self {
             source,
             columns,
@@ -244,10 +334,11 @@ impl TableDelegate for GridTableDelegate {
     /// Four-zone column header per P4a spec §6.
     ///
     /// Layout (left → right):
-    ///   1. **Grip** — invisible `HEADER_GRIP_PX`-wide strip.  Stub: no-op +
-    ///      `cursor_col_resize` hint only (P4c column-resize will fill).
+    ///   1. **Grip** — invisible `HEADER_GRIP_PX`-wide strip.  Live (P4c T6):
+    ///      drag source + drop target for column reorder.
     ///   2. **Body** — column-name text, flex-grows to fill remaining space.
-    ///      Stub: no-op click (future P4b row-selection will claim this zone).
+    ///      Single-click live (P4c T13): selects the whole column.
+    ///      Double-click live (P4c T7): opens inline header rename.
     ///   3. **Sort icon** — `HEADER_SORT_PX`-wide `⇅` button.  Live (P4a):
     ///      dispatches to `WorkspaceShell::on_sort_zone_click` (Asc/Desc/None).
     ///   4. **Funnel icon** — `HEADER_FUNNEL_PX`-wide `⌄` button.  Live (P4a):
@@ -256,9 +347,82 @@ impl TableDelegate for GridTableDelegate {
         &mut self,
         col_ix: usize,
         _window: &mut Window,
-        _cx: &mut Context<TableState<Self>>,
+        cx: &mut Context<TableState<Self>>,
     ) -> impl IntoElement {
         let col_name = self.columns[col_ix].name.clone();
+
+        // ── Zone 1: Grip — drag source + drop target (T6) ────────────────────
+        //
+        // API: GPUI 0.2.2 internal-drag pattern from
+        // `gpui-0.2.2/examples/drag_drop.rs`:
+        //   `.on_drag(value, |val, position, _, cx| cx.new(|_| val.with_position(position)))`
+        //   `.on_drop(cx.listener(|delegate, info: &ReorderDrag, _, _| ...))` on the target.
+        //
+        // The grip is both a drag SOURCE (starts a drag carrying `col_ix`) and a
+        // drop TARGET (receives a drop from another header and applies the reorder).
+        // Keeping them on the same zone means any header-to-header drag is handled
+        // cleanly — the user grabs the left stub and drops over another header's stub.
+        let ws_for_drop = self.ws.clone();
+        let grip = div()
+            .id(("th-grip", col_ix))
+            .w(gpui::px(HEADER_GRIP_PX))
+            .h_full()
+            .cursor_move()
+            // Drag source: carry this column's index as the payload.
+            .on_drag(
+                ReorderDrag::new(col_ix),
+                |drag: &ReorderDrag, position, _, cx| cx.new(|_| drag.with_position(position)),
+            )
+            // Drop target: when a ReorderDrag lands here, call on_reorder_columns.
+            .on_drop(cx.listener(move |_delegate, drag: &ReorderDrag, _, cx| {
+                let from = drag.from;
+                let to = col_ix;
+                if let Some(h) = ws_for_drop.upgrade() {
+                    h.update(cx, |ws, cx| ws.on_reorder_columns(from, to, cx));
+                }
+            }));
+
+        // ── Zone 2: Body / column name ───────────────────────────────────────
+        //
+        // If a header-rename editor is active for this column, render the editor
+        // in-place instead of the label (P4c T7). Otherwise render the label with
+        // an on_click handler: single-click → select the whole column (P4c T13);
+        // double-click → begin inline rename (P4c T7).
+        let ws_for_body = self.ws.clone();
+        let rename_editor: Option<gpui::AnyElement> = self
+            .ws
+            .upgrade()
+            .and_then(|h| h.read(cx).header_rename_for(col_ix))
+            .map(|e| e.into_any_element());
+
+        let body = div()
+            .id(("th-body", col_ix))
+            .flex_1()
+            .h_full()
+            .flex()
+            .items_center()
+            .overflow_hidden()
+            .on_click(move |ev, _window, cx| {
+                // Single-click → select the whole column (P4c T13).
+                // Double-click → begin inline rename (P4c T7).
+                if ev.click_count() == 2 {
+                    if let Some(h) = ws_for_body.upgrade() {
+                        h.update(cx, |ws, cx| ws.begin_column_rename(col_ix, cx));
+                    }
+                } else if ev.click_count() == 1 {
+                    if let Some(h) = ws_for_body.upgrade() {
+                        h.update(cx, |ws, cx| ws.select_column_at(col_ix, cx));
+                    }
+                }
+            });
+
+        let body = if let Some(editor_el) = rename_editor {
+            // Editor active for this column: render it in-place.
+            body.child(editor_el)
+        } else {
+            // No editor: render the column label.
+            body.child(col_name)
+        };
 
         div()
             .flex()
@@ -266,27 +430,8 @@ impl TableDelegate for GridTableDelegate {
             .items_center()
             .w_full()
             .h_full()
-            // ── Zone 1: Grip (stub — P4c column-resize will fill) ────────────
-            .child(
-                div()
-                    .id(("th-grip", col_ix))
-                    .w(gpui::px(HEADER_GRIP_PX))
-                    .h_full()
-                    .cursor_col_resize(),
-                // Stub: no click handler; P4c (column resize) will claim this zone.
-            )
-            // ── Zone 2: Body / column name (stub — future P4b row-selection) ──
-            .child(
-                div()
-                    .id(("th-body", col_ix))
-                    .flex_1()
-                    .h_full()
-                    .flex()
-                    .items_center()
-                    .overflow_hidden()
-                    .child(col_name),
-                // Stub: no click handler; future P4b (row selection) will claim this zone.
-            )
+            .child(grip)
+            .child(body)
             // ── Zone 3: Sort icon (live — T12 replaces closure) ───────────────
             .child(self.render_sort_icon(col_ix))
             // ── Zone 4: Funnel icon (live — T10 replaces closure) ─────────────
@@ -301,17 +446,32 @@ impl TableDelegate for GridTableDelegate {
         cx: &mut Context<TableState<Self>>,
     ) -> impl IntoElement {
         // PD-018: `render_td` reads the real value from the LRU page cache
-        // synchronously (`cell_render` never triggers a DuckDB fetch). When the
+        // synchronously (the render never triggers a DuckDB fetch). When the
         // row's page is already cached — prefetched on bind / on scroll via the
         // background path — the cell paints its real value with numeric
         // right-alignment and NULL styling. When the page hasn't loaded yet, we
         // fall back to the em-dash placeholder for THAT cell only; the
         // virtualized-table pattern means real values appear as pages load.
         //
-        // `col_ix` is a VISIBLE-column index (the hidden `__dat0_rowid` never
-        // paints, T5); `cell_render` maps it to the underlying Arrow schema
-        // index internally so the cell reflects the right column.
-        let cell = self.source.cell_render(row_ix, col_ix);
+        // `col_ix` is a DISPLAY-order index into `self.columns` (the `ColumnView`
+        // fold's order, P4c). We resolve it to the column's stable SOURCE identity
+        // (`columns[col_ix].key`, set to `ProjectionColumn::source`) and read by
+        // source via `cell_render_for_source`. This is the body-cell mirror of the
+        // header/addressing reroute: under a `Reorder`/`DeleteColumn` the display
+        // ordinal no longer equals the schema ordinal, so reading by `col_ix`
+        // directly would paint the WRONG column's data under each header.
+        //
+        // Identity / pre-bind fallback: when `columns[col_ix]` is out of range or
+        // carries no source (the empty-`column_view` identity build, or a delegate
+        // built without a shell in unit tests), fall back to the index-based
+        // `cell_render(row_ix, col_ix)` — under that build display ordinal ==
+        // visible/schema ordinal, so behaviour is unchanged.
+        let cell = match self.columns.get(col_ix) {
+            Some(col) if !col.key.is_empty() => {
+                self.source.cell_render_for_source(row_ix, col.key.as_ref())
+            }
+            _ => self.source.cell_render(row_ix, col_ix),
+        };
 
         // PD-018 focus ring: now that cells paint real values we can anchor a
         // per-cell ring on the active selection cell (replacing the T11
@@ -320,19 +480,27 @@ impl TableDelegate for GridTableDelegate {
         // small and this is the only place the active/selected state is known at
         // cell-render time. Tests build the delegate with an invalid `ws`, so
         // `upgrade` returns `None` and no ring is drawn.
-        let (is_active, is_selected) = self
+        //
+        // T12: also read `copied_range` for the marching-ants dashed border.
+        let (is_active, is_selected, copied) = self
             .ws
             .upgrade()
-            .and_then(|ws| {
-                ws.read(cx).selection.as_ref().map(|sel| {
-                    let active = sel.active();
-                    (
-                        active.row == row_ix && active.col == col_ix,
-                        sel.contains(row_ix, col_ix),
-                    )
-                })
+            .map(|ws| {
+                let shell = ws.read(cx);
+                let (active, selected) = shell
+                    .selection
+                    .as_ref()
+                    .map(|sel| {
+                        let active = sel.active();
+                        (
+                            active.row == row_ix && active.col == col_ix,
+                            sel.contains(row_ix, col_ix),
+                        )
+                    })
+                    .unwrap_or((false, false));
+                (active, selected, shell.copied_range)
             })
-            .unwrap_or((false, false));
+            .unwrap_or((false, false, None));
 
         // ElementId only accepts (&str, usize) tuples (gpui 0.2.2), not
         // 3-tuples. Encode (row_ix, col_ix) into a single index so each
@@ -348,7 +516,50 @@ impl TableDelegate for GridTableDelegate {
         if is_selected && !is_active {
             el = el.bg(gpui::rgba(0x3b82f622));
         }
+
+        // T12: Marching-ants dashed border on the boundary cells of the last
+        // copied/cut range. `copied` is in screen-space (same space as
+        // `col_ix`); we apply a 1-px dashed green border on each boundary
+        // edge of the inclusive rectangle [r0..r1] × [c0..c1].
+        //
+        // GPUI 0.2.2 has `border_dashed()` which sets `BorderStyle::Dashed`
+        // globally for all four edges. We control which edges are VISIBLE by
+        // setting their width to 1 (visible) or leaving them at 0 (hidden).
+        // The active-cell ring applied below overrides this with `border_2()`
+        // so the focus ring wins when the active cell coincides with a boundary.
+        if let Some(cr) = copied {
+            // Normalise so r0 ≤ r1 and c0 ≤ c1 (the selection geometry
+            // already normalises, but copied_range mirrors it verbatim).
+            let (rmin, rmax) = (cr.r0.min(cr.r1), cr.r0.max(cr.r1));
+            let (cmin, cmax) = (cr.c0.min(cr.c1), cr.c0.max(cr.c1));
+
+            let on_top = row_ix == rmin && col_ix >= cmin && col_ix <= cmax;
+            let on_bottom = row_ix == rmax && col_ix >= cmin && col_ix <= cmax;
+            let on_left = col_ix == cmin && row_ix >= rmin && row_ix <= rmax;
+            let on_right = col_ix == cmax && row_ix >= rmin && row_ix <= rmax;
+
+            if on_top || on_bottom || on_left || on_right {
+                // Dashed green accent, 1-px per visible boundary edge.
+                // `.border_dashed()` sets the style; per-edge width methods
+                // control which edges are visible (0-width edges are invisible).
+                el = el.border_color(gpui::rgb(0x22c55e)).border_dashed();
+                if on_top {
+                    el = el.border_t_1();
+                }
+                if on_bottom {
+                    el = el.border_b_1();
+                }
+                if on_left {
+                    el = el.border_l_1();
+                }
+                if on_right {
+                    el = el.border_r_1();
+                }
+            }
+        }
+
         // Active-cell focus ring: 2-px blue border anchored on the exact cell.
+        // Applied after marching-ants so it wins when both apply.
         if is_active {
             el = el
                 .border_2()
@@ -434,7 +645,8 @@ mod tests {
     #[tokio::test]
     async fn delegate_columns_match_schema() {
         let (_tmp, ds) = build_source(8).await;
-        let delegate = GridTableDelegate::new(Arc::clone(&ds), gpui::WeakEntity::new_invalid());
+        let delegate =
+            GridTableDelegate::new(Arc::clone(&ds), gpui::WeakEntity::new_invalid(), &[]);
         // Delegate paints VISIBLE columns only (the `__dat0_rowid` surrogate, when
         // present, is hidden) — assert against the visible count, not the raw schema.
         assert_eq!(delegate.columns.len(), ds.visible_column_count());
@@ -450,7 +662,8 @@ mod tests {
     #[tokio::test]
     async fn delegate_source_ptr_eq() {
         let (_tmp, ds) = build_source(4).await;
-        let delegate = GridTableDelegate::new(Arc::clone(&ds), gpui::WeakEntity::new_invalid());
+        let delegate =
+            GridTableDelegate::new(Arc::clone(&ds), gpui::WeakEntity::new_invalid(), &[]);
         assert!(delegate.source_ptr_eq(&ds));
     }
 }

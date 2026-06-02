@@ -40,6 +40,9 @@ pub mod ids {
     pub const VIEW_DELETE_ROWS: &str = "view.delete_rows";
     pub const VIEW_SET_NULL: &str = "view.set_null";
     pub const VIEW_SET_VALUE: &str = "view.set_value";
+    pub const VIEW_DELETE_COLUMN: &str = "view.delete_column";
+    // P4c T11: File → Export… dialog.
+    pub const VIEW_EXPORT: &str = "view.export";
 }
 
 /// Register every built-in action onto `reg`. Returns an error if any id

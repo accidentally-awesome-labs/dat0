@@ -501,6 +501,25 @@ impl crate::QueryEngine for DuckDBEngine {
         .map_err(|e| EngineError::TaskJoin(e.to_string()))?
     }
 
+    #[instrument(skip(self, select_sql), fields(format = ?format, sql_len = select_sql.len()))]
+    async fn export_query_to_path(
+        &self,
+        select_sql: &str,
+        format: crate::types::ExportFormat,
+        dest: &std::path::Path,
+    ) -> Result<()> {
+        self.assert_open()?;
+        let conn = self.conn.clone();
+        let select_sql = select_sql.to_owned();
+        let dest = dest.to_path_buf();
+        tokio::task::spawn_blocking(move || -> Result<()> {
+            let conn = conn.lock().map_err(|_| EngineError::EnginePoisoned)?;
+            crate::export::export_query_to_path(&conn, &select_sql, format, &dest)
+        })
+        .await
+        .map_err(|e| EngineError::TaskJoin(e.to_string()))?
+    }
+
     #[instrument(skip(self), fields(dsn_scheme = ?dsn.split(':').next(), alias))]
     async fn attach(&self, dsn: &str, alias: &str, opts: crate::types::AttachOpts) -> Result<()> {
         self.assert_open()?;

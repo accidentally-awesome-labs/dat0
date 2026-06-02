@@ -387,6 +387,32 @@ pub fn run_app(lock: AppLock, initial_paths: Vec<PathBuf>, main_loop: MainLoop) 
             });
         }
 
+        // Wire Cmd-E / Ctrl-E → Export (P4c T11). `Export` is a gpui action stub
+        // declared in `menu_macos.rs` (unconditional, so it resolves on Linux
+        // too). The handler dispatches through the ActionRegistry so the
+        // menu-click, keybind, and command-palette paths converge on
+        // `view.export` → `WorkspaceShell::open_export_dialog`.
+        {
+            #[cfg(target_os = "macos")]
+            let export_ks = "cmd-e";
+            #[cfg(not(target_os = "macos"))]
+            let export_ks = "ctrl-e";
+            cx.bind_keys([gpui::KeyBinding::new(
+                export_ks,
+                crate::menu_macos::Export,
+                None,
+            )]);
+            cx.on_action(|_action: &crate::menu_macos::Export, cx: &mut App| {
+                if let Some(reg) = crate::window_registry::action_registry() {
+                    if let Some(desc) = reg.get(&crate::actions::ActionId::from(
+                        crate::actions::builtin::ids::VIEW_EXPORT,
+                    )) {
+                        (desc.dispatch)(cx);
+                    }
+                }
+            });
+        }
+
         let first_window_id = session.lock().window_id;
         let bounds = Bounds::centered(None, size(px(1200.), px(800.)), cx);
         let session_for_window = Arc::clone(&session);
@@ -479,7 +505,7 @@ pub fn run_app(lock: AppLock, initial_paths: Vec<PathBuf>, main_loop: MainLoop) 
 /// `Arc` into an `Entity<TableState<…>>`.
 pub struct WorkspaceShell {
     session: Arc<Mutex<Session>>,
-    data_source: Option<Arc<GridDataSource>>,
+    pub(crate) data_source: Option<Arc<GridDataSource>>,
     /// Stateful entity owning the gpui-component Table's scroll handles,
     /// column-resize state, selection, etc. (`gpui-table-api-notes.md` §3).
     /// Rebuilt when `data_source` is swapped (e.g., user drops a second
@@ -508,7 +534,8 @@ pub struct WorkspaceShell {
     /// `Some` while a popover is open for some column; cleared when its
     /// `Outcome` is routed (apply / clear / cancel). Rendered as an overlay
     /// child in `render` when present.
-    active_popover: Option<Entity<crate::view::filter_popover_entity::FilterPopoverEntity>>,
+    pub(crate) active_popover:
+        Option<Entity<crate::view::filter_popover_entity::FilterPopoverEntity>>,
     /// Subscription to the active popover's `FilterPopoverEvent`. Stored so
     /// the callback stays registered — a dropped `Subscription` deregisters
     /// silently (P4a T10b post-review lesson). Cleared alongside
@@ -523,18 +550,35 @@ pub struct WorkspaceShell {
     /// Currently-mounted inline cell editor (T6). `Some` while editing the
     /// active cell; cleared on commit / cancel. Rendered as an overlay child
     /// in `render` when present.
-    cell_editor: Option<Entity<crate::grid::cell_editor::CellEditor>>,
+    pub(crate) cell_editor: Option<Entity<crate::grid::cell_editor::CellEditor>>,
     /// Subscription to the active cell editor's `CellEditorEvent`. Stored so
     /// the commit/cancel callback stays registered — a dropped `Subscription`
     /// deregisters silently (the P4a T10b trap). Cleared alongside
     /// `cell_editor`.
-    cell_editor_sub: Option<Subscription>,
+    pub(crate) cell_editor_sub: Option<Subscription>,
     /// Marching-ants range set by the most recent copy/cut (T7). Stored in
     /// screen-space; T7 only records the range. T11/polish will render the
     /// animated dashed border and clear this on the next selection change —
     /// until then it persists after a copy/cut.
     // T11/polish: render marching-ants from this stored range + clear on selection change.
     pub(crate) copied_range: Option<crate::grid::selection::CellRange>,
+    /// Currently-mounted inline header-rename editor (P4c T7). `Some` while the
+    /// user is renaming a column; cleared on commit / cancel. The `usize` is the
+    /// screen column index. Rendered in-place inside `render_th` when `Some` for
+    /// that column.
+    pub(crate) header_rename: Option<(usize, Entity<crate::grid::cell_editor::HeaderRenameEditor>)>,
+    /// Subscription to the active header-rename editor's [`HeaderRenameEvent`].
+    /// Stored so the commit/cancel callback stays registered — a dropped
+    /// `Subscription` deregisters silently (the P4a T10b trap). Cleared
+    /// alongside `header_rename`.
+    pub(crate) header_rename_sub: Option<Subscription>,
+    /// Folded visible columns (source→display, display order, deletes excluded),
+    /// recomputed from the active stack whenever it changes (P4c T5). Drives the
+    /// header labels + order and the screen-col→source addressing used by every
+    /// mutating path. Empty until a data source binds; with no projection ops
+    /// active it is the identity over `ds.visible_column_names()`, so screen-col
+    /// index == schema index and existing behaviour is unchanged.
+    pub(crate) column_view: Vec<dat0_engine::transform::ProjectionColumn>,
     /// GPUI focus handle for the workspace shell (T11). The outer container
     /// element tracks this handle so that `on_key_down` receives key events
     /// when the workspace has focus.  Constructed once in `new`; the element
@@ -544,6 +588,22 @@ pub struct WorkspaceShell {
     /// fine-grained cell focus; this shell-level handle is sufficient for
     /// T11's keyboard map + selection navigation.
     focus_handle: FocusHandle,
+    /// PipelineBar expanded/collapsed toggle state (P4c T9). The expanded
+    /// timeline view is T10 — this stub stores the toggle flag so the `⌄`
+    /// button can flip it and be rendered correctly on the next frame.
+    pub(crate) pipeline_bar_state: crate::view::pipeline_bar::PipelineBarState,
+    /// Currently-mounted Export… dialog (P4c T11). `Some` while the File →
+    /// Export… dialog is open; cleared when its `ExportEvent` is routed
+    /// (Export → run + dismiss, or Cancel → dismiss). Rendered as an overlay
+    /// child in `render` when present.
+    export_dialog: Option<Entity<crate::view::export_dialog::ExportDialog>>,
+    /// Subscription to the active export dialog's [`ExportEvent`]. Stored so the
+    /// Export/Cancel callback stays registered — a dropped `Subscription`
+    /// deregisters silently (the P4a T10b trap). Cleared alongside
+    /// `export_dialog`.
+    ///
+    /// [`ExportEvent`]: crate::view::export_dialog::ExportEvent
+    export_dialog_sub: Option<Subscription>,
 }
 
 impl WorkspaceShell {
@@ -560,7 +620,13 @@ impl WorkspaceShell {
             cell_editor: None,
             cell_editor_sub: None,
             copied_range: None,
+            column_view: Vec::new(),
             focus_handle: cx.focus_handle(),
+            header_rename: None,
+            header_rename_sub: None,
+            pipeline_bar_state: crate::view::pipeline_bar::PipelineBarState::default(),
+            export_dialog: None,
+            export_dialog_sub: None,
         }
     }
 
@@ -575,6 +641,12 @@ impl WorkspaceShell {
         // `selection.active().col` could point past the new schema.
         self.selection = None;
         self.data_source = Some(ds);
+        // Re-derive the ColumnView from the new source's visible columns + the
+        // active stack (P4c T5). On a fresh bind this is the identity over the
+        // visible columns (no projection ops yet); after a rebind that carries
+        // an active stack (e.g. a filter view) the source columns are unchanged,
+        // so the fold is still identity unless a projection op is present.
+        self.refresh_column_view();
     }
 
     /// Install or replace the active `GridDataSource` after a `ViewChange`
@@ -588,6 +660,10 @@ impl WorkspaceShell {
         // ever changes (e.g., a future hide-column transform).
         self.selection = None;
         self.data_source = Some(new_ds);
+        // A view-change rebind re-derives the source columns; recompute the
+        // ColumnView so the header labels/order and screen-col→source addressing
+        // track the (possibly new) active stack (P4c T5).
+        self.refresh_column_view();
         cx.notify();
     }
 
@@ -690,13 +766,40 @@ impl WorkspaceShell {
             .map(|vm| vm.base_table().to_string())
     }
 
-    /// Resolve a header column index to its bare column name via the active
-    /// `GridDataSource`'s Arrow schema (T0 / PD-016). Returns `None` if no
-    /// data source is mounted or `col_ix` is out of range.
-    fn column_name(&self, col_ix: usize) -> Option<String> {
-        self.data_source
+    /// Recompute `column_view` from the base columns (the visible source columns
+    /// of the active view) + the active transform stack (P4c T5). Called after
+    /// every stack change and after a data-source (re)bind so the view never
+    /// goes stale.
+    ///
+    /// With no projection ops in the stack the fold is the identity over the
+    /// visible columns, so `source_for_screen_col(&column_view, i)` returns the
+    /// same column `ds.column_name(i)` does — existing behaviour is unchanged.
+    pub(crate) fn refresh_column_view(&mut self) {
+        let base: Vec<String> = self
+            .data_source
             .as_ref()
-            .and_then(|ds| ds.column_name(col_ix))
+            .map(|ds| ds.visible_column_names())
+            .unwrap_or_default();
+        let ops: &[dat0_engine::Transformation] = self
+            .view_model
+            .as_ref()
+            .map(|vm| vm.active())
+            .unwrap_or(&[]);
+        self.column_view = crate::view::fold_columns(&base, ops);
+    }
+
+    /// Resolve a header (screen) column index to its bare SOURCE column name via
+    /// the active `ColumnView` (P4c T5). Returns `None` if no column maps to
+    /// `col_ix`.
+    ///
+    /// Screen-col→source is resolved through the folded `column_view` rather
+    /// than positionally over the Arrow schema, so after a display-only reorder
+    /// or delete a screen index still addresses the right source column. With no
+    /// projection ops the view is identity, so this is equivalent to the
+    /// previous `ds.column_name(col_ix)`.
+    pub(crate) fn column_name(&self, col_ix: usize) -> Option<String> {
+        crate::view::column_view::source_for_screen_col(&self.column_view, col_ix)
+            .map(str::to_string)
     }
 
     /// Drive the engine round-trip + grid rebind for a [`ViewChange`] (T6 —
@@ -711,7 +814,16 @@ impl WorkspaceShell {
     /// Preserves the dispatcher discipline established by `spawn_view_change`:
     /// the closure runs on the GPUI main thread via the `MainThreadDispatcher`,
     /// never `cx.update` from the tokio task.
-    fn spawn_rebind(&self, change: crate::view::ViewChange, cx: &mut Context<Self>) {
+    pub(crate) fn spawn_rebind(&mut self, change: crate::view::ViewChange, cx: &mut Context<Self>) {
+        // The ViewModel stack has already been mutated by the caller (set_sort /
+        // set_filter / edit_cells / delete_rows / a projection op). Refresh the
+        // ColumnView so the header labels/order + screen-col→source addressing
+        // reflect the new active stack immediately — a display-only change
+        // (Rename/Reorder/DeleteColumn, T6+) never round-trips through
+        // `apply_view_change`, so this is the only refresh hook for those. For a
+        // real data-view change this is harmless (the source columns are
+        // unchanged) and `apply_view_change` refreshes again on rebind (P4c T5).
+        self.refresh_column_view();
         let Some(base_table) = self.base_table() else {
             return;
         };
@@ -763,8 +875,11 @@ impl WorkspaceShell {
         let Some(ds) = self.data_source.as_ref() else {
             return;
         };
+        // Type the popover off the SOURCE column (resolved via the ColumnView)
+        // so a display-only reorder can't hand the funnel the wrong column's
+        // operator surface (P4c T5). Identity with no projection ops.
         let column_type = ds
-            .column_type(col_ix)
+            .column_type_for_source(&column)
             .unwrap_or(crate::view::filter_popover::ColumnType::String);
 
         // Pre-populate from any active filter on this column (edit-existing flow).
@@ -824,518 +939,188 @@ impl WorkspaceShell {
         self.spawn_rebind(change, cx);
     }
 
-    /// Commit the in-flight cell edit (T6). Resolves the active selection cell
-    /// to a [`dat0_engine::RowKey::Surrogate`] + column name via the active
-    /// `GridDataSource`, builds a single-cell [`dat0_engine::CellEdit`], pushes
-    /// it through [`ViewModel::edit_cells`], and drives the engine round-trip
-    /// via [`Self::spawn_rebind`].
-    ///
-    /// No-op (graceful) when no data source / view model is mounted, when the
-    /// selected row's page isn't cached (so `row_key` returns `None`), or when
-    /// the column index is out of range.
-    ///
-    /// Called by the inline [`crate::grid::cell_editor::CellEditor`] on commit
-    /// (Enter / focus-out). T11 wires the Enter/F2 keystroke that mounts the
-    /// editor over the active cell.
-    pub fn commit_cell_edit(&mut self, value: dat0_engine::Scalar, cx: &mut Context<Self>) {
-        let (Some(ds), Some(_vm)) = (self.data_source.as_ref(), self.view_model.as_ref()) else {
-            return;
-        };
-        let Some(selection) = self.selection.as_ref() else {
-            return;
-        };
-        let active = selection.active();
-        let Some(key) = ds.row_key(active.row) else {
-            return;
-        };
-        let Some(col) = ds.column_name(active.col) else {
-            return;
-        };
-        let cell = dat0_engine::CellEdit {
-            row: dat0_engine::RowKey::Surrogate { id: key },
-            column: col,
-            value,
-        };
-        // `view_model` is `Some` per the guard above; `unwrap` mirrors the plan.
-        let change = self
-            .view_model
-            .as_mut()
-            .expect("view_model checked above")
-            .edit_cells(vec![cell]);
-        // Drive the engine round-trip FIRST (spawn_rebind does not touch
-        // `cell_editor` / `cell_editor_sub`), then tear down the editor so the
-        // teardown order is: submit → dismiss (defensive; avoids any hypothetical
-        // future dependency on the editor still being mounted at rebind time).
-        self.spawn_rebind(change, cx);
-        self.cell_editor = None;
-        self.cell_editor_sub = None;
-    }
+    // ── Export… dialog + native save panel + streaming COPY (P4c T11) ─────────
 
-    /// Mount the inline cell editor over the active selection cell (T6).
+    /// Mount the File → Export… dialog (P4c T11).
     ///
-    /// Constructs a [`crate::grid::cell_editor::CellEditor`] entity typed for
-    /// the active column's Arrow type, subscribes to its commit/cancel events
-    /// (the subscription is **stored** in `self.cell_editor_sub` — a dropped
-    /// `Subscription` deregisters silently, the P4a T10b trap), and asks the
-    /// view to re-render so the editor mounts as an overlay.
+    /// Follows the `on_funnel_click` popover pattern: build the entity via
+    /// `cx.new`, subscribe to its [`ExportEvent`], and STORE the subscription in
+    /// `export_dialog_sub` (a dropped `Subscription` deregisters the callback
+    /// silently — the P4a T10b trap). No-op (graceful) when no `ViewModel` is
+    /// mounted, so Export… off an empty workspace does nothing rather than
+    /// presenting a dialog that can't build a SELECT.
     ///
-    /// No-op when no data source / selection is available. T11 wires the
-    /// Enter/F2 keystroke that calls this; T6 provides the editor + commit path.
-    pub fn begin_cell_edit(&mut self, _window: &mut Window, cx: &mut Context<Self>) {
-        use crate::grid::cell_editor::{CellEditor, CellEditorEvent};
+    /// [`ExportEvent`]: crate::view::export_dialog::ExportEvent
+    pub fn open_export_dialog(&mut self, cx: &mut Context<Self>) {
+        use crate::view::export_dialog::{ExportDialog, ExportEvent};
 
-        // Guard: both the filter popover and the cell editor render as absolute
-        // overlay children.  Mounting the editor while a popover is open would
-        // stack two overlays and leave no obvious dismiss path for the popover.
-        // The user must close the popover before starting an edit.
-        if self.active_popover.is_some() {
+        if self.view_model.is_none() {
+            tracing::debug!("open_export_dialog: no ViewModel (no file registered yet)");
             return;
         }
 
-        let Some(ds) = self.data_source.as_ref() else {
-            return;
-        };
-        let Some(selection) = self.selection.as_ref() else {
-            return;
-        };
-        let active = selection.active();
-        let column_type = ds
-            .column_type(active.col)
-            .unwrap_or(crate::view::filter_popover::ColumnType::String);
-
-        let editor = cx.new(|_| CellEditor::new(column_type));
-
+        let dialog = cx.new(|_| ExportDialog::new());
         // STORE the subscription — callbacks fire silently if the returned
         // Subscription is dropped (P4a T10b post-review lesson; mirrors
         // `on_funnel_click`'s `popover_sub`).
-        let sub = cx.subscribe(
-            &editor,
-            move |ws: &mut Self, _editor, ev: &CellEditorEvent, cx| match ev {
-                CellEditorEvent::Commit(value) => {
-                    ws.commit_cell_edit(value.clone(), cx);
-                }
-                CellEditorEvent::Cancel => {
-                    ws.cell_editor = None;
-                    ws.cell_editor_sub = None;
-                    // Intentionally NOT clearing `ws.selection` here — cancel
-                    // must leave the cursor on the cell the user was editing so
-                    // they can immediately retry or navigate away.
-                    cx.notify();
-                }
-            },
-        );
-        self.cell_editor_sub = Some(sub);
-        self.cell_editor = Some(editor);
+        let sub = cx.subscribe(&dialog, |ws: &mut Self, _dialog, ev: &ExportEvent, cx| {
+            ws.route_export_event(ev.clone(), cx);
+        });
+        self.export_dialog_sub = Some(sub);
+        self.export_dialog = Some(dialog);
         cx.notify();
     }
 
-    // ── Clipboard: copy / cut / paste (T7) ───────────────────────────────────
-    //
-    // T11 wires the Cmd+C / Cmd+X / Cmd+V (Ctrl on Linux) keybinds → these
-    // handlers; T7 only exposes them. The pure-logic TSV codec + coerce live in
-    // `crate::grid::clipboard`; these handlers are the thin GPUI glue (clipboard
-    // I/O + ViewModel round-trip) — build+clippy verified, with the real Excel /
-    // Sheets round-trip exercised in T14 manual UAT.
-
-    /// Build the bounding-rectangle grid of the current selection's display
-    /// values, serialize it as spreadsheet-TSV, and write it to the system
-    /// clipboard (T7 copy). Gaps in a discontiguous selection become empty
-    /// cells (the bounding-rect convention; mirrors Excel / Sheets). Records the
-    /// copied range for the marching-ants border (rendered in T11/polish).
+    /// Route an [`ExportEvent`] from the dialog: `Export` runs the save panel +
+    /// COPY (and dismisses); `Cancel` just dismisses.
     ///
-    /// No-op (graceful) when no data source / selection is mounted or the
-    /// selection is empty. Cells whose page isn't cached read as empty strings
-    /// (the synchronous-only contract — copy never blocks on a DuckDB fetch).
-    pub fn copy_selection(&mut self, cx: &mut Context<Self>) {
-        let Some(tsv) = self.build_selection_tsv() else {
-            return;
-        };
-        cx.write_to_clipboard(gpui::ClipboardItem::new_string(tsv));
-        cx.notify();
-    }
-
-    /// Copy the selection, then clear every selected cell to NULL in a single
-    /// undo step (T7 cut). The NULL edits are coerced through one
-    /// [`ViewModel::edit_cells`] call (one undo step) + one
-    /// [`Self::spawn_rebind`], exactly like paste.
-    ///
-    /// No-op when no data source / view model / selection is mounted.
-    pub fn cut_selection(&mut self, cx: &mut Context<Self>) {
-        // Copy first (sets the clipboard + marching-ants range).
-        self.copy_selection(cx);
-
-        let (Some(ds), Some(_vm)) = (self.data_source.as_ref(), self.view_model.as_ref()) else {
-            return;
-        };
-        let Some(selection) = self.selection.as_ref() else {
-            return;
-        };
-
-        // One CellEdit setting each selected cell to NULL. Cells whose page
-        // isn't cached (so `row_key` returns None) or whose column index is out
-        // of range are skipped — they can't be addressed.
-        let mut edits: Vec<dat0_engine::CellEdit> = Vec::new();
-        for (row, col) in selection.resolved_cells() {
-            let (Some(id), Some(column)) = (ds.row_key(row), ds.column_name(col)) else {
-                continue;
-            };
-            edits.push(dat0_engine::CellEdit {
-                row: dat0_engine::RowKey::Surrogate { id },
-                column,
-                value: dat0_engine::Scalar::Null,
-            });
-        }
-        if edits.is_empty() {
-            return;
-        }
-
-        let change = self
-            .view_model
-            .as_mut()
-            .expect("view_model checked above")
-            .edit_cells(edits);
-        self.spawn_rebind(change, cx);
-    }
-
-    /// Paste the clipboard's TSV block, anchored at the active selection cell
-    /// (T7). Parses the clipboard text, clamps the pasted block to the grid edge
-    /// (`row_count` × visible-column-count — out-of-range cells are dropped),
-    /// coerces each cell against its column's Arrow type (coerce-or-skip), and
-    /// applies the `Ok` cells as ONE [`ViewModel::edit_cells`] undo step + one
-    /// [`Self::spawn_rebind`]. If any cells were skipped (bad coercion) or
-    /// dropped (clamped past the edge), raises a paste-reject [`Banner`].
-    ///
-    /// No-op when no data source / view model / selection is mounted, or when
-    /// the clipboard holds no string (e.g. an image).
-    pub fn paste_clipboard(&mut self, cx: &mut Context<Self>) {
-        let Some(text) = cx.read_from_clipboard().and_then(|item| item.text()) else {
-            return;
-        };
-        let grid = crate::grid::clipboard::tsv_parse(&text);
-        // `tsv_parse` always returns at least one row of one cell, so a truly
-        // empty (or whitespace-only single-cell) clipboard payload decodes to
-        // `[[""]]` — guard against pasting that as an unintended empty-string
-        // write rather than relying on `grid.is_empty()` (which never fires).
-        if grid.iter().all(|row| row.iter().all(String::is_empty)) {
-            return;
-        }
-
-        let (Some(ds), Some(_vm), Some(selection)) = (
-            self.data_source.as_ref(),
-            self.view_model.as_ref(),
-            self.selection.as_ref(),
-        ) else {
-            return;
-        };
-
-        let anchor = selection.active();
-        let max_row = usize::try_from(ds.row_count).unwrap_or(usize::MAX);
-        let max_col = ds.visible_column_count();
-
-        let mut edits: Vec<dat0_engine::CellEdit> = Vec::new();
-        let mut skipped: usize = 0;
-        for (dr, paste_row) in grid.iter().enumerate() {
-            let row = anchor.row + dr;
-            for (dc, cell) in paste_row.iter().enumerate() {
-                let col = anchor.col + dc;
-                // Clamp-at-edge: drop cells that fall past the grid edge.
-                if row >= max_row || col >= max_col {
-                    skipped += 1;
-                    continue;
-                }
-                let (Some(id), Some(column), Some(ty)) = (
-                    ds.row_key(row),
-                    ds.column_name(col),
-                    ds.column_arrow_type(col),
-                ) else {
-                    // Page not cached or index out of range — can't address it.
-                    skipped += 1;
-                    continue;
-                };
-                match crate::grid::clipboard::coerce_cell(cell, &ty) {
-                    crate::grid::clipboard::CoerceResult::Ok(value) => {
-                        edits.push(dat0_engine::CellEdit {
-                            row: dat0_engine::RowKey::Surrogate { id },
-                            column,
-                            value,
-                        });
-                    }
-                    crate::grid::clipboard::CoerceResult::Skip => skipped += 1,
-                }
+    /// [`ExportEvent`]: crate::view::export_dialog::ExportEvent
+    fn route_export_event(
+        &mut self,
+        ev: crate::view::export_dialog::ExportEvent,
+        cx: &mut Context<Self>,
+    ) {
+        use crate::view::export_dialog::ExportEvent;
+        match ev {
+            ExportEvent::Export { scope, format } => {
+                self.run_export(scope, format, cx);
+            }
+            ExportEvent::Cancel => {
+                self.export_dialog = None;
+                self.export_dialog_sub = None;
+                cx.notify();
             }
         }
+    }
 
-        if !edits.is_empty() {
-            let change = self
-                .view_model
-                .as_mut()
-                .expect("view_model checked above")
-                .edit_cells(edits);
-            self.spawn_rebind(change, cx);
-        } else {
-            // Nothing applied — still re-render (e.g. to clear any prior state).
+    /// Open the native save panel, then stream the export via COPY (P4c T11).
+    ///
+    /// Builds the surrogate-stripped projection SELECT off `scope` + the live
+    /// view state (current-view applies rename/reorder/exclude via `column_view`;
+    /// full-table is the raw base columns minus the surrogate). The save panel
+    /// (`App::prompt_for_new_path`) returns a `oneshot::Receiver`, awaited on the
+    /// GPUI foreground executor inside `cx.spawn`; the async engine COPY
+    /// (`export_query_to_path`) is awaited directly because the tokio runtime is
+    /// entered for the whole `Application::run` closure (window.rs `runtime.enter()`),
+    /// mirroring the file-drop async-engine pattern. The result surfaces through
+    /// the `error_ux` banner queue (the same surface as the paste-reject banner).
+    pub fn run_export(
+        &mut self,
+        scope: crate::view::export_dialog::ExportScope,
+        format: dat0_engine::types::ExportFormat,
+        cx: &mut Context<Self>,
+    ) {
+        use crate::view::export_dialog::build_export;
+
+        let Some(base_table) = self.base_table() else {
+            self.export_dialog = None;
+            self.export_dialog_sub = None;
             cx.notify();
-        }
-
-        if skipped > 0 {
-            // Structured title + body (P3b Banner shape), not a flat string. The
-            // banner is `dismissible` by default (the X closes it); a paste-reject
-            // has no natural primary action, so none is wired (unlike the
-            // recovery banner's "Review"). Surfaced via the boot-time pending
-            // queue, drained by the banner host like every other Banner.
-            crate::error_ux::push(crate::error_ux::Banner::error(
-                format!(
-                    "{skipped} cell{} couldn't be pasted",
-                    if skipped == 1 { "" } else { "s" }
-                ),
-                "Values that don't match the column type (or fall outside the grid) \
-                 were skipped. The rest were pasted."
-                    .to_string(),
-            ));
-        }
-    }
-
-    // ── Bulk ops: fill-down / set-null / set-value / delete-rows (T8) ──────────
-    //
-    // T9 wires these to the context menu and T11 wires Ctrl+D / Delete keys;
-    // T8 only exposes the `pub` handlers. Each resolves the current selection
-    // → ONE transform → `spawn_rebind`. Empty / unresolvable selections are
-    // silent no-ops (no empty Edit/RowDelete emitted — the render layer errors
-    // on those).
-
-    /// Fill every selected cell in each column with the value of the top-most
-    /// selected cell in that column (T8 Ctrl+D behaviour).
-    ///
-    /// For each selected column:
-    ///   1. Find the minimum selected row in that column — the "source" cell.
-    ///   2. Read its display string via `ds.cell_display(top_row, col)` and
-    ///      coerce it through `clipboard::coerce_cell(display, column_arrow_type)`
-    ///      (same coercion path as paste, so the filled value matches the type).
-    ///      If coercion returns `Skip` (e.g. the top cell is NULL / empty), the
-    ///      fill value is `Scalar::Null`.
-    ///   3. Apply the coerced value to every *lower* selected cell in that column
-    ///      (the top cell itself is NOT overwritten — fill-down starts below the
-    ///      source).
-    ///
-    /// All columns' fills are bundled into ONE [`ViewModel::edit_cells`] call →
-    /// ONE undo step. No-op when no data source / view model / selection is
-    /// mounted, or when the resolved set is empty.
-    pub fn fill_down(&mut self, cx: &mut Context<Self>) {
-        let (Some(ds), Some(_vm)) = (self.data_source.as_ref(), self.view_model.as_ref()) else {
             return;
         };
-        let Some(selection) = self.selection.as_ref() else {
-            return;
+        // Active view name, already-quoted (the inner SELECT reads it directly).
+        let active_view = self
+            .view_model
+            .as_ref()
+            .and_then(|vm| vm.active_view())
+            .map(|v| format!("\"{}\"", v.replace('"', "\"\"")));
+        let base_columns = self
+            .data_source
+            .as_ref()
+            .map(|ds| ds.visible_column_names())
+            .unwrap_or_default();
+        let (inner, cols) = build_export(
+            scope,
+            &base_table,
+            active_view.as_deref(),
+            &self.column_view,
+            &base_columns,
+        );
+        let select = dat0_engine::render::render_export_select(&inner, &cols);
+        let ext = match format {
+            dat0_engine::types::ExportFormat::Csv => "csv",
+            dat0_engine::types::ExportFormat::Json => "json",
+            dat0_engine::types::ExportFormat::Parquet => "parquet",
         };
+        let suggested = format!("export.{ext}");
+        let engine = self.engine();
 
-        // Collect all resolved (row, col) pairs.
-        let cells: Vec<(usize, usize)> = selection.resolved_cells().collect();
-        if cells.is_empty() {
-            return;
-        }
-
-        // Group cells by column; find the top row per column.
-        // BTreeMap preserves column order for deterministic behaviour.
-        use std::collections::BTreeMap;
-        let mut col_rows: BTreeMap<usize, Vec<usize>> = BTreeMap::new();
-        for (row, col) in &cells {
-            col_rows.entry(*col).or_default().push(*row);
-        }
-
-        let mut edits: Vec<dat0_engine::CellEdit> = Vec::new();
-        for (col, mut rows) in col_rows {
-            rows.sort_unstable();
-            let top_row = rows[0];
-
-            // Coerce the top cell's display value into a typed Scalar.
-            let fill_value = if let (Some(display), Some(arrow_type)) =
-                (ds.cell_display(top_row, col), ds.column_arrow_type(col))
-            {
-                match crate::grid::clipboard::coerce_cell(&display, &arrow_type) {
-                    crate::grid::clipboard::CoerceResult::Ok(v) => v,
-                    // Empty / NULL display or uncoercible → fill with NULL.
-                    crate::grid::clipboard::CoerceResult::Skip => dat0_engine::Scalar::Null,
+        // GPUI native save panel (`App::prompt_for_new_path` derefs through
+        // `Context`). Returns a `oneshot::Receiver<Result<Option<PathBuf>>>`:
+        // `Ok(Some(path))` on confirm, `Ok(None)` on cancel.
+        let path_rx = cx.prompt_for_new_path(std::path::Path::new(""), Some(&suggested));
+        cx.spawn(async move |_this: gpui::WeakEntity<Self>, _async_cx| {
+            // `export_query_to_path` is a `QueryEngine` trait method.
+            use dat0_engine::QueryEngine as _;
+            // `await` yields `Result<Result<Option<PathBuf>>, oneshot::Canceled>`;
+            // collapse both layers to `Option<PathBuf>` (cancel / closed = None).
+            let dest = match path_rx.await {
+                Ok(Ok(Some(dest))) => dest,
+                _ => return,
+            };
+            // The engine COPY is async + Send; the tokio runtime is entered for
+            // the GPUI loop (window.rs `runtime.enter()`), so awaiting it here on
+            // the foreground executor drives the streaming COPY to completion.
+            match engine.export_query_to_path(&select, format, &dest).await {
+                Ok(()) => {
+                    let mut banner =
+                        crate::error_ux::Banner::info(dat0_i18n::t("export.done.title"));
+                    banner.body = format!("{}", dest.display());
+                    crate::error_ux::push(banner);
                 }
-            } else {
-                // Page not cached or col out of range for the top cell: skip column.
-                continue;
-            };
-
-            // Apply fill_value to every lower selected cell in this column.
-            for row in rows.into_iter().skip(1) {
-                let (Some(id), Some(column)) = (ds.row_key(row), ds.column_name(col)) else {
-                    continue;
-                };
-                edits.push(dat0_engine::CellEdit {
-                    row: dat0_engine::RowKey::Surrogate { id },
-                    column,
-                    value: fill_value.clone(),
-                });
+                Err(e) => {
+                    crate::error_ux::push(crate::error_ux::Banner::error(
+                        dat0_i18n::t("export.failed.title"),
+                        e.to_string(),
+                    ));
+                }
             }
-        }
+        })
+        .detach();
 
-        if edits.is_empty() {
-            return;
-        }
-
-        let change = self
-            .view_model
-            .as_mut()
-            .expect("view_model checked above")
-            .edit_cells(edits);
-        self.spawn_rebind(change, cx);
+        // Dismiss the dialog immediately — the save panel + COPY run async.
+        self.export_dialog = None;
+        self.export_dialog_sub = None;
+        cx.notify();
     }
 
-    /// Set every selected cell to `Scalar::Null` in ONE undo step (T8).
-    ///
-    /// Resolves the current selection → one [`ViewModel::edit_cells`] call
-    /// → one [`Self::spawn_rebind`]. Cells whose page isn't cached (so
-    /// `row_key` returns `None`) or whose column index is out of range are
-    /// skipped gracefully. No-op when no data source / view model / selection
-    /// is mounted or the selection resolves to nothing.
-    pub fn set_null_selection(&mut self, cx: &mut Context<Self>) {
-        let (Some(ds), Some(_vm)) = (self.data_source.as_ref(), self.view_model.as_ref()) else {
+    /// PipelineBar scrubber: jump to state `k` (keep first `k` ops) as one undo
+    /// step (P4c T9). Refreshes the `ColumnView` and routes the resulting
+    /// `ViewChange` — display-only ops re-render immediately; data-view changes
+    /// spawn an engine round-trip. No-op when no `ViewModel` is mounted.
+    pub fn pipeline_jump_to(&mut self, k: usize, cx: &mut Context<Self>) {
+        let Some(vm) = self.view_model.as_mut() else {
             return;
         };
-        let Some(selection) = self.selection.as_ref() else {
-            return;
-        };
-
-        let mut edits: Vec<dat0_engine::CellEdit> = Vec::new();
-        for (row, col) in selection.resolved_cells() {
-            let (Some(id), Some(column)) = (ds.row_key(row), ds.column_name(col)) else {
-                continue;
-            };
-            edits.push(dat0_engine::CellEdit {
-                row: dat0_engine::RowKey::Surrogate { id },
-                column,
-                value: dat0_engine::Scalar::Null,
-            });
-        }
-        if edits.is_empty() {
-            return;
-        }
-
-        let change = self
-            .view_model
-            .as_mut()
-            .expect("view_model checked above")
-            .edit_cells(edits);
-        self.spawn_rebind(change, cx);
+        let change = vm.jump_to(k);
+        self.refresh_column_view();
+        self.route_change(change, cx);
     }
 
-    /// Set every selected cell to `value` in ONE undo step (T8).
-    ///
-    /// Resolves the current selection → one [`ViewModel::edit_cells`] call
-    /// → one [`Self::spawn_rebind`]. Cells whose page isn't cached (so
-    /// `row_key` returns `None`) or whose column index is out of range are
-    /// skipped gracefully. No-op when no data source / view model / selection
-    /// is mounted or the selection resolves to nothing.
-    pub fn set_value_selection(&mut self, value: dat0_engine::Scalar, cx: &mut Context<Self>) {
-        let (Some(ds), Some(_vm)) = (self.data_source.as_ref(), self.view_model.as_ref()) else {
+    /// PipelineBar expanded timeline: remove the transform at stack position `i`
+    /// in ONE undo step (P4c T10). Refreshes the `ColumnView` and routes the
+    /// resulting `ViewChange` — display-only ops re-render immediately; data-view
+    /// changes spawn an engine round-trip. No-op when no `ViewModel` is mounted.
+    pub fn pipeline_remove_at(&mut self, i: usize, cx: &mut Context<Self>) {
+        let Some(vm) = self.view_model.as_mut() else {
             return;
         };
-        let Some(selection) = self.selection.as_ref() else {
-            return;
-        };
-
-        let mut edits: Vec<dat0_engine::CellEdit> = Vec::new();
-        for (row, col) in selection.resolved_cells() {
-            let (Some(id), Some(column)) = (ds.row_key(row), ds.column_name(col)) else {
-                continue;
-            };
-            edits.push(dat0_engine::CellEdit {
-                row: dat0_engine::RowKey::Surrogate { id },
-                column,
-                value: value.clone(),
-            });
-        }
-        if edits.is_empty() {
-            return;
-        }
-
-        let change = self
-            .view_model
-            .as_mut()
-            .expect("view_model checked above")
-            .edit_cells(edits);
-        self.spawn_rebind(change, cx);
+        let change = vm.remove_at(i);
+        self.refresh_column_view();
+        self.route_change(change, cx);
     }
 
-    /// Delete the distinct rows represented in the current selection in ONE
-    /// undo step (T8).
-    ///
-    /// Semantics: any selected cell's row is a candidate for deletion (not
-    /// just full-row selections). Distinct `RowKey`s are collected across all
-    /// selected cells and issued as one [`ViewModel::delete_rows`] call →
-    /// ONE undo step. Cells whose page isn't cached (so `row_key` returns
-    /// `None`) are skipped. No-op when no data source / view model / selection
-    /// is mounted or the selection resolves to nothing.
-    pub fn delete_selected_rows(&mut self, cx: &mut Context<Self>) {
-        let (Some(ds), Some(_vm)) = (self.data_source.as_ref(), self.view_model.as_ref()) else {
-            return;
-        };
-        let Some(selection) = self.selection.as_ref() else {
-            return;
-        };
-
-        // Collect distinct row IDs (one per selected row regardless of how
-        // many columns are selected in that row).
-        use std::collections::BTreeSet;
-        let mut seen_ids: BTreeSet<i64> = BTreeSet::new();
-        let mut keys: Vec<dat0_engine::RowKey> = Vec::new();
-        for (row, _col) in selection.resolved_cells() {
-            let Some(id) = ds.row_key(row) else {
-                continue;
-            };
-            if seen_ids.insert(id) {
-                keys.push(dat0_engine::RowKey::Surrogate { id });
-            }
-        }
-        if keys.is_empty() {
-            return;
-        }
-
-        let change = self
-            .view_model
-            .as_mut()
-            .expect("view_model checked above")
-            .delete_rows(keys);
-        self.spawn_rebind(change, cx);
-    }
-
-    /// Build the bounding-rect TSV blob of the current selection's display
-    /// values, recording the copied range for marching-ants. Returns `None`
-    /// when no data source / selection is mounted or the selection is empty.
-    ///
-    /// Shared by [`Self::copy_selection`] and [`Self::cut_selection`]; the
-    /// bounding rectangle spans `min..=max` row / column over every selected
-    /// cell, and each gap (a coordinate in the rect not in the selection, or a
-    /// cell whose page isn't cached) becomes an empty string.
-    fn build_selection_tsv(&mut self) -> Option<String> {
-        let ds = self.data_source.as_ref()?;
-        let selection = self.selection.as_ref()?;
-
-        let cells: Vec<(usize, usize)> = selection.resolved_cells().collect();
-        let (r0, c0, r1, c1) = bounding_rect(&cells)?;
-
-        let grid: Vec<Vec<String>> = (r0..=r1)
-            .map(|row| {
-                (c0..=c1)
-                    .map(|col| {
-                        if selection.contains(row, col) {
-                            ds.cell_display(row, col).unwrap_or_default()
-                        } else {
-                            // Gap inside the bounding rect → empty cell.
-                            String::new()
-                        }
-                    })
-                    .collect()
-            })
-            .collect();
-
-        self.copied_range = Some(crate::grid::selection::CellRange { r0, c0, r1, c1 });
-        Some(crate::grid::clipboard::tsv_serialize(&grid))
+    /// Return the active inline header-rename editor for `col_ix`, if one is
+    /// mounted for that column. Used by `GridTableDelegate::render_th` to render
+    /// the editor in-place instead of the column label (P4c T7).
+    pub fn header_rename_for(
+        &self,
+        col_ix: usize,
+    ) -> Option<Entity<crate::grid::cell_editor::HeaderRenameEditor>> {
+        self.header_rename
+            .as_ref()
+            .filter(|(c, _)| *c == col_ix)
+            .map(|(_, e)| e.clone())
     }
 }
 
@@ -1363,7 +1148,7 @@ impl WorkspaceShell {
 /// cells, or `None` when the set is empty (T7 copy/cut). Used to build the
 /// dense bounding-rect grid a discontiguous selection serializes to (gaps in
 /// the rect become empty cells).
-fn bounding_rect(cells: &[(usize, usize)]) -> Option<(usize, usize, usize, usize)> {
+pub(crate) fn bounding_rect(cells: &[(usize, usize)]) -> Option<(usize, usize, usize, usize)> {
     let mut it = cells.iter();
     let &(r, c) = it.next()?;
     let (mut r0, mut c0, mut r1, mut c1) = (r, c, r, c);
@@ -1408,7 +1193,15 @@ impl Render for WorkspaceShell {
                 }
             };
             if needs_rebuild {
-                let delegate = GridTableDelegate::new(Arc::clone(ds), cx.entity().downgrade());
+                // Build the delegate's columns from the active ColumnView so the
+                // header renders display labels in display order (P4c T5). With
+                // no projection ops the view is identity over the visible schema,
+                // so the columns match the pre-P4c schema-derived ones exactly.
+                let delegate = GridTableDelegate::new(
+                    Arc::clone(ds),
+                    cx.entity().downgrade(),
+                    &self.column_view,
+                );
                 self.table_state = Some(cx.new(|cx| TableState::new(delegate, window, cx)));
 
                 // PD-018 prefetch-on-bind: kick a background fetch of the first
@@ -1548,7 +1341,12 @@ impl Render for WorkspaceShell {
                 // shell so the items dispatch into the live edit handlers.
                 use crate::grid::context_menu::{ContextMenuExt, build_menu};
                 let ws_weak = cx.entity().downgrade();
-                let menu_builder = build_menu(ws_weak, self.selection.as_ref());
+                // Use the active cell's column as the fallback for "Delete
+                // Column" when no column selection is active (body-level menu;
+                // the header right-click handler passes the header's col_ix
+                // directly when that wiring lands in a later task).
+                let active_col = self.selection.as_ref().map(|s| s.active().col).unwrap_or(0);
+                let menu_builder = build_menu(ws_weak, self.selection.as_ref(), active_col);
                 div()
                     .size_full()
                     .child(table)
@@ -1597,6 +1395,19 @@ impl Render for WorkspaceShell {
                 .top_8()
                 .left_4()
                 .child(e.clone())
+                .into_any_element()
+        });
+
+        // Export… dialog overlay (P4c T11). Mounted by `open_export_dialog`;
+        // emits `ExportEvent` routed via the stored `export_dialog_sub`
+        // subscription. Centred-ish near the top; a later polish task can centre
+        // it precisely in a modal scrim.
+        let export_overlay: Option<gpui::AnyElement> = self.export_dialog.as_ref().map(|d| {
+            div()
+                .absolute()
+                .top_16()
+                .left_1_2()
+                .child(d.clone())
                 .into_any_element()
         });
 
@@ -1653,7 +1464,7 @@ impl Render for WorkspaceShell {
         // Undo/Redo (Cmd-Z / Cmd-Shift-Z) are bound globally via cx.on_action
         // in run_app — do NOT rebind here.
         let key_handler = cx.listener(|ws: &mut Self, ev: &KeyDownEvent, window, cx| {
-            use crate::grid::keymap::{apply_key, key_from_event};
+            use crate::grid::keymap::{Key, apply_key, key_from_event};
 
             let ks = &ev.keystroke;
             let mods = &ks.modifiers;
@@ -1718,6 +1529,14 @@ impl Render for WorkspaceShell {
                 if let Some(sel) = ws.selection.as_mut() {
                     apply_key(sel, nav_key);
                 }
+                // Marching-ants border (T12): clear ONLY on Escape so the user
+                // can navigate to a paste target while the marquee is visible.
+                // Paste clears it via `paste_clipboard`; a new copy/cut overwrites
+                // it via `build_selection_tsv`.  Plain arrows / Shift+arrow /
+                // Cmd+arrow / Cmd+A must NOT clear it.
+                if nav_key == Key::Escape {
+                    ws.copied_range = None;
+                }
                 cx.notify();
             }
         });
@@ -1728,6 +1547,29 @@ impl Render for WorkspaceShell {
             cx.listener(move |_ws: &mut Self, _ev: &gpui::ClickEvent, window, _cx| {
                 focus_handle_for_click.focus(window);
             });
+
+        // PipelineBar (P4c T9 collapsed pills / T10 expanded timeline). Shown
+        // when the active transform stack is non-empty. The render fn from
+        // `view::pipeline_bar` takes the current active stack; pill/row clicks
+        // and the ✕ remove use `cx.listener` (which supplies `&mut self`), so no
+        // weak handle is threaded. The `⌄`/`⌃` toggle flips
+        // `pipeline_bar_state.expanded` (collapsed pills ↔ expanded timeline).
+        let pipeline_bar: Option<gpui::AnyElement> = {
+            if let Some(vm) = self.view_model.as_ref() {
+                let stack = vm.active();
+                if !stack.is_empty() {
+                    crate::view::pipeline_bar::render_pipeline_bar(
+                        stack,
+                        &mut self.pipeline_bar_state,
+                        cx,
+                    )
+                } else {
+                    None
+                }
+            } else {
+                None
+            }
+        };
 
         div()
             .id("workspace-shell")
@@ -1741,8 +1583,10 @@ impl Render for WorkspaceShell {
             .drag_over::<ExternalPaths>(|style, _, _, _| style.bg(gpui::rgba(0x0088_ff22)))
             .on_drop::<ExternalPaths>(drop_listener)
             .children(tab_strip)
+            .children(pipeline_bar)
             .child(div().flex_1().child(body))
             .children(popover_overlay)
             .children(editor_overlay)
+            .children(export_overlay)
     }
 }

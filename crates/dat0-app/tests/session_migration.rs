@@ -97,11 +97,11 @@ fn sample_v2_session_json() -> String {
 /// Take a v2 sample JSON and splice an unrecognized transform `kind` into the
 /// first tab's `transform_stack` — simulating a session a newer dat0 binary
 /// wrote with a variant this build doesn't know. The `schema_version` is also
-/// bumped to 3 so the doc looks like a real future v3 file (the unknown-kind
+/// bumped to 4 so the doc looks like a real current v4 file (the unknown-kind
 /// guard, not the version arm, is what must reject it).
 fn inject_unknown_kind(sample: String) -> String {
     let mut doc: serde_json::Value = serde_json::from_str(&sample).unwrap();
-    doc["schema_version"] = serde_json::json!(3);
+    doc["schema_version"] = serde_json::json!(4);
     let stack = doc["tabs"][0]["transform_stack"].as_array_mut().unwrap();
     stack.push(serde_json::json!({
         "kind": "frobnicate",
@@ -150,7 +150,7 @@ fn v2_fixture_migrates_to_v3_preserving_content() {
     let state: SessionState = migrate::load(&p).unwrap();
 
     assert_eq!(state.schema_version, SESSION_SCHEMA_VERSION);
-    assert_eq!(state.schema_version, 3);
+    assert_eq!(state.schema_version, 4);
     assert_eq!(state.tabs.len(), 1);
     assert_eq!(state.tabs[0].transform_stack.len(), 2);
     assert_eq!(state.tabs[0].undo_cursor, 2);
@@ -255,12 +255,12 @@ async fn recover_eagerly_writes_back_current_version_on_first_open() {
         .await
         .expect("Session::recover should succeed on a v1 file");
 
-    // The on-disk file must now be the current schema (v3) without any further
+    // The on-disk file must now be the current schema (v4) without any further
     // persist() call.
     let after = fs::read_to_string(&session_path).unwrap();
     assert!(
-        after.contains("\"schema_version\": 3") || after.contains("\"schema_version\":3"),
-        "post-recover file should be current schema (v3), got: {}",
+        after.contains("\"schema_version\": 4") || after.contains("\"schema_version\":4"),
+        "post-recover file should be current schema (v4), got: {}",
         &after[..after.len().min(300)]
     );
 }
@@ -299,7 +299,7 @@ fn v2_session_migrates_to_v3_identity() {
     let v2 = sample_v2_session_json();
     let migrated = migrate::load_str(&v2).unwrap();
 
-    assert_eq!(migrated.schema_version, 3);
+    assert_eq!(migrated.schema_version, 4);
     // Identity: the active stack contents and cursor are preserved verbatim.
     assert_eq!(migrated.tabs.len(), 1);
     assert_eq!(migrated.tabs[0].transform_stack.len(), 2);
@@ -335,4 +335,57 @@ fn unknown_transform_kind_triggers_forward_incompat_banner_not_panic() {
         "unknown transform kind must map to ForwardIncompatTransform(\"frobnicate\"), got {err:?}"
     );
     assert!(err.unwrap_err().is_forward_incompat());
+}
+
+// ---------------------------------------------------------------------------
+// T4 — session v4 (projection kinds allowlist + migrate_v3_to_v4)
+// ---------------------------------------------------------------------------
+
+#[test]
+fn v3_with_projection_transform_loads_as_v4() {
+    // A v3 file that ALSO carries a P4c projection transform must load (the
+    // kinds are now known) and stamp v4.
+    let json = r#"{
+      "schema_version": 3,
+      "tabs": [{
+        "table_name": "orders",
+        "source_path": null,
+        "transform_stack": [
+          {"kind":"rename","column":"a","to":"A"},
+          {"kind":"reorder","columns":["b","a"]},
+          {"kind":"delete_column","columns":["c"]}
+        ],
+        "undo_cursor": 3
+      }],
+      "active_tab": 0
+    }"#;
+    let state = migrate::load_str(json).unwrap();
+    assert_eq!(state.schema_version, SESSION_SCHEMA_VERSION);
+    assert_eq!(state.tabs[0].transform_stack.len(), 3);
+}
+
+#[test]
+fn v3_redo_tail_is_dropped_on_v4_upgrade() {
+    // v3 persisted full stack + undo_cursor; v4 keeps only the active slice.
+    let json = r#"{
+      "schema_version": 3,
+      "tabs": [{
+        "table_name": "orders",
+        "source_path": null,
+        "transform_stack": [
+          {"kind":"filter","column":"a","op":"eq","value":{"kind":"scalar","value":{"type":"int","value":1}}},
+          {"kind":"filter","column":"a","op":"eq","value":{"kind":"scalar","value":{"type":"int","value":2}}}
+        ],
+        "undo_cursor": 1
+      }],
+      "active_tab": 0
+    }"#;
+    let state = migrate::load_str(json).unwrap();
+    assert_eq!(state.schema_version, SESSION_SCHEMA_VERSION);
+    assert_eq!(
+        state.tabs[0].transform_stack.len(),
+        1,
+        "v4 upgrade truncates to the active slice (undo_cursor)"
+    );
+    assert_eq!(state.tabs[0].undo_cursor, 1);
 }

@@ -75,7 +75,33 @@ pub enum Transformation {
     RowDelete {
         rows: Vec<RowKey>,
     },
-    // P4c will add: Reorder, Rename, Delete (column)
+    /// Reorder the visible columns. `columns` is the FULL visible source-column
+    /// order after this step (excludes `__dat0_rowid` and any deleted columns).
+    /// Display-only in Option B: never affects `compile_view_sql` output.
+    Reorder {
+        columns: Vec<String>,
+    },
+    /// Rename a column's DISPLAY label. `column` is the stable source identity
+    /// (base-table column name); `to` is the new display name. Display-only.
+    Rename {
+        column: String,
+        to: String,
+    },
+    /// Hide columns from the visible projection. `columns` are source
+    /// identities. Display-only; the underlying data column is untouched (so a
+    /// pre-existing filter/sort on it still compiles).
+    DeleteColumn {
+        columns: Vec<String>,
+    },
+}
+
+/// A visible column for projection rendering: its stable `source` identity and
+/// its current `display` label. Used by export (`render_export_select`) and by
+/// the app's grid `ColumnView` fold.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ProjectionColumn {
+    pub source: String,
+    pub display: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]

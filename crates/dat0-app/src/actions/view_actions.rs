@@ -44,6 +44,16 @@ pub fn register(reg: &ActionRegistry) -> Result<(), RegisterError> {
         }),
     })?;
 
+    reg.register(ActionDescriptor {
+        id: ActionId::from(ids::VIEW_EXPORT),
+        title: "Export…".into(),
+        group: ActionGroup::File,
+        keybinding: None, // keybind wired in window.rs (bind_keys + on_action)
+        dispatch: Arc::new(|app| {
+            dispatch_export(app);
+        }),
+    })?;
+
     Ok(())
 }
 
@@ -94,7 +104,15 @@ fn dispatch_undo(app: &mut gpui::App) {
         // requires mutable access to the same entity.
         let _ = ws;
         let change = workspace.update(app, |ws, _cx| {
-            ws.view_model.as_mut().and_then(|vm| vm.undo())
+            let change = ws.view_model.as_mut().and_then(|vm| vm.undo());
+            // Refresh the ColumnView off the new active stack (P4c T5). A
+            // display-only undo (e.g. undoing a Rename/Reorder, T6+) never
+            // round-trips through `apply_view_change`, so this is the only hook
+            // that keeps the header labels/order + addressing fresh for those.
+            // For a real data-view undo it is harmless (the source columns are
+            // unchanged) and `apply_view_change` refreshes again on rebind.
+            ws.refresh_column_view();
+            change
         });
         (engine, base_table, change, ws_weak)
     };
@@ -113,6 +131,21 @@ fn dispatch_undo(app: &mut gpui::App) {
             }
         }),
     );
+}
+
+/// Dispatch body for `view.export` (P4c T11).
+///
+/// Resolves the focused workspace and asks it to mount the File → Export…
+/// dialog. The dialog is a no-op (graceful) when no `ViewModel` is mounted
+/// (`WorkspaceShell::open_export_dialog` guards on that), so Export… off an
+/// empty workspace presents nothing rather than a dialog that can't build a
+/// SELECT.
+fn dispatch_export(app: &mut gpui::App) {
+    let Some(workspace) = focused_workspace(app) else {
+        tracing::debug!("view.export: no focused workspace");
+        return;
+    };
+    workspace.update(app, |ws, cx| ws.open_export_dialog(cx));
 }
 
 /// Dispatch body for `view.redo` (T13). Symmetric to `dispatch_undo`.
@@ -139,7 +172,11 @@ fn dispatch_redo(app: &mut gpui::App) {
         // requires mutable access to the same entity.
         let _ = ws;
         let change = workspace.update(app, |ws, _cx| {
-            ws.view_model.as_mut().and_then(|vm| vm.redo())
+            let change = ws.view_model.as_mut().and_then(|vm| vm.redo());
+            // Refresh the ColumnView off the new active stack (P4c T5);
+            // symmetric to `dispatch_undo` — see the rationale there.
+            ws.refresh_column_view();
+            change
         });
         (engine, base_table, change, ws_weak)
     };

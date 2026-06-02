@@ -72,6 +72,9 @@ that's modifying it; merge conflicts are signals worth investigating.
 | PD-016 | P4a UI-click → ViewChange wirings unowned by plan T13: funnel-click → open popover, popover `Outcome::Apply` → `vm.apply`, sort-zone-click → `vm.set_sort`. T7/T9/T10b/T12 implementers each commented "T13 wires" but plan T13 Steps 1-4 cover only keybind undo/redo + supersede-cancel test. Closed by P4b T0: `on_sort_zone_click`/`on_funnel_click`/`route_outcome` → `spawn_view_change`; `click_wiring.rs` (7 tests). | closed | medium |
 | PD-017 | P4b T3 plan premise wrong: it assumed `register_file` "finalizes a CTAS import", but `register_file` emits `CREATE OR REPLACE VIEW … AS SELECT * FROM read_csv/json/parquet(…)` — a VIEW, which cannot be `ALTER TABLE`-d, so the eager `__dat0_rowid` surrogate only lands via `create_table` (base tables). The app imports files exclusively via `register_file` (`file_drop.rs:133`), so imported grids are VIEWs with no `__dat0_rowid`, and the P4b edit/delete overlay (`WHERE __dat0_rowid NOT IN …`, `CASE WHEN __dat0_rowid = …`) references a non-existent column → edit/delete fail on real imports. T3 engine work is correct + complete; resolution is app-side (materialize imports to base tables, or back-fill via `ensure_rowid` on first bind). **Closed via Path A:** new `QueryEngine::register_file_as_table` materializes imports into rowid-bearing base tables (reusing all P3b sniffing); `file_drop.rs` now calls it. | closed | high |
 | PD-018 | Pre-existing (P3a-era) grid-render gap surfaced during P4b T7: `GridTableDelegate::render_td` (`grid/mod.rs`) renders the em-dash placeholder for EVERY cell — it never calls `render_cell` or `page_for`, and `page_for` (the only method that populates the page LRU from DuckDB) has ZERO production callers (no `load_more`/visible-range/prefetch). So in the running app the grid shows `—` and the cache is empty. P4b's cache-only reads (`cell_display`/`row_key`/`column_arrow_type`) resolve nothing on screen, so copy reads empty strings and paste/cut/edit skip every cell. P4b edit/select/clipboard LOGIC is correct + fully test-green (engine round-trips), but the headline T14 manual Excel/Sheets UAT is BLOCKED until the paged-render cache is wired (render_td → real values via the page LRU + prefetch visible page on bind). Out of every P4b plan task's scope. **Closed (Path A):** `render_td` now does a synchronous LRU lookup → real `render_cell` value; the LRU is populated off-thread by `WorkspaceShell::prefetch_visible_rows` (page-0 prefetch on grid bind + the gpui-component `TableDelegate::visible_rows_changed` scroll hook), notifying the main thread via the `MainThreadDispatcher`. Also wired the right-click context menu (`ContextMenuExt`), a per-cell focus ring, and the forward-incompat recover banner. | closed | high |
+| PD-019 | P4c T13 wired header single-click → select-column but could NOT wire row-gutter click → select-row: the gpui-component `TableDelegate` trait (rev `0f0ab35`) has no `render_row_header`/gutter seam, and `TableState::render_table_row` owns the row layout internally. Two alternatives were rejected: (a) subscribing to `TableEvent::SelectRow` makes every row-body click select a whole row, clobbering the single-cell click selection wired in T5; (b) a fake first column holding row numbers corrupts the `col_ix` passed to `render_td` and breaks column addressing. `WorkspaceShell::select_row_at` IS implemented + reachable programmatically; the click wiring is unwired. | open | low |
+| PD-020 | P4c T14 wired inline-editor `Enter` → commit + move-DOWN + focus-on-mount, but `Tab` → commit + move-RIGHT could NOT be wired: gpui-component `Input` (rev `0f0ab35`) consumes Tab internally for focus tab-stops and surfaces no `InputEvent::PressTab` variant (`InputEvent` is `{ Change, PressEnter, Focus, Blur }`). `EditorAdvance` is enum-shaped so adding `Right` is a one-line extension once an upstream Tab seam exists. | open | low |
+| PD-021 | P4c (T11 review): `error_ux::push` enqueues success/error banners into the global `PENDING` queue, but NOTHING drains it in the runtime render tree — only `#[cfg(test)]` code calls `drain_pending`. So export completion/failure feedback (`window.rs::run_export`) AND the pre-existing P4b paste-reject banner (`grid/edit_ops.rs`) are invisible to the user at runtime. Needs a banner host mounted in the `WorkspaceShell` render tree that drains `error_ux::PENDING` and renders the `Banner`s. | open | medium |
 
 ## At-a-glance — Closed plan defects
 
@@ -456,7 +459,10 @@ that's modifying it; merge conflicts are signals worth investigating.
   contingent on a GPUI version that ships an AccessKit adapter (or a dat0-side
   fork). Revisit when the GPUI pin advances.
 - **Originating doc:** `docs/internal/dat0-p4b-t0-probe.md` §2.
-- **Last touched:** 2026-05-31.
+- **P4c re-scan (2026-06-01):** confirmed still open + still targeted at P10; no
+  AccessKit adapter on the pinned GPUI/gpui-component. P4c T13 added header-click
+  → select-column (operability), not a screen-reader semantics tree.
+- **Last touched:** 2026-06-01.
 
 ---
 
@@ -1081,6 +1087,119 @@ that's modifying it; merge conflicts are signals worth investigating.
 
 ---
 
+### PD-019 — Row-gutter click → select-row unwired (no `render_row_header` seam in gpui-component)
+
+- **Status:** open
+- **Severity:** low (column-select fully wired; select-row reachable programmatically + via keyboard)
+- **Affected files:** `crates/dat0-app/src/window.rs` (`WorkspaceShell::select_row_at`)
+- **Symptom:** P4c T13 wired header single-click → `select_column_at` (column-select) but could NOT
+  provide a matching row-gutter click → `select_row_at`. The gpui-component `TableDelegate` trait
+  (rev `0f0ab35`) has no `render_row_header` / row-gutter seam — `TableState::render_table_row` owns
+  the row-number layout internally and does not call through to the delegate. There is therefore no
+  hook point in the existing trait surface for attaching a click handler.
+- **Two alternatives rejected:**
+  - **(a) Subscribe to `TableEvent::SelectRow`:** this event fires on ANY row-body click, which would
+    make every single-cell click select a whole row — clobbering the per-cell `SelectionModel`
+    click wiring from T5 (P4b). Not usable.
+  - **(b) Fake first column holding row numbers:** mounting a synthetic column at index 0 to act as
+    a visual row-number gutter would corrupt the `col_ix` argument passed to `render_td` and
+    `render_th` for all real data columns (+1 off everywhere), breaking column addressing end-to-end.
+    Not usable.
+- **Current state:** `WorkspaceShell::select_row_at` is fully implemented and correct; it is
+  reachable programmatically (e.g., from tests and keyboard bindings) but has no UI click wiring.
+  Column-select (`select_column_at`, wired in T13) is fully functional.
+- **Two clean future paths:**
+  - **(1) Upstream gpui-component PR:** add a `render_row_header(&self, row_ix, cx) ->
+    impl IntoElement` hook to `TableDelegate` and call it from `render_table_row`. dat0 then
+    implements the hook to return a labelled div with `on_click → select_row_at`.
+  - **(2) Absolute-positioned per-row overlay:** paint a zero-width `div` at x=0 with `position:
+    absolute`, height matching one row, its own `on_click`, iterated over the visible row range.
+    Fragile (must track row height + scroll offset), but requires no upstream change.
+- **Discovered:** P4c T13 implementation review (2026-06-01).
+- **Originating doc:** `docs/plans/2026-05-31-dat0-p4c-plan.md` T13.
+- **Last touched:** 2026-06-01.
+
+---
+
+### PD-020 — Inline-editor `Tab` → move-RIGHT advance unwired (gpui-component `Input` exposes no Tab event)
+
+- **Status:** open
+- **Severity:** low (the `Enter` → move-DOWN advance + focus-on-mount are shipped; `Tab` still
+  works as the input's own tab-stop, it just doesn't commit-and-advance one cell right).
+- **Affected files:** `crates/dat0-app/src/grid/cell_editor.rs` (`CellEditor`),
+  `crates/dat0-app/src/grid/edit_ops.rs` (`commit_cell_edit_and_advance` only handles
+  `EditorAdvance::Down`).
+- **Symptom:** P4c T14 added a real `FocusHandle` + focus-on-mount and wired `Enter` → commit + move
+  the active cell DOWN one row + re-open the editor (spreadsheet semantics) by emitting
+  `CellEditorEvent::CommitAndMove(value, EditorAdvance::Down)` on `InputEvent::PressEnter`. The
+  matching `Tab` → commit + move RIGHT could NOT be wired: the gpui-component `Input` (rev `0f0ab35`)
+  consumes Tab internally for tab-stop focus navigation and surfaces it to subscribers only as
+  focus changes, NOT as an `InputEvent` variant — `InputEvent` is exactly `{ Change, PressEnter,
+  Focus, Blur }` (see `crates/ui/src/input/state.rs`). There is therefore no hook point on the
+  existing event surface for a Tab-advance.
+- **One alternative rejected:**
+  - **Wrapper-level `on_key_down` intercept:** attaching a key handler to the `CellEditor` container
+    (tracking its own `FocusHandle`) to catch Tab would require the wrapper to HOLD focus — but then
+    keystrokes route to the wrapper, not the inner `InputState`, so typing into the field would land
+    nowhere (focus contention). Shipping that would break the very focus-on-mount this task added.
+    Not usable.
+- **Current state:** `Enter` → down + focus-on-mount are fully wired and shipped; `EditorAdvance` is
+  an enum (currently single-variant `Down`) so adding `Right` later is a one-line extension once an
+  upstream Tab seam exists. `Esc` cancels (P4b). `Tab` falls through to the input's own behaviour.
+- **One clean future path:**
+  - **Upstream gpui-component PR:** add a `PressTab { shift: bool }` variant to `InputEvent` (emitted
+    alongside the existing tab-stop handling) so dat0 can subscribe and emit
+    `CommitAndMove(value, EditorAdvance::Right)` exactly like the `PressEnter` → `Down` path.
+- **Discovered:** P4c T14 implementation (2026-06-01).
+- **Originating doc:** `docs/plans/2026-05-31-dat0-p4c-plan.md` T14 (Step 3).
+- **Last touched:** 2026-06-01.
+
+---
+
+### PD-021 — Banner host unmounted: `error_ux::PENDING` is never drained at runtime
+
+- **Status:** open
+- **Severity:** medium (no data loss; the operation succeeds — but the user gets
+  zero on-screen confirmation/error feedback for exports and paste-rejects)
+- **Affected files:**
+  - `crates/dat0-app/src/error_ux/banner.rs` (`PENDING` queue, `push`,
+    `drain_pending` — `drain_pending` has ZERO non-test callers)
+  - `crates/dat0-app/src/window.rs` (`WorkspaceShell::run_export` pushes
+    `Banner::info`/`Banner::error` on export done/fail; `WorkspaceShell::render`
+    never drains)
+  - `crates/dat0-app/src/grid/edit_ops.rs` (paste-reject pushes `Banner::error`)
+  - `crates/dat0-app/src/boot.rs`, `import_progress.rs`, `session/mod.rs` (other
+    producers that enqueue but are never surfaced)
+- **Symptom:** `error_ux::push(banner)` appends a `Banner` to a global
+  `static PENDING: Lazy<Mutex<Vec<Banner>>>`. The only code that calls
+  `drain_pending()` is `#[cfg(test)]` (the `file_drop.rs` / `session/mod.rs` test
+  modules, which drain to assert producers fired). No production render path
+  drains the queue and paints the banners. Net effect at runtime:
+  - **Export feedback is invisible.** T11's `run_export` pushes
+    `Banner::info("export.done.title", <dest path>)` on success and
+    `Banner::error("export.failed.title", …)` on failure (`window.rs:1065-1076`),
+    but neither ever appears on screen — the COPY runs, the file lands on disk,
+    and the user sees nothing.
+  - **The pre-existing P4b paste-reject banner is also invisible** — the
+    coerce-or-skip reject count pushed from `grid/edit_ops.rs` never shows.
+  - Boot-time and forward-incompat banners (`boot.rs`, `session/mod.rs`) share
+    the same dead-letter fate (the original P2 PD-007 design always intended a
+    P7 render layer to drain on first window open; that drain was never wired).
+- **Discovered:** P4c T11 code-quality review (2026-06-01) — surfaced while
+  reviewing the export completion path; the success/error banners were pushed but
+  could not be observed in a smoke launch.
+- **Suggested fix:** Mount a banner host in the `WorkspaceShell` render tree: on
+  each render (or via a short GPUI timer / an explicit notify after producers
+  run), call `error_ux::drain_pending()` into a `Vec<Banner>` field on
+  `WorkspaceShell`, render a stack of dismissible banner chips (the
+  `error_ux::Banner` already carries `kind`/`title`/`body`/`action`), and clear on
+  dismiss. This is the single drain site the P2 design (PD-007) deferred to "the
+  render layer (P7+)"; P4c export UX is the first feature that makes its absence
+  user-visible.
+- **Originating doc:** `docs/plans/2026-05-31-dat0-p4c-plan.md` T11;
+  `docs/deferrals.md` PD-007 (the queue's original "render layer drains later"
+  intent).
+- **Last touched:** 2026-06-01.
 
 ---
 
