@@ -53,6 +53,11 @@ pub fn build_menus(_cx: &mut gpui::App) -> Vec<gpui::Menu> {
                     OpenCommandPalette,
                 ),
                 MenuItem::action(dat0_i18n::t("menu.view.settings"), OpenSettings),
+                MenuItem::separator(),
+                // P5a T11: SQL Console toggle + active-statement run / cancel.
+                MenuItem::action(dat0_i18n::t("sql.console_toggle"), SqlConsoleToggle),
+                MenuItem::action(dat0_i18n::t("sql.run"), SqlRun),
+                MenuItem::action(dat0_i18n::t("sql.cancel"), SqlCancel),
             ],
         },
         Menu {
@@ -103,6 +108,12 @@ gpui::actions!(
         ShowAbout,
         OpenDocs,
         OpenDiscord,
+        // P5a T11: SQL Console entry points (toggle / run / cancel / tab lifecycle).
+        SqlConsoleToggle,
+        SqlRun,
+        SqlCancel,
+        SqlNewTab,
+        SqlCloseTab,
     ]
 );
 

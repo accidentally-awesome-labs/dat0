@@ -413,6 +413,32 @@ pub fn run_app(lock: AppLock, initial_paths: Vec<PathBuf>, main_loop: MainLoop) 
             });
         }
 
+        // Wire the SQL Console keystrokes (P5a T11):
+        //   Cmd+Enter / Ctrl+Enter      → SqlRun    (run the active statement)
+        //   Cmd+.     / Ctrl+.          → SqlCancel (interrupt the in-flight run)
+        //   Cmd+Shift+C / Ctrl+Shift+C  → SqlConsoleToggle (show/hide the console)
+        //
+        // Unlike Export/Undo/Redo (handled by GLOBAL `cx.on_action` here in
+        // run_app), these actions are handled VIEW-scoped on the WorkspaceShell
+        // root in `render` — they reach `self`, and toggle/new-tab need a
+        // `&mut Window` that the App-level dispatch path can't supply. We only
+        // register the keystrokes here; gpui routes the dispatched action up the
+        // focused element tree to the shell's `.on_action` handlers. SqlNewTab /
+        // SqlCloseTab are reachable via the menu + command palette (and the
+        // console's own "+"/"✕" tab buttons) — no default keystroke is bound to
+        // avoid colliding with the editor's own text-editing keymap.
+        {
+            #[cfg(target_os = "macos")]
+            let (run_ks, cancel_ks, toggle_ks) = ("cmd-enter", "cmd-.", "cmd-shift-c");
+            #[cfg(not(target_os = "macos"))]
+            let (run_ks, cancel_ks, toggle_ks) = ("ctrl-enter", "ctrl-.", "ctrl-shift-c");
+            cx.bind_keys([
+                gpui::KeyBinding::new(run_ks, crate::menu_macos::SqlRun, None),
+                gpui::KeyBinding::new(cancel_ks, crate::menu_macos::SqlCancel, None),
+                gpui::KeyBinding::new(toggle_ks, crate::menu_macos::SqlConsoleToggle, None),
+            ]);
+        }
+
         // Register the SQL grammar for the P5 console editor (runtime-registered,
         // single grammar — see query::highlight). T0 spike confirmed the runtime
         // path; decision-7 fallback NOT triggered.
@@ -618,11 +644,13 @@ pub struct WorkspaceShell {
     /// run/cancel/persist callback stays registered — a dropped `Subscription`
     /// deregisters silently (the P4a T10b trap).
     ///
-    /// Only written (never read) until P5a T11 wires the toggle action; the
-    /// field's purpose is to keep the subscription alive for the entity's life.
+    /// Written (never explicitly read); the field's sole purpose is to keep the
+    /// `Subscription` alive for the entity's life so `on_sql_console_event` keeps
+    /// firing. Dropping a `Subscription` deregisters silently, so this must be a
+    /// stored field — hence the lint allowance (a keep-alive, not dead code).
     ///
     /// [`SqlConsoleEvent`]: crate::view::sql_console::SqlConsoleEvent
-    #[allow(dead_code)] // read indirectly (keep-alive); toggle wired in P5a T11
+    #[allow(dead_code)] // keep-alive: storing the Subscription is the read
     pub(crate) sql_console_sub: Option<Subscription>,
     /// Whether the SQL Console panel is currently shown. Toggled by
     /// `toggle_sql_console`; the render gate respects this independently of
@@ -636,7 +664,6 @@ pub struct WorkspaceShell {
     /// while a run is executing; dropped/disarmed in `finish_sql_run`. The
     /// guard's `Drop` (or an explicit `cancel()` in T7) fires the engine's
     /// connection-wide `interrupt()`.
-    #[allow(dead_code)] // wired in T11 (actions/keybinds); cancel surface lands in T7
     pub(crate) active_query_cancel: Option<crate::query::QueryCancel>,
 }
 
@@ -1068,7 +1095,6 @@ impl WorkspaceShell {
     ///
     /// [`SqlConsole`]: crate::view::sql_console::SqlConsole
     /// [`SqlConsoleEvent`]: crate::view::sql_console::SqlConsoleEvent
-    #[allow(dead_code)] // wired to an action/keybind/menu in P5a T11
     pub(crate) fn toggle_sql_console(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if self.sql_console.is_none() {
             let (persisted, active) = {
@@ -1118,7 +1144,6 @@ impl WorkspaceShell {
     /// VIEW/EXEC → bind grid). `Cancel` lands in T7.
     ///
     /// [`SqlConsoleEvent`]: crate::view::sql_console::SqlConsoleEvent
-    #[allow(dead_code)] // reached via the toggle's subscription, wired in P5a T11
     pub(crate) fn on_sql_console_event(
         &mut self,
         console: Entity<crate::view::sql_console::SqlConsole>,
@@ -1143,7 +1168,6 @@ impl WorkspaceShell {
     /// under double-cancel: `QueryCancel::cancel()` is idempotent (disarms after
     /// firing), and `finish_sql_run`'s later `take()+disarm()` on the
     /// already-disarmed guard is a no-op.
-    #[allow(dead_code)] // wired in T11 (Cmd+. + Cancel button)
     pub(crate) fn cancel_sql_run(&mut self, _cx: &mut Context<Self>) {
         if let Some(g) = self.active_query_cancel.as_mut() {
             g.cancel(); // fires engine.interrupt(); the in-flight task resolves to Cancelled
@@ -1188,7 +1212,6 @@ impl WorkspaceShell {
     /// via [`crate::query::statement::statement_at`] from the editor cursor.
     ///
     /// [`MainThreadDispatcher`]: crate::main_bridge::MainThreadDispatcher
-    #[allow(dead_code)] // wired in T11 (actions/keybinds)
     pub(crate) fn spawn_sql_run(
         &mut self,
         console: gpui::Entity<crate::view::sql_console::SqlConsole>,
@@ -1266,7 +1289,6 @@ impl WorkspaceShell {
     /// Apply a completed SQL run on the GPUI main thread (P5a T6). Disarms the
     /// cancel guard, clears the running flag, then routes the outcome: a bound
     /// result rebinds the grid; status/error/cancelled render the inline strip.
-    #[allow(dead_code)] // reached via spawn_sql_run, wired in T11
     fn finish_sql_run(
         &mut self,
         console: &gpui::Entity<crate::view::sql_console::SqlConsole>,
@@ -1453,7 +1475,6 @@ impl WorkspaceShell {
 
 /// The terminal state of one SQL console run, computed OFF the GPUI main thread
 /// inside `spawn_sql_run` and applied on the main thread by `finish_sql_run`.
-#[allow(dead_code)] // constructed in spawn_sql_run, consumed in finish_sql_run (T11-wired)
 pub(crate) enum SqlRunOutcome {
     /// A result-producing statement bound to a fresh `GridDataSource`.
     Bound(std::sync::Arc<crate::grid::GridDataSource>),
@@ -1469,7 +1490,6 @@ pub(crate) enum SqlRunOutcome {
 /// `EngineError::Interrupted` variant (engine `execute/mod.rs` surfaces it when
 /// `Engine::interrupt()` fires) maps to `Cancelled`; everything else is an
 /// inline error.
-#[allow(dead_code)] // reached via spawn_sql_run, wired in T11
 fn classify_run_err(e: dat0_engine::EngineError) -> SqlRunOutcome {
     if matches!(e, dat0_engine::EngineError::Interrupted) {
         SqlRunOutcome::Cancelled
@@ -1481,7 +1501,6 @@ fn classify_run_err(e: dat0_engine::EngineError) -> SqlRunOutcome {
 /// Build the status line for a completed EXEC statement. DuckDB does not
 /// uniformly expose an affected-row count through `QueryResult` here, so a
 /// generic localized "OK" is used for P5a.
-#[allow(dead_code)] // reached via spawn_sql_run, wired in T11
 fn format_exec_status(_r: &dat0_engine::QueryResult) -> String {
     dat0_i18n::t("sql.ok")
 }
@@ -1957,6 +1976,44 @@ impl Render for WorkspaceShell {
             .flex_col()
             .relative()
             .track_focus(&self.focus_handle)
+            // ── SQL Console actions (P5a T11) ─────────────────────────────────
+            // View-scoped (not global `cx.on_action`) because these reach `self`
+            // and three of them need a `&mut Window` (which the global App-level
+            // dispatch path does NOT supply). gpui dispatches actions up the
+            // focus/element tree, so `Cmd+Enter` / `Cmd+.` fired while the console
+            // editor has focus still bubble here to the shell root.
+            .on_action(cx.listener(
+                |ws: &mut Self, _: &crate::menu_macos::SqlRun, _window, cx| {
+                    if let Some(c) = ws.sql_console.clone() {
+                        ws.spawn_sql_run(c, crate::query::ResultTarget::MainGrid, cx);
+                    }
+                },
+            ))
+            .on_action(cx.listener(
+                |ws: &mut Self, _: &crate::menu_macos::SqlCancel, _window, cx| {
+                    ws.cancel_sql_run(cx);
+                },
+            ))
+            .on_action(cx.listener(
+                |ws: &mut Self, _: &crate::menu_macos::SqlConsoleToggle, window, cx| {
+                    ws.toggle_sql_console(window, cx);
+                },
+            ))
+            .on_action(cx.listener(
+                |ws: &mut Self, _: &crate::menu_macos::SqlNewTab, window, cx| {
+                    if let Some(c) = ws.sql_console.clone() {
+                        c.update(cx, |c, cx| c.new_tab(window, cx));
+                    }
+                },
+            ))
+            .on_action(cx.listener(
+                |ws: &mut Self, _: &crate::menu_macos::SqlCloseTab, _window, cx| {
+                    if let Some(c) = ws.sql_console.clone() {
+                        let active = c.read(cx).active;
+                        c.update(cx, |c, cx| c.close_tab(active, cx));
+                    }
+                },
+            ))
             .on_key_down(key_handler)
             .on_click(click_to_focus)
             .drag_over::<ExternalPaths>(|style, _, _, _| style.bg(gpui::rgba(0x0088_ff22)))
