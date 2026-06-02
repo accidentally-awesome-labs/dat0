@@ -701,28 +701,47 @@ impl WorkspaceShell {
         cx.notify();
     }
 
-    /// Prefetch the page(s) covering screen rows `[start, end)` into the
-    /// `GridDataSource` LRU so the grid's synchronous `render_td` paints real
-    /// values for the rows the user can see (PD-018).
+    /// Prefetch the page(s) covering screen rows `[start, end)` into the MAIN
+    /// grid's `GridDataSource` LRU so the grid's synchronous `render_td` paints
+    /// real values for the rows the user can see (PD-018).
+    ///
+    /// Thin wrapper over [`Self::prefetch_rows_for`] bound to `self.data_source`.
+    /// Callers that page a DIFFERENT source (e.g. the console results pane, which
+    /// owns a separate `GridDataSource` with its own LRU) must call
+    /// `prefetch_rows_for(&that_source, …)` directly so the right cache is
+    /// populated (P5a T9).
+    pub fn prefetch_visible_rows(&self, start: usize, end: usize, cx: &mut Context<Self>) {
+        if let Some(ds) = self.data_source.as_ref() {
+            let ds = Arc::clone(ds);
+            self.prefetch_rows_for(&ds, start, end, cx);
+        }
+    }
+
+    /// Source-parameterized prefetch: load the page(s) covering screen rows
+    /// `[start, end)` into `ds`'s OWN LRU, then notify the shell so the mounted
+    /// view repaints with real values.
+    ///
+    /// Each [`crate::grid::GridDataSource`] owns a SEPARATE `Mutex<LruCache>`, so
+    /// a view's `render_td` only ever finds pages that were fetched into THAT
+    /// view's source. The main grid drives this via
+    /// [`Self::prefetch_visible_rows`] (passing `self.data_source`); the
+    /// console-owned results pane drives it via the delegate's
+    /// `visible_rows_changed` hook (passing the PANE's source). Routing both
+    /// through this one method means pane scrolling loads the pane's cache and
+    /// leaves the main grid's cache untouched (P5a T9 fix).
     ///
     /// The fetch runs OFF the GPUI main thread — `GridDataSource::page_for` is
     /// async DuckDB I/O and must never block the 60 fps render loop. Once the
     /// page is in the LRU, the re-render `notify` is posted back onto the main
     /// thread via the [`crate::main_bridge::MainThreadDispatcher`] (the canonical
     /// `spawn_view_change` discipline — NEVER `cx.update` from the tokio task).
-    /// Re-rendering the shell re-renders the mounted `Table`, whose `render_td`
-    /// now finds the cached page.
-    ///
-    /// Called on grid bind (page 0) and from the delegate's
-    /// `visible_rows_changed` hook (scroll-paging).  When both boundary pages
-    /// are already resident in the LRU, the spawn is skipped entirely — no
-    /// tokio task, no `cx.notify()` — eliminating the gratuitous task/notify
-    /// storm on fast scroll over already-loaded data.
-    pub fn prefetch_visible_rows(&self, start: usize, end: usize, cx: &mut Context<Self>) {
-        let Some(ds) = self.data_source.as_ref() else {
-            return;
-        };
-
+    pub(crate) fn prefetch_rows_for(
+        &self,
+        ds: &Arc<crate::grid::GridDataSource>,
+        start: usize,
+        end: usize,
+        cx: &mut Context<Self>,
+    ) {
         // Cheap resident guard: if both boundary pages are already in the LRU
         // cache, the synchronous `render_td` will already paint real values —
         // there is nothing to fetch and no notify to post.  This eliminates the
@@ -759,7 +778,7 @@ impl WorkspaceShell {
                 match ds.page_for(row).await {
                     Ok(_) => any_loaded = true,
                     Err(e) => {
-                        tracing::warn!(row, error = %e, "prefetch_visible_rows: page_for failed");
+                        tracing::warn!(row, error = %e, "prefetch_rows_for: page_for failed");
                     }
                 }
             }
@@ -775,7 +794,7 @@ impl WorkspaceShell {
                 });
             } else {
                 tracing::warn!(
-                    "prefetch_visible_rows: no MainThreadDispatcher installed; grid will not refresh"
+                    "prefetch_rows_for: no MainThreadDispatcher installed; grid will not refresh"
                 );
             }
         });

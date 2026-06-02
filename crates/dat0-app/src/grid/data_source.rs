@@ -682,4 +682,43 @@ mod tests {
             .expect("int64");
         assert_eq!(arr.value(0), 1024, "page 1 must start at row index 1024");
     }
+
+    /// P5a T9 regression: each `GridDataSource` owns a SEPARATE LRU. Prefetching
+    /// a page into source A must NOT populate source B's cache.
+    ///
+    /// This is the invariant the T9 pane-scroll bug violated: the pane delegate's
+    /// `visible_rows_changed` was hardcoded to prefetch the MAIN grid's source,
+    /// so pages the user scrolled to in the PANE landed in the wrong cache and
+    /// the pane's `render_td` never found them. The fix routes each delegate's
+    /// prefetch through `prefetch_rows_for(&self.source, …)`; this test pins the
+    /// underlying per-source cache isolation that makes that routing correct.
+    #[tokio::test]
+    async fn prefetch_one_source_leaves_another_untouched() {
+        let tmp = TempDir::new().unwrap();
+        // One engine, two independent sources over the same table — exactly the
+        // main-grid-vs-pane shape (two `GridDataSource`s, each its own LRU).
+        let engine = build_engine_with_csv(&tmp, 4096).await;
+        let name = engine.get_tables().await.unwrap()[0].name.clone();
+        let source_a = GridDataSource::new(Arc::clone(&engine), name.clone())
+            .await
+            .unwrap();
+        let source_b = GridDataSource::new(engine, name).await.unwrap();
+
+        // Sanity: neither source has page 1 (rows 1024..2047) resident yet.
+        assert!(!source_a.pages_resident(1024, 2047));
+        assert!(!source_b.pages_resident(1024, 2047));
+
+        // Scroll-page source A to a deep row (page key 1024).
+        source_a.page_for(1500).await.unwrap();
+
+        // A now caches that page; B's cache MUST be unaffected.
+        assert!(
+            source_a.pages_resident(1024, 2047),
+            "fetched page must be resident in the source it was fetched into"
+        );
+        assert!(
+            !source_b.pages_resident(1024, 2047),
+            "prefetching source A must NOT populate source B's independent LRU"
+        );
+    }
 }
