@@ -1086,8 +1086,24 @@ impl WorkspaceShell {
         match ev {
             Persist => self.persist_sql_console(cx),
             Run { target } => self.spawn_sql_run(console, target, cx),
-            // T7 implements Cancel.
-            Cancel => {}
+            Cancel => self.cancel_sql_run(cx),
+        }
+    }
+
+    /// Fire the active run's cancel drop-guard (P5a T7). `QueryCancel::cancel()`
+    /// invokes the engine's connection-wide `interrupt()`, so the in-flight
+    /// `spawn_sql_run` task's engine call resolves to `EngineError::Interrupted`,
+    /// which `classify_run_err` maps to `SqlRunOutcome::Cancelled`; `finish_sql_run`
+    /// then renders the muted "Cancelled" region and clears `running`.
+    ///
+    /// Safe when there is no active run (`active_query_cancel` is `None`). Safe
+    /// under double-cancel: `QueryCancel::cancel()` is idempotent (disarms after
+    /// firing), and `finish_sql_run`'s later `take()+disarm()` on the
+    /// already-disarmed guard is a no-op.
+    #[allow(dead_code)] // wired in T11 (Cmd+. + Cancel button)
+    pub(crate) fn cancel_sql_run(&mut self, _cx: &mut Context<Self>) {
+        if let Some(g) = self.active_query_cancel.as_mut() {
+            g.cancel(); // fires engine.interrupt(); the in-flight task resolves to Cancelled
         }
     }
 

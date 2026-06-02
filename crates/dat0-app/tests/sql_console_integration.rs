@@ -72,3 +72,30 @@ async fn bad_sql_surfaces_engine_error() {
         "binding a bad query must error (-> inline error strip)"
     );
 }
+
+/// Proves `interrupt()` actually aborts an in-flight query, returning the
+/// `EngineError::Interrupted` variant that `classify_run_err` maps to
+/// `SqlRunOutcome::Cancelled` — i.e. the Cancel drop-guard path resolves a
+/// running query to "Cancelled". DuckDB will not finish a 1e8×1e8 cross-join
+/// count in 150ms, so the interrupt lands on a genuinely in-flight query.
+#[tokio::test]
+async fn interrupt_stops_a_long_running_query() {
+    let tmp = TempDir::new().unwrap();
+    let e = engine(&tmp).await;
+    let e2 = Arc::clone(&e);
+    // A deliberately slow query (large cross join + aggregate).
+    let handle = tokio::spawn(async move {
+        e2.execute("SELECT count(*) FROM range(100000000) a, range(100000000) b")
+            .await
+    });
+    // Give it a moment to start, then interrupt.
+    tokio::time::sleep(std::time::Duration::from_millis(150)).await;
+    e.interrupt();
+    let res = handle.await.unwrap();
+    assert!(res.is_err(), "interrupted query should return an error");
+    match res {
+        Err(dat0_engine::EngineError::Interrupted) => {}
+        Err(other) => panic!("expected Interrupted, got {other:?}"),
+        Ok(_) => panic!("query unexpectedly completed"),
+    }
+}

@@ -22,6 +22,7 @@ use gpui::{
     Context, Entity, EventEmitter, IntoElement, ParentElement, SharedString, Styled, Window, div,
 };
 use gpui_component::input::{Input, InputState};
+use gpui_component::spinner::Spinner;
 
 use crate::query::{ResultTarget, SqlTabMeta};
 
@@ -51,6 +52,9 @@ pub struct SqlConsole {
     pub active: usize,
     pub region: ResultRegion,
     pub running: bool,
+    /// When the active run started, for the live elapsed-seconds counter (T7).
+    /// `Some` while `running`, `None` otherwise. Read in `render`.
+    pub started_at: Option<std::time::Instant>,
 }
 
 /// Events the console emits up to `WorkspaceShell`.
@@ -117,6 +121,7 @@ impl SqlConsole {
             active,
             region: ResultRegion::Empty,
             running: false,
+            started_at: None,
         }
     }
 
@@ -148,8 +153,16 @@ impl SqlConsole {
     }
 
     /// Toggle the running spinner / Run↔Cancel button label (T6 run path).
+    ///
+    /// Stamps `started_at` when the run begins so `render` can show the live
+    /// elapsed-seconds counter, and clears it when the run ends (T7).
     pub fn set_running(&mut self, running: bool, cx: &mut Context<Self>) {
         self.running = running;
+        self.started_at = if running {
+            Some(std::time::Instant::now())
+        } else {
+            None
+        };
         cx.notify();
     }
 
@@ -225,6 +238,42 @@ impl Render for SqlConsole {
                 }
             }));
 
+        // ── Progress indicator (spinner + live elapsed seconds) ─────────────
+        // Shown only while a run is in flight. The `Spinner` self-animates via
+        // its own gpui `Animation`, so it spins without our help; the elapsed
+        // counter needs a ~per-second repaint, scheduled below.
+        let progress: gpui::AnyElement = if self.running {
+            let elapsed = self.started_at.map(|t| t.elapsed().as_secs()).unwrap_or(0);
+            let label = format!("{} {}s", dat0_i18n::t("sql.running"), elapsed);
+            div()
+                .flex()
+                .flex_row()
+                .items_center()
+                .gap_1()
+                .px_2()
+                .child(Spinner::new())
+                .child(SharedString::from(label))
+                .into_any_element()
+        } else {
+            div().into_any_element()
+        };
+
+        // Drive a ~1s repaint while running so the elapsed counter advances.
+        // This schedules ONE delayed `notify` per render frame while running;
+        // each notify re-renders, which (still running) schedules the next.
+        // When `running` flips false, the next render does not schedule → the
+        // loop self-terminates. (Redundant in-flight timers from extra renders
+        // only cause harmless extra notifies — acceptable for P5a.)
+        if self.running {
+            cx.spawn(async move |this, cx| {
+                cx.background_executor()
+                    .timer(std::time::Duration::from_millis(500))
+                    .await;
+                let _ = this.update(cx, |_this, cx| cx.notify());
+            })
+            .detach();
+        }
+
         // ── Editor for the active tab ───────────────────────────────────────
         let editor = Input::new(&self.tabs[active].input).h_full();
 
@@ -258,10 +307,19 @@ impl Render for SqlConsole {
                     .flex()
                     .flex_row()
                     .justify_between()
+                    .items_center()
                     .px_2()
                     .py_1()
                     .child(tab_strip)
-                    .child(run_btn),
+                    .child(
+                        div()
+                            .flex()
+                            .flex_row()
+                            .items_center()
+                            .gap_2()
+                            .child(progress)
+                            .child(run_btn),
+                    ),
             )
             .child(div().flex_1().child(editor))
             .child(region)
