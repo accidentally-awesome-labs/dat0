@@ -13,6 +13,7 @@ pub mod import_wizard;
 pub mod main_bridge;
 pub mod menu_macos;
 pub mod platform;
+pub mod query;
 pub mod recents;
 pub mod recovery_panel;
 pub mod sample_data;

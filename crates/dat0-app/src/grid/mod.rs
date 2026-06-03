@@ -595,6 +595,13 @@ impl TableDelegate for GridTableDelegate {
     /// thread via the `MainThreadDispatcher` (never `cx.update` from the tokio
     /// task — the canonical `spawn_view_change` discipline). Delegated to the
     /// owning `WorkspaceShell` (it holds the dispatcher-friendly weak entity).
+    ///
+    /// Routes through `prefetch_rows_for(&self.source, …)` so the page lands in
+    /// THIS delegate's OWN source's LRU. The main grid's delegate carries the
+    /// same `Arc` as the shell's `data_source`, so this is behavior-preserving
+    /// for the main grid; the console results pane's delegate carries the PANE's
+    /// source, so its scroll-paging loads the pane's cache instead of clobbering
+    /// the main grid's (P5a T9 fix). Each `GridDataSource` owns a separate LRU.
     fn visible_rows_changed(
         &mut self,
         visible_range: std::ops::Range<usize>,
@@ -602,8 +609,9 @@ impl TableDelegate for GridTableDelegate {
         cx: &mut Context<TableState<Self>>,
     ) {
         if let Some(ws) = self.ws.upgrade() {
+            let source = Arc::clone(&self.source);
             ws.update(cx, |ws, cx| {
-                ws.prefetch_visible_rows(visible_range.start, visible_range.end, cx);
+                ws.prefetch_rows_for(&source, visible_range.start, visible_range.end, cx);
             });
         }
     }

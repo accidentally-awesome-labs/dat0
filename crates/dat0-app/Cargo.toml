@@ -40,6 +40,14 @@ lru = { workspace = true }
 futures = { workspace = true }
 reqwest = { workspace = true }
 sha2 = { workspace = true }
+# SQL syntax highlighting in the P5 console. The grammar is registered at
+# runtime via gpui-component's LanguageRegistry (P5a §0 decision 6). We
+# deliberately do NOT enable gpui-component's all-or-nothing
+# `tree-sitter-languages` feature (~28 grammars; CI OOM/disk cost), so there
+# is no second copy of this crate in the build — the `tree-sitter-languages`
+# bundle is off and never compiled. The "0.3.8" pin matches gpui-component's
+# own declaration (harmless caret); Cargo resolves both to a single 0.3.x copy.
+tree-sitter-sequel = "0.3.8"
 
 [dev-dependencies]
 tempfile = { workspace = true }

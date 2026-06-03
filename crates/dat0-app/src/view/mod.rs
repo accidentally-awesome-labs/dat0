@@ -8,6 +8,7 @@ pub mod filter_popover_entity;
 pub mod model;
 pub mod pipeline_bar;
 pub mod sort_header;
+pub mod sql_console;
 
 pub use column_view::fold_columns;
 pub use model::{HISTORY_CAP, ViewChange, ViewModel, route_outcome};

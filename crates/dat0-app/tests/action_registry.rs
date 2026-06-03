@@ -1,14 +1,17 @@
-//! `ActionRegistry` + built-in action descriptors (P3b T3 + T8 + P4b T9).
+//! `ActionRegistry` + built-in action descriptors (P3b T3 + T8 + P4b T9 + P5a T11).
 //!
 //! Verifies the registry shape and the baseline `register_all` built-ins.
 //! T3 shipped seven descriptors; T8 added `sample_data.retry_taxi` (banner
 //! Retry button for the offline fetch-failed UX), bringing the count to
 //! eight. P4a T13 added `view.undo` + `view.redo` → ten. P4b T9 adds seven
-//! edit / clipboard / bulk-op actions → seventeen. Banner action_ids (T2)
-//! reference these stable strings. Downstream tasks (T5 recovery panel,
-//! T7 empty-state hero, T10 import cancel, T11 file dialog, T12 theme
-//! toggle) will replace stub dispatch bodies with real wiring — registry
-//! shape itself is frozen here.
+//! edit / clipboard / bulk-op actions → seventeen. P4c T8 added
+//! `view.delete_column` → eighteen; P4c T11 added `view.export` → nineteen.
+//! P5a T11 adds five SQL Console entry points (console.toggle / sql.run /
+//! sql.cancel / sql.new_tab / sql.close_tab) → twenty-four. Banner action_ids
+//! (T2) reference these stable strings. Downstream tasks (T5 recovery panel,
+//! T7 empty-state hero, T10 import cancel, T11 file dialog, T12 theme toggle)
+//! will replace stub dispatch bodies with real wiring — registry shape itself
+//! is frozen here.
 
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -70,12 +73,13 @@ fn lookup_returns_descriptor() {
 }
 
 #[test]
-fn builtins_register_nineteen() {
+fn builtins_register_twenty_four() {
     let reg = ActionRegistry::new();
     dat0_app::actions::builtin::register_all(&reg).unwrap();
     // Ten from P3b/P4a + seven from P4b T9 (copy/cut/paste/fill_down/set_null/set_value/delete_rows)
-    // + one from P4c T8 (delete_column) + one from P4c T11 (view.export).
-    assert_eq!(reg.count(), 19);
+    // + one from P4c T8 (delete_column) + one from P4c T11 (view.export)
+    // + five from P5a T11 (console.toggle/sql.run/sql.cancel/sql.new_tab/sql.close_tab) = 24.
+    assert_eq!(reg.count(), 24);
     let titles: Vec<String> = reg.iter().map(|d| d.title).collect();
     assert!(titles.contains(&"New Window".to_string()));
     assert!(titles.contains(&"Open Settings".to_string()));
@@ -94,6 +98,12 @@ fn builtins_register_nineteen() {
     assert!(titles.contains(&"Delete Column".to_string()));
     // P4c T11 addition
     assert!(titles.contains(&"Export…".to_string()));
+    // P5a T11 additions (SQL Console entry points)
+    assert!(titles.contains(&"Toggle SQL Console".to_string()));
+    assert!(titles.contains(&"Run".to_string()));
+    assert!(titles.contains(&"Cancel".to_string()));
+    assert!(titles.contains(&"New query tab".to_string()));
+    assert!(titles.contains(&"Close query tab".to_string()));
 }
 
 #[test]

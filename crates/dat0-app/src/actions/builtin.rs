@@ -43,6 +43,12 @@ pub mod ids {
     pub const VIEW_DELETE_COLUMN: &str = "view.delete_column";
     // P4c T11: File → Export… dialog.
     pub const VIEW_EXPORT: &str = "view.export";
+    // P5a T11: SQL Console entry points (toggle / run / cancel / tab lifecycle).
+    pub const CONSOLE_TOGGLE: &str = "console.toggle";
+    pub const SQL_RUN: &str = "sql.run";
+    pub const SQL_CANCEL: &str = "sql.cancel";
+    pub const SQL_NEW_TAB: &str = "sql.new_tab";
+    pub const SQL_CLOSE_TAB: &str = "sql.close_tab";
 }
 
 /// Register every built-in action onto `reg`. Returns an error if any id

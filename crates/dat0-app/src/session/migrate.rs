@@ -1,6 +1,7 @@
 //! session.json schema migration. v1 (no version field) → v2 (typed transforms)
 //! → v3 (additive `Edit`/`RowDelete` transform variants, P4b) → v4 (projection
-//! variants allowlist + active-stack-only persistence, P4c).
+//! variants allowlist + active-stack-only persistence, P4c) → v5 (additive SQL
+//! console tabs `sql_tabs` + `active_sql_tab`, P5a).
 //!
 //! Migration is load-and-write-back (eager): a successful migration is
 //! immediately followed by the caller's `Session::persist` call to land the
@@ -185,11 +186,12 @@ pub fn load_str(raw: &str) -> Result<SessionState, SessionLoadError> {
     // migration path (e.g. `3 => migrate_v3_to_v4(raw)`) or get an
     // inexhaustive-match error instead of a silent runtime failure.
     match probe.schema_version {
-        1 => migrate_v1_to_v4(raw),
-        2 => migrate_v2_to_v4(raw),
-        3 => migrate_v3_to_v4(raw),
-        4 => {
-            // Forward-incompat guard: a NEWER dat0 (writing the same v4 schema)
+        1 => migrate_v1_to_v5(raw),
+        2 => migrate_v2_to_v5(raw),
+        3 => migrate_v3_to_v5(raw),
+        4 => migrate_v4_to_v5(raw),
+        5 => {
+            // Forward-incompat guard: a NEWER dat0 (writing the same v5 schema)
             // may have introduced a transform variant this build doesn't know.
             // Scan the current-version document's transform stacks and map any
             // unknown TOP-LEVEL `kind` to the forward-incompat banner path BEFORE
@@ -217,55 +219,72 @@ pub fn load_str(raw: &str) -> Result<SessionState, SessionLoadError> {
 // Private migration helpers
 // ---------------------------------------------------------------------------
 
-/// Migrate a raw v1 JSON string straight to the current (v4) `SessionState`.
+/// Migrate a raw v1 JSON string straight to the current (v5) `SessionState`.
 ///
 /// v1 had no `schema_version` + no `transform_stack` + no `undo_cursor` on
 /// `Tab`. The `#[serde(default)]` attrs on those fields handle the gaps; we
 /// just re-parse the whole document (which now has the serde defaults applied)
 /// and stamp `schema_version = SESSION_SCHEMA_VERSION`.
 ///
-/// v2 → v3 → v4 are identity reshapes (see [`migrate_v2_to_v4`],
-/// [`migrate_v3_to_v4`]), so the v1 → v4 path is the same single re-parse +
-/// version stamp — no intermediate hops are needed (v1 stacks are always
-/// empty, so the v4 redo-truncation is a no-op).
-fn migrate_v1_to_v4(raw: &str) -> Result<SessionState, SessionLoadError> {
+/// v2 → v3 → v4 → v5 are identity / additive reshapes (see [`migrate_v2_to_v5`],
+/// [`migrate_v3_to_v5`], [`migrate_v4_to_v5`]), so the v1 → v5 path is the same
+/// single re-parse + version stamp — no intermediate hops are needed (v1 stacks
+/// are always empty, so the v4 redo-truncation is a no-op, and the v5 SQL-tab
+/// fields default via serde).
+fn migrate_v1_to_v5(raw: &str) -> Result<SessionState, SessionLoadError> {
     let mut state: SessionState = serde_json::from_str(raw)?;
     state.schema_version = SESSION_SCHEMA_VERSION;
     // serde(default) on Tab fields ensures:
     //   transform_stack = Vec::new()
     //   undo_cursor     = 0
     //   extra           = serde_json::Map::new()   (via flatten)
+    // serde(default) on SessionState fields ensures:
+    //   sql_tabs        = Vec::new()
+    //   active_sql_tab  = None
     // No further field-level work is needed.
     Ok(state)
 }
 
-/// Migrate a raw v2 JSON string to a v4 `SessionState` — IDENTITY.
+/// Migrate a raw v2 JSON string to a v5 `SessionState` — IDENTITY.
 ///
 /// v3 adds the `Edit` / `RowDelete` `Transformation` variants, which are purely
 /// additive tagged-enum cases. v4 adds the projection variants (Reorder/Rename/
-/// DeleteColumn) and truncates to the active slice. A v2 file (filter/sort only)
-/// parses into the exact same in-memory shape; stacks parsed from v2 are by
-/// definition "active only" (no redo tail in v2 format). The only change is the
-/// version stamp. Re-parse and bump `schema_version`.
-fn migrate_v2_to_v4(raw: &str) -> Result<SessionState, SessionLoadError> {
+/// DeleteColumn) and truncates to the active slice. v5 adds SQL console tabs
+/// (additive, serde-defaulted). A v2 file (filter/sort only) parses into the
+/// exact same in-memory shape; stacks parsed from v2 are by definition "active
+/// only" (no redo tail in v2 format). The only change is the version stamp.
+/// Re-parse and bump `schema_version`.
+fn migrate_v2_to_v5(raw: &str) -> Result<SessionState, SessionLoadError> {
     let mut state: SessionState = serde_json::from_str(raw)?;
     state.schema_version = SESSION_SCHEMA_VERSION;
     Ok(state)
 }
 
-/// Migrate a raw v3 JSON string to a v4 `SessionState`.
+/// Migrate a raw v3 JSON string to a v5 `SessionState`.
 ///
 /// v4 adds the display-only projection variants (Reorder/Rename/DeleteColumn) —
 /// additive tagged-enum cases — AND changes persistence to the ACTIVE stack only
 /// (the P4c history zipper drops the in-stack redo tail). So we truncate each
-/// tab's `transform_stack` to `undo_cursor` (its active slice) and stamp v4.
-fn migrate_v3_to_v4(raw: &str) -> Result<SessionState, SessionLoadError> {
+/// tab's `transform_stack` to `undo_cursor` (its active slice). v5 then adds SQL
+/// console tabs additively (serde-defaulted). Truncate, then stamp v5.
+fn migrate_v3_to_v5(raw: &str) -> Result<SessionState, SessionLoadError> {
     let mut state: SessionState = serde_json::from_str(raw)?;
     for tab in &mut state.tabs {
         let keep = tab.undo_cursor.min(tab.transform_stack.len());
         tab.transform_stack.truncate(keep);
         tab.undo_cursor = keep;
     }
+    state.schema_version = SESSION_SCHEMA_VERSION;
+    Ok(state)
+}
+
+/// Migrate a raw v4 JSON string to a v5 `SessionState`.
+///
+/// v5 adds SQL console tabs (`sql_tabs` + `active_sql_tab`). Purely additive:
+/// a v4 file lacks both fields, so serde `#[serde(default)]` fills them with
+/// an empty vec / `None`. No table-tab reshaping. Just stamp the version.
+fn migrate_v4_to_v5(raw: &str) -> Result<SessionState, SessionLoadError> {
+    let mut state: SessionState = serde_json::from_str(raw)?;
     state.schema_version = SESSION_SCHEMA_VERSION;
     Ok(state)
 }

@@ -413,6 +413,37 @@ pub fn run_app(lock: AppLock, initial_paths: Vec<PathBuf>, main_loop: MainLoop) 
             });
         }
 
+        // Wire the SQL Console keystrokes (P5a T11):
+        //   Cmd+Enter / Ctrl+Enter      → SqlRun    (run the active statement)
+        //   Cmd+.     / Ctrl+.          → SqlCancel (interrupt the in-flight run)
+        //   Cmd+Shift+C / Ctrl+Shift+C  → SqlConsoleToggle (show/hide the console)
+        //
+        // Unlike Export/Undo/Redo (handled by GLOBAL `cx.on_action` here in
+        // run_app), these actions are handled VIEW-scoped on the WorkspaceShell
+        // root in `render` — they reach `self`, and toggle/new-tab need a
+        // `&mut Window` that the App-level dispatch path can't supply. We only
+        // register the keystrokes here; gpui routes the dispatched action up the
+        // focused element tree to the shell's `.on_action` handlers. SqlNewTab /
+        // SqlCloseTab are reachable via the menu + command palette (and the
+        // console's own "+"/"✕" tab buttons) — no default keystroke is bound to
+        // avoid colliding with the editor's own text-editing keymap.
+        {
+            #[cfg(target_os = "macos")]
+            let (run_ks, cancel_ks, toggle_ks) = ("cmd-enter", "cmd-.", "cmd-shift-c");
+            #[cfg(not(target_os = "macos"))]
+            let (run_ks, cancel_ks, toggle_ks) = ("ctrl-enter", "ctrl-.", "ctrl-shift-c");
+            cx.bind_keys([
+                gpui::KeyBinding::new(run_ks, crate::menu_macos::SqlRun, None),
+                gpui::KeyBinding::new(cancel_ks, crate::menu_macos::SqlCancel, None),
+                gpui::KeyBinding::new(toggle_ks, crate::menu_macos::SqlConsoleToggle, None),
+            ]);
+        }
+
+        // Register the SQL grammar for the P5 console editor (runtime-registered,
+        // single grammar — see query::highlight). T0 spike confirmed the runtime
+        // path; decision-7 fallback NOT triggered.
+        crate::query::highlight::register_sql_language();
+
         let first_window_id = session.lock().window_id;
         let bounds = Bounds::centered(None, size(px(1200.), px(800.)), cx);
         let session_for_window = Arc::clone(&session);
@@ -604,6 +635,36 @@ pub struct WorkspaceShell {
     ///
     /// [`ExportEvent`]: crate::view::export_dialog::ExportEvent
     export_dialog_sub: Option<Subscription>,
+    /// SQL Console panel (P5a T5). Lazily constructed on the first
+    /// `toggle_sql_console` call (which has the `&mut Window` that the per-tab
+    /// code editors need). `None` until first toggled; visibility is gated by
+    /// `sql_console_visible` so a second toggle hides without tearing it down.
+    pub(crate) sql_console: Option<Entity<crate::view::sql_console::SqlConsole>>,
+    /// Subscription to the console's [`SqlConsoleEvent`]. Stored so the
+    /// run/cancel/persist callback stays registered — a dropped `Subscription`
+    /// deregisters silently (the P4a T10b trap).
+    ///
+    /// Written (never explicitly read); the field's sole purpose is to keep the
+    /// `Subscription` alive for the entity's life so `on_sql_console_event` keeps
+    /// firing. Dropping a `Subscription` deregisters silently, so this must be a
+    /// stored field — hence the lint allowance (a keep-alive, not dead code).
+    ///
+    /// [`SqlConsoleEvent`]: crate::view::sql_console::SqlConsoleEvent
+    #[allow(dead_code)] // keep-alive: storing the Subscription is the read
+    pub(crate) sql_console_sub: Option<Subscription>,
+    /// Whether the SQL Console panel is currently shown. Toggled by
+    /// `toggle_sql_console`; the render gate respects this independently of
+    /// whether `sql_console` is `Some`.
+    pub(crate) sql_console_visible: bool,
+    /// Whether the window-close `Persist` backstop has been registered (P5a
+    /// T10). Set the first time the console is built so the
+    /// `on_window_should_close` hook is installed exactly once per window.
+    pub(crate) sql_console_close_hooked: bool,
+    /// Cancellation guard for the in-flight SQL console run (P5a T6). `Some`
+    /// while a run is executing; dropped/disarmed in `finish_sql_run`. The
+    /// guard's `Drop` (or an explicit `cancel()` in T7) fires the engine's
+    /// connection-wide `interrupt()`.
+    pub(crate) active_query_cancel: Option<crate::query::QueryCancel>,
 }
 
 impl WorkspaceShell {
@@ -627,6 +688,11 @@ impl WorkspaceShell {
             pipeline_bar_state: crate::view::pipeline_bar::PipelineBarState::default(),
             export_dialog: None,
             export_dialog_sub: None,
+            sql_console: None,
+            sql_console_sub: None,
+            sql_console_visible: false,
+            sql_console_close_hooked: false,
+            active_query_cancel: None,
         }
     }
 
@@ -667,28 +733,47 @@ impl WorkspaceShell {
         cx.notify();
     }
 
-    /// Prefetch the page(s) covering screen rows `[start, end)` into the
-    /// `GridDataSource` LRU so the grid's synchronous `render_td` paints real
-    /// values for the rows the user can see (PD-018).
+    /// Prefetch the page(s) covering screen rows `[start, end)` into the MAIN
+    /// grid's `GridDataSource` LRU so the grid's synchronous `render_td` paints
+    /// real values for the rows the user can see (PD-018).
+    ///
+    /// Thin wrapper over [`Self::prefetch_rows_for`] bound to `self.data_source`.
+    /// Callers that page a DIFFERENT source (e.g. the console results pane, which
+    /// owns a separate `GridDataSource` with its own LRU) must call
+    /// `prefetch_rows_for(&that_source, …)` directly so the right cache is
+    /// populated (P5a T9).
+    pub fn prefetch_visible_rows(&self, start: usize, end: usize, cx: &mut Context<Self>) {
+        if let Some(ds) = self.data_source.as_ref() {
+            let ds = Arc::clone(ds);
+            self.prefetch_rows_for(&ds, start, end, cx);
+        }
+    }
+
+    /// Source-parameterized prefetch: load the page(s) covering screen rows
+    /// `[start, end)` into `ds`'s OWN LRU, then notify the shell so the mounted
+    /// view repaints with real values.
+    ///
+    /// Each [`crate::grid::GridDataSource`] owns a SEPARATE `Mutex<LruCache>`, so
+    /// a view's `render_td` only ever finds pages that were fetched into THAT
+    /// view's source. The main grid drives this via
+    /// [`Self::prefetch_visible_rows`] (passing `self.data_source`); the
+    /// console-owned results pane drives it via the delegate's
+    /// `visible_rows_changed` hook (passing the PANE's source). Routing both
+    /// through this one method means pane scrolling loads the pane's cache and
+    /// leaves the main grid's cache untouched (P5a T9 fix).
     ///
     /// The fetch runs OFF the GPUI main thread — `GridDataSource::page_for` is
     /// async DuckDB I/O and must never block the 60 fps render loop. Once the
     /// page is in the LRU, the re-render `notify` is posted back onto the main
     /// thread via the [`crate::main_bridge::MainThreadDispatcher`] (the canonical
     /// `spawn_view_change` discipline — NEVER `cx.update` from the tokio task).
-    /// Re-rendering the shell re-renders the mounted `Table`, whose `render_td`
-    /// now finds the cached page.
-    ///
-    /// Called on grid bind (page 0) and from the delegate's
-    /// `visible_rows_changed` hook (scroll-paging).  When both boundary pages
-    /// are already resident in the LRU, the spawn is skipped entirely — no
-    /// tokio task, no `cx.notify()` — eliminating the gratuitous task/notify
-    /// storm on fast scroll over already-loaded data.
-    pub fn prefetch_visible_rows(&self, start: usize, end: usize, cx: &mut Context<Self>) {
-        let Some(ds) = self.data_source.as_ref() else {
-            return;
-        };
-
+    pub(crate) fn prefetch_rows_for(
+        &self,
+        ds: &Arc<crate::grid::GridDataSource>,
+        start: usize,
+        end: usize,
+        cx: &mut Context<Self>,
+    ) {
         // Cheap resident guard: if both boundary pages are already in the LRU
         // cache, the synchronous `render_td` will already paint real values —
         // there is nothing to fetch and no notify to post.  This eliminates the
@@ -725,7 +810,7 @@ impl WorkspaceShell {
                 match ds.page_for(row).await {
                     Ok(_) => any_loaded = true,
                     Err(e) => {
-                        tracing::warn!(row, error = %e, "prefetch_visible_rows: page_for failed");
+                        tracing::warn!(row, error = %e, "prefetch_rows_for: page_for failed");
                     }
                 }
             }
@@ -741,7 +826,7 @@ impl WorkspaceShell {
                 });
             } else {
                 tracing::warn!(
-                    "prefetch_visible_rows: no MainThreadDispatcher installed; grid will not refresh"
+                    "prefetch_rows_for: no MainThreadDispatcher installed; grid will not refresh"
                 );
             }
         });
@@ -993,6 +1078,266 @@ impl WorkspaceShell {
         }
     }
 
+    // ── SQL Console panel (P5a T5) ────────────────────────────────────────────
+
+    /// Toggle the SQL Console bottom panel (P5a T5).
+    ///
+    /// On the first toggle, lazily constructs the [`SqlConsole`] from the
+    /// session's persisted SQL tabs (which needs the `&mut Window` for the
+    /// per-tab code editors) and subscribes to its [`SqlConsoleEvent`]. The
+    /// subscription is STORED in `sql_console_sub` — a dropped `Subscription`
+    /// deregisters the callback silently (the P4a T10b trap). Subsequent
+    /// toggles just flip `sql_console_visible` without tearing the console
+    /// down, preserving the editor buffers.
+    ///
+    /// Run/Cancel are wired in P5a T6/T7; for now the event handler only
+    /// services `Persist`.
+    ///
+    /// [`SqlConsole`]: crate::view::sql_console::SqlConsole
+    /// [`SqlConsoleEvent`]: crate::view::sql_console::SqlConsoleEvent
+    pub(crate) fn toggle_sql_console(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.sql_console.is_none() {
+            let (persisted, active) = {
+                let s = self.session.lock();
+                (s.sql_tabs().to_vec(), s.active_sql_tab())
+            };
+            let console = cx.new(|cx| {
+                crate::view::sql_console::SqlConsole::new(&persisted, active, window, cx)
+            });
+            let sub = cx.subscribe(
+                &console,
+                |ws: &mut Self, console, ev: &crate::view::sql_console::SqlConsoleEvent, cx| {
+                    ws.on_sql_console_event(console.clone(), ev.clone(), cx);
+                },
+            );
+            self.sql_console_sub = Some(sub);
+            self.sql_console = Some(console);
+            self.sql_console_visible = true;
+
+            // Persist the console one last time on window close (P5a T10). This
+            // is a best-effort backstop ON TOP OF the guaranteed per-mutation
+            // persists (Run / tab add / close / active-switch each emit
+            // `Persist` → `set_sql_tabs` → disk), so disk is already current;
+            // the close hook flushes any edit-buffer text typed since the last
+            // mutation. Registered once, the first time the console is built
+            // (we hold the only `&mut Window` here). `should_close` returns
+            // `true` so the default close proceeds.
+            if !self.sql_console_close_hooked {
+                self.sql_console_close_hooked = true;
+                let ws_weak = cx.entity().downgrade();
+                window.on_window_should_close(cx, move |_window, app| {
+                    if let Some(ws) = ws_weak.upgrade() {
+                        ws.update(app, |ws, cx| ws.persist_sql_console(cx));
+                    }
+                    true
+                });
+            }
+        } else {
+            self.sql_console_visible = !self.sql_console_visible;
+        }
+        cx.notify();
+    }
+
+    /// Route a [`SqlConsoleEvent`] from the console.
+    ///
+    /// T5 stubbed `Run`/`Cancel`; T6 implements `Run` (statement resolve →
+    /// VIEW/EXEC → bind grid). `Cancel` lands in T7.
+    ///
+    /// [`SqlConsoleEvent`]: crate::view::sql_console::SqlConsoleEvent
+    pub(crate) fn on_sql_console_event(
+        &mut self,
+        console: Entity<crate::view::sql_console::SqlConsole>,
+        ev: crate::view::sql_console::SqlConsoleEvent,
+        cx: &mut Context<Self>,
+    ) {
+        use crate::view::sql_console::SqlConsoleEvent::*;
+        match ev {
+            Persist => self.persist_sql_console(cx),
+            Run { target } => self.spawn_sql_run(console, target, cx),
+            Cancel => self.cancel_sql_run(cx),
+        }
+    }
+
+    /// Fire the active run's cancel drop-guard (P5a T7). `QueryCancel::cancel()`
+    /// invokes the engine's connection-wide `interrupt()`, so the in-flight
+    /// `spawn_sql_run` task's engine call resolves to `EngineError::Interrupted`,
+    /// which `classify_run_err` maps to `SqlRunOutcome::Cancelled`; `finish_sql_run`
+    /// then renders the muted "Cancelled" region and clears `running`.
+    ///
+    /// Safe when there is no active run (`active_query_cancel` is `None`). Safe
+    /// under double-cancel: `QueryCancel::cancel()` is idempotent (disarms after
+    /// firing), and `finish_sql_run`'s later `take()+disarm()` on the
+    /// already-disarmed guard is a no-op.
+    pub(crate) fn cancel_sql_run(&mut self, _cx: &mut Context<Self>) {
+        if let Some(g) = self.active_query_cancel.as_mut() {
+            g.cancel(); // fires engine.interrupt(); the in-flight task resolves to Cancelled
+        }
+    }
+
+    /// Snapshot the console's tabs into the session and persist (P5a T5).
+    /// Now LIVE — called from `finish_sql_run` after every run (T6).
+    ///
+    /// Persistence cadence (P5a T10): every console mutation that emits
+    /// `SqlConsoleEvent::Persist` routes here — Run, tab add (`new_tab`), tab
+    /// close (`close_tab`), and active-tab switch — plus a window-close backstop
+    /// registered in `toggle_sql_console`. Editor-buffer text typed between
+    /// mutations is captured by the next mutation or the close backstop. Blur is
+    /// intentionally NOT wired: `InputState` owns its focus handle internally
+    /// (no clean seam to subscribe its blur at this gpui-component rev), and the
+    /// guaranteed per-mutation + close triggers already keep disk current.
+    pub(crate) fn persist_sql_console(&mut self, cx: &mut Context<Self>) {
+        if let Some(console) = &self.sql_console {
+            let app: &gpui::App = cx;
+            let (tabs, active) = console.read(app).snapshot(app);
+            let _ = self.session.lock().set_sql_tabs(tabs, active);
+        }
+    }
+
+    /// Short, stable per-window discriminator for the TEMP VIEW name. The
+    /// session `window_id` is a `Uuid`; its canonical `to_string()` always
+    /// renders `8-4-4-4-12` hex, so the first 4 chars are always ASCII hex.
+    fn window_disc(&self) -> String {
+        self.session.lock().window_id.to_string()[..4].to_string()
+    }
+
+    /// Execute the SQL statement under the cursor OFF the GPUI main thread and
+    /// bind the result to the grid (P5a T6). Structurally mirrors
+    /// [`crate::view::spawn_view_change`] / `run_view_change_inner`: the engine
+    /// round-trip + `GridDataSource::new` run inside a `tokio::spawn`, then the
+    /// main-thread apply is posted back via the [`MainThreadDispatcher`]
+    /// (`crate::window_registry::dispatcher`). NEVER `cx.update` from the task.
+    ///
+    /// **Cursor-only** (T0 spike): there is no public selection accessor on
+    /// `InputState` at this gpui-component rev, so the run statement is resolved
+    /// via [`crate::query::statement::statement_at`] from the editor cursor.
+    ///
+    /// [`MainThreadDispatcher`]: crate::main_bridge::MainThreadDispatcher
+    pub(crate) fn spawn_sql_run(
+        &mut self,
+        console: gpui::Entity<crate::view::sql_console::SqlConsole>,
+        target: crate::query::ResultTarget,
+        cx: &mut Context<Self>,
+    ) {
+        use crate::query::statement::{ResultKind, classify, statement_at};
+        use crate::view::sql_console::ResultRegion;
+
+        // Resolve the statement under the cursor (cursor-only; no selection).
+        let (sql, cursor) = console.read(cx).active_sql_and_cursor(cx);
+        let span = statement_at(&sql, cursor);
+        let stmt = sql[span.start..span.end].trim().to_string();
+        if stmt.is_empty() {
+            return;
+        }
+        let kind = classify(&stmt);
+
+        let engine = self.engine();
+        let win_disc = self.window_disc();
+        let tab_ix = console.read(cx).active;
+        let view_name = crate::query::result_view_name(&win_disc, tab_ix);
+
+        // Flip the console into the running state immediately.
+        console.update(cx, |c, cx| {
+            c.set_running(true, cx);
+            c.set_region(ResultRegion::Empty, cx);
+        });
+        self.active_query_cancel = Some(crate::query::QueryCancel::new(&engine));
+
+        let ws_weak = cx.entity().downgrade();
+        let console_weak = console.downgrade();
+        let engine_for_task = std::sync::Arc::clone(&engine);
+
+        tokio::spawn(async move {
+            // `create_or_replace_view` / `execute` are `QueryEngine` trait methods.
+            use dat0_engine::QueryEngine as _;
+            let outcome: SqlRunOutcome = match kind {
+                ResultKind::Result => match engine_for_task
+                    .create_or_replace_view(&view_name, &stmt)
+                    .await
+                {
+                    Ok(()) => match crate::grid::GridDataSource::new(
+                        std::sync::Arc::clone(&engine_for_task),
+                        view_name.clone(),
+                    )
+                    .await
+                    {
+                        Ok(ds) => SqlRunOutcome::Bound(std::sync::Arc::new(ds)),
+                        Err(e) => SqlRunOutcome::Error(e.to_string()),
+                    },
+                    Err(e) => classify_run_err(e),
+                },
+                ResultKind::Exec => match engine_for_task.execute(&stmt).await {
+                    Ok(r) => SqlRunOutcome::Status(format_exec_status(&r)),
+                    Err(e) => classify_run_err(e),
+                },
+            };
+            // Post the apply onto the GPUI main thread. Matches the dispatcher
+            // discipline of `run_view_change_inner` / `prefetch_visible_rows`.
+            if let Some(dispatcher) = crate::window_registry::dispatcher() {
+                let _ = dispatcher.dispatch(move |app_cx: &mut gpui::App| {
+                    if let (Some(ws), Some(console)) = (ws_weak.upgrade(), console_weak.upgrade()) {
+                        ws.update(app_cx, |ws, cx| {
+                            ws.finish_sql_run(&console, target, outcome, cx);
+                        });
+                    }
+                });
+            } else {
+                tracing::warn!("spawn_sql_run: no MainThreadDispatcher installed; result dropped");
+            }
+        });
+    }
+
+    /// Apply a completed SQL run on the GPUI main thread (P5a T6). Disarms the
+    /// cancel guard, clears the running flag, then routes the outcome: a bound
+    /// result rebinds the grid; status/error/cancelled render the inline strip.
+    fn finish_sql_run(
+        &mut self,
+        console: &gpui::Entity<crate::view::sql_console::SqlConsole>,
+        target: crate::query::ResultTarget,
+        outcome: SqlRunOutcome,
+        cx: &mut Context<Self>,
+    ) {
+        use crate::view::sql_console::ResultRegion;
+
+        // Normal completion: disarm so the dropped guard does NOT interrupt.
+        if let Some(mut g) = self.active_query_cancel.take() {
+            g.disarm();
+        }
+        console.update(cx, |c, cx| c.set_running(false, cx));
+
+        match outcome {
+            SqlRunOutcome::Bound(ds) => match target {
+                crate::query::ResultTarget::MainGrid => {
+                    self.apply_view_change(ds, cx);
+                    console.update(cx, |c, cx| c.set_region(ResultRegion::BoundToGrid, cx));
+                }
+                crate::query::ResultTarget::Pane => {
+                    // T9 (Tier 2): route into the console-owned results grid
+                    // instead of the main DataGrid. `set_pane_source` stores the
+                    // `Arc` + this shell's weak handle (for the pane delegate's
+                    // header/scroll closures) and kicks a first-page prefetch;
+                    // the console's `render` lazily promotes it to a `TableState`
+                    // (it owns the `&mut Window` this callback lacks). The main
+                    // grid / table tab is left untouched.
+                    let ws_weak = cx.entity().downgrade();
+                    console.update(cx, |c, cx| {
+                        c.set_pane_source(ds, ws_weak, cx);
+                        c.set_region(ResultRegion::Pane, cx);
+                    });
+                }
+            },
+            SqlRunOutcome::Status(s) => {
+                console.update(cx, |c, cx| c.set_region(ResultRegion::Status(s), cx))
+            }
+            SqlRunOutcome::Error(e) => {
+                console.update(cx, |c, cx| c.set_region(ResultRegion::Error(e), cx))
+            }
+            SqlRunOutcome::Cancelled => {
+                console.update(cx, |c, cx| c.set_region(ResultRegion::Cancelled, cx))
+            }
+        }
+        self.persist_sql_console(cx);
+    }
+
     /// Open the native save panel, then stream the export via COPY (P4c T11).
     ///
     /// Builds the surrogate-stripped projection SELECT off `scope` + the live
@@ -1122,6 +1467,42 @@ impl WorkspaceShell {
             .filter(|(c, _)| *c == col_ix)
             .map(|(_, e)| e.clone())
     }
+}
+
+// ---------------------------------------------------------------------------
+// SQL console run-path support types (P5a T6)
+// ---------------------------------------------------------------------------
+
+/// The terminal state of one SQL console run, computed OFF the GPUI main thread
+/// inside `spawn_sql_run` and applied on the main thread by `finish_sql_run`.
+pub(crate) enum SqlRunOutcome {
+    /// A result-producing statement bound to a fresh `GridDataSource`.
+    Bound(std::sync::Arc<crate::grid::GridDataSource>),
+    /// A DDL/DML statement completed; carries the status line.
+    Status(String),
+    /// The run failed; carries the DuckDB error message.
+    Error(String),
+    /// The run was interrupted (cooperative cancel).
+    Cancelled,
+}
+
+/// Map a `dat0_engine::EngineError` onto a run outcome. The dedicated
+/// `EngineError::Interrupted` variant (engine `execute/mod.rs` surfaces it when
+/// `Engine::interrupt()` fires) maps to `Cancelled`; everything else is an
+/// inline error.
+fn classify_run_err(e: dat0_engine::EngineError) -> SqlRunOutcome {
+    if matches!(e, dat0_engine::EngineError::Interrupted) {
+        SqlRunOutcome::Cancelled
+    } else {
+        SqlRunOutcome::Error(e.to_string())
+    }
+}
+
+/// Build the status line for a completed EXEC statement. DuckDB does not
+/// uniformly expose an affected-row count through `QueryResult` here, so a
+/// generic localized "OK" is used for P5a.
+fn format_exec_status(_r: &dat0_engine::QueryResult) -> String {
+    dat0_i18n::t("sql.ok")
 }
 
 impl WorkspaceShell {
@@ -1571,6 +1952,23 @@ impl Render for WorkspaceShell {
             }
         };
 
+        // SQL Console bottom panel (P5a T5). Mounted between the PipelineBar and
+        // the grid body when the console exists AND is visible. A fixed-height
+        // panel with a top border; the inner `SqlConsole` entity renders the tab
+        // strip + code editor + result region.
+        let sql_console_panel: Option<gpui::AnyElement> = self
+            .sql_console
+            .as_ref()
+            .filter(|_| self.sql_console_visible)
+            .map(|c| {
+                div()
+                    .h(px(260.))
+                    .w_full()
+                    .border_t_1()
+                    .child(c.clone())
+                    .into_any_element()
+            });
+
         div()
             .id("workspace-shell")
             .size_full()
@@ -1578,12 +1976,51 @@ impl Render for WorkspaceShell {
             .flex_col()
             .relative()
             .track_focus(&self.focus_handle)
+            // ── SQL Console actions (P5a T11) ─────────────────────────────────
+            // View-scoped (not global `cx.on_action`) because these reach `self`
+            // and three of them need a `&mut Window` (which the global App-level
+            // dispatch path does NOT supply). gpui dispatches actions up the
+            // focus/element tree, so `Cmd+Enter` / `Cmd+.` fired while the console
+            // editor has focus still bubble here to the shell root.
+            .on_action(cx.listener(
+                |ws: &mut Self, _: &crate::menu_macos::SqlRun, _window, cx| {
+                    if let Some(c) = ws.sql_console.clone() {
+                        ws.spawn_sql_run(c, crate::query::ResultTarget::MainGrid, cx);
+                    }
+                },
+            ))
+            .on_action(cx.listener(
+                |ws: &mut Self, _: &crate::menu_macos::SqlCancel, _window, cx| {
+                    ws.cancel_sql_run(cx);
+                },
+            ))
+            .on_action(cx.listener(
+                |ws: &mut Self, _: &crate::menu_macos::SqlConsoleToggle, window, cx| {
+                    ws.toggle_sql_console(window, cx);
+                },
+            ))
+            .on_action(cx.listener(
+                |ws: &mut Self, _: &crate::menu_macos::SqlNewTab, window, cx| {
+                    if let Some(c) = ws.sql_console.clone() {
+                        c.update(cx, |c, cx| c.new_tab(window, cx));
+                    }
+                },
+            ))
+            .on_action(cx.listener(
+                |ws: &mut Self, _: &crate::menu_macos::SqlCloseTab, _window, cx| {
+                    if let Some(c) = ws.sql_console.clone() {
+                        let active = c.read(cx).active;
+                        c.update(cx, |c, cx| c.close_tab(active, cx));
+                    }
+                },
+            ))
             .on_key_down(key_handler)
             .on_click(click_to_focus)
             .drag_over::<ExternalPaths>(|style, _, _, _| style.bg(gpui::rgba(0x0088_ff22)))
             .on_drop::<ExternalPaths>(drop_listener)
             .children(tab_strip)
             .children(pipeline_bar)
+            .children(sql_console_panel)
             .child(div().flex_1().child(body))
             .children(popover_overlay)
             .children(editor_overlay)

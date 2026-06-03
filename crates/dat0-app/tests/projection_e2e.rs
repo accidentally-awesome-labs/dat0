@@ -352,6 +352,8 @@ async fn projection_filter_export_remove_undo_restore() {
             extra: serde_json::Map::new(),
         }],
         active_tab: Some(0),
+        sql_tabs: Vec::new(),
+        active_sql_tab: None,
     };
     std::fs::write(&session_json, serde_json::to_vec_pretty(&state).unwrap()).unwrap();
 
@@ -362,7 +364,7 @@ async fn projection_filter_export_remove_undo_restore() {
     let restored = migrate::load(&session_json).unwrap();
     assert_eq!(
         restored.schema_version, SESSION_SCHEMA_VERSION,
-        "reloaded schema_version must be the current schema (4)"
+        "reloaded schema_version must be the current schema (5)"
     );
     assert_eq!(restored.tabs.len(), 1);
     assert_eq!(
@@ -405,11 +407,11 @@ async fn projection_filter_export_remove_undo_restore() {
         "restored data view still yields the single amt==100 row"
     );
 
-    // On-disk session.json declares the current schema (v4).
+    // On-disk session.json declares the current schema (v5).
     let raw = std::fs::read_to_string(&session_json).unwrap();
     assert!(
-        raw.contains("\"schema_version\": 4") || raw.contains("\"schema_version\":4"),
-        "session.json must declare schema_version 4"
+        raw.contains("\"schema_version\": 5") || raw.contains("\"schema_version\":5"),
+        "session.json must declare schema_version 5"
     );
 
     engine.close().await.unwrap();

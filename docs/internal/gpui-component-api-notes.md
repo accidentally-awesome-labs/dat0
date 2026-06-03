@@ -508,3 +508,67 @@ Re-verification protocol: when bumping `gpui-component` past `v0.5.1`, refetch
 each file above and diff against the verbatim snippets in this doc + the P3a
 `gpui-table-api-notes.md`. Update `docs/upstream-watch.md` "Current verified
 pins" row.
+
+---
+
+## 6. P5a T0 spike (2026-06-02)
+
+De-risk spike for the SQL Console. Method: a throwaway `examples/p5a_spike.rs`
+(deleted at end of T0) that compiles as an **external** consumer of
+`dat0-app`/`gpui-component` — the exact visibility boundary the shipped
+`crates/dat0-app/src/...` code will face. Findings:
+
+**(a) Runtime SQL highlight via `LanguageRegistry` — API compiles/links cleanly.**
+The runtime-registration path is valid and ABI-correct:
+`LanguageConfig::new("sql", tree_sitter_sequel::LANGUAGE.into(), vec![],
+tree_sitter_sequel::HIGHLIGHTS_QUERY, "", "")` +
+`LanguageRegistry::singleton().register("sql", &cfg)` +
+`InputState::new(..).code_editor("sql")`.
+`cargo build -p dat0-app --example p5a_spike` succeeded (clean compile + link).
+This mirrors gpui-component's own reference exactly (`crates/story/examples/editor.rs:35`
+registers `tree_sitter_navi::LANGUAGE.into()` / `HIGHLIGHTS_QUERY` the same way;
+`crates/ui/src/highlighter/registry.rs:515` unit test uses
+`tree_sitter_json::LANGUAGE.into()`). Public paths confirmed:
+`gpui_component::highlighter::{LanguageConfig, LanguageRegistry}` and
+`gpui_component::input::{Input, InputState}`.
+**Visual color confirmation owed to manual UAT (headless agent cannot view GUI)** —
+i.e. "are keywords/identifiers actually colored on screen" is a human-run check;
+this spike only proves the API path compiles and links.
+=> Design decision 7 (fallback to plain `code_editor`, highlight moved to P5b) is
+NOT triggered. Highlight stays in P5a.
+
+**(b) Selection accessor — NONE public; selection-override deferred, cursor-only run.**
+Neither selection probe compiles from outside the crate:
+- `selected_range` (field): `error[E0616]: field selected_range of struct InputState
+  is private` — declared `pub(super) selected_range: Selection` at
+  `crates/ui/src/input/state.rs:273`.
+- `selected_text()` (method): `error[E0624]: method selected_text is private` —
+  declared `pub(super) fn selected_text(&self) -> RopeSlice<'_>` at
+  `crates/ui/src/input/state.rs:1837`.
+The ONLY public state accessors are `cursor() -> usize` (state.rs:1498, the
+control probe — compiled OK), `cursor_position() -> Position` (state.rs:802),
+`text() -> &Rope` (state.rs:797), and `value() -> SharedString` (state.rs:787).
+=> T6/T11 "run the selected text" is NOT achievable through public API at rev
+`0f0ab35`. Selection-override is deferred; the run path is **cursor-based**
+(use `cursor()` + `text()` to find the statement under the cursor). If true
+selection-run is later required, options are: upstream a `pub` getter, or read
+the full `text()` and run the whole buffer / statement-at-cursor.
+
+**(c) `tree-sitter-sequel` version pinned.**
+Requirement string in `crates/dat0-app/Cargo.toml`: `tree-sitter-sequel = "0.3.8"`
+— byte-identical to gpui-component's own declaration (rev `0f0ab35`,
+`crates/ui/Cargo.toml:123`: `tree-sitter-sequel = { version = "0.3.8", optional = true }`).
+Both caret requirements unify to a **single** resolved copy in `Cargo.lock`:
+`tree-sitter-sequel v0.3.11` (checksum `9d198ad3...`), riding the shared
+`tree-sitter v0.25.10` core (gpui-component declares `tree-sitter = "0.25.4"`).
+Single unified copy => `LANGUAGE`/`HIGHLIGHTS_QUERY` come from an ABI-identical
+build, so the `tree_sitter::Language` handed to gpui-component's registry is the
+one its highlighter expects. Transitive footprint is tiny (`tree-sitter-language`
+runtime + `cc`/`jobserver`/`shlex`/`libc` build deps); no `arrow`, no bundle.
+
+**(d) Do NOT enable gpui-component `tree-sitter-languages` (28-grammar bundle).**
+gpui-component gates ~28 grammar deps behind its `tree-sitter-languages` feature
+(`crates/ui/Cargo.toml:23`); enabling it has caused CI OOM/disk failures. dat0
+deliberately stays off that feature and supplies the single SQL grammar directly
+as a dat0-app dependency, registered at runtime. Under no circumstance enable the
+bundle.

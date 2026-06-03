@@ -54,7 +54,113 @@ pub fn register(reg: &ActionRegistry) -> Result<(), RegisterError> {
         }),
     })?;
 
+    // P5a T11: SQL Console descriptors. The KEYBIND + MENU paths are handled
+    // VIEW-scoped on the WorkspaceShell root (`window.rs::render`), because the
+    // console toggle/new-tab handlers need a `&mut Window` that the registry
+    // `Fn(&mut App)` dispatch path can't supply. These descriptors exist so the
+    // P5b command palette can SURFACE the actions; their dispatch bodies cover
+    // the App-reachable subset (run / cancel) and leave the Window-needing ones
+    // (toggle / tab lifecycle) as breadcrumbs that the palette overlay (P5b)
+    // re-routes through the focused window once the WindowRegistry hop lands.
+    reg.register(ActionDescriptor {
+        id: ActionId::from(ids::CONSOLE_TOGGLE),
+        title: dat0_i18n::t("sql.console_toggle"),
+        group: ActionGroup::Navigation,
+        keybinding: None, // keybind: Cmd+Shift+C (view-scoped, window.rs)
+        dispatch: Arc::new(|_app| {
+            // Needs `&mut Window` (lazily builds + shows the console). Reached via
+            // the Cmd+Shift+C keybind / View-menu item (view-scoped handler).
+            tracing::debug!(
+                "action: console.toggle dispatched via registry — handled view-scoped (needs Window); no-op from App path"
+            );
+        }),
+    })?;
+
+    reg.register(ActionDescriptor {
+        id: ActionId::from(ids::SQL_RUN),
+        title: dat0_i18n::t("sql.run"),
+        group: ActionGroup::Edit,
+        keybinding: None, // keybind: Cmd+Enter (view-scoped, window.rs)
+        dispatch: Arc::new(|app| {
+            dispatch_sql_run(app);
+        }),
+    })?;
+
+    reg.register(ActionDescriptor {
+        id: ActionId::from(ids::SQL_CANCEL),
+        title: dat0_i18n::t("sql.cancel"),
+        group: ActionGroup::Edit,
+        keybinding: None, // keybind: Cmd+. (view-scoped, window.rs)
+        dispatch: Arc::new(|app| {
+            dispatch_sql_cancel(app);
+        }),
+    })?;
+
+    reg.register(ActionDescriptor {
+        id: ActionId::from(ids::SQL_NEW_TAB),
+        title: dat0_i18n::t("sql.new_tab"),
+        group: ActionGroup::Edit,
+        keybinding: None, // menu + console "+" button (view-scoped, window.rs)
+        dispatch: Arc::new(|_app| {
+            tracing::debug!(
+                "action: sql.new_tab dispatched via registry — handled view-scoped (needs Window); no-op from App path"
+            );
+        }),
+    })?;
+
+    reg.register(ActionDescriptor {
+        id: ActionId::from(ids::SQL_CLOSE_TAB),
+        title: dat0_i18n::t("sql.close_tab"),
+        group: ActionGroup::Edit,
+        keybinding: None, // menu + console "✕" button (view-scoped, window.rs)
+        dispatch: Arc::new(|app| {
+            dispatch_sql_close_tab(app);
+        }),
+    })?;
+
     Ok(())
+}
+
+/// Dispatch body for `sql.run` (P5a T11). Runs the focused workspace's active
+/// statement into the main grid. Cursor-only resolution (no selection
+/// override — T0 proved there is no public selection getter at this
+/// gpui-component rev). No-op when no console is mounted.
+fn dispatch_sql_run(app: &mut gpui::App) {
+    let Some(workspace) = focused_workspace(app) else {
+        tracing::debug!("sql.run: no focused workspace");
+        return;
+    };
+    workspace.update(app, |ws, cx| {
+        if let Some(console) = ws.sql_console.clone() {
+            ws.spawn_sql_run(console, crate::query::ResultTarget::MainGrid, cx);
+        }
+    });
+}
+
+/// Dispatch body for `sql.cancel` (P5a T11). Interrupts the focused
+/// workspace's in-flight run; safe when there is none.
+fn dispatch_sql_cancel(app: &mut gpui::App) {
+    let Some(workspace) = focused_workspace(app) else {
+        tracing::debug!("sql.cancel: no focused workspace");
+        return;
+    };
+    workspace.update(app, |ws, cx| ws.cancel_sql_run(cx));
+}
+
+/// Dispatch body for `sql.close_tab` (P5a T11). Closes the active tab of the
+/// focused workspace's console (a no-op on the last tab). No-op when no
+/// console is mounted.
+fn dispatch_sql_close_tab(app: &mut gpui::App) {
+    let Some(workspace) = focused_workspace(app) else {
+        tracing::debug!("sql.close_tab: no focused workspace");
+        return;
+    };
+    workspace.update(app, |ws, cx| {
+        if let Some(console) = ws.sql_console.clone() {
+            let active = console.read(cx).active;
+            console.update(cx, |c, cx| c.close_tab(active, cx));
+        }
+    });
 }
 
 /// Retrieve the focused `WorkspaceShell` entity, if available.
