@@ -1206,6 +1206,7 @@ Used by:
 - simd_helpers 0.1.0 — https://github.com/lu-zero/simd_helpers
 - taffy 0.9.0 — https://github.com/DioxusLabs/taffy
 - tree-sitter-json 0.24.8 — https://github.com/tree-sitter/tree-sitter-json
+- tree-sitter-sequel 0.3.11 — https://github.com/derekstride/tree-sitter-sql.git
 - tree-sitter 0.25.10 — https://github.com/tree-sitter/tree-sitter
 - xim-ctext 0.3.0 — https://github.com/Riey/xim-rs
 - xim-parser 0.2.2 — https://github.com/Riey/xim-rs
