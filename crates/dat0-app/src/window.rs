@@ -1592,6 +1592,34 @@ impl WorkspaceShell {
             .filter(|(c, _)| *c == col_ix)
             .map(|(_, e)| e.clone())
     }
+
+    /// Persist the current tab's SQL as a named saved query (P5b T6). Upserts by
+    /// name (case-insensitive). No-op on empty name/sql.
+    #[expect(dead_code, reason = "UI callers wired in P5b T8")]
+    pub(crate) fn save_named_query(&mut self, name: String, sql: String, _cx: &mut Context<Self>) {
+        if name.trim().is_empty() || sql.trim().is_empty() {
+            return;
+        }
+        let q = crate::session::queries::SavedQuery {
+            id: uuid::Uuid::now_v7(),
+            name: name.trim().to_string(),
+            sql,
+            saved_at: now_unix_millis(),
+        };
+        let mut sess = self.session.lock();
+        let mut list = sess.saved_queries().to_vec();
+        crate::session::queries::upsert_saved(&mut list, q);
+        let _ = sess.set_saved_queries(list);
+    }
+
+    /// Delete a saved query by id (P5b T6). Wired to UI buttons in T8.
+    #[expect(dead_code, reason = "UI callers wired in P5b T8")]
+    pub(crate) fn delete_named_query(&mut self, id: uuid::Uuid, _cx: &mut Context<Self>) {
+        let mut sess = self.session.lock();
+        let mut list = sess.saved_queries().to_vec();
+        crate::session::queries::delete_saved(&mut list, id);
+        let _ = sess.set_saved_queries(list);
+    }
 }
 
 // ---------------------------------------------------------------------------
