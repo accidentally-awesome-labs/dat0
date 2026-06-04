@@ -17,7 +17,9 @@ use uuid::Uuid;
 use dat0_engine::{DuckDBEngine, MemoryBudget, QueryEngine, Transformation};
 
 pub mod migrate;
+pub mod queries;
 pub use migrate::SessionLoadError;
+use queries::{HistoryEntry, SavedQuery};
 
 // ---------------------------------------------------------------------------
 // Public data types
@@ -37,7 +39,10 @@ pub use migrate::SessionLoadError;
 ///
 /// v4 → v5 (P5a) adds SQL console tabs (`sql_tabs` + `active_sql_tab`) alongside
 /// the existing table `tabs`. Purely additive: v4 files default both to empty.
-pub const SESSION_SCHEMA_VERSION: u32 = 5;
+///
+/// v5 → v6 (P5b) adds `query_history` + `saved_queries`. Purely additive: v5
+/// files default both to empty.
+pub const SESSION_SCHEMA_VERSION: u32 = 6;
 
 /// A single tab within a scratch session.
 ///
@@ -88,6 +93,10 @@ pub struct SessionState {
     pub sql_tabs: Vec<SqlTabState>,
     #[serde(default)]
     pub active_sql_tab: Option<usize>,
+    #[serde(default)]
+    pub query_history: Vec<HistoryEntry>,
+    #[serde(default)]
+    pub saved_queries: Vec<SavedQuery>,
 }
 
 fn default_schema_version_v1() -> u32 {
@@ -102,6 +111,8 @@ impl Default for SessionState {
             active_tab: None,
             sql_tabs: Vec::new(),
             active_sql_tab: None,
+            query_history: Vec::new(),
+            saved_queries: Vec::new(),
         }
     }
 }
@@ -123,6 +134,8 @@ pub struct Session {
     active_tab: Option<usize>,
     sql_tabs: Vec<SqlTabState>,
     active_sql_tab: Option<usize>,
+    query_history: Vec<HistoryEntry>,
+    saved_queries: Vec<SavedQuery>,
 }
 
 impl Session {
@@ -157,6 +170,8 @@ impl Session {
             active_tab: None,
             sql_tabs: Vec::new(),
             active_sql_tab: None,
+            query_history: Vec::new(),
+            saved_queries: Vec::new(),
         };
         sess.persist()
             .context("session::new: initial persist failed")?;
@@ -228,6 +243,8 @@ impl Session {
             active_tab: state.active_tab,
             sql_tabs: state.sql_tabs,
             active_sql_tab: state.active_sql_tab,
+            query_history: state.query_history,
+            saved_queries: state.saved_queries,
         };
 
         // Eagerly persist after recovery. This matches Session::new's pattern and
@@ -300,6 +317,30 @@ impl Session {
             .context("session::set_sql_tabs: persist failed")
     }
 
+    /// Replace the query history and persist (P5b).
+    pub fn set_query_history(&mut self, history: Vec<HistoryEntry>) -> Result<()> {
+        self.query_history = history;
+        self.persist()
+            .context("session::set_query_history: persist failed")
+    }
+
+    /// Read-only access to the persisted history (newest last).
+    pub fn query_history(&self) -> &[HistoryEntry] {
+        &self.query_history
+    }
+
+    /// Replace the saved queries and persist (P5b).
+    pub fn set_saved_queries(&mut self, saved: Vec<SavedQuery>) -> Result<()> {
+        self.saved_queries = saved;
+        self.persist()
+            .context("session::set_saved_queries: persist failed")
+    }
+
+    /// Read-only access to the saved queries.
+    pub fn saved_queries(&self) -> &[SavedQuery] {
+        &self.saved_queries
+    }
+
     // -----------------------------------------------------------------------
     // Persistence
     // -----------------------------------------------------------------------
@@ -318,6 +359,8 @@ impl Session {
             active_tab: self.active_tab,
             sql_tabs: self.sql_tabs.clone(),
             active_sql_tab: self.active_sql_tab,
+            query_history: self.query_history.clone(),
+            saved_queries: self.saved_queries.clone(),
         };
 
         let bytes =
@@ -552,6 +595,54 @@ mod tests {
             Some(PathBuf::from("/tmp/data.csv"))
         );
         assert_eq!(recovered.active_tab, Some(0));
+    }
+
+    #[tokio::test]
+    async fn query_stores_round_trip_through_persist_and_recover() {
+        use queries::{HistoryEntry, SavedQuery};
+
+        let root = tempfile::tempdir().expect("tempdir");
+
+        let scratch_dir = {
+            let mut sess = Session::new(root.path(), TEST_BUDGET)
+                .await
+                .expect("Session::new");
+
+            // Fresh session has empty stores.
+            assert!(sess.query_history().is_empty());
+            assert!(sess.saved_queries().is_empty());
+
+            sess.set_query_history(vec![HistoryEntry {
+                sql: "select 1".into(),
+                ran_at: 42,
+                ok: true,
+                elapsed_ms: 7,
+            }])
+            .expect("set_query_history");
+
+            let id = Uuid::now_v7();
+            sess.set_saved_queries(vec![SavedQuery {
+                id,
+                name: "Daily".into(),
+                sql: "select count(*) from t".into(),
+                saved_at: 99,
+            }])
+            .expect("set_saved_queries");
+
+            sess.scratch_dir.clone()
+            // sess drops here, releasing the engine + DB lock
+        };
+
+        let recovered = Session::recover(scratch_dir, TEST_BUDGET)
+            .await
+            .expect("Session::recover");
+
+        assert_eq!(recovered.query_history().len(), 1);
+        assert_eq!(recovered.query_history()[0].sql, "select 1");
+        assert_eq!(recovered.query_history()[0].ran_at, 42);
+        assert_eq!(recovered.saved_queries().len(), 1);
+        assert_eq!(recovered.saved_queries()[0].name, "Daily");
+        assert_eq!(recovered.saved_queries()[0].sql, "select count(*) from t");
     }
 
     #[tokio::test]

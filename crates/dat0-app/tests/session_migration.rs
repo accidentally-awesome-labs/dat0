@@ -97,11 +97,11 @@ fn sample_v2_session_json() -> String {
 /// Take a v2 sample JSON and splice an unrecognized transform `kind` into the
 /// first tab's `transform_stack` — simulating a session a newer dat0 binary
 /// wrote with a variant this build doesn't know. The `schema_version` is also
-/// bumped to the current version (5) so the doc looks like a real current file
+/// bumped to the current version (6) so the doc looks like a real current file
 /// (the unknown-kind guard, not the version arm, is what must reject it).
 fn inject_unknown_kind(sample: String) -> String {
     let mut doc: serde_json::Value = serde_json::from_str(&sample).unwrap();
-    doc["schema_version"] = serde_json::json!(5);
+    doc["schema_version"] = serde_json::json!(6);
     let stack = doc["tabs"][0]["transform_stack"].as_array_mut().unwrap();
     stack.push(serde_json::json!({
         "kind": "frobnicate",
@@ -116,7 +116,7 @@ fn inject_unknown_kind(sample: String) -> String {
 // ---------------------------------------------------------------------------
 
 #[test]
-fn v1_fixture_migrates_to_v5() {
+fn v1_fixture_migrates_to_v6() {
     let tmp = TempDir::new().unwrap();
     let p = write_temp(&tmp, V1_FIXTURE_JSON);
 
@@ -141,8 +141,8 @@ fn v1_fixture_migrates_to_v5() {
 }
 
 #[test]
-fn v2_fixture_migrates_to_v5_preserving_content() {
-    // v2 → v5 is an identity migration (T13): the version stamp bumps to the
+fn v2_fixture_migrates_to_v6_preserving_content() {
+    // v2 → v6 is an identity migration (T13): the version stamp bumps to the
     // current schema, but the transform stack + cursor pass through unchanged.
     let tmp = TempDir::new().unwrap();
     let p = write_temp(&tmp, V2_FIXTURE_JSON);
@@ -150,7 +150,7 @@ fn v2_fixture_migrates_to_v5_preserving_content() {
     let state: SessionState = migrate::load(&p).unwrap();
 
     assert_eq!(state.schema_version, SESSION_SCHEMA_VERSION);
-    assert_eq!(state.schema_version, 5);
+    assert_eq!(state.schema_version, 6);
     assert_eq!(state.tabs.len(), 1);
     assert_eq!(state.tabs[0].transform_stack.len(), 2);
     assert_eq!(state.tabs[0].undo_cursor, 2);
@@ -231,7 +231,7 @@ fn v2_round_trip_through_serialization() {
 }
 
 /// Session::recover eagerly calls persist() after loading, so a v1 file is
-/// rewritten as the current schema (v5) on the first open — no subsequent
+/// rewritten as the current schema (v6) on the first open — no subsequent
 /// mutation required.
 #[tokio::test]
 async fn recover_eagerly_writes_back_current_version_on_first_open() {
@@ -255,12 +255,12 @@ async fn recover_eagerly_writes_back_current_version_on_first_open() {
         .await
         .expect("Session::recover should succeed on a v1 file");
 
-    // The on-disk file must now be the current schema (v5) without any further
+    // The on-disk file must now be the current schema (v6) without any further
     // persist() call.
     let after = fs::read_to_string(&session_path).unwrap();
     assert!(
-        after.contains("\"schema_version\": 5") || after.contains("\"schema_version\":5"),
-        "post-recover file should be current schema (v5), got: {}",
+        after.contains("\"schema_version\": 6") || after.contains("\"schema_version\":6"),
+        "post-recover file should be current schema (v6), got: {}",
         &after[..after.len().min(300)]
     );
 }
@@ -293,13 +293,13 @@ fn v1_migration_write_back_produces_current_version_on_disk() {
 // ---------------------------------------------------------------------------
 
 #[test]
-fn v2_session_migrates_to_v5_identity() {
+fn v2_session_migrates_to_v6_identity() {
     // A v2 session.json (no Edit/RowDelete — filter + sort only) loads and is
-    // stamped v5 with NO field reshape: the stack + cursor pass through unchanged.
+    // stamped v6 with NO field reshape: the stack + cursor pass through unchanged.
     let v2 = sample_v2_session_json();
     let migrated = migrate::load_str(&v2).unwrap();
 
-    assert_eq!(migrated.schema_version, 5);
+    assert_eq!(migrated.schema_version, 6);
     // Identity: the active stack contents and cursor are preserved verbatim.
     assert_eq!(migrated.tabs.len(), 1);
     assert_eq!(migrated.tabs[0].transform_stack.len(), 2);
@@ -315,7 +315,7 @@ fn v2_session_migrates_to_v5_identity() {
     migrated_canonical["schema_version"] = serde_json::json!(2);
     assert_eq!(
         migrated_canonical, v2_canonical,
-        "v2 → v3 must change ONLY the version (identity migration)"
+        "v2 → v6 must change ONLY the version (identity migration)"
     );
 }
 
@@ -342,9 +342,9 @@ fn unknown_transform_kind_triggers_forward_incompat_banner_not_panic() {
 // ---------------------------------------------------------------------------
 
 #[test]
-fn v3_with_projection_transform_loads_as_v5() {
+fn v3_with_projection_transform_loads_as_v6() {
     // A v3 file that ALSO carries a P4c projection transform must load (the
-    // kinds are now known) and stamp v5 (current).
+    // kinds are now known) and stamp v6 (current).
     let json = r#"{
       "schema_version": 3,
       "tabs": [{
@@ -395,7 +395,7 @@ fn v3_redo_tail_is_dropped_on_v4_upgrade() {
 // ---------------------------------------------------------------------------
 
 #[test]
-fn v4_migration_to_v5_defaults_sql_tabs() {
+fn v4_migration_to_v6_defaults_sql_tabs() {
     let v4_json = r#"{
       "schema_version": 4,
       "tabs": [
@@ -407,15 +407,17 @@ fn v4_migration_to_v5_defaults_sql_tabs() {
     assert_eq!(state.schema_version, SESSION_SCHEMA_VERSION);
     assert_eq!(state.tabs.len(), 1);
     assert_eq!(state.active_tab, Some(0));
-    assert!(state.sql_tabs.is_empty(), "v4->v5: sql_tabs defaults empty");
+    assert!(state.sql_tabs.is_empty(), "v4->v6: sql_tabs defaults empty");
     assert_eq!(
         state.active_sql_tab, None,
-        "v4->v5: active_sql_tab defaults None"
+        "v4->v6: active_sql_tab defaults None"
     );
 }
 
 #[test]
 fn v5_round_trips_sql_tabs() {
+    // A v5 file (with SQL tabs but no query stores) migrates to v6, stamping the
+    // version while preserving its SQL tabs verbatim.
     let v5_json = r#"{
       "schema_version": 5,
       "tabs": [],
@@ -426,9 +428,34 @@ fn v5_round_trips_sql_tabs() {
       "active_sql_tab": 0
     }"#;
     let state = migrate::load_str(v5_json).unwrap();
-    assert_eq!(state.schema_version, 5);
+    assert_eq!(state.schema_version, 6);
     assert_eq!(state.sql_tabs.len(), 1);
     assert_eq!(state.sql_tabs[0].title, "Query 1");
     assert_eq!(state.sql_tabs[0].sql, "SELECT 1");
     assert_eq!(state.active_sql_tab, Some(0));
+}
+
+// ---------------------------------------------------------------------------
+// T3 (P5b) — session v6 (additive query stores `query_history` + `saved_queries`)
+// ---------------------------------------------------------------------------
+
+#[test]
+fn v5_file_migrates_to_v6_with_empty_query_stores() {
+    // A v5 document: has sql_tabs but no query_history/saved_queries.
+    let raw =
+        r#"{"schema_version":5,"tabs":[],"active_tab":null,"sql_tabs":[],"active_sql_tab":null}"#;
+    let state = migrate::load_str(raw).expect("v5 should migrate");
+    assert_eq!(state.schema_version, 6);
+    assert!(state.query_history.is_empty());
+    assert!(state.saved_queries.is_empty());
+}
+
+#[test]
+fn v6_roundtrips_query_stores() {
+    let raw = r#"{"schema_version":6,"tabs":[],"active_tab":null,"sql_tabs":[],"active_sql_tab":null,
+        "query_history":[{"sql":"select 1","ran_at":5,"ok":true,"elapsed_ms":3}],
+        "saved_queries":[]}"#;
+    let state = migrate::load_str(raw).expect("v6 loads");
+    assert_eq!(state.query_history.len(), 1);
+    assert_eq!(state.query_history[0].sql, "select 1");
 }
