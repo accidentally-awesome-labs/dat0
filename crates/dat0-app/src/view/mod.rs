@@ -7,6 +7,7 @@ pub mod filter_popover;
 pub mod filter_popover_entity;
 pub mod model;
 pub mod pipeline_bar;
+pub mod query_library;
 pub mod sort_header;
 pub mod sql_console;
 

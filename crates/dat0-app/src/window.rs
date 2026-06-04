@@ -1234,6 +1234,23 @@ impl WorkspaceShell {
             Persist => self.persist_sql_console(cx),
             Run { target } => self.spawn_sql_run(console, target, cx),
             Cancel => self.cancel_sql_run(cx),
+            // P5b T5: fetch the session's persisted history (newest last in the
+            // store; the list view reverses to newest-first) and hand it to the
+            // console, which renders the overlay where a row click owns a live
+            // `Window` to load into a new tab.
+            ShowHistory => {
+                let entries = self.session.lock().query_history().to_vec();
+                console.update(cx, |c, cx| c.show_history(entries, cx));
+            }
+            // P5b T5/T8: a row/entry picked an SQL to load. The console owns the
+            // `&mut Window` (in its `render`) that `load_into_new_tab` needs, so
+            // the load is queued onto the console and consumed on its next
+            // render. (T5's history rows load directly inside the console render
+            // and do not emit this; this arm backs the T8 saved-query picker and
+            // keeps the variant fully wired.)
+            LoadSql(sql) => {
+                console.update(cx, |c, cx| c.queue_load(sql, cx));
+            }
         }
     }
 
