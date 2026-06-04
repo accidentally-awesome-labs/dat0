@@ -95,11 +95,12 @@ pub struct SqlConsole {
     /// inside [`render`](Self::render) — which owns the `&mut Window` a row
     /// click needs to load its SQL into a new tab.
     pub(crate) history_overlay: Option<Vec<crate::session::queries::HistoryEntry>>,
-    /// SQL queued by a [`SqlConsoleEvent::LoadSql`] to load into a new tab on
-    /// the next render (P5b T5/T8). `load_into_new_tab` needs a `&mut Window`,
-    /// which only `render` has; the event handler on `WorkspaceShell` (reached
-    /// from a windowless subscription) sets this via [`queue_load`](Self::queue_load),
-    /// and `render` drains it. `None` when nothing is pending.
+    /// SQL queued to load into a new tab on the next render (P5b T8). The
+    /// saved-query picker is a WINDOW-level overlay (no live `&mut Window` in its
+    /// pick closure), but `load_into_new_tab` needs a `&mut Window`, which only
+    /// [`render`](Self::render) holds; the picker's pick stashes the SQL here via
+    /// [`queue_load`](Self::queue_load) and `render` drains it. `None` when
+    /// nothing is pending.
     pub(crate) pending_load: Option<String>,
 }
 
@@ -133,8 +134,14 @@ pub enum SqlConsoleEvent {
     /// the session and pushes them back into the console via
     /// [`SqlConsole::show_history`] (the console owns the `Window`-having render).
     ShowHistory,
-    /// Load `sql` into a new tab (from history or a saved query).
-    LoadSql(String),
+    /// Open the Save-query name prompt. `WorkspaceShell` captures the active
+    /// tab's SQL and mounts a [`NamePrompt`](crate::view::name_prompt::NamePrompt)
+    /// overlay; confirming saves it to the session (P5b T8).
+    SaveQuery,
+    /// Open the saved-query picker. `WorkspaceShell` mounts a window-level
+    /// overlay listing the session's saved queries; picking one queues it into a
+    /// new tab and deleting removes it (P5b T8).
+    ShowSaved,
 }
 
 impl EventEmitter<SqlConsoleEvent> for SqlConsole {}
@@ -361,8 +368,9 @@ impl SqlConsole {
         cx.notify();
     }
 
-    /// Queue `sql` to load into a new tab on the next render (P5b T5/T8). Used
-    /// by the windowless `LoadSql` event path: `load_into_new_tab` needs a
+    /// Queue `sql` to load into a new tab on the next render (P5b T8). Used by
+    /// the window-level saved-query picker, whose pick closure has only a
+    /// `&mut App` (no live `&mut Window`); `load_into_new_tab` needs a
     /// `&mut Window`, which only [`render`](Self::render) owns, so the SQL is
     /// stashed here and `render` drains it. Also closes any open history overlay.
     pub fn queue_load(&mut self, sql: String, cx: &mut Context<Self>) {
@@ -414,7 +422,8 @@ impl SqlConsole {
 
 impl Render for SqlConsole {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        // Drain any SQL queued by a windowless `LoadSql` event (P5b T5/T8):
+        // Drain any SQL queued by the window-level saved-query picker (P5b T8):
+        // its pick stashed the SQL via `queue_load` (no `&mut Window` there);
         // `load_into_new_tab` needs the `&mut Window` we now hold. Done before
         // reading `active` so the freshly-loaded tab becomes the active one.
         if let Some(sql) = self.pending_load.take() {
@@ -746,6 +755,34 @@ impl Render for SqlConsole {
                                     .child(SharedString::from("🕘"))
                                     .on_click(cx.listener(|_this, _ev, _window, cx| {
                                         cx.emit(SqlConsoleEvent::ShowHistory);
+                                    })),
+                            )
+                            // ── Save-query button (P5b T8) ────────────────────
+                            // Emits `SaveQuery`; `WorkspaceShell` captures the
+                            // active tab's SQL and opens a NamePrompt overlay.
+                            .child(
+                                div()
+                                    .id("sql-save")
+                                    .px_2()
+                                    .py_1()
+                                    .cursor_pointer()
+                                    .child(SharedString::from("💾"))
+                                    .on_click(cx.listener(|_this, _ev, _window, cx| {
+                                        cx.emit(SqlConsoleEvent::SaveQuery);
+                                    })),
+                            )
+                            // ── Saved-query picker button (P5b T8) ────────────
+                            // Emits `ShowSaved`; `WorkspaceShell` mounts the
+                            // window-level saved-query picker overlay.
+                            .child(
+                                div()
+                                    .id("sql-saved")
+                                    .px_2()
+                                    .py_1()
+                                    .cursor_pointer()
+                                    .child(SharedString::from("📑"))
+                                    .on_click(cx.listener(|_this, _ev, _window, cx| {
+                                        cx.emit(SqlConsoleEvent::ShowSaved);
                                     })),
                             )
                             .child(run_btn),

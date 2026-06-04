@@ -670,6 +670,25 @@ pub struct WorkspaceShell {
     /// per-tab providers), then refreshed off the engine on console-open and
     /// after every run. `None` until the console is first opened.
     pub(crate) sql_snapshot: Option<crate::query::completion::SharedSnapshot>,
+    /// Currently-mounted Save-query name prompt (P5b T8). `Some` while the
+    /// 💾 → Save-query modal is open; cleared when its
+    /// [`NamePromptEvent`](crate::view::name_prompt::NamePromptEvent) is routed
+    /// (Confirm → save + dismiss, or Cancel → dismiss). Rendered as a window
+    /// overlay child in `render` when present.
+    name_prompt: Option<Entity<crate::view::name_prompt::NamePrompt>>,
+    /// Subscription to the active name prompt's `NamePromptEvent`. Stored so the
+    /// Confirm/Cancel callback stays registered — a dropped `Subscription`
+    /// deregisters silently (the P4a T10b trap). Cleared alongside `name_prompt`.
+    name_prompt_sub: Option<Subscription>,
+    /// The active tab's SQL captured at the moment 💾 was pressed (P5b T8). Held
+    /// while the name prompt is open so a Confirm saves the SQL as it was THEN,
+    /// not whatever is in the editor when the user finishes typing the name.
+    name_prompt_sql: Option<String>,
+    /// Whether the window-level saved-query picker overlay is shown (P5b T8).
+    /// Toggled by `show_saved_picker` (📑) / closed on pick or the overlay's ✕.
+    /// The overlay reads `session.saved_queries()` live at render, so no
+    /// snapshot is stored here — the flag alone gates the overlay.
+    saved_picker_open: bool,
 }
 
 impl WorkspaceShell {
@@ -699,6 +718,10 @@ impl WorkspaceShell {
             sql_console_close_hooked: false,
             active_query_cancel: None,
             sql_snapshot: None,
+            name_prompt: None,
+            name_prompt_sub: None,
+            name_prompt_sql: None,
+            saved_picker_open: false,
         }
     }
 
@@ -1123,10 +1146,20 @@ impl WorkspaceShell {
                     cx,
                 )
             });
-            let sub = cx.subscribe(
+            // `subscribe_in` (not `subscribe`) so the event callback receives a
+            // live `&mut Window` — the Save-query path (`SaveQuery`) builds a
+            // `NamePrompt` whose single-line `InputState` needs one eagerly
+            // (P5b T8). The window is valid because the subscription fires inside
+            // a window update.
+            let sub = cx.subscribe_in(
                 &console,
-                |ws: &mut Self, console, ev: &crate::view::sql_console::SqlConsoleEvent, cx| {
-                    ws.on_sql_console_event(console.clone(), ev.clone(), cx);
+                window,
+                |ws: &mut Self,
+                 console,
+                 ev: &crate::view::sql_console::SqlConsoleEvent,
+                 window,
+                 cx| {
+                    ws.on_sql_console_event(console.clone(), ev.clone(), window, cx);
                 },
             );
             self.sql_console_sub = Some(sub);
@@ -1227,6 +1260,7 @@ impl WorkspaceShell {
         &mut self,
         console: Entity<crate::view::sql_console::SqlConsole>,
         ev: crate::view::sql_console::SqlConsoleEvent,
+        window: &mut Window,
         cx: &mut Context<Self>,
     ) {
         use crate::view::sql_console::SqlConsoleEvent::*;
@@ -1242,14 +1276,19 @@ impl WorkspaceShell {
                 let entries = self.session.lock().query_history().to_vec();
                 console.update(cx, |c, cx| c.show_history(entries, cx));
             }
-            // P5b T5/T8: a row/entry picked an SQL to load. The console owns the
-            // `&mut Window` (in its `render`) that `load_into_new_tab` needs, so
-            // the load is queued onto the console and consumed on its next
-            // render. (T5's history rows load directly inside the console render
-            // and do not emit this; this arm backs the T8 saved-query picker and
-            // keeps the variant fully wired.)
-            LoadSql(sql) => {
-                console.update(cx, |c, cx| c.queue_load(sql, cx));
+            // P5b T8: capture the active tab's SQL NOW and open the Save-query
+            // name-prompt overlay (export-dialog idiom). Confirm → save; Cancel →
+            // dismiss (both in `on_name_prompt_event`).
+            SaveQuery => {
+                let sql = console.read(cx).active_sql_and_cursor(cx).0;
+                self.open_name_prompt(sql, window, cx);
+            }
+            // P5b T8: mount the window-level saved-query picker overlay. Picking
+            // a row queues its SQL into a new tab (via the console's `queue_load`,
+            // drained by `SqlConsole::render` with a real `Window`); deleting a
+            // row removes it from the session and refreshes the overlay.
+            ShowSaved => {
+                self.show_saved_picker(cx);
             }
         }
     }
@@ -1594,8 +1633,8 @@ impl WorkspaceShell {
     }
 
     /// Persist the current tab's SQL as a named saved query (P5b T6). Upserts by
-    /// name (case-insensitive). No-op on empty name/sql.
-    #[expect(dead_code, reason = "UI callers wired in P5b T8")]
+    /// name (case-insensitive). No-op on empty name/sql. Called from
+    /// [`on_name_prompt_event`](Self::on_name_prompt_event) on a Save confirm (T8).
     pub(crate) fn save_named_query(&mut self, name: String, sql: String, _cx: &mut Context<Self>) {
         if name.trim().is_empty() || sql.trim().is_empty() {
             return;
@@ -1612,13 +1651,73 @@ impl WorkspaceShell {
         let _ = sess.set_saved_queries(list);
     }
 
-    /// Delete a saved query by id (P5b T6). Wired to UI buttons in T8.
-    #[expect(dead_code, reason = "UI callers wired in P5b T8")]
+    /// Delete a saved query by id (P5b T6). Called from the saved-query picker's
+    /// per-row ✕ (T8).
     pub(crate) fn delete_named_query(&mut self, id: uuid::Uuid, _cx: &mut Context<Self>) {
         let mut sess = self.session.lock();
         let mut list = sess.saved_queries().to_vec();
         crate::session::queries::delete_saved(&mut list, id);
         let _ = sess.set_saved_queries(list);
+    }
+
+    /// Mount the Save-query name-prompt overlay (P5b T8).
+    ///
+    /// Mirrors [`open_export_dialog`](Self::open_export_dialog): build the entity
+    /// via `cx.new`, subscribe to its `NamePromptEvent`, and STORE the
+    /// subscription in `name_prompt_sub` (a dropped `Subscription` deregisters
+    /// the callback silently — the P4a T10b trap). `sql` is the active tab's SQL
+    /// captured at the moment 💾 was pressed; it is held in `name_prompt_sql` so
+    /// a later Confirm saves THAT text, not whatever is in the editor by then.
+    ///
+    /// Needs `&mut Window` because `NamePrompt::new` builds an `InputState`
+    /// (single-line name field) eagerly.
+    pub(crate) fn open_name_prompt(
+        &mut self,
+        sql: String,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        use crate::view::name_prompt::{NamePrompt, NamePromptEvent};
+        let prompt = cx.new(|cx| NamePrompt::new("Save query as…", window, cx));
+        let sub = cx.subscribe(
+            &prompt,
+            |ws: &mut Self, _prompt, ev: &NamePromptEvent, cx| {
+                ws.on_name_prompt_event(ev.clone(), cx);
+            },
+        );
+        self.name_prompt_sub = Some(sub);
+        self.name_prompt_sql = Some(sql);
+        self.name_prompt = Some(prompt);
+        cx.notify();
+    }
+
+    /// Route a `NamePromptEvent` from the Save-query modal (P5b T8). `Confirm`
+    /// saves the captured SQL under the entered name and dismisses; `Cancel`
+    /// just dismisses. Either way the entity + subscription + captured SQL are
+    /// dropped (closes the overlay).
+    fn on_name_prompt_event(
+        &mut self,
+        ev: crate::view::name_prompt::NamePromptEvent,
+        cx: &mut Context<Self>,
+    ) {
+        use crate::view::name_prompt::NamePromptEvent;
+        if let NamePromptEvent::Confirm(name) = ev {
+            if let Some(sql) = self.name_prompt_sql.clone() {
+                self.save_named_query(name, sql, cx);
+            }
+        }
+        self.name_prompt = None;
+        self.name_prompt_sub = None;
+        self.name_prompt_sql = None;
+        cx.notify();
+    }
+
+    /// Open the window-level saved-query picker overlay (P5b T8). The overlay is
+    /// a flag-gated render of `render_saved_picker` over the live
+    /// `session.saved_queries()`, so this just flips the flag.
+    pub(crate) fn show_saved_picker(&mut self, cx: &mut Context<Self>) {
+        self.saved_picker_open = true;
+        cx.notify();
     }
 }
 
@@ -1954,6 +2053,97 @@ impl Render for WorkspaceShell {
                 .into_any_element()
         });
 
+        // Save-query name-prompt overlay (P5b T8). Mounted by `open_name_prompt`;
+        // emits `NamePromptEvent` routed via the stored `name_prompt_sub`
+        // subscription (Confirm → save + dismiss, Cancel → dismiss). Same
+        // top-centre placement as the export dialog.
+        let name_prompt_overlay: Option<gpui::AnyElement> = self.name_prompt.as_ref().map(|p| {
+            div()
+                .absolute()
+                .top_16()
+                .left_1_2()
+                .child(p.clone())
+                .into_any_element()
+        });
+
+        // Saved-query picker overlay (P5b T8). Window-level, flag-gated on
+        // `saved_picker_open`; reads `session.saved_queries()` LIVE so a delete
+        // refreshes the list on the next render. Picking a row routes the SQL
+        // through the console's `queue_load` (the console's render drains it with
+        // a real `Window` for `load_into_new_tab`) and closes the overlay.
+        // Deleting calls `delete_named_query` and re-notifies so the list shrinks.
+        // A trailing ✕ closes the overlay.
+        let saved_picker_overlay: Option<gpui::AnyElement> = if self.saved_picker_open {
+            let saved = self.session.lock().saved_queries().to_vec();
+            let ws = cx.entity();
+            let console = self.sql_console.clone();
+            // Pick: route the SQL into a new tab via the console's `queue_load`
+            // (windowless), then close the overlay.
+            let on_pick = {
+                let ws = ws.clone();
+                move |sql: String, app: &mut gpui::App| {
+                    if let Some(console) = console.clone() {
+                        console.update(app, |c, cx| c.queue_load(sql, cx));
+                    }
+                    ws.update(app, |ws, cx| {
+                        ws.saved_picker_open = false;
+                        cx.notify();
+                    });
+                }
+            };
+            // Delete: remove from the session, then re-notify so the LIVE
+            // `saved_queries()` read above re-runs next frame and the row drops.
+            let on_delete = {
+                let ws = ws.clone();
+                move |id: uuid::Uuid, app: &mut gpui::App| {
+                    ws.update(app, |ws, cx| {
+                        ws.delete_named_query(id, cx);
+                        cx.notify();
+                    });
+                }
+            };
+            let close = ws.clone();
+            let picker = div()
+                .absolute()
+                .top_16()
+                .right_2()
+                .w(gpui::px(420.))
+                .max_h(gpui::px(320.))
+                .overflow_hidden()
+                .border_1()
+                .child(
+                    div()
+                        .flex()
+                        .flex_row()
+                        .justify_between()
+                        .items_center()
+                        .px_2()
+                        .py_1()
+                        .border_b_1()
+                        .child(dat0_i18n::t("sql.load_query"))
+                        .child(
+                            div()
+                                .id("sql-saved-close")
+                                .cursor_pointer()
+                                .px_1()
+                                .child("✕")
+                                .on_click(move |_ev, _window, cx| {
+                                    close.update(cx, |ws, cx| {
+                                        ws.saved_picker_open = false;
+                                        cx.notify();
+                                    });
+                                }),
+                        ),
+                )
+                .child(crate::view::query_library::render_saved_picker(
+                    &saved, on_pick, on_delete,
+                ))
+                .into_any_element();
+            Some(picker)
+        } else {
+            None
+        };
+
         // T10: tab-strip with dirty-dot indicator. Shown whenever a ViewModel
         // is mounted (i.e. a file has been loaded). The "•" glyph appears next
         // to the tab label when `vm.is_dirty()` is true — meaning the active
@@ -2187,5 +2377,7 @@ impl Render for WorkspaceShell {
             .children(popover_overlay)
             .children(editor_overlay)
             .children(export_overlay)
+            .children(name_prompt_overlay)
+            .children(saved_picker_overlay)
     }
 }
