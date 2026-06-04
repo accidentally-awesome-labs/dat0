@@ -529,15 +529,21 @@ pub fn run_app(lock: AppLock, initial_paths: Vec<PathBuf>, main_loop: MainLoop) 
 /// [`on_name_prompt_event`](WorkspaceShell::on_name_prompt_event), so adding a
 /// new flow is a new variant + a new match arm — nothing else moves.
 ///
-/// T11 will add a `SaveViewAsTable` variant (promote the active grid's
-/// projection to a derived table); the routing match is built to extend
-/// trivially.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+// All three variants are intentionally `Save*` — they name distinct "save this
+// thing as…" flows routed by `on_name_prompt_event`. The shared prefix is
+// meaningful, not redundant, so the `enum_variant_names` lint is suppressed.
+#[allow(clippy::enum_variant_names)]
 enum NamePromptIntent {
     /// Save the captured SQL (`name_prompt_sql`) as a named saved query (T8).
     SaveQuery,
     /// Promote the console statement-under-cursor to a derived table (T10).
     SaveConsoleAsTable,
+    /// Promote the active grid view's transform stack to a derived table,
+    /// recording its lineage as `DerivedOrigin::Transform { parent, ops }`
+    /// (T11). The handler re-reads the `ViewModel` on confirm, so no per-intent
+    /// state is captured up front.
+    SaveViewAsTable,
 }
 
 /// Owns the session for this window and an optional data source (set once
@@ -1762,6 +1768,89 @@ impl WorkspaceShell {
         });
     }
 
+    /// Open the shared name-prompt overlay to promote the active grid view's
+    /// transform stack to a derived table (P5b T11). Guards on an active
+    /// `ViewModel` with a non-empty op stack (no-op otherwise — the PipelineBar
+    /// pill already only renders in that case, but this is defensive). The
+    /// `ViewModel` is re-read on confirm by [`save_view_as_table`], so nothing
+    /// is captured here beyond opening the modal with the
+    /// [`SaveViewAsTable`](NamePromptIntent::SaveViewAsTable) intent.
+    pub(crate) fn open_save_view_as_table(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(vm) = self.view_model.as_ref() else {
+            return;
+        };
+        if vm.active().is_empty() {
+            return;
+        }
+        self.open_name_prompt_with(
+            "Save view as table…",
+            NamePromptIntent::SaveViewAsTable,
+            window,
+            cx,
+        );
+    }
+
+    /// Promote the active grid view's transform stack to a derived table (P5b
+    /// T11), invoked from the [`SaveViewAsTable`](NamePromptIntent::SaveViewAsTable)
+    /// Confirm arm of [`on_name_prompt_event`](Self::on_name_prompt_event).
+    ///
+    /// Compiles the active op stack against the base table via
+    /// [`compile_view_sql`](dat0_engine::compile_view_sql) for the CTAS SQL, and
+    /// records the parent + ops as `DerivedOrigin::Transform` — the
+    /// lineage-meaningful path (the engine now honors the passed origin, see the
+    /// T11 engine fix). On success the autocomplete snapshot is refreshed so the
+    /// new table appears in completions; on failure the error is logged.
+    ///
+    /// Send discipline (matches the T2/T8/T10 bridge): only `Send + 'static`
+    /// values cross into `tokio::spawn` — the engine `Arc`, the owned
+    /// `name`/`base`/`sql` strings + `ops` vec, and the `Weak` shell handle. The
+    /// GPUI entity is touched ONLY inside the dispatcher closure after
+    /// `.upgrade()`.
+    pub(crate) fn save_view_as_table(&mut self, name: String, cx: &mut Context<Self>) {
+        let Some(vm) = self.view_model.as_ref() else {
+            return;
+        };
+        let name = name.trim().to_string();
+        if name.is_empty() {
+            return;
+        }
+        let base = vm.base_table().to_string();
+        let ops = vm.active().to_vec();
+        if ops.is_empty() {
+            return;
+        }
+        let sql = match dat0_engine::compile_view_sql(&base, &ops) {
+            Ok(s) => s,
+            Err(e) => {
+                tracing::warn!(error = %e, "save_view_as_table: compile failed");
+                return;
+            }
+        };
+        let engine = self.engine();
+        let ws_weak = cx.entity().downgrade();
+        tokio::spawn(async move {
+            use dat0_engine::QueryEngine as _;
+            let origin = dat0_engine::DerivedOrigin::Transform { parent: base, ops };
+            let outcome = engine.create_table(&name, &sql, origin).await;
+            if let Some(dispatcher) = crate::window_registry::dispatcher() {
+                let _ = dispatcher.dispatch(move |app: &mut gpui::App| {
+                    if let Some(ws) = ws_weak.upgrade() {
+                        ws.update(app, |ws, cx| match &outcome {
+                            Ok(_) => ws.refresh_completion_snapshot(cx),
+                            Err(e) => {
+                                tracing::warn!(error = %e, "save_view_as_table failed")
+                            }
+                        });
+                    }
+                });
+            } else {
+                tracing::warn!(
+                    "save_view_as_table: no MainThreadDispatcher installed; result dropped"
+                );
+            }
+        });
+    }
+
     /// Delete a saved query by id (P5b T6). Called from the saved-query picker's
     /// per-row ✕ (T8).
     pub(crate) fn delete_named_query(&mut self, id: uuid::Uuid, _cx: &mut Context<Self>) {
@@ -1843,6 +1932,9 @@ impl WorkspaceShell {
                 }
                 Some(NamePromptIntent::SaveConsoleAsTable) => {
                     self.save_console_as_table(name, cx);
+                }
+                Some(NamePromptIntent::SaveViewAsTable) => {
+                    self.save_view_as_table(name, cx);
                 }
                 None => {}
             }

@@ -162,3 +162,74 @@ async fn rename_table_rekeys_origin_entry() {
         other => panic!("expected Derived(Sql) origin after rename, got {:?}", other),
     }
 }
+
+/// P5b T11: `create_table` HONORS its `origin` param and records the distinct
+/// `DerivedOrigin` variant (Sql vs Transform). This is the exit-criterion proof
+/// that the previously-discarded `Transform { parent, ops }` lineage is now
+/// genuinely populated.
+#[tokio::test]
+async fn create_table_records_both_origins() {
+    let tmp = tempfile::tempdir().unwrap();
+    let engine = DuckDBEngine::new(
+        tmp.path().join("scratch.duckdb"),
+        MemoryBudget {
+            bytes: 128 * 1024 * 1024,
+        },
+    )
+    .unwrap();
+    engine.init().await.unwrap();
+
+    // Seed a real base table `t` (Sql origin) so `SELECT * FROM t` is valid.
+    engine
+        .create_table(
+            "t",
+            "SELECT 1 AS a",
+            DerivedOrigin::Sql("SELECT 1 AS a".into()),
+        )
+        .await
+        .unwrap();
+
+    // 1) Sql origin (raw statement string).
+    engine
+        .create_table(
+            "d_sql",
+            "SELECT 1 AS a",
+            DerivedOrigin::Sql("SELECT 1 AS a".into()),
+        )
+        .await
+        .unwrap();
+
+    // 2) Transform origin (parent + empty op stack). The element type is
+    //    `dat0_engine::transform::Transformation`; an empty vec needs the type
+    //    annotation so inference resolves it.
+    let ops: Vec<dat0_engine::transform::Transformation> = vec![];
+    engine
+        .create_table(
+            "d_tf",
+            "SELECT * FROM t",
+            DerivedOrigin::Transform {
+                parent: "t".into(),
+                ops,
+            },
+        )
+        .await
+        .unwrap();
+
+    let tables = engine.get_tables().await.unwrap();
+    let names: Vec<_> = tables.iter().map(|t| t.name.as_str()).collect();
+    assert!(names.contains(&"d_sql"));
+    assert!(names.contains(&"d_tf"));
+
+    // The engine actually RECORDED the distinct origins (the T11 exit criterion).
+    match engine.table_origin("d_sql").unwrap() {
+        TableOrigin::Derived(DerivedOrigin::Sql(s)) => assert_eq!(s, "SELECT 1 AS a"),
+        other => panic!("expected Sql origin, got {other:?}"),
+    }
+    match engine.table_origin("d_tf").unwrap() {
+        TableOrigin::Derived(DerivedOrigin::Transform { parent, ops }) => {
+            assert_eq!(parent, "t");
+            assert!(ops.is_empty());
+        }
+        other => panic!("expected Transform origin, got {other:?}"),
+    }
+}

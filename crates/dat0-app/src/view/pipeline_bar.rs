@@ -160,22 +160,44 @@ pub fn render_pipeline_bar(
             })
             .collect();
 
-        // `⌃` collapse toggle
-        let toggle_btn = div().px_3().py_1().flex().justify_end().child(
-            div()
-                .px_2()
-                .py_0p5()
-                .rounded_md()
-                .text_sm()
-                .cursor_pointer()
-                .child("⌃")
-                .on_mouse_up(
-                    gpui::MouseButton::Left,
-                    cx.listener(|ws, _ev, _window, _cx| {
-                        ws.pipeline_bar_state.expanded = false;
-                    }),
-                ),
-        );
+        // Footer: `Save as Table…` pill (P5b T11) + `⌃` collapse toggle.
+        let save_pill = div()
+            .id("pipeline-save-table")
+            .px_2()
+            .py_0p5()
+            .rounded_md()
+            .text_sm()
+            .bg(gpui::rgba(0x3b82_f640)) // blue-500/25
+            .cursor_pointer()
+            .child(gpui::SharedString::from(dat0_i18n::t("view.save_as_table")))
+            .on_mouse_up(
+                gpui::MouseButton::Left,
+                cx.listener(|ws, _ev, window, cx| {
+                    ws.open_save_view_as_table(window, cx);
+                }),
+            );
+        let collapse_btn = div()
+            .px_2()
+            .py_0p5()
+            .rounded_md()
+            .text_sm()
+            .cursor_pointer()
+            .child("⌃")
+            .on_mouse_up(
+                gpui::MouseButton::Left,
+                cx.listener(|ws, _ev, _window, _cx| {
+                    ws.pipeline_bar_state.expanded = false;
+                }),
+            );
+        let toggle_btn = div()
+            .px_3()
+            .py_1()
+            .flex()
+            .justify_end()
+            .items_center()
+            .gap_2()
+            .child(save_pill)
+            .child(collapse_btn);
 
         let bar = div()
             .w_full()
@@ -239,6 +261,28 @@ pub fn render_pipeline_bar(
             pill_children.push(pill.into_any_element());
         }
 
+        // `Save as Table…` pill (P5b T11) — promotes the active transform stack
+        // to a derived table via `create_table(.., DerivedOrigin::Transform)`.
+        // The bar only renders when the stack is non-empty (callsite-guarded on
+        // `view_model` + non-empty `active()`), so this pill is inherently
+        // gated on an active view with at least one transform.
+        let save_pill = div()
+            .id("pipeline-save-table")
+            .ml_2()
+            .px_2()
+            .py_0p5()
+            .rounded_md()
+            .text_sm()
+            .bg(gpui::rgba(0x3b82_f640)) // blue-500/25
+            .cursor_pointer()
+            .child(gpui::SharedString::from(dat0_i18n::t("view.save_as_table")))
+            .on_mouse_up(
+                gpui::MouseButton::Left,
+                cx.listener(|ws, _ev, window, cx| {
+                    ws.open_save_view_as_table(window, cx);
+                }),
+            );
+
         // `⌄` expand toggle
         let toggle_btn = div()
             .ml_2()
@@ -263,6 +307,7 @@ pub fn render_pipeline_bar(
             .gap_0p5()
             .items_center()
             .children(pill_children)
+            .child(save_pill)
             .child(toggle_btn)
             .into_any_element();
 
