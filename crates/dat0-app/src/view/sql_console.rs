@@ -142,6 +142,11 @@ pub enum SqlConsoleEvent {
     /// overlay listing the session's saved queries; picking one queues it into a
     /// new tab and deleting removes it (P5b T8).
     ShowSaved,
+    /// Promote the statement under the cursor to a derived table (P5b T10).
+    /// `WorkspaceShell` opens a NamePrompt overlay; confirming runs a CTAS via
+    /// `engine.create_table(.., DerivedOrigin::Sql)` and refreshes the
+    /// autocomplete snapshot.
+    SaveAsTable,
 }
 
 impl EventEmitter<SqlConsoleEvent> for SqlConsole {}
@@ -804,6 +809,21 @@ impl Render for SqlConsole {
                                     .child(SharedString::from("📑"))
                                     .on_click(cx.listener(|_this, _ev, _window, cx| {
                                         cx.emit(SqlConsoleEvent::ShowSaved);
+                                    })),
+                            )
+                            // ── Save-as-Table button (P5b T10) ────────────────
+                            // Emits `SaveAsTable`; `WorkspaceShell` opens a
+                            // NamePrompt and CTAS-promotes the statement under the
+                            // cursor to a derived table (`DerivedOrigin::Sql`).
+                            .child(
+                                div()
+                                    .id("sql-save-as-table")
+                                    .px_2()
+                                    .py_1()
+                                    .cursor_pointer()
+                                    .child(SharedString::from("⤓ Table"))
+                                    .on_click(cx.listener(|_this, _ev, _window, cx| {
+                                        cx.emit(SqlConsoleEvent::SaveAsTable);
                                     })),
                             )
                             .child(run_btn),
