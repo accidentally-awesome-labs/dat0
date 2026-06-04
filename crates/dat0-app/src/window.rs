@@ -665,6 +665,11 @@ pub struct WorkspaceShell {
     /// guard's `Drop` (or an explicit `cancel()` in T7) fires the engine's
     /// connection-wide `interrupt()`.
     pub(crate) active_query_cancel: Option<crate::query::QueryCancel>,
+    /// Shared per-window autocomplete schema cache (P5b T2). Lazily created on
+    /// the first `toggle_sql_console` (so it can be cloned into the console's
+    /// per-tab providers), then refreshed off the engine on console-open and
+    /// after every run. `None` until the console is first opened.
+    pub(crate) sql_snapshot: Option<crate::query::completion::SharedSnapshot>,
 }
 
 impl WorkspaceShell {
@@ -693,6 +698,7 @@ impl WorkspaceShell {
             sql_console_visible: false,
             sql_console_close_hooked: false,
             active_query_cancel: None,
+            sql_snapshot: None,
         }
     }
 
@@ -1101,8 +1107,21 @@ impl WorkspaceShell {
                 let s = self.session.lock();
                 (s.sql_tabs().to_vec(), s.active_sql_tab())
             };
+            // Ensure the per-window autocomplete snapshot exists, then clone it
+            // into the console so every tab's provider shares one `RefCell`
+            // (P5b T2). The refresh below populates `tables` off the engine.
+            let snapshot = self
+                .sql_snapshot
+                .get_or_insert_with(crate::query::completion::new_shared_snapshot)
+                .clone();
             let console = cx.new(|cx| {
-                crate::view::sql_console::SqlConsole::new(&persisted, active, window, cx)
+                crate::view::sql_console::SqlConsole::new(
+                    &persisted,
+                    active,
+                    snapshot.clone(),
+                    window,
+                    cx,
+                )
             });
             let sub = cx.subscribe(
                 &console,
@@ -1135,7 +1154,67 @@ impl WorkspaceShell {
         } else {
             self.sql_console_visible = !self.sql_console_visible;
         }
+        // Refresh the autocomplete schema whenever the console is (re)shown so
+        // tables created/dropped while it was hidden are reflected (P5b T2).
+        if self.sql_console_visible {
+            self.refresh_completion_snapshot(cx);
+        }
         cx.notify();
+    }
+
+    /// Rebuild the autocomplete schema snapshot off the live engine (P5b T2).
+    /// Runs `get_tables()` OFF the GPUI main thread, then posts the result back
+    /// via the canonical `MainThreadDispatcher` and writes the shared `RefCell`
+    /// ON the main thread. Called on console-open and after every run (covers
+    /// CREATE/DROP/Save-as-Table).
+    ///
+    /// Send discipline: `SharedSnapshot` is `Rc<RefCell<..>>` — neither `Send`
+    /// nor allowed in the dispatcher's `Send + 'static` closure. So the snapshot
+    /// is NEVER captured across the thread boundary. Instead a weak
+    /// `WorkspaceShell` handle (Send) crosses into the task; the dispatcher
+    /// closure upgrades it on the main thread and reaches `self.sql_snapshot`
+    /// there, mirroring the `finish_sql_run` / `prefetch_rows_for` bridge.
+    pub(crate) fn refresh_completion_snapshot(&mut self, cx: &mut Context<Self>) {
+        if self.sql_snapshot.is_none() {
+            return; // console never opened; nothing to refresh
+        }
+        let engine = self.engine();
+        let ws_weak = cx.entity().downgrade();
+        tokio::spawn(async move {
+            use dat0_engine::QueryEngine as _;
+            let tables = match engine.get_tables().await {
+                Ok(t) => t,
+                Err(e) => {
+                    tracing::warn!(error = %e, "refresh_completion_snapshot: get_tables failed");
+                    return;
+                }
+            };
+            // `tables` is `Vec<TableInfo>` (Send). Build the `TableEntry`s and
+            // write the shared `RefCell` on the main thread, where the `Rc` is
+            // reachable via the upgraded shell handle.
+            if let Some(dispatcher) = crate::window_registry::dispatcher() {
+                let _ = dispatcher.dispatch(move |app_cx: &mut gpui::App| {
+                    let Some(ws) = ws_weak.upgrade() else { return };
+                    ws.update(app_cx, |ws, _cx| {
+                        let Some(snapshot) = ws.sql_snapshot.as_ref() else {
+                            return;
+                        };
+                        let entries = tables
+                            .iter()
+                            .map(|t| crate::query::completion::TableEntry {
+                                name: t.name.clone().into(),
+                                columns: t.columns.iter().map(|c| c.name.clone().into()).collect(),
+                            })
+                            .collect();
+                        snapshot.borrow_mut().tables = entries;
+                    });
+                });
+            } else {
+                tracing::warn!(
+                    "refresh_completion_snapshot: no MainThreadDispatcher installed; snapshot stale"
+                );
+            }
+        });
     }
 
     /// Route a [`SqlConsoleEvent`] from the console.
@@ -1336,6 +1415,9 @@ impl WorkspaceShell {
             }
         }
         self.persist_sql_console(cx);
+        // Pick up tables created/dropped by this run (CREATE/DROP/Save-as-Table)
+        // so autocomplete reflects the new schema on the next keystroke (P5b T2).
+        self.refresh_completion_snapshot(cx);
     }
 
     /// Open the native save panel, then stream the export via COPY (P4c T11).

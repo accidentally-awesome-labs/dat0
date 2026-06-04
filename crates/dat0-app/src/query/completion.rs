@@ -175,6 +175,81 @@ pub fn duckdb_functions() -> Vec<SharedString> {
     .collect()
 }
 
+// ---------------------------------------------------------------------------
+// Live `CompletionProvider` adapter (P5b T2)
+// ---------------------------------------------------------------------------
+
+use std::cell::RefCell;
+use std::rc::Rc;
+
+use gpui::{Context, Task, Window};
+use gpui_component::input::{CompletionProvider, InputState};
+use lsp_types::{CompletionContext, CompletionItem, CompletionItemKind, CompletionResponse};
+use ropey::Rope;
+
+/// Shared, mutable per-window schema cache. Cloned into every tab's provider so
+/// one refresh updates all tabs.
+pub type SharedSnapshot = Rc<RefCell<SchemaSnapshot>>;
+
+/// Build an empty shared snapshot pre-seeded with the curated function list.
+pub fn new_shared_snapshot() -> SharedSnapshot {
+    Rc::new(RefCell::new(SchemaSnapshot {
+        tables: Vec::new(),
+        functions: duckdb_functions(),
+    }))
+}
+
+/// Adapter: turns ranked [`Suggestion`]s into LSP completion items from the
+/// cached snapshot. Synchronous (`Task::ready`) — no engine call on the
+/// keystroke path; the snapshot is refreshed off-thread by `WorkspaceShell`.
+pub struct SchemaCompletionProvider {
+    pub snapshot: SharedSnapshot,
+}
+
+fn kind_to_lsp(k: SuggestKind) -> CompletionItemKind {
+    match k {
+        SuggestKind::Table => CompletionItemKind::CLASS,
+        SuggestKind::Column => CompletionItemKind::FIELD,
+        SuggestKind::Function => CompletionItemKind::FUNCTION,
+    }
+}
+
+impl CompletionProvider for SchemaCompletionProvider {
+    fn completions(
+        &self,
+        text: &Rope,
+        offset: usize,
+        _trigger: CompletionContext,
+        _window: &mut Window,
+        _cx: &mut Context<InputState>,
+    ) -> Task<anyhow::Result<CompletionResponse>> {
+        let s = text.to_string();
+        let q = completion_query(&s, offset);
+        let snap = self.snapshot.borrow();
+        let items: Vec<CompletionItem> = suggestions(&snap, &q)
+            .into_iter()
+            .map(|sg| CompletionItem {
+                label: sg.label.to_string(),
+                kind: Some(kind_to_lsp(sg.kind)),
+                ..Default::default()
+            })
+            .collect();
+        Task::ready(Ok(CompletionResponse::Array(items)))
+    }
+
+    fn is_completion_trigger(
+        &self,
+        _offset: usize,
+        new_text: &str,
+        _cx: &mut Context<InputState>,
+    ) -> bool {
+        new_text
+            .chars()
+            .next_back()
+            .is_some_and(|c| c.is_alphanumeric() || c == '_' || c == '.')
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -79,6 +79,28 @@ pub struct SqlConsole {
     /// so the pane delegate's header/scroll closures can dispatch into the shell
     /// (P5a T9). `new_invalid()` until a Pane result binds.
     pub(crate) pane_ws: WeakEntity<WorkspaceShell>,
+    /// Shared per-window schema cache for autocomplete (P5b T2). Cloned into
+    /// every tab's [`SchemaCompletionProvider`]; refreshed off the engine by
+    /// `WorkspaceShell::refresh_completion_snapshot`, so one update reaches all
+    /// tabs (the `RefCell` is shared by `Rc`).
+    pub(crate) snapshot: crate::query::completion::SharedSnapshot,
+}
+
+/// Install the autocomplete provider on a freshly-built tab editor (P5b T2).
+/// Shared by all three tab-build paths ([`SqlConsole::new`]'s persisted loop +
+/// empty fallback, and [`SqlConsole::new_tab`]) so every editor gets a provider
+/// backed by the same per-window snapshot.
+fn attach_completion_provider(
+    input: &Entity<InputState>,
+    snapshot: &crate::query::completion::SharedSnapshot,
+    cx: &mut Context<SqlConsole>,
+) {
+    let snap = snapshot.clone();
+    input.update(cx, |s, _cx| {
+        s.lsp.completion_provider = Some(std::rc::Rc::new(
+            crate::query::completion::SchemaCompletionProvider { snapshot: snap },
+        ));
+    });
 }
 
 /// Events the console emits up to `WorkspaceShell`.
@@ -102,6 +124,7 @@ impl SqlConsole {
     pub fn new(
         persisted: &[crate::session::SqlTabState],
         active: Option<usize>,
+        snapshot: crate::query::completion::SharedSnapshot,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
@@ -116,6 +139,7 @@ impl SqlConsole {
                         .placeholder(dat0_i18n::t("sql.placeholder"))
                 });
                 input.update(cx, |s, cx| s.set_value(sql, window, cx));
+                attach_completion_provider(&input, &snapshot, cx);
                 ConsoleTab {
                     meta: SqlTabMeta {
                         id: p.id,
@@ -134,6 +158,7 @@ impl SqlConsole {
                     .line_number(true)
                     .placeholder(dat0_i18n::t("sql.placeholder"))
             });
+            attach_completion_provider(&input, &snapshot, cx);
             tabs.push(ConsoleTab {
                 meta: SqlTabMeta::new("Query 1"),
                 input,
@@ -149,6 +174,7 @@ impl SqlConsole {
             pane_source: None,
             pane_table_state: None,
             pane_ws: WeakEntity::new_invalid(),
+            snapshot,
         }
     }
 
@@ -250,6 +276,8 @@ impl SqlConsole {
                 .line_number(true)
                 .placeholder(dat0_i18n::t("sql.placeholder"))
         });
+        let snapshot = self.snapshot.clone();
+        attach_completion_provider(&input, &snapshot, cx);
         self.tabs.push(ConsoleTab {
             meta: SqlTabMeta::new(format!("Query {n}")),
             input,
