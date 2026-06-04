@@ -84,6 +84,10 @@ pub struct SqlConsole {
     /// `WorkspaceShell::refresh_completion_snapshot`, so one update reaches all
     /// tabs (the `RefCell` is shared by `Rc`).
     pub(crate) snapshot: crate::query::completion::SharedSnapshot,
+    /// Wall time (ms) of the most recently completed run, set by
+    /// [`set_last_elapsed`](Self::set_last_elapsed) from `finish_sql_run`
+    /// (P5b T4). Drives the timing chip (T9). `None` until the first run.
+    pub(crate) last_elapsed_ms: Option<u64>,
 }
 
 /// Install the autocomplete provider on a freshly-built tab editor (P5b T2).
@@ -175,6 +179,7 @@ impl SqlConsole {
             pane_table_state: None,
             pane_ws: WeakEntity::new_invalid(),
             snapshot,
+            last_elapsed_ms: None,
         }
     }
 
@@ -209,6 +214,12 @@ impl SqlConsole {
         } else {
             None
         };
+        cx.notify();
+    }
+
+    /// Record the most recent run's wall time (P5b T4/T9). Drives the timing chip.
+    pub fn set_last_elapsed(&mut self, ms: u64, cx: &mut Context<Self>) {
+        self.last_elapsed_ms = Some(ms);
         cx.notify();
     }
 

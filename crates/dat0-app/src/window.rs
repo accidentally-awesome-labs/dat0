@@ -1381,6 +1381,32 @@ impl WorkspaceShell {
         if let Some(mut g) = self.active_query_cancel.take() {
             g.disarm();
         }
+
+        // Compute elapsed from the console's run-start stamp BEFORE set_running(false)
+        // clears it (set_running(false) sets started_at = None). Capture the FULL
+        // editor buffer (not just the statement under cursor) — history shows what
+        // the user ran/typed, and load re-opens the whole buffer.
+        let elapsed_ms = console
+            .read(cx)
+            .started_at
+            .map(|t| t.elapsed().as_millis() as u64)
+            .unwrap_or(0);
+        let (sql_text, _) = console.read(cx).active_sql_and_cursor(cx);
+        let ok = !matches!(outcome, SqlRunOutcome::Error(_) | SqlRunOutcome::Cancelled);
+        console.update(cx, |c, cx| c.set_last_elapsed(elapsed_ms, cx));
+        {
+            let entry = crate::session::queries::HistoryEntry {
+                sql: sql_text,
+                ran_at: now_unix_millis(),
+                ok,
+                elapsed_ms,
+            };
+            let mut sess = self.session.lock();
+            let mut hist = sess.query_history().to_vec();
+            crate::session::queries::push_history(&mut hist, entry);
+            let _ = sess.set_query_history(hist);
+        }
+
         console.update(cx, |c, cx| c.set_running(false, cx));
 
         match outcome {
@@ -1585,6 +1611,15 @@ fn classify_run_err(e: dat0_engine::EngineError) -> SqlRunOutcome {
 /// generic localized "OK" is used for P5a.
 fn format_exec_status(_r: &dat0_engine::QueryResult) -> String {
     dat0_i18n::t("sql.ok")
+}
+
+/// Wall-clock millis since the Unix epoch (app runtime; not a workflow script).
+fn now_unix_millis() -> i64 {
+    use std::time::{SystemTime, UNIX_EPOCH};
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_millis() as i64)
+        .unwrap_or(0)
 }
 
 impl WorkspaceShell {
