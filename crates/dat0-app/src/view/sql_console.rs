@@ -741,6 +741,27 @@ impl Render for SqlConsole {
                             .flex_row()
                             .items_center()
                             .gap_2()
+                            .child({
+                                // ── Timing chip (P5b T9) ──────────────────────
+                                // Shows "⏱ N ms · local" when idle and a run has
+                                // completed. Hidden while running (the progress
+                                // spinner takes that slot) and before the first
+                                // run. The "· local" suffix reserves the P5c
+                                // local-vs-md slot.
+                                let timing_chip: gpui::AnyElement =
+                                    match (self.running, self.last_elapsed_ms) {
+                                        (false, Some(ms)) => div()
+                                            .px_2()
+                                            .py_1()
+                                            .child(SharedString::from(format!(
+                                                "⏱ {ms} ms · {}",
+                                                dat0_i18n::t("sql.local")
+                                            )))
+                                            .into_any_element(),
+                                        _ => div().into_any_element(),
+                                    };
+                                timing_chip
+                            })
                             .child(progress)
                             // ── Query-history clock (P5b T5) ──────────────────
                             // Emits `ShowHistory`; `WorkspaceShell` fetches the
