@@ -38,12 +38,16 @@ pub(crate) fn build_detach_sql(alias: &str) -> String {
 }
 
 pub(crate) fn build_attach_md_sql(alias: &str, opts: &AttachOpts) -> String {
-    // Caller guarantees opts.token is Some (attach() md-arm checks). Escape the
-    // token as a SQL string literal; never log it.
+    // Caller guarantees opts.token is Some (attach() md-arm checks). Trim
+    // surrounding whitespace — a real token never has any, but a trailing
+    // newline (e.g. from a pasted CI/keychain secret) survives the non-empty
+    // check yet corrupts `SET motherduck_token`, failing auth. Then escape as a
+    // SQL string literal; never log it.
     let token = opts
         .token
         .as_deref()
         .unwrap_or_default()
+        .trim()
         .replace('\'', "''");
     format!(
         "SET motherduck_token = '{}'; ATTACH 'md:' AS {};",
@@ -67,6 +71,21 @@ mod md_sql_tests {
         assert!(sql.contains("SET motherduck_token = 'tok''123';"));
         assert!(sql.contains("ATTACH 'md:' AS \"md\";"));
         assert!(sql.find("SET motherduck_token").unwrap() < sql.find("ATTACH").unwrap());
+    }
+
+    #[test]
+    fn build_md_sql_trims_surrounding_whitespace() {
+        // A trailing newline (e.g. a pasted CI secret) must not reach the SET.
+        let opts = AttachOpts {
+            token: Some("  tok123\n".into()),
+            ..Default::default()
+        };
+        let sql = super::build_attach_md_sql("md", &opts);
+        assert!(
+            sql.contains("SET motherduck_token = 'tok123';"),
+            "got: {sql}"
+        );
+        assert!(!sql.contains("tok123\n"), "newline leaked into SET: {sql}");
     }
 
     #[test]
