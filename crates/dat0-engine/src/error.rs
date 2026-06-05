@@ -28,6 +28,12 @@ pub enum EngineError {
     #[error("Feature not yet implemented: {feature}")]
     NotImplemented { feature: &'static str },
 
+    #[error("MotherDuck authentication failed (missing or invalid token)")]
+    MotherDuckAuth,
+
+    #[error("DuckDB extension '{name}' failed to install/load")]
+    ExtensionLoad { name: &'static str },
+
     #[error("Migration {version} ({name}) failed: {source}")]
     Migration {
         version: u32,
