@@ -22,7 +22,7 @@ pub enum EngineError {
     #[error("Invalid option for {field}: {reason}")]
     InvalidOption { field: &'static str, reason: String },
 
-    #[error("Unknown ATTACH scheme: {0}; supported: sqlite:")]
+    #[error("Unknown ATTACH scheme: {0}; supported: sqlite:, md:")]
     UnknownAttachScheme(String),
 
     #[error("Feature not yet implemented: {feature}")]

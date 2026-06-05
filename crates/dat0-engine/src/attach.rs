@@ -37,8 +37,6 @@ pub(crate) fn build_detach_sql(alias: &str) -> String {
     format!("DETACH {};", quote_ident(alias))
 }
 
-// T3 wires the call site; suppress until then.
-#[allow(dead_code)]
 pub(crate) fn build_attach_md_sql(alias: &str, opts: &AttachOpts) -> String {
     // Caller guarantees opts.token is Some (attach() md-arm checks). Escape the
     // token as a SQL string literal; never log it.

@@ -527,16 +527,47 @@ impl crate::QueryEngine for DuckDBEngine {
         .map_err(|e| EngineError::TaskJoin(e.to_string()))?
     }
 
-    #[instrument(skip(self), fields(dsn_scheme = ?dsn.split(':').next(), alias))]
+    // `opts` is deliberately excluded from the span: AttachOpts carries the raw
+    // MotherDuck token. Skipping it (rather than relying on the redacted Debug
+    // impl) makes the no-log guarantee structural, not a property that could
+    // silently regress if Debug changes.
+    #[instrument(skip(self, opts), fields(dsn_scheme = ?dsn.split(':').next(), alias))]
     async fn attach(&self, dsn: &str, alias: &str, opts: crate::types::AttachOpts) -> Result<()> {
         self.assert_open()?;
         let (scheme, rest) = crate::attach::parse_scheme(dsn)?;
         match scheme {
             crate::attach::AttachScheme::MotherDuck => {
-                // D-007: end-to-end deferred to P5.
-                return Err(EngineError::NotImplemented {
-                    feature: "MotherDuck",
-                });
+                let Some(_) = opts.token.as_ref() else {
+                    return Err(EngineError::MotherDuckAuth);
+                };
+                // Lazy, memoized global extension install (design D8). Use a
+                // throwaway temp scratch DB — NOT the live engine db file
+                // (`self.scratch_path`), which already has an open connection;
+                // opening it twice would contend on the DuckDB file lock.
+                let bootstrap_scratch = std::env::temp_dir()
+                    .join(format!("dat0-md-bootstrap-{}.duckdb", std::process::id()));
+                crate::extension_bootstrap::install_motherduck_at_app_boot(bootstrap_scratch)?;
+                // `install_*` only LOADs on its throwaway connection; the live
+                // connection must LOAD it too (mirrors init()'s `LOAD
+                // sqlite_scanner`). The SET+ATTACH `sql` below contains the raw
+                // token — never log it or fold it into an error message.
+                let sql = crate::attach::build_attach_md_sql(alias, &opts);
+                let conn = self.conn.clone();
+                return tokio::task::spawn_blocking(move || -> Result<()> {
+                    let conn = conn.lock().map_err(|_| EngineError::EnginePoisoned)?;
+                    conn.execute_batch("LOAD motherduck;")
+                        .map_err(|_| EngineError::ExtensionLoad { name: "motherduck" })?;
+                    conn.execute_batch(&sql).map_err(|_| {
+                        // A failed ATTACH after a good extension load is almost
+                        // always a bad/expired token; surface as auth. The error
+                        // is dropped (not logged) because it can echo token-
+                        // adjacent text.
+                        EngineError::MotherDuckAuth
+                    })?;
+                    Ok(())
+                })
+                .await
+                .map_err(|e| EngineError::TaskJoin(e.to_string()))?;
             }
             crate::attach::AttachScheme::Sqlite => {}
         }
