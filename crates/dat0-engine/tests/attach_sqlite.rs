@@ -47,6 +47,7 @@ async fn attach_sqlite_exposes_tables() {
             AttachOpts {
                 read_only: true,
                 schema_filter: None,
+                token: None,
             },
         )
         .await

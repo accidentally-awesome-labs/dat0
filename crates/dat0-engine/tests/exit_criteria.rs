@@ -130,6 +130,7 @@ async fn one_hundred_mb_sqlite_attach() {
             AttachOpts {
                 read_only: true,
                 schema_filter: None,
+                token: None,
             },
         )
         .await

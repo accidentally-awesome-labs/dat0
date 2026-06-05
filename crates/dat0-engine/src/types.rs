@@ -145,8 +145,21 @@ pub enum ExportFormat {
     Parquet,
 }
 
-#[derive(Debug, Clone, Default)]
+#[derive(Clone, Default)]
 pub struct AttachOpts {
     pub read_only: bool,
     pub schema_filter: Option<Vec<String>>,
+    /// MotherDuck token, used only by the `md:` ATTACH path. Never logged:
+    /// the manual `Debug` impl below redacts it.
+    pub token: Option<String>,
+}
+
+impl std::fmt::Debug for AttachOpts {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("AttachOpts")
+            .field("read_only", &self.read_only)
+            .field("schema_filter", &self.schema_filter)
+            .field("token", &self.token.as_ref().map(|_| "<redacted>"))
+            .finish()
+    }
 }
