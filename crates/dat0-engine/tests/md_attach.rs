@@ -115,10 +115,14 @@ async fn engine_attaches_md_and_queries_then_detaches() {
         .await
     );
 
-    // A real query against an attached MD database (by its real name).
+    // A real catalog query scoped to the attached MD database. `duckdb_tables()`
+    // is a global table function spanning all attached catalogs with a
+    // `database_name` column (unlike `<db>.information_schema.schemata`, which
+    // DuckDB does not expose as a 3-part path). Proves the attached MD db is
+    // queryable end-to-end.
     let n = scalar(
         &engine,
-        "SELECT count(*)::TEXT FROM sample_data.information_schema.schemata;",
+        "SELECT count(*)::TEXT FROM duckdb_tables() WHERE database_name = 'sample_data';",
     )
     .await;
     assert!(n.parse::<i64>().unwrap() >= 0);
