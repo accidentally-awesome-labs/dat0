@@ -79,6 +79,46 @@ pub struct SqlConsole {
     /// so the pane delegate's header/scroll closures can dispatch into the shell
     /// (P5a T9). `new_invalid()` until a Pane result binds.
     pub(crate) pane_ws: WeakEntity<WorkspaceShell>,
+    /// Shared per-window schema cache for autocomplete (P5b T2). Cloned into
+    /// every tab's [`SchemaCompletionProvider`]; refreshed off the engine by
+    /// `WorkspaceShell::refresh_completion_snapshot`, so one update reaches all
+    /// tabs (the `RefCell` is shared by `Rc`).
+    pub(crate) snapshot: crate::query::completion::SharedSnapshot,
+    /// Wall time (ms) of the most recently completed run, set by
+    /// [`set_last_elapsed`](Self::set_last_elapsed) from `finish_sql_run`
+    /// (P5b T4). Drives the timing chip (T9). `None` until the first run.
+    pub(crate) last_elapsed_ms: Option<u64>,
+    /// Transient query-history overlay (P5b T5). `Some(entries)` while the
+    /// history panel is open; `None` when closed. Populated by
+    /// [`show_history`](Self::show_history) (fed from the session by
+    /// `WorkspaceShell` on a `ShowHistory` event) and rendered as an overlay
+    /// inside [`render`](Self::render) — which owns the `&mut Window` a row
+    /// click needs to load its SQL into a new tab.
+    pub(crate) history_overlay: Option<Vec<crate::session::queries::HistoryEntry>>,
+    /// SQL queued to load into a new tab on the next render (P5b T8). The
+    /// saved-query picker is a WINDOW-level overlay (no live `&mut Window` in its
+    /// pick closure), but `load_into_new_tab` needs a `&mut Window`, which only
+    /// [`render`](Self::render) holds; the picker's pick stashes the SQL here via
+    /// [`queue_load`](Self::queue_load) and `render` drains it. `None` when
+    /// nothing is pending.
+    pub(crate) pending_load: Option<String>,
+}
+
+/// Install the autocomplete provider on a freshly-built tab editor (P5b T2).
+/// Shared by all three tab-build paths ([`SqlConsole::new`]'s persisted loop +
+/// empty fallback, and [`SqlConsole::new_tab`]) so every editor gets a provider
+/// backed by the same per-window snapshot.
+fn attach_completion_provider(
+    input: &Entity<InputState>,
+    snapshot: &crate::query::completion::SharedSnapshot,
+    cx: &mut Context<SqlConsole>,
+) {
+    let snap = snapshot.clone();
+    input.update(cx, |s, _cx| {
+        s.lsp.completion_provider = Some(std::rc::Rc::new(
+            crate::query::completion::SchemaCompletionProvider { snapshot: snap },
+        ));
+    });
 }
 
 /// Events the console emits up to `WorkspaceShell`.
@@ -90,6 +130,23 @@ pub enum SqlConsoleEvent {
     Cancel,
     /// Tab set / active index changed; persist to the session.
     Persist,
+    /// Open the query-history panel. `WorkspaceShell` fetches the entries from
+    /// the session and pushes them back into the console via
+    /// [`SqlConsole::show_history`] (the console owns the `Window`-having render).
+    ShowHistory,
+    /// Open the Save-query name prompt. `WorkspaceShell` captures the active
+    /// tab's SQL and mounts a [`NamePrompt`](crate::view::name_prompt::NamePrompt)
+    /// overlay; confirming saves it to the session (P5b T8).
+    SaveQuery,
+    /// Open the saved-query picker. `WorkspaceShell` mounts a window-level
+    /// overlay listing the session's saved queries; picking one queues it into a
+    /// new tab and deleting removes it (P5b T8).
+    ShowSaved,
+    /// Promote the statement under the cursor to a derived table (P5b T10).
+    /// `WorkspaceShell` opens a NamePrompt overlay; confirming runs a CTAS via
+    /// `engine.create_table(.., DerivedOrigin::Sql)` and refreshes the
+    /// autocomplete snapshot.
+    SaveAsTable,
 }
 
 impl EventEmitter<SqlConsoleEvent> for SqlConsole {}
@@ -102,6 +159,7 @@ impl SqlConsole {
     pub fn new(
         persisted: &[crate::session::SqlTabState],
         active: Option<usize>,
+        snapshot: crate::query::completion::SharedSnapshot,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
@@ -116,6 +174,7 @@ impl SqlConsole {
                         .placeholder(dat0_i18n::t("sql.placeholder"))
                 });
                 input.update(cx, |s, cx| s.set_value(sql, window, cx));
+                attach_completion_provider(&input, &snapshot, cx);
                 ConsoleTab {
                     meta: SqlTabMeta {
                         id: p.id,
@@ -134,6 +193,7 @@ impl SqlConsole {
                     .line_number(true)
                     .placeholder(dat0_i18n::t("sql.placeholder"))
             });
+            attach_completion_provider(&input, &snapshot, cx);
             tabs.push(ConsoleTab {
                 meta: SqlTabMeta::new("Query 1"),
                 input,
@@ -149,6 +209,10 @@ impl SqlConsole {
             pane_source: None,
             pane_table_state: None,
             pane_ws: WeakEntity::new_invalid(),
+            snapshot,
+            last_elapsed_ms: None,
+            history_overlay: None,
+            pending_load: None,
         }
     }
 
@@ -183,6 +247,12 @@ impl SqlConsole {
         } else {
             None
         };
+        cx.notify();
+    }
+
+    /// Record the most recent run's wall time (P5b T4/T9). Drives the timing chip.
+    pub fn set_last_elapsed(&mut self, ms: u64, cx: &mut Context<Self>) {
+        self.last_elapsed_ms = Some(ms);
         cx.notify();
     }
 
@@ -250,12 +320,67 @@ impl SqlConsole {
                 .line_number(true)
                 .placeholder(dat0_i18n::t("sql.placeholder"))
         });
+        let snapshot = self.snapshot.clone();
+        attach_completion_provider(&input, &snapshot, cx);
         self.tabs.push(ConsoleTab {
             meta: SqlTabMeta::new(format!("Query {n}")),
             input,
         });
         self.active = self.tabs.len() - 1;
         cx.emit(SqlConsoleEvent::Persist);
+        cx.notify();
+    }
+
+    /// Open a new tab pre-filled with `sql` (P5b T5 history / saved-query load).
+    ///
+    /// Mirrors [`new_tab`](Self::new_tab)'s construction exactly — same eager
+    /// `InputState` code-editor build (needs `&mut Window`) and the SAME
+    /// [`attach_completion_provider`] helper (T2), so the loaded tab gets
+    /// autocomplete just like a freshly-added one — then seeds the buffer with
+    /// `sql` via `set_value` (also `&mut Window`) and focuses the new tab.
+    /// Emits [`SqlConsoleEvent::Persist`] so the new tab set reaches
+    /// `session.json` immediately.
+    pub fn load_into_new_tab(&mut self, sql: String, window: &mut Window, cx: &mut Context<Self>) {
+        let n = self.tabs.len() + 1;
+        let input = cx.new(|cx| {
+            InputState::new(window, cx)
+                .code_editor("sql")
+                .line_number(true)
+                .placeholder(dat0_i18n::t("sql.placeholder"))
+        });
+        let snapshot = self.snapshot.clone();
+        attach_completion_provider(&input, &snapshot, cx);
+        input.update(cx, |s, cx| s.set_value(sql, window, cx));
+        self.tabs.push(ConsoleTab {
+            meta: SqlTabMeta::new(format!("Query {n}")),
+            input,
+        });
+        self.active = self.tabs.len() - 1;
+        cx.emit(SqlConsoleEvent::Persist);
+        cx.notify();
+    }
+
+    /// Open the query-history overlay with `entries` (P5b T5). Called by
+    /// `WorkspaceShell::on_sql_console_event` after a `ShowHistory` event, with
+    /// the entries pulled from `session.query_history()`. `render` then mounts
+    /// the list; picking a row loads it into a new tab and closes the overlay.
+    pub fn show_history(
+        &mut self,
+        entries: Vec<crate::session::queries::HistoryEntry>,
+        cx: &mut Context<Self>,
+    ) {
+        self.history_overlay = Some(entries);
+        cx.notify();
+    }
+
+    /// Queue `sql` to load into a new tab on the next render (P5b T8). Used by
+    /// the window-level saved-query picker, whose pick closure has only a
+    /// `&mut App` (no live `&mut Window`); `load_into_new_tab` needs a
+    /// `&mut Window`, which only [`render`](Self::render) owns, so the SQL is
+    /// stashed here and `render` drains it. Also closes any open history overlay.
+    pub fn queue_load(&mut self, sql: String, cx: &mut Context<Self>) {
+        self.history_overlay = None;
+        self.pending_load = Some(sql);
         cx.notify();
     }
 
@@ -302,6 +427,13 @@ impl SqlConsole {
 
 impl Render for SqlConsole {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        // Drain any SQL queued by the window-level saved-query picker (P5b T8):
+        // its pick stashed the SQL via `queue_load` (no `&mut Window` there);
+        // `load_into_new_tab` needs the `&mut Window` we now hold. Done before
+        // reading `active` so the freshly-loaded tab becomes the active one.
+        if let Some(sql) = self.pending_load.take() {
+            self.load_into_new_tab(sql, window, cx);
+        }
         let active = self.active;
 
         // ── Lazy-promote the Pane result source → TableState (P5a T9) ───────
@@ -539,6 +671,61 @@ impl Render for SqlConsole {
                 .into_any_element(),
         };
 
+        // ── Query-history overlay (P5b T5) ──────────────────────────────────
+        // Mounted INSIDE the console's own render so a row click reaches a live
+        // `&mut Window` (needed by `load_into_new_tab`). The pick closure
+        // captures this entity (`cx.entity()`); the raw-`div` row `on_click`
+        // forwards its `window`/`cx`, and `Entity::update` re-enters this entity
+        // to load the SQL into a new tab AND close the overlay. A trailing close
+        // affordance (✕) also clears it.
+        let history_overlay: Option<gpui::AnyElement> =
+            self.history_overlay.as_ref().map(|entries| {
+                let this = cx.entity();
+                let on_pick = move |sql: String, window: &mut Window, app: &mut gpui::App| {
+                    this.update(app, |c, cx| {
+                        c.history_overlay = None;
+                        c.load_into_new_tab(sql, window, cx);
+                    });
+                };
+                let close = cx.entity();
+                div()
+                    .absolute()
+                    .top_8()
+                    .right_2()
+                    .w(gpui::px(420.))
+                    .max_h(gpui::px(320.))
+                    .overflow_hidden()
+                    .border_1()
+                    .child(
+                        div()
+                            .flex()
+                            .flex_row()
+                            .justify_between()
+                            .items_center()
+                            .px_2()
+                            .py_1()
+                            .border_b_1()
+                            .child(SharedString::from(dat0_i18n::t("sql.history")))
+                            .child(
+                                div()
+                                    .id("sql-history-close")
+                                    .cursor_pointer()
+                                    .px_1()
+                                    .child(SharedString::from("✕"))
+                                    .on_click(move |_ev, _window, cx| {
+                                        close.update(cx, |c, cx| {
+                                            c.history_overlay = None;
+                                            cx.notify();
+                                        });
+                                    }),
+                            ),
+                    )
+                    .child(crate::view::query_library::render_history_list(
+                        entries, on_pick,
+                    ))
+                    .into_any_element()
+            });
+
         // ── Assemble ─────────────────────────────────────────────────────────
         div()
             .flex()
@@ -559,11 +746,91 @@ impl Render for SqlConsole {
                             .flex_row()
                             .items_center()
                             .gap_2()
+                            .child({
+                                // ── Timing chip (P5b T9) ──────────────────────
+                                // Shows "⏱ N ms · local" when idle and a run has
+                                // completed. Hidden while running (the progress
+                                // spinner takes that slot) and before the first
+                                // run. The "· local" suffix reserves the P5c
+                                // local-vs-md slot.
+                                let timing_chip: gpui::AnyElement =
+                                    match (self.running, self.last_elapsed_ms) {
+                                        (false, Some(ms)) => div()
+                                            .px_2()
+                                            .py_1()
+                                            .child(SharedString::from(format!(
+                                                "⏱ {ms} ms · {}",
+                                                dat0_i18n::t("sql.local")
+                                            )))
+                                            .into_any_element(),
+                                        _ => div().into_any_element(),
+                                    };
+                                timing_chip
+                            })
                             .child(progress)
+                            // ── Query-history clock (P5b T5) ──────────────────
+                            // Emits `ShowHistory`; `WorkspaceShell` fetches the
+                            // session's history and pushes it back via
+                            // `show_history`, which opens the overlay below.
+                            .child(
+                                div()
+                                    .id("sql-history")
+                                    .px_2()
+                                    .py_1()
+                                    .cursor_pointer()
+                                    .child(SharedString::from("🕘"))
+                                    .on_click(cx.listener(|_this, _ev, _window, cx| {
+                                        cx.emit(SqlConsoleEvent::ShowHistory);
+                                    })),
+                            )
+                            // ── Save-query button (P5b T8) ────────────────────
+                            // Emits `SaveQuery`; `WorkspaceShell` captures the
+                            // active tab's SQL and opens a NamePrompt overlay.
+                            .child(
+                                div()
+                                    .id("sql-save")
+                                    .px_2()
+                                    .py_1()
+                                    .cursor_pointer()
+                                    .child(SharedString::from("💾"))
+                                    .on_click(cx.listener(|_this, _ev, _window, cx| {
+                                        cx.emit(SqlConsoleEvent::SaveQuery);
+                                    })),
+                            )
+                            // ── Saved-query picker button (P5b T8) ────────────
+                            // Emits `ShowSaved`; `WorkspaceShell` mounts the
+                            // window-level saved-query picker overlay.
+                            .child(
+                                div()
+                                    .id("sql-saved")
+                                    .px_2()
+                                    .py_1()
+                                    .cursor_pointer()
+                                    .child(SharedString::from("📑"))
+                                    .on_click(cx.listener(|_this, _ev, _window, cx| {
+                                        cx.emit(SqlConsoleEvent::ShowSaved);
+                                    })),
+                            )
+                            // ── Save-as-Table button (P5b T10) ────────────────
+                            // Emits `SaveAsTable`; `WorkspaceShell` opens a
+                            // NamePrompt and CTAS-promotes the statement under the
+                            // cursor to a derived table (`DerivedOrigin::Sql`).
+                            .child(
+                                div()
+                                    .id("sql-save-as-table")
+                                    .px_2()
+                                    .py_1()
+                                    .cursor_pointer()
+                                    .child(SharedString::from("⤓ Table"))
+                                    .on_click(cx.listener(|_this, _ev, _window, cx| {
+                                        cx.emit(SqlConsoleEvent::SaveAsTable);
+                                    })),
+                            )
                             .child(run_btn),
                     ),
             )
             .child(div().flex_1().child(editor))
             .child(region)
+            .children(history_overlay)
     }
 }

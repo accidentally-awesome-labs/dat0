@@ -9,7 +9,7 @@ use tracing::{debug, error, instrument};
 use crate::Result;
 use crate::catalog::quote_ident;
 use crate::error::EngineError;
-use crate::types::{DerivedOrigin, EngineStatus, MemoryBudget, TableOrigin};
+use crate::types::{EngineStatus, MemoryBudget, TableOrigin};
 
 pub struct DuckDBEngine {
     pub(crate) conn: Arc<Mutex<duckdb::Connection>>,
@@ -328,7 +328,7 @@ impl crate::QueryEngine for DuckDBEngine {
         &self,
         name: &str,
         sql: &str,
-        _origin: crate::types::DerivedOrigin,
+        origin: crate::types::DerivedOrigin,
     ) -> Result<crate::types::TableInfo> {
         self.assert_open()?;
         let conn = self.conn.clone();
@@ -354,10 +354,17 @@ impl crate::QueryEngine for DuckDBEngine {
         })
         .await
         .map_err(|e| EngineError::TaskJoin(e.to_string()))??;
+        // Honor the PASSED origin (P5b T11): the `table_origins` map is the
+        // source of truth that `table_origin(name)` reads. For the console
+        // Save-as-Table path the caller passes `Sql(<raw statement>)`; for the
+        // grid Save-as-Table path it passes `Transform { parent, ops }` — the
+        // lineage-meaningful variant. `origin` is owned and unused by the
+        // blocking catalog create (which only consumed `sql`), so it moves
+        // cleanly into the insert here.
         self.table_origins
             .write()
             .expect("table_origins poisoned")
-            .insert(name, TableOrigin::Derived(DerivedOrigin::Sql(sql)));
+            .insert(name, TableOrigin::Derived(origin));
         Ok(info)
     }
 

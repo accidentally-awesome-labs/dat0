@@ -49,6 +49,12 @@ pub mod ids {
     pub const SQL_CANCEL: &str = "sql.cancel";
     pub const SQL_NEW_TAB: &str = "sql.new_tab";
     pub const SQL_CLOSE_TAB: &str = "sql.close_tab";
+    // P5b: SQL Console reuse/promotion actions.
+    pub const SQL_SAVE_QUERY: &str = "sql.save_query";
+    pub const SQL_LOAD_QUERY: &str = "sql.load_query";
+    pub const SQL_HISTORY: &str = "sql.history";
+    pub const SQL_SAVE_AS_TABLE: &str = "sql.save_as_table";
+    pub const VIEW_SAVE_AS_TABLE: &str = "view.save_as_table";
 }
 
 /// Register every built-in action onto `reg`. Returns an error if any id
@@ -170,6 +176,7 @@ pub fn register_all(reg: &ActionRegistry) -> Result<(), RegisterError> {
 
     super::view_actions::register(reg)?;
     super::edit_actions::register(reg)?;
+    super::sql_actions::register(reg)?;
 
     Ok(())
 }

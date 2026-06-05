@@ -522,6 +522,30 @@ pub fn run_app(lock: AppLock, initial_paths: Vec<PathBuf>, main_loop: MainLoop) 
 
 /// Session-backed workspace shell rendered inside `gpui_component::Root`.
 ///
+/// What a confirmed [`NamePrompt`](crate::view::name_prompt::NamePrompt)
+/// should do (P5b T8 + T10). The shared single-line name modal is reused for
+/// several "name this thing" flows; the intent is the single routing point for
+/// the `Confirm(name)` arm in
+/// [`on_name_prompt_event`](WorkspaceShell::on_name_prompt_event), so adding a
+/// new flow is a new variant + a new match arm — nothing else moves.
+///
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+// All three variants are intentionally `Save*` — they name distinct "save this
+// thing as…" flows routed by `on_name_prompt_event`. The shared prefix is
+// meaningful, not redundant, so the `enum_variant_names` lint is suppressed.
+#[allow(clippy::enum_variant_names)]
+enum NamePromptIntent {
+    /// Save the captured SQL (`name_prompt_sql`) as a named saved query (T8).
+    SaveQuery,
+    /// Promote the console statement-under-cursor to a derived table (T10).
+    SaveConsoleAsTable,
+    /// Promote the active grid view's transform stack to a derived table,
+    /// recording its lineage as `DerivedOrigin::Transform { parent, ops }`
+    /// (T11). The handler re-reads the `ViewModel` on confirm, so no per-intent
+    /// state is captured up front.
+    SaveViewAsTable,
+}
+
 /// Owns the session for this window and an optional data source (set once
 /// the user drops a file or opens a table). When no data source is present,
 /// renders a "Drop a file here" placeholder. When a data source is present
@@ -665,6 +689,37 @@ pub struct WorkspaceShell {
     /// guard's `Drop` (or an explicit `cancel()` in T7) fires the engine's
     /// connection-wide `interrupt()`.
     pub(crate) active_query_cancel: Option<crate::query::QueryCancel>,
+    /// Shared per-window autocomplete schema cache (P5b T2). Lazily created on
+    /// the first `toggle_sql_console` (so it can be cloned into the console's
+    /// per-tab providers), then refreshed off the engine on console-open and
+    /// after every run. `None` until the console is first opened.
+    pub(crate) sql_snapshot: Option<crate::query::completion::SharedSnapshot>,
+    /// Currently-mounted Save-query name prompt (P5b T8). `Some` while the
+    /// 💾 → Save-query modal is open; cleared when its
+    /// [`NamePromptEvent`](crate::view::name_prompt::NamePromptEvent) is routed
+    /// (Confirm → save + dismiss, or Cancel → dismiss). Rendered as a window
+    /// overlay child in `render` when present.
+    name_prompt: Option<Entity<crate::view::name_prompt::NamePrompt>>,
+    /// Subscription to the active name prompt's `NamePromptEvent`. Stored so the
+    /// Confirm/Cancel callback stays registered — a dropped `Subscription`
+    /// deregisters silently (the P4a T10b trap). Cleared alongside `name_prompt`.
+    name_prompt_sub: Option<Subscription>,
+    /// The active tab's SQL captured at the moment 💾 was pressed (P5b T8). Held
+    /// while the name prompt is open so a Confirm saves the SQL as it was THEN,
+    /// not whatever is in the editor when the user finishes typing the name.
+    /// Only the `SaveQuery` intent uses this; `SaveConsoleAsTable` re-reads the
+    /// statement-under-cursor on confirm, so it leaves this `None`.
+    name_prompt_sql: Option<String>,
+    /// What the currently-open name prompt should do on Confirm (P5b T8 + T10).
+    /// `Some` exactly while `name_prompt` is mounted; the `Confirm` arm of
+    /// [`on_name_prompt_event`](Self::on_name_prompt_event) matches on it to
+    /// route to the right handler. Cleared alongside `name_prompt`.
+    name_prompt_intent: Option<NamePromptIntent>,
+    /// Whether the window-level saved-query picker overlay is shown (P5b T8).
+    /// Toggled by `show_saved_picker` (📑) / closed on pick or the overlay's ✕.
+    /// The overlay reads `session.saved_queries()` live at render, so no
+    /// snapshot is stored here — the flag alone gates the overlay.
+    saved_picker_open: bool,
 }
 
 impl WorkspaceShell {
@@ -693,6 +748,12 @@ impl WorkspaceShell {
             sql_console_visible: false,
             sql_console_close_hooked: false,
             active_query_cancel: None,
+            sql_snapshot: None,
+            name_prompt: None,
+            name_prompt_sub: None,
+            name_prompt_sql: None,
+            name_prompt_intent: None,
+            saved_picker_open: false,
         }
     }
 
@@ -1101,13 +1162,36 @@ impl WorkspaceShell {
                 let s = self.session.lock();
                 (s.sql_tabs().to_vec(), s.active_sql_tab())
             };
+            // Ensure the per-window autocomplete snapshot exists, then clone it
+            // into the console so every tab's provider shares one `RefCell`
+            // (P5b T2). The refresh below populates `tables` off the engine.
+            let snapshot = self
+                .sql_snapshot
+                .get_or_insert_with(crate::query::completion::new_shared_snapshot)
+                .clone();
             let console = cx.new(|cx| {
-                crate::view::sql_console::SqlConsole::new(&persisted, active, window, cx)
+                crate::view::sql_console::SqlConsole::new(
+                    &persisted,
+                    active,
+                    snapshot.clone(),
+                    window,
+                    cx,
+                )
             });
-            let sub = cx.subscribe(
+            // `subscribe_in` (not `subscribe`) so the event callback receives a
+            // live `&mut Window` — the Save-query path (`SaveQuery`) builds a
+            // `NamePrompt` whose single-line `InputState` needs one eagerly
+            // (P5b T8). The window is valid because the subscription fires inside
+            // a window update.
+            let sub = cx.subscribe_in(
                 &console,
-                |ws: &mut Self, console, ev: &crate::view::sql_console::SqlConsoleEvent, cx| {
-                    ws.on_sql_console_event(console.clone(), ev.clone(), cx);
+                window,
+                |ws: &mut Self,
+                 console,
+                 ev: &crate::view::sql_console::SqlConsoleEvent,
+                 window,
+                 cx| {
+                    ws.on_sql_console_event(console.clone(), ev.clone(), window, cx);
                 },
             );
             self.sql_console_sub = Some(sub);
@@ -1135,7 +1219,67 @@ impl WorkspaceShell {
         } else {
             self.sql_console_visible = !self.sql_console_visible;
         }
+        // Refresh the autocomplete schema whenever the console is (re)shown so
+        // tables created/dropped while it was hidden are reflected (P5b T2).
+        if self.sql_console_visible {
+            self.refresh_completion_snapshot(cx);
+        }
         cx.notify();
+    }
+
+    /// Rebuild the autocomplete schema snapshot off the live engine (P5b T2).
+    /// Runs `get_tables()` OFF the GPUI main thread, then posts the result back
+    /// via the canonical `MainThreadDispatcher` and writes the shared `RefCell`
+    /// ON the main thread. Called on console-open and after every run (covers
+    /// CREATE/DROP/Save-as-Table).
+    ///
+    /// Send discipline: `SharedSnapshot` is `Rc<RefCell<..>>` — neither `Send`
+    /// nor allowed in the dispatcher's `Send + 'static` closure. So the snapshot
+    /// is NEVER captured across the thread boundary. Instead a weak
+    /// `WorkspaceShell` handle (Send) crosses into the task; the dispatcher
+    /// closure upgrades it on the main thread and reaches `self.sql_snapshot`
+    /// there, mirroring the `finish_sql_run` / `prefetch_rows_for` bridge.
+    pub(crate) fn refresh_completion_snapshot(&mut self, cx: &mut Context<Self>) {
+        if self.sql_snapshot.is_none() {
+            return; // console never opened; nothing to refresh
+        }
+        let engine = self.engine();
+        let ws_weak = cx.entity().downgrade();
+        tokio::spawn(async move {
+            use dat0_engine::QueryEngine as _;
+            let tables = match engine.get_tables().await {
+                Ok(t) => t,
+                Err(e) => {
+                    tracing::warn!(error = %e, "refresh_completion_snapshot: get_tables failed");
+                    return;
+                }
+            };
+            // `tables` is `Vec<TableInfo>` (Send). Build the `TableEntry`s and
+            // write the shared `RefCell` on the main thread, where the `Rc` is
+            // reachable via the upgraded shell handle.
+            if let Some(dispatcher) = crate::window_registry::dispatcher() {
+                let _ = dispatcher.dispatch(move |app_cx: &mut gpui::App| {
+                    let Some(ws) = ws_weak.upgrade() else { return };
+                    ws.update(app_cx, |ws, _cx| {
+                        let Some(snapshot) = ws.sql_snapshot.as_ref() else {
+                            return;
+                        };
+                        let entries = tables
+                            .iter()
+                            .map(|t| crate::query::completion::TableEntry {
+                                name: t.name.clone().into(),
+                                columns: t.columns.iter().map(|c| c.name.clone().into()).collect(),
+                            })
+                            .collect();
+                        snapshot.borrow_mut().tables = entries;
+                    });
+                });
+            } else {
+                tracing::warn!(
+                    "refresh_completion_snapshot: no MainThreadDispatcher installed; snapshot stale"
+                );
+            }
+        });
     }
 
     /// Route a [`SqlConsoleEvent`] from the console.
@@ -1148,6 +1292,7 @@ impl WorkspaceShell {
         &mut self,
         console: Entity<crate::view::sql_console::SqlConsole>,
         ev: crate::view::sql_console::SqlConsoleEvent,
+        window: &mut Window,
         cx: &mut Context<Self>,
     ) {
         use crate::view::sql_console::SqlConsoleEvent::*;
@@ -1155,6 +1300,40 @@ impl WorkspaceShell {
             Persist => self.persist_sql_console(cx),
             Run { target } => self.spawn_sql_run(console, target, cx),
             Cancel => self.cancel_sql_run(cx),
+            // P5b T5: fetch the session's persisted history (newest last in the
+            // store; the list view reverses to newest-first) and hand it to the
+            // console, which renders the overlay where a row click owns a live
+            // `Window` to load into a new tab.
+            ShowHistory => {
+                let entries = self.session.lock().query_history().to_vec();
+                console.update(cx, |c, cx| c.show_history(entries, cx));
+            }
+            // P5b T8: capture the active tab's SQL NOW and open the Save-query
+            // name-prompt overlay (export-dialog idiom). Confirm → save; Cancel →
+            // dismiss (both in `on_name_prompt_event`).
+            SaveQuery => {
+                let sql = console.read(cx).active_sql_and_cursor(cx).0;
+                self.open_name_prompt(sql, window, cx);
+            }
+            // P5b T8: mount the window-level saved-query picker overlay. Picking
+            // a row queues its SQL into a new tab (via the console's `queue_load`,
+            // drained by `SqlConsole::render` with a real `Window`); deleting a
+            // row removes it from the session and refreshes the overlay.
+            ShowSaved => {
+                self.show_saved_picker(cx);
+            }
+            // P5b T10: open the shared name modal with the SaveConsoleAsTable
+            // intent. Confirm re-reads the statement-under-cursor and CTAS-
+            // promotes it via `create_table(.., DerivedOrigin::Sql)`; the
+            // SaveQuery path's captured-SQL snapshot is not needed here.
+            SaveAsTable => {
+                self.open_name_prompt_with(
+                    "Save as table…",
+                    NamePromptIntent::SaveConsoleAsTable,
+                    window,
+                    cx,
+                );
+            }
         }
     }
 
@@ -1302,6 +1481,32 @@ impl WorkspaceShell {
         if let Some(mut g) = self.active_query_cancel.take() {
             g.disarm();
         }
+
+        // Compute elapsed from the console's run-start stamp BEFORE set_running(false)
+        // clears it (set_running(false) sets started_at = None). Capture the FULL
+        // editor buffer (not just the statement under cursor) — history shows what
+        // the user ran/typed, and load re-opens the whole buffer.
+        let elapsed_ms = console
+            .read(cx)
+            .started_at
+            .map(|t| t.elapsed().as_millis() as u64)
+            .unwrap_or(0);
+        let (sql_text, _) = console.read(cx).active_sql_and_cursor(cx);
+        let ok = !matches!(outcome, SqlRunOutcome::Error(_) | SqlRunOutcome::Cancelled);
+        console.update(cx, |c, cx| c.set_last_elapsed(elapsed_ms, cx));
+        {
+            let entry = crate::session::queries::HistoryEntry {
+                sql: sql_text,
+                ran_at: now_unix_millis(),
+                ok,
+                elapsed_ms,
+            };
+            let mut sess = self.session.lock();
+            let mut hist = sess.query_history().to_vec();
+            crate::session::queries::push_history(&mut hist, entry);
+            let _ = sess.set_query_history(hist);
+        }
+
         console.update(cx, |c, cx| c.set_running(false, cx));
 
         match outcome {
@@ -1336,6 +1541,9 @@ impl WorkspaceShell {
             }
         }
         self.persist_sql_console(cx);
+        // Pick up tables created/dropped by this run (CREATE/DROP/Save-as-Table)
+        // so autocomplete reflects the new schema on the next keystroke (P5b T2).
+        self.refresh_completion_snapshot(cx);
     }
 
     /// Open the native save panel, then stream the export via COPY (P4c T11).
@@ -1467,6 +1675,284 @@ impl WorkspaceShell {
             .filter(|(c, _)| *c == col_ix)
             .map(|(_, e)| e.clone())
     }
+
+    /// Persist the current tab's SQL as a named saved query (P5b T6). Upserts by
+    /// name (case-insensitive). No-op on empty name/sql. Called from
+    /// [`on_name_prompt_event`](Self::on_name_prompt_event) on a Save confirm (T8).
+    pub(crate) fn save_named_query(&mut self, name: String, sql: String, _cx: &mut Context<Self>) {
+        if name.trim().is_empty() || sql.trim().is_empty() {
+            return;
+        }
+        let q = crate::session::queries::SavedQuery {
+            id: uuid::Uuid::now_v7(),
+            name: name.trim().to_string(),
+            sql,
+            saved_at: now_unix_millis(),
+        };
+        let mut sess = self.session.lock();
+        let mut list = sess.saved_queries().to_vec();
+        crate::session::queries::upsert_saved(&mut list, q);
+        let _ = sess.set_saved_queries(list);
+    }
+
+    /// Promote the statement under the cursor to a derived table (P5b T10).
+    /// Called from [`on_name_prompt_event`](Self::on_name_prompt_event) on a
+    /// confirm of the [`SaveConsoleAsTable`](NamePromptIntent::SaveConsoleAsTable)
+    /// intent. Resolves the statement-under-cursor itself (it does NOT use the
+    /// SaveQuery captured-SQL), wraps it in a CTAS-style `SELECT * FROM (…)`, and
+    /// runs `create_table(.., DerivedOrigin::Sql)` off-thread. On success the
+    /// console shows a status line and the autocomplete snapshot is refreshed so
+    /// the new table appears in completions; on failure (bad SQL, name
+    /// collision) the DuckDB error renders inline in the console's Error region
+    /// (no modal — sidesteps PD-021).
+    ///
+    /// Send discipline (matches the T2/T6/T8 bridge): only `Send + 'static`
+    /// values cross into the `tokio::spawn` — the engine `Arc`, the owned
+    /// `name`/`stmt`/`select` strings, and the `Weak` shell/console handles. The
+    /// GPUI entities are touched ONLY inside the dispatcher closure on the main
+    /// thread after `.upgrade()`.
+    pub(crate) fn save_console_as_table(&mut self, name: String, _cx: &mut Context<Self>) {
+        let Some(console) = self.sql_console.clone() else {
+            return;
+        };
+        let name = name.trim().to_string();
+        if name.is_empty() {
+            return;
+        }
+        let (sql, cursor) = {
+            let app: &gpui::App = _cx;
+            console.read(app).active_sql_and_cursor(app)
+        };
+        let span = crate::query::statement::statement_at(&sql, cursor);
+        let stmt = sql[span.start..span.end].trim().to_string();
+        if stmt.is_empty() {
+            return;
+        }
+        let select = format!("SELECT * FROM ({stmt})");
+        let engine = self.engine();
+        let ws_weak = _cx.entity().downgrade();
+        let console_weak = console.downgrade();
+        tokio::spawn(async move {
+            use dat0_engine::QueryEngine as _;
+            let origin = dat0_engine::DerivedOrigin::Sql(stmt);
+            let outcome = engine.create_table(&name, &select, origin).await;
+            if let Some(dispatcher) = crate::window_registry::dispatcher() {
+                let _ = dispatcher.dispatch(move |app: &mut gpui::App| {
+                    if let (Some(ws), Some(console)) = (ws_weak.upgrade(), console_weak.upgrade()) {
+                        ws.update(app, |ws, cx| match &outcome {
+                            Ok(_) => {
+                                console.update(cx, |c, cx| {
+                                    c.set_region(
+                                        crate::view::sql_console::ResultRegion::Status(format!(
+                                            "Saved table {name}"
+                                        )),
+                                        cx,
+                                    )
+                                });
+                                ws.refresh_completion_snapshot(cx);
+                            }
+                            Err(e) => console.update(cx, |c, cx| {
+                                c.set_region(
+                                    crate::view::sql_console::ResultRegion::Error(e.to_string()),
+                                    cx,
+                                )
+                            }),
+                        });
+                    }
+                });
+            } else {
+                tracing::warn!(
+                    "save_console_as_table: no MainThreadDispatcher installed; result dropped"
+                );
+            }
+        });
+    }
+
+    /// Open the shared name-prompt overlay to promote the active grid view's
+    /// transform stack to a derived table (P5b T11). Guards on an active
+    /// `ViewModel` with a non-empty op stack (no-op otherwise — the PipelineBar
+    /// pill already only renders in that case, but this is defensive). The
+    /// `ViewModel` is re-read on confirm by [`save_view_as_table`], so nothing
+    /// is captured here beyond opening the modal with the
+    /// [`SaveViewAsTable`](NamePromptIntent::SaveViewAsTable) intent.
+    pub(crate) fn open_save_view_as_table(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(vm) = self.view_model.as_ref() else {
+            return;
+        };
+        if vm.active().is_empty() {
+            return;
+        }
+        self.open_name_prompt_with(
+            "Save view as table…",
+            NamePromptIntent::SaveViewAsTable,
+            window,
+            cx,
+        );
+    }
+
+    /// Promote the active grid view's transform stack to a derived table (P5b
+    /// T11), invoked from the [`SaveViewAsTable`](NamePromptIntent::SaveViewAsTable)
+    /// Confirm arm of [`on_name_prompt_event`](Self::on_name_prompt_event).
+    ///
+    /// Compiles the active op stack against the base table via
+    /// [`compile_view_sql`](dat0_engine::compile_view_sql) for the CTAS SQL, and
+    /// records the parent + ops as `DerivedOrigin::Transform` — the
+    /// lineage-meaningful path (the engine now honors the passed origin, see the
+    /// T11 engine fix). On success the autocomplete snapshot is refreshed so the
+    /// new table appears in completions; on failure the error is logged.
+    ///
+    /// Send discipline (matches the T2/T8/T10 bridge): only `Send + 'static`
+    /// values cross into `tokio::spawn` — the engine `Arc`, the owned
+    /// `name`/`base`/`sql` strings + `ops` vec, and the `Weak` shell handle. The
+    /// GPUI entity is touched ONLY inside the dispatcher closure after
+    /// `.upgrade()`.
+    pub(crate) fn save_view_as_table(&mut self, name: String, cx: &mut Context<Self>) {
+        let Some(vm) = self.view_model.as_ref() else {
+            return;
+        };
+        let name = name.trim().to_string();
+        if name.is_empty() {
+            return;
+        }
+        let base = vm.base_table().to_string();
+        let ops = vm.active().to_vec();
+        if ops.is_empty() {
+            return;
+        }
+        let sql = match dat0_engine::compile_view_sql(&base, &ops) {
+            Ok(s) => s,
+            Err(e) => {
+                tracing::warn!(error = %e, "save_view_as_table: compile failed");
+                return;
+            }
+        };
+        let engine = self.engine();
+        let ws_weak = cx.entity().downgrade();
+        tokio::spawn(async move {
+            use dat0_engine::QueryEngine as _;
+            let origin = dat0_engine::DerivedOrigin::Transform { parent: base, ops };
+            let outcome = engine.create_table(&name, &sql, origin).await;
+            if let Some(dispatcher) = crate::window_registry::dispatcher() {
+                let _ = dispatcher.dispatch(move |app: &mut gpui::App| {
+                    if let Some(ws) = ws_weak.upgrade() {
+                        ws.update(app, |ws, cx| match &outcome {
+                            Ok(_) => ws.refresh_completion_snapshot(cx),
+                            Err(e) => {
+                                tracing::warn!(error = %e, "save_view_as_table failed")
+                            }
+                        });
+                    }
+                });
+            } else {
+                tracing::warn!(
+                    "save_view_as_table: no MainThreadDispatcher installed; result dropped"
+                );
+            }
+        });
+    }
+
+    /// Delete a saved query by id (P5b T6). Called from the saved-query picker's
+    /// per-row ✕ (T8).
+    pub(crate) fn delete_named_query(&mut self, id: uuid::Uuid, _cx: &mut Context<Self>) {
+        let mut sess = self.session.lock();
+        let mut list = sess.saved_queries().to_vec();
+        crate::session::queries::delete_saved(&mut list, id);
+        let _ = sess.set_saved_queries(list);
+    }
+
+    /// Mount the Save-query name-prompt overlay (P5b T8). Thin wrapper over the
+    /// generalized [`open_name_prompt_with`](Self::open_name_prompt_with): it
+    /// captures the active tab's SQL (held in `name_prompt_sql` so a later
+    /// Confirm saves THAT text, not whatever is in the editor by then) and opens
+    /// the modal with the [`SaveQuery`](NamePromptIntent::SaveQuery) intent.
+    pub(crate) fn open_name_prompt(
+        &mut self,
+        sql: String,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.name_prompt_sql = Some(sql);
+        self.open_name_prompt_with("Save query as…", NamePromptIntent::SaveQuery, window, cx);
+    }
+
+    /// Mount the shared single-line name-prompt overlay for a given `intent`
+    /// (P5b T8 generalized; T10). The `intent` is the ONLY thing that varies the
+    /// Confirm behaviour — it is stashed in `name_prompt_intent` and matched in
+    /// [`on_name_prompt_event`](Self::on_name_prompt_event).
+    ///
+    /// Mirrors [`open_export_dialog`](Self::open_export_dialog): build the entity
+    /// via `cx.new`, subscribe to its `NamePromptEvent`, and STORE the
+    /// subscription in `name_prompt_sub` (a dropped `Subscription` deregisters
+    /// the callback silently — the P4a T10b trap).
+    ///
+    /// Per-intent inputs (e.g. the captured SQL for `SaveQuery`) are set by the
+    /// caller BEFORE calling this; the `SaveConsoleAsTable` intent needs none
+    /// (it re-reads the statement-under-cursor on confirm).
+    ///
+    /// Needs `&mut Window` because `NamePrompt::new` builds an `InputState`
+    /// (single-line name field) eagerly.
+    fn open_name_prompt_with(
+        &mut self,
+        title: impl Into<gpui::SharedString>,
+        intent: NamePromptIntent,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        use crate::view::name_prompt::{NamePrompt, NamePromptEvent};
+        let prompt = cx.new(|cx| NamePrompt::new(title, window, cx));
+        let sub = cx.subscribe(
+            &prompt,
+            |ws: &mut Self, _prompt, ev: &NamePromptEvent, cx| {
+                ws.on_name_prompt_event(ev.clone(), cx);
+            },
+        );
+        self.name_prompt_sub = Some(sub);
+        self.name_prompt_intent = Some(intent);
+        self.name_prompt = Some(prompt);
+        cx.notify();
+    }
+
+    /// Route a `NamePromptEvent` from the shared name modal (P5b T8 + T10).
+    /// `Confirm` dispatches on the stored [`NamePromptIntent`] to the right
+    /// handler (the single routing point — a new flow is one new arm here);
+    /// `Cancel` just dismisses. Either way the entity + subscription + per-intent
+    /// state are dropped (closes the overlay).
+    fn on_name_prompt_event(
+        &mut self,
+        ev: crate::view::name_prompt::NamePromptEvent,
+        cx: &mut Context<Self>,
+    ) {
+        use crate::view::name_prompt::NamePromptEvent;
+        if let NamePromptEvent::Confirm(name) = ev {
+            match self.name_prompt_intent {
+                Some(NamePromptIntent::SaveQuery) => {
+                    if let Some(sql) = self.name_prompt_sql.clone() {
+                        self.save_named_query(name, sql, cx);
+                    }
+                }
+                Some(NamePromptIntent::SaveConsoleAsTable) => {
+                    self.save_console_as_table(name, cx);
+                }
+                Some(NamePromptIntent::SaveViewAsTable) => {
+                    self.save_view_as_table(name, cx);
+                }
+                None => {}
+            }
+        }
+        self.name_prompt = None;
+        self.name_prompt_sub = None;
+        self.name_prompt_sql = None;
+        self.name_prompt_intent = None;
+        cx.notify();
+    }
+
+    /// Open the window-level saved-query picker overlay (P5b T8). The overlay is
+    /// a flag-gated render of `render_saved_picker` over the live
+    /// `session.saved_queries()`, so this just flips the flag.
+    pub(crate) fn show_saved_picker(&mut self, cx: &mut Context<Self>) {
+        self.saved_picker_open = true;
+        cx.notify();
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -1503,6 +1989,15 @@ fn classify_run_err(e: dat0_engine::EngineError) -> SqlRunOutcome {
 /// generic localized "OK" is used for P5a.
 fn format_exec_status(_r: &dat0_engine::QueryResult) -> String {
     dat0_i18n::t("sql.ok")
+}
+
+/// Wall-clock millis since the Unix epoch (app runtime; not a workflow script).
+fn now_unix_millis() -> i64 {
+    use std::time::{SystemTime, UNIX_EPOCH};
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_millis() as i64)
+        .unwrap_or(0)
 }
 
 impl WorkspaceShell {
@@ -1792,6 +2287,97 @@ impl Render for WorkspaceShell {
                 .into_any_element()
         });
 
+        // Save-query name-prompt overlay (P5b T8). Mounted by `open_name_prompt`;
+        // emits `NamePromptEvent` routed via the stored `name_prompt_sub`
+        // subscription (Confirm → save + dismiss, Cancel → dismiss). Same
+        // top-centre placement as the export dialog.
+        let name_prompt_overlay: Option<gpui::AnyElement> = self.name_prompt.as_ref().map(|p| {
+            div()
+                .absolute()
+                .top_16()
+                .left_1_2()
+                .child(p.clone())
+                .into_any_element()
+        });
+
+        // Saved-query picker overlay (P5b T8). Window-level, flag-gated on
+        // `saved_picker_open`; reads `session.saved_queries()` LIVE so a delete
+        // refreshes the list on the next render. Picking a row routes the SQL
+        // through the console's `queue_load` (the console's render drains it with
+        // a real `Window` for `load_into_new_tab`) and closes the overlay.
+        // Deleting calls `delete_named_query` and re-notifies so the list shrinks.
+        // A trailing ✕ closes the overlay.
+        let saved_picker_overlay: Option<gpui::AnyElement> = if self.saved_picker_open {
+            let saved = self.session.lock().saved_queries().to_vec();
+            let ws = cx.entity();
+            let console = self.sql_console.clone();
+            // Pick: route the SQL into a new tab via the console's `queue_load`
+            // (windowless), then close the overlay.
+            let on_pick = {
+                let ws = ws.clone();
+                move |sql: String, app: &mut gpui::App| {
+                    if let Some(console) = console.clone() {
+                        console.update(app, |c, cx| c.queue_load(sql, cx));
+                    }
+                    ws.update(app, |ws, cx| {
+                        ws.saved_picker_open = false;
+                        cx.notify();
+                    });
+                }
+            };
+            // Delete: remove from the session, then re-notify so the LIVE
+            // `saved_queries()` read above re-runs next frame and the row drops.
+            let on_delete = {
+                let ws = ws.clone();
+                move |id: uuid::Uuid, app: &mut gpui::App| {
+                    ws.update(app, |ws, cx| {
+                        ws.delete_named_query(id, cx);
+                        cx.notify();
+                    });
+                }
+            };
+            let close = ws.clone();
+            let picker = div()
+                .absolute()
+                .top_16()
+                .right_2()
+                .w(gpui::px(420.))
+                .max_h(gpui::px(320.))
+                .overflow_hidden()
+                .border_1()
+                .child(
+                    div()
+                        .flex()
+                        .flex_row()
+                        .justify_between()
+                        .items_center()
+                        .px_2()
+                        .py_1()
+                        .border_b_1()
+                        .child(dat0_i18n::t("sql.load_query"))
+                        .child(
+                            div()
+                                .id("sql-saved-close")
+                                .cursor_pointer()
+                                .px_1()
+                                .child("✕")
+                                .on_click(move |_ev, _window, cx| {
+                                    close.update(cx, |ws, cx| {
+                                        ws.saved_picker_open = false;
+                                        cx.notify();
+                                    });
+                                }),
+                        ),
+                )
+                .child(crate::view::query_library::render_saved_picker(
+                    &saved, on_pick, on_delete,
+                ))
+                .into_any_element();
+            Some(picker)
+        } else {
+            None
+        };
+
         // T10: tab-strip with dirty-dot indicator. Shown whenever a ViewModel
         // is mounted (i.e. a file has been loaded). The "•" glyph appears next
         // to the tab label when `vm.is_dirty()` is true — meaning the active
@@ -2025,5 +2611,7 @@ impl Render for WorkspaceShell {
             .children(popover_overlay)
             .children(editor_overlay)
             .children(export_overlay)
+            .children(name_prompt_overlay)
+            .children(saved_picker_overlay)
     }
 }

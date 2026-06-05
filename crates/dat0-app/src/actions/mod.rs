@@ -9,6 +9,7 @@
 pub mod builtin;
 pub mod edit_actions;
 pub mod registry;
+pub mod sql_actions;
 pub mod view_actions;
 
 pub use registry::{ActionDescriptor, ActionGroup, ActionId, ActionRegistry, RegisterError};

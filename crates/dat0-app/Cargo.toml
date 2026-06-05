@@ -29,6 +29,13 @@ regex = { workspace = true }
 ureq = { workspace = true }
 gpui = { workspace = true }
 gpui-component = { workspace = true }
+# P5b autocomplete: gpui-component's CompletionProvider trait is generic over
+# lsp-types + ropey. gpui-component re-exports only Rope/Position, not the
+# Completion* types, so dat0 names them directly. Pin to gpui-component's exact
+# resolved versions (Cargo.lock: lsp-types 0.97.0, ropey 2.0.0-beta.1) to avoid
+# a second copy in the tree.
+lsp-types = "=0.97.0"
+ropey = "=2.0.0-beta.1"
 dat0-engine = { workspace = true }
 duckdb = { workspace = true }
 dat0-i18n = { workspace = true }

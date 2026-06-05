@@ -7,7 +7,9 @@
 //! edit / clipboard / bulk-op actions → seventeen. P4c T8 added
 //! `view.delete_column` → eighteen; P4c T11 added `view.export` → nineteen.
 //! P5a T11 adds five SQL Console entry points (console.toggle / sql.run /
-//! sql.cancel / sql.new_tab / sql.close_tab) → twenty-four. Banner action_ids
+//! sql.cancel / sql.new_tab / sql.close_tab) → twenty-four. P5b T12 adds five
+//! SQL Console reuse/promotion descriptors (sql.save_query / sql.load_query /
+//! sql.history / sql.save_as_table / view.save_as_table) → twenty-nine. Banner action_ids
 //! (T2) reference these stable strings. Downstream tasks (T5 recovery panel,
 //! T7 empty-state hero, T10 import cancel, T11 file dialog, T12 theme toggle)
 //! will replace stub dispatch bodies with real wiring — registry shape itself
@@ -73,13 +75,14 @@ fn lookup_returns_descriptor() {
 }
 
 #[test]
-fn builtins_register_twenty_four() {
+fn builtins_register_twenty_nine() {
     let reg = ActionRegistry::new();
     dat0_app::actions::builtin::register_all(&reg).unwrap();
     // Ten from P3b/P4a + seven from P4b T9 (copy/cut/paste/fill_down/set_null/set_value/delete_rows)
     // + one from P4c T8 (delete_column) + one from P4c T11 (view.export)
     // + five from P5a T11 (console.toggle/sql.run/sql.cancel/sql.new_tab/sql.close_tab) = 24.
-    assert_eq!(reg.count(), 24);
+    // + five from P5b T12 (sql.save_query/sql.load_query/sql.history/sql.save_as_table/view.save_as_table) = 29.
+    assert_eq!(reg.count(), 29);
     let titles: Vec<String> = reg.iter().map(|d| d.title).collect();
     assert!(titles.contains(&"New Window".to_string()));
     assert!(titles.contains(&"Open Settings".to_string()));
@@ -104,6 +107,18 @@ fn builtins_register_twenty_four() {
     assert!(titles.contains(&"Cancel".to_string()));
     assert!(titles.contains(&"New query tab".to_string()));
     assert!(titles.contains(&"Close query tab".to_string()));
+    // P5b T12 additions (SQL Console reuse/promotion descriptors). Checked by
+    // id, not title: `sql.save_as_table` + `view.save_as_table` share the
+    // "Save as Table…" title, so a title-based check can't distinguish them.
+    for id in [
+        "sql.save_query",
+        "sql.load_query",
+        "sql.history",
+        "sql.save_as_table",
+        "view.save_as_table",
+    ] {
+        assert!(reg.contains(id), "missing {id}");
+    }
 }
 
 #[test]
