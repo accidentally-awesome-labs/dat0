@@ -1857,6 +1857,10 @@ impl WorkspaceShell {
             Ok(s) => s,
             Err(e) => {
                 tracing::warn!(error = %e, "save_view_as_table: compile failed");
+                crate::error_ux::push(crate::error_ux::Banner::warning_with_body(
+                    dat0_i18n::t("save_as_table.failed.title"),
+                    format!("{e}"),
+                ));
                 return;
             }
         };
@@ -1872,7 +1876,11 @@ impl WorkspaceShell {
                         ws.update(app, |ws, cx| match &outcome {
                             Ok(_) => ws.refresh_completion_snapshot(cx),
                             Err(e) => {
-                                tracing::warn!(error = %e, "save_view_as_table failed")
+                                tracing::warn!(error = %e, "save_view_as_table failed");
+                                crate::error_ux::push(crate::error_ux::Banner::warning_with_body(
+                                    dat0_i18n::t("save_as_table.failed.title"),
+                                    format!("{e}"),
+                                ));
                             }
                         });
                     }
