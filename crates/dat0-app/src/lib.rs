@@ -4,6 +4,7 @@ pub mod actions;
 pub mod app_lock;
 pub mod boot;
 pub mod command_palette;
+pub mod connections;
 pub mod empty_state;
 pub mod error_ux;
 pub mod file_drop;
