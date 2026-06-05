@@ -2,7 +2,7 @@
 //! → v3 (additive `Edit`/`RowDelete` transform variants, P4b) → v4 (projection
 //! variants allowlist + active-stack-only persistence, P4c) → v5 (additive SQL
 //! console tabs `sql_tabs` + `active_sql_tab`, P5a) → v6 (additive query stores
-//! `query_history` + `saved_queries`, P5b).
+//! `query_history` + `saved_queries`, P5b) → v7 (additive `attachments`, P5c).
 //!
 //! Migration is load-and-write-back (eager): a successful migration is
 //! immediately followed by the caller's `Session::persist` call to land the
@@ -187,13 +187,14 @@ pub fn load_str(raw: &str) -> Result<SessionState, SessionLoadError> {
     // migration path (e.g. `3 => migrate_v3_to_v4(raw)`) or get an
     // inexhaustive-match error instead of a silent runtime failure.
     match probe.schema_version {
-        1 => migrate_v1_to_v6(raw),
-        2 => migrate_v2_to_v6(raw),
-        3 => migrate_v3_to_v6(raw),
-        4 => migrate_v4_to_v6(raw),
-        5 => migrate_v5_to_v6(raw),
-        6 => {
-            // Forward-incompat guard: a NEWER dat0 (writing the same v6 schema)
+        1 => migrate_v1_to_v7(raw),
+        2 => migrate_v2_to_v7(raw),
+        3 => migrate_v3_to_v7(raw),
+        4 => migrate_v4_to_v7(raw),
+        5 => migrate_v5_to_v7(raw),
+        6 => migrate_v6_to_v7(raw),
+        7 => {
+            // Forward-incompat guard: a NEWER dat0 (writing the same v7 schema)
             // may have introduced a transform variant this build doesn't know.
             // Scan the current-version document's transform stacks and map any
             // unknown TOP-LEVEL `kind` to the forward-incompat banner path BEFORE
@@ -212,7 +213,8 @@ pub fn load_str(raw: &str) -> Result<SessionState, SessionLoadError> {
             Ok(state)
         }
         // When SESSION_SCHEMA_VERSION advances, add: N => migrate_vN_to_v(N+1)(raw)
-        // The current-version arm becomes the new "load as-is" target.
+        // and make the new current-version (now 7) arm above the "load as-is"
+        // target.
         n => Err(SessionLoadError::UnsupportedVersion(n)),
     }
 }
@@ -221,20 +223,20 @@ pub fn load_str(raw: &str) -> Result<SessionState, SessionLoadError> {
 // Private migration helpers
 // ---------------------------------------------------------------------------
 
-/// Migrate a raw v1 JSON string straight to the current (v6) `SessionState`.
+/// Migrate a raw v1 JSON string straight to the current (v7) `SessionState`.
 ///
 /// v1 had no `schema_version` + no `transform_stack` + no `undo_cursor` on
 /// `Tab`. The `#[serde(default)]` attrs on those fields handle the gaps; we
 /// just re-parse the whole document (which now has the serde defaults applied)
 /// and stamp `schema_version = SESSION_SCHEMA_VERSION`.
 ///
-/// v2 → v3 → v4 → v5 → v6 are identity / additive reshapes (see
-/// [`migrate_v2_to_v6`], [`migrate_v3_to_v6`], [`migrate_v4_to_v6`],
-/// [`migrate_v5_to_v6`]), so the v1 → v6 path is the same single re-parse +
-/// version stamp — no intermediate hops are needed (v1 stacks are always empty,
-/// so the v4 redo-truncation is a no-op, and the v5 SQL-tab + v6 query-store
-/// fields default via serde).
-fn migrate_v1_to_v6(raw: &str) -> Result<SessionState, SessionLoadError> {
+/// v2 → v3 → v4 → v5 → v6 → v7 are identity / additive reshapes (see
+/// [`migrate_v2_to_v7`], [`migrate_v3_to_v7`], [`migrate_v4_to_v7`],
+/// [`migrate_v5_to_v7`], [`migrate_v6_to_v7`]), so the v1 → v7 path is the same
+/// single re-parse + version stamp — no intermediate hops are needed (v1 stacks
+/// are always empty, so the v4 redo-truncation is a no-op, and the v5 SQL-tab +
+/// v6 query-store + v7 attachments fields default via serde).
+fn migrate_v1_to_v7(raw: &str) -> Result<SessionState, SessionLoadError> {
     let mut state: SessionState = serde_json::from_str(raw)?;
     state.schema_version = SESSION_SCHEMA_VERSION;
     // serde(default) on Tab fields ensures:
@@ -246,35 +248,36 @@ fn migrate_v1_to_v6(raw: &str) -> Result<SessionState, SessionLoadError> {
     //   active_sql_tab  = None
     //   query_history   = Vec::new()
     //   saved_queries   = Vec::new()
+    //   attachments     = Vec::new()
     // No further field-level work is needed.
     Ok(state)
 }
 
-/// Migrate a raw v2 JSON string to a v6 `SessionState` — IDENTITY.
+/// Migrate a raw v2 JSON string to a v7 `SessionState` — IDENTITY.
 ///
 /// v3 adds the `Edit` / `RowDelete` `Transformation` variants, which are purely
 /// additive tagged-enum cases. v4 adds the projection variants (Reorder/Rename/
-/// DeleteColumn) and truncates to the active slice. v5 adds SQL console tabs and
-/// v6 adds the query stores (`query_history` + `saved_queries`) — both additive,
-/// serde-defaulted. A v2 file (filter/sort only) parses into the exact same
-/// in-memory shape; stacks parsed from v2 are by definition "active only" (no
-/// redo tail in v2 format). The only change is the version stamp. Re-parse and
-/// bump `schema_version`.
-fn migrate_v2_to_v6(raw: &str) -> Result<SessionState, SessionLoadError> {
+/// DeleteColumn) and truncates to the active slice. v5 adds SQL console tabs,
+/// v6 adds the query stores (`query_history` + `saved_queries`), and v7 adds
+/// `attachments` — all additive, serde-defaulted. A v2 file (filter/sort only)
+/// parses into the exact same in-memory shape; stacks parsed from v2 are by
+/// definition "active only" (no redo tail in v2 format). The only change is the
+/// version stamp. Re-parse and bump `schema_version`.
+fn migrate_v2_to_v7(raw: &str) -> Result<SessionState, SessionLoadError> {
     let mut state: SessionState = serde_json::from_str(raw)?;
     state.schema_version = SESSION_SCHEMA_VERSION;
     Ok(state)
 }
 
-/// Migrate a raw v3 JSON string to a v6 `SessionState`.
+/// Migrate a raw v3 JSON string to a v7 `SessionState`.
 ///
 /// v4 adds the display-only projection variants (Reorder/Rename/DeleteColumn) —
 /// additive tagged-enum cases — AND changes persistence to the ACTIVE stack only
 /// (the P4c history zipper drops the in-stack redo tail). So we truncate each
 /// tab's `transform_stack` to `undo_cursor` (its active slice). v5 then adds SQL
-/// console tabs and v6 adds the query stores — both additive (serde-defaulted).
-/// Truncate, then stamp v6.
-fn migrate_v3_to_v6(raw: &str) -> Result<SessionState, SessionLoadError> {
+/// console tabs, v6 adds the query stores, and v7 adds `attachments` — all
+/// additive (serde-defaulted). Truncate, then stamp v7.
+fn migrate_v3_to_v7(raw: &str) -> Result<SessionState, SessionLoadError> {
     let mut state: SessionState = serde_json::from_str(raw)?;
     for tab in &mut state.tabs {
         let keep = tab.undo_cursor.min(tab.transform_stack.len());
@@ -285,23 +288,36 @@ fn migrate_v3_to_v6(raw: &str) -> Result<SessionState, SessionLoadError> {
     Ok(state)
 }
 
-/// Migrate a raw v4 JSON string to a v6 `SessionState`.
+/// Migrate a raw v4 JSON string to a v7 `SessionState`.
 ///
-/// v5 adds SQL console tabs (`sql_tabs` + `active_sql_tab`) and v6 adds the query
-/// stores (`query_history` + `saved_queries`). Purely additive: a v4 file lacks
-/// all four fields, so serde `#[serde(default)]` fills them with empty vecs /
-/// `None`. No table-tab reshaping. Just stamp the version.
-fn migrate_v4_to_v6(raw: &str) -> Result<SessionState, SessionLoadError> {
+/// v5 adds SQL console tabs (`sql_tabs` + `active_sql_tab`), v6 adds the query
+/// stores (`query_history` + `saved_queries`), and v7 adds `attachments`. Purely
+/// additive: a v4 file lacks all of these fields, so serde `#[serde(default)]`
+/// fills them with empty vecs / `None`. No table-tab reshaping. Just stamp the
+/// version.
+fn migrate_v4_to_v7(raw: &str) -> Result<SessionState, SessionLoadError> {
     let mut state: SessionState = serde_json::from_str(raw)?;
     state.schema_version = SESSION_SCHEMA_VERSION;
     Ok(state)
 }
 
-/// Migrate a raw v5 JSON string to a v6 `SessionState`.
+/// Migrate a raw v5 JSON string to a v7 `SessionState`.
 ///
-/// v6 adds `query_history` + `saved_queries`. Purely additive: a v5 file lacks
-/// both, so `#[serde(default)]` fills them with empty vecs. Just stamp the version.
-fn migrate_v5_to_v6(raw: &str) -> Result<SessionState, SessionLoadError> {
+/// v6 adds `query_history` + `saved_queries` and v7 adds `attachments`. Purely
+/// additive: a v5 file lacks all three, so `#[serde(default)]` fills them with
+/// empty vecs. Just stamp the version.
+fn migrate_v5_to_v7(raw: &str) -> Result<SessionState, SessionLoadError> {
+    let mut state: SessionState = serde_json::from_str(raw)?;
+    state.schema_version = SESSION_SCHEMA_VERSION;
+    Ok(state)
+}
+
+/// Migrate a raw v6 JSON string to a v7 `SessionState`.
+///
+/// v7 adds `attachments` (MotherDuck + sqlite). Purely additive: a v6 file lacks
+/// the field, so `#[serde(default)]` fills it with an empty vec. Just stamp the
+/// version.
+fn migrate_v6_to_v7(raw: &str) -> Result<SessionState, SessionLoadError> {
     let mut state: SessionState = serde_json::from_str(raw)?;
     state.schema_version = SESSION_SCHEMA_VERSION;
     Ok(state)

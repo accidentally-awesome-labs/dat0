@@ -42,7 +42,10 @@ use queries::{HistoryEntry, SavedQuery};
 ///
 /// v5 → v6 (P5b) adds `query_history` + `saved_queries`. Purely additive: v5
 /// files default both to empty.
-pub const SESSION_SCHEMA_VERSION: u32 = 6;
+///
+/// v6 → v7 (P5c) adds persisted `attachments` (MotherDuck + sqlite). Purely
+/// additive: v6 files default to an empty vec.
+pub const SESSION_SCHEMA_VERSION: u32 = 7;
 
 /// A single tab within a scratch session.
 ///
@@ -79,6 +82,23 @@ pub struct SqlTabState {
 // Private persistence shape
 // ---------------------------------------------------------------------------
 
+/// Kind of a persisted attachment (v7+, P5c). `#[serde(rename_all = "snake_case")]`
+/// makes the on-disk enum tags `md` / `sqlite`.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum PersistedAttachmentKind {
+    Md,
+    Sqlite { path: String },
+}
+
+/// A single persisted attachment (v7+, P5c): an alias bound to an attachment kind
+/// (MotherDuck or a sqlite file), re-attached on session recover.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct PersistedAttachment {
+    pub alias: String,
+    pub kind: PersistedAttachmentKind,
+}
+
 /// Serialized form of mutable session state written to `session.json`.
 #[derive(Debug, Serialize, Deserialize)]
 pub struct SessionState {
@@ -97,6 +117,8 @@ pub struct SessionState {
     pub query_history: Vec<HistoryEntry>,
     #[serde(default)]
     pub saved_queries: Vec<SavedQuery>,
+    #[serde(default)]
+    pub attachments: Vec<PersistedAttachment>,
 }
 
 fn default_schema_version_v1() -> u32 {
@@ -113,6 +135,7 @@ impl Default for SessionState {
             active_sql_tab: None,
             query_history: Vec::new(),
             saved_queries: Vec::new(),
+            attachments: Vec::new(),
         }
     }
 }
@@ -136,6 +159,7 @@ pub struct Session {
     active_sql_tab: Option<usize>,
     query_history: Vec<HistoryEntry>,
     saved_queries: Vec<SavedQuery>,
+    attachments: Vec<PersistedAttachment>,
 }
 
 impl Session {
@@ -172,6 +196,7 @@ impl Session {
             active_sql_tab: None,
             query_history: Vec::new(),
             saved_queries: Vec::new(),
+            attachments: Vec::new(),
         };
         sess.persist()
             .context("session::new: initial persist failed")?;
@@ -245,6 +270,7 @@ impl Session {
             active_sql_tab: state.active_sql_tab,
             query_history: state.query_history,
             saved_queries: state.saved_queries,
+            attachments: state.attachments,
         };
 
         // Eagerly persist after recovery. This matches Session::new's pattern and
@@ -341,6 +367,17 @@ impl Session {
         &self.saved_queries
     }
 
+    /// Replace the persisted attachment set and persist (P5c).
+    pub fn set_attachments(&mut self, attachments: Vec<PersistedAttachment>) -> Result<()> {
+        self.attachments = attachments;
+        self.persist().context("session::set_attachments: persist failed")
+    }
+
+    /// Read-only access to the persisted attachments.
+    pub fn attachments(&self) -> &[PersistedAttachment] {
+        &self.attachments
+    }
+
     // -----------------------------------------------------------------------
     // Persistence
     // -----------------------------------------------------------------------
@@ -361,6 +398,7 @@ impl Session {
             active_sql_tab: self.active_sql_tab,
             query_history: self.query_history.clone(),
             saved_queries: self.saved_queries.clone(),
+            attachments: self.attachments.clone(),
         };
 
         let bytes =
@@ -515,6 +553,29 @@ mod tests {
     use super::*;
 
     const TEST_BUDGET: u64 = 256 * 1024 * 1024;
+
+    #[test]
+    fn v6_session_loads_as_v7_with_empty_attachments() {
+        // A v6 JSON (no `attachments`) must deserialize with an empty vec.
+        let json = r#"{"schema_version":6,"tabs":[],"active_tab":null}"#;
+        let state: SessionState = serde_json::from_str(json).unwrap();
+        assert!(state.attachments.is_empty());
+    }
+
+    #[test]
+    fn attachments_round_trip() {
+        let state = SessionState {
+            attachments: vec![PersistedAttachment {
+                alias: "md".into(),
+                kind: PersistedAttachmentKind::Md,
+            }],
+            ..Default::default()
+        };
+        let s = serde_json::to_string(&state).unwrap();
+        let back: SessionState = serde_json::from_str(&s).unwrap();
+        assert_eq!(back.attachments.len(), 1);
+        assert_eq!(back.schema_version, SESSION_SCHEMA_VERSION);
+    }
 
     #[tokio::test]
     async fn new_session_creates_dir_and_persists_empty_state() {

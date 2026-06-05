@@ -122,6 +122,7 @@ fn session_round_trips_sql_tabs_via_setter() {
         active_sql_tab: Some(0),
         query_history: vec![],
         saved_queries: vec![],
+        attachments: vec![],
     };
     let json = serde_json::to_string_pretty(&state).unwrap();
     let back: dat0_app::session::SessionState = serde_json::from_str(&json).unwrap();
