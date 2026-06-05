@@ -91,8 +91,10 @@ pub fn install_motherduck_at_app_boot(scratch_template: std::path::PathBuf) -> R
 /// Test-only: install via a per-test scratch DB.
 #[doc(hidden)]
 pub fn __test_install_motherduck() -> Result<()> {
-    let scratch = std::env::temp_dir()
-        .join(format!("dat0-test-md-extbootstrap-{}.duckdb", std::process::id()));
+    let scratch = std::env::temp_dir().join(format!(
+        "dat0-test-md-extbootstrap-{}.duckdb",
+        std::process::id()
+    ));
     install_motherduck_at_app_boot(scratch)
 }
 

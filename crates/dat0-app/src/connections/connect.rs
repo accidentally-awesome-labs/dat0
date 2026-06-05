@@ -2,11 +2,11 @@
 //! `precheck` is unit-tested; the engine-touching `run_connect` is covered by
 //! the env-gated engine integration test (T3) + manual UAT.
 
-use std::sync::Arc;
 use anyhow::Result;
 use dat0_engine::{DuckDBEngine, QueryEngine as _, types::AttachOpts};
+use std::sync::Arc;
 
-use crate::connections::{token_store::TokenStore, MD_ALIAS, ConnectionStatus};
+use crate::connections::{ConnectionStatus, MD_ALIAS, token_store::TokenStore};
 
 pub enum Precheck {
     NeedToken,
@@ -24,7 +24,10 @@ pub fn precheck(store: &dyn TokenStore) -> Result<Precheck> {
 /// Perform the ATTACH using a token already in the store. Maps engine errors
 /// to a `ConnectionStatus::Error(localized)`. Returns the terminal status.
 pub async fn run_connect(engine: Arc<DuckDBEngine>, token: String) -> ConnectionStatus {
-    let opts = AttachOpts { token: Some(token), ..Default::default() };
+    let opts = AttachOpts {
+        token: Some(token),
+        ..Default::default()
+    };
     match engine.attach("md:", MD_ALIAS, opts).await {
         Ok(()) => ConnectionStatus::Connected,
         Err(dat0_engine::EngineError::MotherDuckAuth) => {

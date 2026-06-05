@@ -370,7 +370,8 @@ impl Session {
     /// Replace the persisted attachment set and persist (P5c).
     pub fn set_attachments(&mut self, attachments: Vec<PersistedAttachment>) -> Result<()> {
         self.attachments = attachments;
-        self.persist().context("session::set_attachments: persist failed")
+        self.persist()
+            .context("session::set_attachments: persist failed")
     }
 
     /// Read-only access to the persisted attachments.

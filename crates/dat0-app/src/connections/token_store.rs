@@ -22,13 +22,18 @@ pub struct KeychainTokenStore {
 
 impl KeychainTokenStore {
     pub fn new() -> Result<Self> {
-        Ok(Self { kc: dat0_keychain::Keychain::new(SERVICE)? })
+        Ok(Self {
+            kc: dat0_keychain::Keychain::new(SERVICE)?,
+        })
     }
 }
 
 impl TokenStore for KeychainTokenStore {
     fn get(&self) -> Result<Option<String>> {
-        Ok(self.kc.get(KEY)?.map(|b| String::from_utf8_lossy(&b).into_owned()))
+        Ok(self
+            .kc
+            .get(KEY)?
+            .map(|b| String::from_utf8_lossy(&b).into_owned()))
     }
     fn set(&self, token: &str) -> Result<()> {
         self.kc.set(KEY, token.as_bytes())

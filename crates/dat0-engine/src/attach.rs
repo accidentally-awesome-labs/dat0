@@ -40,7 +40,11 @@ pub(crate) fn build_detach_sql(alias: &str) -> String {
 pub(crate) fn build_attach_md_sql(alias: &str, opts: &AttachOpts) -> String {
     // Caller guarantees opts.token is Some (attach() md-arm checks). Escape the
     // token as a SQL string literal; never log it.
-    let token = opts.token.as_deref().unwrap_or_default().replace('\'', "''");
+    let token = opts
+        .token
+        .as_deref()
+        .unwrap_or_default()
+        .replace('\'', "''");
     format!(
         "SET motherduck_token = '{}'; ATTACH 'md:' AS {};",
         token,
@@ -54,7 +58,10 @@ mod md_sql_tests {
 
     #[test]
     fn build_md_sql_sets_token_then_attaches() {
-        let opts = AttachOpts { token: Some("tok'123".into()), ..Default::default() };
+        let opts = AttachOpts {
+            token: Some("tok'123".into()),
+            ..Default::default()
+        };
         let sql = super::build_attach_md_sql("md", &opts);
         // Token single-quote escaped; alias quoted; SET precedes ATTACH.
         assert!(sql.contains("SET motherduck_token = 'tok''123';"));
@@ -64,7 +71,10 @@ mod md_sql_tests {
 
     #[test]
     fn attach_opts_debug_redacts_token() {
-        let opts = AttachOpts { token: Some("SECRET".into()), ..Default::default() };
+        let opts = AttachOpts {
+            token: Some("SECRET".into()),
+            ..Default::default()
+        };
         let dbg = format!("{opts:?}");
         assert!(!dbg.contains("SECRET"), "token leaked into Debug: {dbg}");
     }

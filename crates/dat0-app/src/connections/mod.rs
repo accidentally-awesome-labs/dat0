@@ -1,8 +1,8 @@
 //! MotherDuck + attachment connection management (P5c).
-pub mod token_store;
 pub mod connect;
-pub mod routing;
 pub mod panel;
+pub mod routing;
+pub mod token_store;
 
 pub const MD_ALIAS: &str = "md";
 
@@ -50,11 +50,19 @@ impl ConnectionManager {
         }
         self.md = Some(s);
     }
-    pub fn md_alias(&self) -> &'static str { MD_ALIAS }
+    pub fn md_alias(&self) -> &'static str {
+        MD_ALIAS
+    }
     /// Cached database names from the last successful enumeration (design §4.3).
-    pub fn md_databases(&self) -> &[String] { &self.md_databases }
-    pub fn set_md_databases(&mut self, dbs: Vec<String>) { self.md_databases = dbs; }
-    pub fn sqlite(&self) -> &[Attachment] { &self.sqlite }
+    pub fn md_databases(&self) -> &[String] {
+        &self.md_databases
+    }
+    pub fn set_md_databases(&mut self, dbs: Vec<String>) {
+        self.md_databases = dbs;
+    }
+    pub fn sqlite(&self) -> &[Attachment] {
+        &self.sqlite
+    }
     pub fn add_sqlite(&mut self, alias: String, path: String) {
         self.sqlite.push(Attachment {
             alias,

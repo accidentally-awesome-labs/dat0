@@ -5,7 +5,11 @@
 //! `USE md` default-catalog switch.
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Routing { Local, Md, Mixed }
+pub enum Routing {
+    Local,
+    Md,
+    Mixed,
+}
 
 impl Routing {
     /// i18n key suffix for the timing chip (`sql.local` / `sql.md` / `sql.mixed`).
@@ -31,7 +35,11 @@ pub fn classify_routing(sql: &str, attached_aliases: &[String]) -> Routing {
     }
     // Any FROM/JOIN target that is NOT md-qualified → also touches local.
     let touches_local = mentions_non_md_relation(&lower);
-    if touches_local { Routing::Mixed } else { Routing::Md }
+    if touches_local {
+        Routing::Mixed
+    } else {
+        Routing::Md
+    }
 }
 
 fn find_qualified(lower: &str, needle: &str) -> bool {
@@ -75,16 +83,25 @@ mod tests {
 
     #[test]
     fn no_md_alias_is_local() {
-        assert_eq!(classify_routing("SELECT * FROM t", &["md".into()]), Routing::Local);
+        assert_eq!(
+            classify_routing("SELECT * FROM t", &["md".into()]),
+            Routing::Local
+        );
     }
     #[test]
     fn only_md_qualified_is_md() {
-        assert_eq!(classify_routing("SELECT * FROM md.main.t", &["md".into()]), Routing::Md);
+        assert_eq!(
+            classify_routing("SELECT * FROM md.main.t", &["md".into()]),
+            Routing::Md
+        );
     }
     #[test]
     fn md_plus_local_is_mixed() {
         assert_eq!(
-            classify_routing("SELECT * FROM md.main.t JOIN local_t USING (id)", &["md".into()]),
+            classify_routing(
+                "SELECT * FROM md.main.t JOIN local_t USING (id)",
+                &["md".into()]
+            ),
             Routing::Mixed
         );
     }

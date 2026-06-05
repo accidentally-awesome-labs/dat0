@@ -14,7 +14,7 @@
 use crate::connections::{AttachmentKind, ConnectionManager, ConnectionStatus};
 use crate::window::WorkspaceShell;
 use gpui::prelude::*;
-use gpui::{div, Context, SharedString};
+use gpui::{Context, SharedString, div};
 
 /// Intent emitted by a panel button, dispatched to
 /// [`WorkspaceShell::handle_connections_event`]. A plain enum (not a GPUI
@@ -102,8 +102,7 @@ pub fn render_connections(
     let mut md_databases = div().flex().flex_col().gap_1();
     if matches!(status, ConnectionStatus::Connected) {
         for name in manager.md_databases() {
-            md_databases =
-                md_databases.child(div().pl_4().child(SharedString::from(name.clone())));
+            md_databases = md_databases.child(div().pl_4().child(SharedString::from(name.clone())));
         }
     }
 
@@ -119,7 +118,9 @@ pub fn render_connections(
 
     // Attached-files section: one row per sqlite attachment + an "Attach…" button.
     let mut files = div().flex().flex_col().gap_1();
-    files = files.child(div().child(SharedString::from(dat0_i18n::t("connections.files.heading"))));
+    files = files.child(div().child(SharedString::from(dat0_i18n::t(
+        "connections.files.heading",
+    ))));
     for att in manager.sqlite() {
         let path = match &att.kind {
             AttachmentKind::Sqlite { path } => path.clone(),

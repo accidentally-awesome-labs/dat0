@@ -46,7 +46,7 @@ that's modifying it; merge conflicts are signals worth investigating.
 | D-004 | AppImageUpdate subprocess invocation               | open | P1   | P10    |
 | D-005 | Linux Secret Service "setup banner" UX             | open | P1   | TBD    |
 | D-006 | macOS x86_64 (Intel) CI matrix coverage            | open | P1   | TBD    |
-| D-007 | MotherDuck ATTACH end-to-end                       | open | P2   | P5c    |
+| D-007 | MotherDuck ATTACH end-to-end                       | closed | P2   | P5c    |
 | D-008 | Cancellation-token wiring through `QueryEngine` trait (→ token-free in P5a) | in-progress | P2 | P5a |
 | D-009 | Bundle `sqlite_scanner` static when duckdb-rs exposes a feature | open | P2 | TBD |
 | D-010 | Non-UTF-8 file encoding handling                   | open | P2   | TBD    |
@@ -212,7 +212,7 @@ that's modifying it; merge conflicts are signals worth investigating.
 
 ### D-007 — MotherDuck ATTACH end-to-end
 
-- **Status:** open
+- **Status:** closed
 - **Deferred from:** P2
 - **Target phase:** P5c (credential-gated MotherDuck slice)
 - **P5 split (2026-06-02):** P5 (SQL Console) was split three ways —
@@ -240,7 +240,22 @@ that's modifying it; merge conflicts are signals worth investigating.
 - **Originating doc:** `docs/specs/2026-04-27-dat0-p2-engine-design.md` §7
 - **Closes:** spec §6.5 entirely (partial closure — `sqlite:` lands in P2;
   `md:` lands in P5c).
-- **Last touched:** 2026-06-02 (retarget P5 → P5c on the P5 three-way split).
+- **Closed by:** P5c (branch `p5c-motherduck`; squash SHA filled at merge).
+  P5c delivered: runtime `INSTALL/LOAD motherduck` on duckdb-rs 1.4.4
+  (S1 spike confirmed it works), the `attach()` md arm (`LOAD motherduck` on
+  live conn + `SET motherduck_token` + `ATTACH 'md:'`),
+  `EngineError::{MotherDuckAuth, ExtensionLoad}`, redacted token in
+  `AttachOpts`, keychain token store (`TokenStore`), `ConnectionManager`,
+  Connections panel + token prompt UI, session-v7 `PersistedAttachment`
+  persistence + boot auto-reconnect, routing classifier, routing-tagged timing
+  chip (`· local` / `· md` / `· mixed`), and CI-required `MOTHERDUCK_TOKEN`
+  integration test job. Catalog enumeration (database names via
+  `duckdb_databases()`) is implemented. One trim applied: the general
+  "Attach SQLite…" panel add-flow is a **no-op stub** (trim-valve ②) — no
+  reusable native file-picker exists in this codebase; files attach only via
+  drag-and-drop. Engine `attach()`/`detach()` + the Detach button are fully
+  implemented; only the panel "pick a file" UI entry point is deferred.
+- **Last touched:** 2026-06-05 (closed by P5c).
 
 ### D-008 — Cancellation-token wiring through `QueryEngine` trait
 
@@ -406,7 +421,11 @@ that's modifying it; merge conflicts are signals worth investigating.
 - **Originating doc:** `docs/plans/2026-04-27-dat0-p2-engine-plan.md` T9 +
   T9 review notes; `docs/plans/2026-04-27-dat0-p2-retro.md` § "Reviewer-
   flagged minor follow-ups".
-- **Last touched:** 2026-05-16
+- **P5c note (2026-06-05):** The Connections panel's catalog enumeration is
+  **database-names-only** (`duckdb_databases()`). Per-table `TableOrigin::Attached`
+  origins for attached databases remain deferred — the engine `attach()` still
+  does not enumerate attached tables or record them in the origin registry.
+- **Last touched:** 2026-06-05
 
 ### D-013 — Self-hosted macOS CI runner (cut hosted macos-14 10× billing)
 
@@ -487,7 +506,10 @@ that's modifying it; merge conflicts are signals worth investigating.
 - **P4c re-scan (2026-06-01):** confirmed still open + still targeted at P10; no
   AccessKit adapter on the pinned GPUI/gpui-component. P4c T13 added header-click
   → select-column (operability), not a screen-reader semantics tree.
-- **Last touched:** 2026-06-01.
+- **P5c note (2026-06-05):** The Connections panel (attachment list, connect/disconnect
+  controls) and token-prompt modal are additional AccessKit / screen-reader surfaces
+  to cover in P10 alongside the selection tree (still deferred).
+- **Last touched:** 2026-06-05.
 
 ---
 

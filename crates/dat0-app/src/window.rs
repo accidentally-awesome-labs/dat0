@@ -463,8 +463,7 @@ pub fn run_app(lock: AppLock, initial_paths: Vec<PathBuf>, main_loop: MainLoop) 
                 },
                 |window, cx| {
                     let view = cx.new(|cx| {
-                        let mut shell =
-                            WorkspaceShell::new(Arc::clone(&session_for_window), cx);
+                        let mut shell = WorkspaceShell::new(Arc::clone(&session_for_window), cx);
                         shell.reconnect_persisted_md(cx);
                         shell
                     });
@@ -1525,8 +1524,10 @@ impl WorkspaceShell {
         // P5c T9: routing tag for the chip, using the live attachment set so an
         // md-qualified query is tagged `md`/`mixed` only when md is actually
         // attached (P5c T11).
-        let routing =
-            crate::connections::routing::classify_routing(&sql_text, &self.connections.attached_aliases());
+        let routing = crate::connections::routing::classify_routing(
+            &sql_text,
+            &self.connections.attached_aliases(),
+        );
         console.update(cx, |c, cx| c.set_last_elapsed(elapsed_ms, routing, cx));
         {
             let entry = crate::session::queries::HistoryEntry {
@@ -2015,10 +2016,10 @@ impl WorkspaceShell {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        use crate::connections::connect::{precheck, Precheck};
+        use crate::connections::ConnectionStatus;
+        use crate::connections::connect::{Precheck, precheck};
         use crate::connections::panel::ConnectionsEvent;
         use crate::connections::token_store::KeychainTokenStore;
-        use crate::connections::ConnectionStatus;
 
         match ev {
             // Connect (or Retry from an error state).
@@ -2077,7 +2078,8 @@ impl WorkspaceShell {
         tokio::spawn(async move {
             crate::connections::connect::run_disconnect(engine).await;
         });
-        self.connections.set_md_status(ConnectionStatus::Disconnected);
+        self.connections
+            .set_md_status(ConnectionStatus::Disconnected);
         // Drop the persisted md attachment so a session recover does not re-attach.
         let mut sess = self.session.lock();
         let atts: Vec<crate::session::PersistedAttachment> = sess
@@ -2130,8 +2132,7 @@ impl WorkspaceShell {
         let ws_weak = cx.entity().downgrade();
         tokio::spawn(async move {
             let status = crate::connections::connect::run_connect(engine, token).await;
-            let connected =
-                matches!(status, crate::connections::ConnectionStatus::Connected);
+            let connected = matches!(status, crate::connections::ConnectionStatus::Connected);
             // On success, enumerate database names for the panel (design §4.3).
             let dbs = if connected {
                 crate::connections::connect::list_databases(engine_for_list).await
@@ -2151,10 +2152,7 @@ impl WorkspaceShell {
                                 let mut sess = ws.session.lock();
                                 let mut atts = sess.attachments().to_vec();
                                 if !atts.iter().any(|a| {
-                                    matches!(
-                                        a.kind,
-                                        crate::session::PersistedAttachmentKind::Md
-                                    )
+                                    matches!(a.kind, crate::session::PersistedAttachmentKind::Md)
                                 }) {
                                     atts.push(crate::session::PersistedAttachment {
                                         alias: crate::connections::MD_ALIAS.to_string(),
@@ -2169,7 +2167,9 @@ impl WorkspaceShell {
                     }
                 });
             } else {
-                tracing::warn!("spawn_md_connect: no MainThreadDispatcher installed; result dropped");
+                tracing::warn!(
+                    "spawn_md_connect: no MainThreadDispatcher installed; result dropped"
+                );
             }
         });
     }
@@ -2180,9 +2180,9 @@ impl WorkspaceShell {
     /// the keychain (never session.json); if it is gone, we leave the panel
     /// Disconnected so the user can reconnect manually.
     pub(crate) fn reconnect_persisted_md(&mut self, cx: &mut Context<Self>) {
-        use crate::connections::connect::{precheck, Precheck};
-        use crate::connections::token_store::KeychainTokenStore;
         use crate::connections::ConnectionStatus;
+        use crate::connections::connect::{Precheck, precheck};
+        use crate::connections::token_store::KeychainTokenStore;
         let has_md = self
             .session
             .lock()
@@ -2215,16 +2215,15 @@ impl WorkspaceShell {
     /// trap).
     fn open_md_token_prompt(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         use crate::view::name_prompt::{NamePrompt, NamePromptEvent};
-        let prompt = cx.new(|cx| {
-            NamePrompt::new(dat0_i18n::t("connections.md.token_prompt"), window, cx)
-        });
+        let prompt =
+            cx.new(|cx| NamePrompt::new(dat0_i18n::t("connections.md.token_prompt"), window, cx));
         let sub = cx.subscribe_in(
             &prompt,
             window,
             |ws: &mut Self, _prompt, ev: &NamePromptEvent, _window, cx| match ev {
                 NamePromptEvent::Confirm(token) => {
-                    use crate::connections::token_store::{KeychainTokenStore, TokenStore as _};
                     use crate::connections::ConnectionStatus;
+                    use crate::connections::token_store::{KeychainTokenStore, TokenStore as _};
                     let token = token.clone();
                     // Close the prompt first.
                     ws.md_token_prompt = None;
@@ -2938,13 +2937,9 @@ impl Render for WorkspaceShell {
                     .flex_row()
                     .flex_1()
                     .children(self.connections_panel_visible.then(|| {
-                        div()
-                            .w_64()
-                            .border_r_1()
-                            .child(crate::connections::panel::render_connections(
-                                &self.connections,
-                                cx,
-                            ))
+                        div().w_64().border_r_1().child(
+                            crate::connections::panel::render_connections(&self.connections, cx),
+                        )
                     }))
                     .child(div().flex_1().child(body)),
             )
