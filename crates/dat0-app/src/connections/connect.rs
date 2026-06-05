@@ -53,18 +53,18 @@ pub async fn run_disconnect(engine: Arc<DuckDBEngine>, md_databases: Vec<String>
 }
 
 /// Shallow catalog enumeration for the panel (design §4.3): the names of the
-/// attached **MotherDuck** databases only (filtered by `path LIKE 'md:%'` OR a
-/// `motherduck` storage type — robust to whichever column DuckDB populates).
-/// NO per-table origins (D-012 stays deferred). TRIM-VALVE ①.
+/// attached **MotherDuck** databases only. CI confirmed (run 27028725998) that
+/// `duckdb_databases()` tags MotherDuck attachments with `type = 'motherduck'`
+/// (their `path` is the db name or `_share/…`, NOT a `md:` URI). The internal
+/// `motherduck_info` database (`md_information_schema`) is deliberately excluded
+/// by the exact-match. NO per-table origins (D-012 stays deferred). TRIM-VALVE ①.
 pub async fn list_databases(engine: Arc<DuckDBEngine>) -> Vec<String> {
     use dat0_engine::QueryEngine as _;
     use duckdb::arrow::array::Array as _;
-    // Read name + path + type; decide MD-membership in Rust so we don't depend
-    // on one exact column being populated for MotherDuck attachments.
     let Ok(result) = engine
         .execute(
-            "SELECT database_name, COALESCE(path, ''), COALESCE(type, '') \
-             FROM duckdb_databases() ORDER BY 1;",
+            "SELECT database_name FROM duckdb_databases() \
+             WHERE lower(type) = 'motherduck' ORDER BY 1;",
         )
         .await
     else {
@@ -72,34 +72,15 @@ pub async fn list_databases(engine: Arc<DuckDBEngine>) -> Vec<String> {
     };
     let mut out = Vec::new();
     for batch in &result.batches {
-        let cols: Option<(_, _, _)> = (|| {
-            use duckdb::arrow::array::StringArray;
-            Some((
-                batch.column(0).as_any().downcast_ref::<StringArray>()?,
-                batch.column(1).as_any().downcast_ref::<StringArray>()?,
-                batch.column(2).as_any().downcast_ref::<StringArray>()?,
-            ))
-        })();
-        let Some((names, paths, types)) = cols else {
-            continue;
-        };
-        for i in 0..names.len() {
-            if !names.is_valid(i) {
-                continue;
-            }
-            let path = if paths.is_valid(i) {
-                paths.value(i)
-            } else {
-                ""
-            };
-            let ty = if types.is_valid(i) {
-                types.value(i)
-            } else {
-                ""
-            };
-            let is_md = path.starts_with("md:") || ty.to_ascii_lowercase().contains("motherduck");
-            if is_md {
-                out.push(names.value(i).to_string());
+        if let Some(arr) = batch
+            .column(0)
+            .as_any()
+            .downcast_ref::<duckdb::arrow::array::StringArray>()
+        {
+            for i in 0..arr.len() {
+                if arr.is_valid(i) {
+                    out.push(arr.value(i).to_string());
+                }
             }
         }
     }

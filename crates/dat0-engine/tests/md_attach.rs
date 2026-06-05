@@ -96,18 +96,18 @@ async fn engine_attaches_md_and_queries_then_detaches() {
     // alias arg is ignored by the md arm (workspace mode has no alias).
     engine.attach("md:", "md", opts).await.expect("attach md");
 
-    // The app filters MD databases by `path LIKE 'md:%'` (see
+    // The app filters MD databases by `type = 'motherduck'` (see
     // connections::connect::list_databases). Validate that filter here: every
     // MotherDuck account has a `sample_data` database. On failure, dump
     // name|path|type for ALL databases so a wrong filter is self-diagnosing.
     let md_dbs = scalar_list(
         &engine,
-        "SELECT database_name FROM duckdb_databases() WHERE starts_with(path,'md:') ORDER BY 1",
+        "SELECT database_name FROM duckdb_databases() WHERE lower(type) = 'motherduck' ORDER BY 1",
     )
     .await;
     assert!(
         md_dbs.iter().any(|d| d == "sample_data"),
-        "expected `sample_data` among md dbs (path LIKE 'md:%'); got {md_dbs:?}; ALL dbs (name|path|type): {:?}",
+        "expected `sample_data` among md dbs (type='motherduck'); got {md_dbs:?}; ALL dbs (name|path|type): {:?}",
         scalar_list(
             &engine,
             "SELECT database_name || '|' || COALESCE(path,'') || '|' || COALESCE(type,'') FROM duckdb_databases() ORDER BY 1",
