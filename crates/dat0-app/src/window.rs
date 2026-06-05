@@ -1521,12 +1521,13 @@ impl WorkspaceShell {
             .unwrap_or(0);
         let (sql_text, _) = console.read(cx).active_sql_and_cursor(cx);
         let ok = !matches!(outcome, SqlRunOutcome::Error(_) | SqlRunOutcome::Cancelled);
-        // P5c T9: routing tag for the chip, using the live attachment set so an
-        // md-qualified query is tagged `md`/`mixed` only when md is actually
-        // attached (P5c T11).
+        // P5c T9: routing tag for the chip, using the live set of attached
+        // MotherDuck database names (workspace mode attaches them under real
+        // names) so a query is tagged `md`/`mixed` only when it references one
+        // that is actually attached.
         let routing = crate::connections::routing::classify_routing(
             &sql_text,
-            &self.connections.attached_aliases(),
+            self.connections.md_databases(),
         );
         console.update(cx, |c, cx| c.set_last_elapsed(elapsed_ms, routing, cx));
         {
@@ -2075,8 +2076,11 @@ impl WorkspaceShell {
     fn disconnect_md(&mut self, cx: &mut Context<Self>) {
         use crate::connections::ConnectionStatus;
         let engine = self.engine();
+        // Workspace mode has no single `md` alias — detach each attached MD db
+        // by its real name. Capture the names BEFORE set_md_status clears them.
+        let md_dbs = self.connections.md_databases().to_vec();
         tokio::spawn(async move {
-            crate::connections::connect::run_disconnect(engine).await;
+            crate::connections::connect::run_disconnect(engine, md_dbs).await;
         });
         self.connections
             .set_md_status(ConnectionStatus::Disconnected);

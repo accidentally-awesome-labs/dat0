@@ -37,12 +37,19 @@ pub(crate) fn build_detach_sql(alias: &str) -> String {
     format!("DETACH {};", quote_ident(alias))
 }
 
-pub(crate) fn build_attach_md_sql(alias: &str, opts: &AttachOpts) -> String {
+pub(crate) fn build_attach_md_sql(opts: &AttachOpts) -> String {
     // Caller guarantees opts.token is Some (attach() md-arm checks). Trim
     // surrounding whitespace — a real token never has any, but a trailing
     // newline (e.g. from a pasted CI/keychain secret) survives the non-empty
-    // check yet corrupts `SET motherduck_token`, failing auth. Then escape as a
-    // SQL string literal; never log it.
+    // check yet corrupts `SET motherduck_token`. Then escape as a SQL string
+    // literal; never log it.
+    //
+    // `ATTACH 'md:'` enters MotherDuck **workspace mode**, attaching ALL of the
+    // account's databases under their REAL names (e.g. `sample_data`, `my_db`).
+    // There is deliberately NO `AS <alias>`: MotherDuck rejects aliasing an
+    // owned database in workspace mode ("Database aliases are not yet supported
+    // by MotherDuck in workspace mode"). `SET motherduck_attach_mode` makes the
+    // mode explicit/deterministic.
     let token = opts
         .token
         .as_deref()
@@ -50,9 +57,7 @@ pub(crate) fn build_attach_md_sql(alias: &str, opts: &AttachOpts) -> String {
         .trim()
         .replace('\'', "''");
     format!(
-        "SET motherduck_token = '{}'; ATTACH 'md:' AS {};",
-        token,
-        quote_ident(alias)
+        "SET motherduck_token = '{token}'; SET motherduck_attach_mode = 'workspace'; ATTACH 'md:';"
     )
 }
 
@@ -61,15 +66,27 @@ mod md_sql_tests {
     use crate::types::AttachOpts;
 
     #[test]
-    fn build_md_sql_sets_token_then_attaches() {
+    fn build_md_sql_sets_token_then_attaches_no_alias() {
         let opts = AttachOpts {
             token: Some("tok'123".into()),
             ..Default::default()
         };
-        let sql = super::build_attach_md_sql("md", &opts);
-        // Token single-quote escaped; alias quoted; SET precedes ATTACH.
-        assert!(sql.contains("SET motherduck_token = 'tok''123';"));
-        assert!(sql.contains("ATTACH 'md:' AS \"md\";"));
+        let sql = super::build_attach_md_sql(&opts);
+        // Token single-quote escaped; SET precedes ATTACH; workspace mode set;
+        // NO `AS <alias>` (MotherDuck rejects aliasing owned dbs).
+        assert!(
+            sql.contains("SET motherduck_token = 'tok''123';"),
+            "got: {sql}"
+        );
+        assert!(
+            sql.contains("SET motherduck_attach_mode = 'workspace';"),
+            "got: {sql}"
+        );
+        assert!(sql.contains("ATTACH 'md:';"), "got: {sql}");
+        assert!(
+            !sql.contains(" AS "),
+            "must not alias the md attachment: {sql}"
+        );
         assert!(sql.find("SET motherduck_token").unwrap() < sql.find("ATTACH").unwrap());
     }
 
@@ -80,7 +97,7 @@ mod md_sql_tests {
             token: Some("  tok123\n".into()),
             ..Default::default()
         };
-        let sql = super::build_attach_md_sql("md", &opts);
+        let sql = super::build_attach_md_sql(&opts);
         assert!(
             sql.contains("SET motherduck_token = 'tok123';"),
             "got: {sql}"

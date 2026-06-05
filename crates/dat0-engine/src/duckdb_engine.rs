@@ -550,13 +550,23 @@ impl crate::QueryEngine for DuckDBEngine {
                 // `install_*` only LOADs on its throwaway connection; the live
                 // connection must LOAD it too (mirrors init()'s `LOAD
                 // sqlite_scanner`). The SET+ATTACH `sql` below contains the raw
-                // token — never log it or fold it into an error message.
-                let sql = crate::attach::build_attach_md_sql(alias, &opts);
+                // token — never log it or fold it into an error message. The
+                // `alias` param is intentionally unused for `md:`: MotherDuck
+                // workspace mode attaches the account's databases under their
+                // real names and rejects `AS <alias>` for owned databases.
+                let _ = alias;
+                let sql = crate::attach::build_attach_md_sql(&opts);
                 let conn = self.conn.clone();
                 return tokio::task::spawn_blocking(move || -> Result<()> {
                     let conn = conn.lock().map_err(|_| EngineError::EnginePoisoned)?;
                     conn.execute_batch("LOAD motherduck;")
                         .map_err(|_| EngineError::ExtensionLoad { name: "motherduck" })?;
+                    // `ATTACH 'md:'` (workspace mode) can switch the current
+                    // database to a MotherDuck db; capture + restore the local
+                    // one so the engine's scratch tables stay reachable unqualified.
+                    let current_db: Option<String> = conn
+                        .query_row("SELECT current_database()", [], |r| r.get(0))
+                        .ok();
                     conn.execute_batch(&sql).map_err(|_| {
                         // A failed ATTACH after a good extension load is almost
                         // always a bad/expired token; surface as auth. The error
@@ -564,6 +574,9 @@ impl crate::QueryEngine for DuckDBEngine {
                         // adjacent text.
                         EngineError::MotherDuckAuth
                     })?;
+                    if let Some(db) = current_db {
+                        let _ = conn.execute_batch(&format!("USE {};", quote_ident(&db)));
+                    }
                     Ok(())
                 })
                 .await

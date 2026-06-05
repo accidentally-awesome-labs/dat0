@@ -152,7 +152,7 @@ jobs:
         env:
           MOTHERDUCK_TOKEN: ${{ secrets.MOTHERDUCK_TOKEN }}
           CARGO_BUILD_JOBS: ${{ (runner.os == 'Linux' && runner.environment == 'github-hosted') && '2' || 'default' }}
-        run: cargo test -p dat0-engine --test md_attach --target ${{ matrix.target.triple }} -- --include-ignored --nocapture
+        run: cargo test -p dat0-engine --test md_attach --target ${{ matrix.target.triple }} -- --include-ignored
       # Bench is macOS-only (single host class — variance across runners
       # makes cross-OS comparison meaningless). Artifact-only at P3a; spec
       # line 819 defers the merge-gate threshold to P10.

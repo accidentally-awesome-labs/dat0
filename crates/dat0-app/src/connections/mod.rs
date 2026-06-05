@@ -73,14 +73,6 @@ impl ConnectionManager {
     pub fn remove_attachment(&mut self, alias: &str) {
         self.sqlite.retain(|a| a.alias != alias);
     }
-    /// Aliases currently attached (for the routing classifier, T9).
-    pub fn attached_aliases(&self) -> Vec<String> {
-        let mut v: Vec<String> = self.sqlite.iter().map(|a| a.alias.clone()).collect();
-        if matches!(self.md, Some(ConnectionStatus::Connected)) {
-            v.push(MD_ALIAS.to_string());
-        }
-        v
-    }
 }
 
 #[cfg(test)]

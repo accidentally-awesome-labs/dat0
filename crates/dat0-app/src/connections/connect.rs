@@ -28,6 +28,9 @@ pub async fn run_connect(engine: Arc<DuckDBEngine>, token: String) -> Connection
         token: Some(token),
         ..Default::default()
     };
+    // `MD_ALIAS` is passed for the engine's `attach(dsn, alias, opts)` contract
+    // but the md arm ignores it — workspace mode attaches the account's dbs
+    // under their real names (no alias). See `build_attach_md_sql`.
     match engine.attach("md:", MD_ALIAS, opts).await {
         Ok(()) => ConnectionStatus::Connected,
         Err(dat0_engine::EngineError::MotherDuckAuth) => {
@@ -40,32 +43,63 @@ pub async fn run_connect(engine: Arc<DuckDBEngine>, token: String) -> Connection
     }
 }
 
-pub async fn run_disconnect(engine: Arc<DuckDBEngine>) {
-    let _ = engine.detach(MD_ALIAS).await; // best-effort
+/// Detach every attached MotherDuck database (best-effort). Workspace mode has
+/// no single `md` alias, so the caller passes the real db names (from
+/// [`list_databases`]).
+pub async fn run_disconnect(engine: Arc<DuckDBEngine>, md_databases: Vec<String>) {
+    for db in md_databases {
+        let _ = engine.detach(&db).await;
+    }
 }
 
-/// Shallow catalog enumeration for the panel (design §4.3): database names only,
+/// Shallow catalog enumeration for the panel (design §4.3): the names of the
+/// attached **MotherDuck** databases only (filtered by `path LIKE 'md:%'` OR a
+/// `motherduck` storage type — robust to whichever column DuckDB populates).
 /// NO per-table origins (D-012 stays deferred). TRIM-VALVE ①.
 pub async fn list_databases(engine: Arc<DuckDBEngine>) -> Vec<String> {
     use dat0_engine::QueryEngine as _;
     use duckdb::arrow::array::Array as _;
+    // Read name + path + type; decide MD-membership in Rust so we don't depend
+    // on one exact column being populated for MotherDuck attachments.
     let Ok(result) = engine
-        .execute("SELECT database_name FROM duckdb_databases() ORDER BY 1;")
+        .execute(
+            "SELECT database_name, COALESCE(path, ''), COALESCE(type, '') \
+             FROM duckdb_databases() ORDER BY 1;",
+        )
         .await
     else {
         return Vec::new();
     };
     let mut out = Vec::new();
     for batch in &result.batches {
-        if let Some(arr) = batch
-            .column(0)
-            .as_any()
-            .downcast_ref::<duckdb::arrow::array::StringArray>()
-        {
-            for i in 0..arr.len() {
-                if arr.is_valid(i) {
-                    out.push(arr.value(i).to_string());
-                }
+        let cols: Option<(_, _, _)> = (|| {
+            use duckdb::arrow::array::StringArray;
+            Some((
+                batch.column(0).as_any().downcast_ref::<StringArray>()?,
+                batch.column(1).as_any().downcast_ref::<StringArray>()?,
+                batch.column(2).as_any().downcast_ref::<StringArray>()?,
+            ))
+        })();
+        let Some((names, paths, types)) = cols else {
+            continue;
+        };
+        for i in 0..names.len() {
+            if !names.is_valid(i) {
+                continue;
+            }
+            let path = if paths.is_valid(i) {
+                paths.value(i)
+            } else {
+                ""
+            };
+            let ty = if types.is_valid(i) {
+                types.value(i)
+            } else {
+                ""
+            };
+            let is_md = path.starts_with("md:") || ty.to_ascii_lowercase().contains("motherduck");
+            if is_md {
+                out.push(names.value(i).to_string());
             }
         }
     }
