@@ -2,6 +2,7 @@
 pub mod token_store;
 pub mod connect;
 pub mod routing;
+pub mod panel;
 
 pub const MD_ALIAS: &str = "md";
 

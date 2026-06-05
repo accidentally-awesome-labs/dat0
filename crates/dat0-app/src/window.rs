@@ -720,6 +720,23 @@ pub struct WorkspaceShell {
     /// The overlay reads `session.saved_queries()` live at render, so no
     /// snapshot is stored here — the flag alone gates the overlay.
     saved_picker_open: bool,
+    /// Runtime connection state (MotherDuck status + sqlite attachments) for this
+    /// window (P5c T6/T10). The persisted projection lives in
+    /// `SessionState.attachments` (T7); this is the live UI-facing copy the
+    /// Connections panel renders from.
+    pub(crate) connections: crate::connections::ConnectionManager,
+    /// Whether the left-dock Connections panel is shown (P5c T10/T11). Toggled by
+    /// the `ConnectionsToggle` action; gates the panel in `render`.
+    pub(crate) connections_panel_visible: bool,
+    /// Token-entry modal (reuses [`NamePrompt`](crate::view::name_prompt::NamePrompt)).
+    /// `Some` while the MotherDuck token prompt is open; cleared on Confirm /
+    /// Cancel. Rendered as a window overlay child in `render` when present.
+    pub(crate) md_token_prompt: Option<gpui::Entity<crate::view::name_prompt::NamePrompt>>,
+    /// Subscription to the token prompt's `NamePromptEvent`. Stored so the
+    /// Confirm/Cancel callback stays registered — a dropped `Subscription`
+    /// deregisters silently (the P4a T10b trap). Cleared alongside
+    /// `md_token_prompt`.
+    pub(crate) md_token_prompt_sub: Option<gpui::Subscription>,
 }
 
 impl WorkspaceShell {
@@ -754,6 +771,10 @@ impl WorkspaceShell {
             name_prompt_sql: None,
             name_prompt_intent: None,
             saved_picker_open: false,
+            connections: Default::default(),
+            connections_panel_visible: false,
+            md_token_prompt: None,
+            md_token_prompt_sub: None,
         }
     }
 
@@ -1493,9 +1514,11 @@ impl WorkspaceShell {
             .unwrap_or(0);
         let (sql_text, _) = console.read(cx).active_sql_and_cursor(cx);
         let ok = !matches!(outcome, SqlRunOutcome::Error(_) | SqlRunOutcome::Cancelled);
-        // P5c T9: routing tag for the chip. T11 replaces `&[]` with
-        // `self.connections.attached_aliases()` once the ConnectionManager field exists.
-        let routing = crate::connections::routing::classify_routing(&sql_text, &Vec::<String>::new());
+        // P5c T9: routing tag for the chip, using the live attachment set so an
+        // md-qualified query is tagged `md`/`mixed` only when md is actually
+        // attached (P5c T11).
+        let routing =
+            crate::connections::routing::classify_routing(&sql_text, &self.connections.attached_aliases());
         console.update(cx, |c, cx| c.set_last_elapsed(elapsed_ms, routing, cx));
         {
             let entry = crate::session::queries::HistoryEntry {
@@ -1956,6 +1979,228 @@ impl WorkspaceShell {
         self.saved_picker_open = true;
         cx.notify();
     }
+
+    // -----------------------------------------------------------------------
+    // Connections panel event handling (P5c T10/T11)
+    // -----------------------------------------------------------------------
+
+    /// Single routing point for the Connections panel's buttons
+    /// ([`ConnectionsEvent`]). Runs the async MotherDuck connect/disconnect/forget
+    /// flows (T8) and updates the [`ConnectionManager`] + persisted attachment set.
+    ///
+    /// The engine-touching connect/disconnect paths can only be compile-verified
+    /// here (no MotherDuck token in this environment); CI/UAT exercise them later.
+    ///
+    /// [`ConnectionsEvent`]: crate::connections::panel::ConnectionsEvent
+    /// [`ConnectionManager`]: crate::connections::ConnectionManager
+    pub(crate) fn handle_connections_event(
+        &mut self,
+        ev: crate::connections::panel::ConnectionsEvent,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        use crate::connections::connect::{precheck, Precheck};
+        use crate::connections::panel::ConnectionsEvent;
+        use crate::connections::token_store::KeychainTokenStore;
+        use crate::connections::ConnectionStatus;
+
+        match ev {
+            // Connect (or Retry from an error state).
+            ConnectionsEvent::ConnectMd => {
+                let store = match KeychainTokenStore::new() {
+                    Ok(s) => s,
+                    Err(e) => {
+                        self.connections
+                            .set_md_status(ConnectionStatus::Error(e.to_string()));
+                        cx.notify();
+                        return;
+                    }
+                };
+                match precheck(&store) {
+                    Ok(Precheck::NeedToken) => self.open_md_token_prompt(window, cx),
+                    Ok(Precheck::Ready(token)) => {
+                        self.connections.set_md_status(ConnectionStatus::Connecting);
+                        cx.notify();
+                        self.spawn_md_connect(token, cx);
+                    }
+                    Err(e) => {
+                        self.connections
+                            .set_md_status(ConnectionStatus::Error(e.to_string()));
+                        cx.notify();
+                    }
+                }
+            }
+            ConnectionsEvent::DisconnectMd => self.disconnect_md(cx),
+            ConnectionsEvent::ForgetMd => {
+                // Best-effort token forget, then disconnect.
+                if let Ok(store) = KeychainTokenStore::new() {
+                    use crate::connections::token_store::TokenStore as _;
+                    let _ = store.forget();
+                }
+                self.disconnect_md(cx);
+            }
+            // TRIM-VALVE ②: the native file picker is not yet wired into this
+            // codebase (files are loaded only via drag-and-drop). The
+            // ConnectionManager `add_sqlite`/`remove_attachment` + the async
+            // `engine().attach`/`detach` plumbing exist (Detach below uses them),
+            // so wiring a picker here is the only remaining piece.
+            // TODO P5c: wire native file picker (cx.prompt_for_paths) → attach the
+            // chosen sqlite file via engine().attach("sqlite:<path>", alias, …),
+            // then self.connections.add_sqlite(alias, path) + persist.
+            ConnectionsEvent::AttachSqlite => {}
+            ConnectionsEvent::Detach(alias) => self.detach_attachment(alias, cx),
+        }
+    }
+
+    /// Disconnect MotherDuck: spawn the async detach, flip the manager to
+    /// Disconnected, and drop the persisted md attachment. Shared by the
+    /// Disconnect and Forget flows (P5c T11).
+    fn disconnect_md(&mut self, cx: &mut Context<Self>) {
+        use crate::connections::ConnectionStatus;
+        let engine = self.engine();
+        tokio::spawn(async move {
+            crate::connections::connect::run_disconnect(engine).await;
+        });
+        self.connections.set_md_status(ConnectionStatus::Disconnected);
+        // Drop the persisted md attachment so a session recover does not re-attach.
+        let mut sess = self.session.lock();
+        let atts: Vec<crate::session::PersistedAttachment> = sess
+            .attachments()
+            .iter()
+            .filter(|a| !matches!(a.kind, crate::session::PersistedAttachmentKind::Md))
+            .cloned()
+            .collect();
+        let _ = sess.set_attachments(atts);
+        drop(sess);
+        cx.notify();
+    }
+
+    /// Detach a sqlite attachment by alias: spawn the async detach, remove it from
+    /// the manager, and drop its persisted entry (P5c T11).
+    fn detach_attachment(&mut self, alias: String, cx: &mut Context<Self>) {
+        let engine = self.engine();
+        let alias_for_engine = alias.clone();
+        tokio::spawn(async move {
+            use dat0_engine::QueryEngine as _;
+            let _ = engine.detach(&alias_for_engine).await;
+        });
+        self.connections.remove_attachment(&alias);
+        let mut sess = self.session.lock();
+        let atts: Vec<crate::session::PersistedAttachment> = sess
+            .attachments()
+            .iter()
+            .filter(|a| a.alias != alias)
+            .cloned()
+            .collect();
+        let _ = sess.set_attachments(atts);
+        drop(sess);
+        cx.notify();
+    }
+
+    /// Spawn the async MotherDuck connect (mirrors [`save_view_as_table`]'s
+    /// engine bridge, P5c T11). Only `Send + 'static` values cross into
+    /// `tokio::spawn` — the engine `Arc`, the owned `token` string, and the
+    /// `Weak` shell handle. The GPUI entity is touched ONLY inside the dispatcher
+    /// closure after `.upgrade()`. On a Connected result the md attachment is
+    /// persisted so a session recover re-attaches it.
+    ///
+    /// The token is never logged: it is moved straight into `run_connect` (which
+    /// itself never logs it) and dropped when the task ends.
+    ///
+    /// [`save_view_as_table`]: Self::save_view_as_table
+    fn spawn_md_connect(&mut self, token: String, cx: &mut Context<Self>) {
+        let engine = self.engine();
+        let ws_weak = cx.entity().downgrade();
+        tokio::spawn(async move {
+            let status = crate::connections::connect::run_connect(engine, token).await;
+            if let Some(dispatcher) = crate::window_registry::dispatcher() {
+                let _ = dispatcher.dispatch(move |app: &mut gpui::App| {
+                    if let Some(ws) = ws_weak.upgrade() {
+                        ws.update(app, |ws, cx| {
+                            let connected = matches!(
+                                status,
+                                crate::connections::ConnectionStatus::Connected
+                            );
+                            ws.connections.set_md_status(status.clone());
+                            if connected {
+                                // Persist the md attachment (idempotent).
+                                let mut sess = ws.session.lock();
+                                let mut atts = sess.attachments().to_vec();
+                                if !atts.iter().any(|a| {
+                                    matches!(
+                                        a.kind,
+                                        crate::session::PersistedAttachmentKind::Md
+                                    )
+                                }) {
+                                    atts.push(crate::session::PersistedAttachment {
+                                        alias: crate::connections::MD_ALIAS.to_string(),
+                                        kind: crate::session::PersistedAttachmentKind::Md,
+                                    });
+                                    let _ = sess.set_attachments(atts);
+                                }
+                                drop(sess);
+                            }
+                            cx.notify();
+                        });
+                    }
+                });
+            } else {
+                tracing::warn!("spawn_md_connect: no MainThreadDispatcher installed; result dropped");
+            }
+        });
+    }
+
+    /// Open the MotherDuck token-entry modal (reuses
+    /// [`NamePrompt`](crate::view::name_prompt::NamePrompt), P5c T11). On Confirm
+    /// the entered token is stored in the keychain, the prompt closes, the manager
+    /// flips to Connecting, and the async connect spawns. On Cancel the prompt is
+    /// just dismissed.
+    ///
+    /// Needs `&mut Window` because `NamePrompt::new` builds a single-line
+    /// `InputState` eagerly. The subscription is stored in `md_token_prompt_sub`
+    /// (a dropped `Subscription` deregisters the callback silently — the P4a T10b
+    /// trap).
+    fn open_md_token_prompt(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        use crate::view::name_prompt::{NamePrompt, NamePromptEvent};
+        let prompt = cx.new(|cx| {
+            NamePrompt::new(dat0_i18n::t("connections.md.token_prompt"), window, cx)
+        });
+        let sub = cx.subscribe_in(
+            &prompt,
+            window,
+            |ws: &mut Self, _prompt, ev: &NamePromptEvent, _window, cx| match ev {
+                NamePromptEvent::Confirm(token) => {
+                    use crate::connections::token_store::{KeychainTokenStore, TokenStore as _};
+                    use crate::connections::ConnectionStatus;
+                    let token = token.clone();
+                    // Close the prompt first.
+                    ws.md_token_prompt = None;
+                    ws.md_token_prompt_sub = None;
+                    // Store the token; on failure surface an error and stop.
+                    match KeychainTokenStore::new().and_then(|s| s.set(&token)) {
+                        Ok(()) => {
+                            ws.connections.set_md_status(ConnectionStatus::Connecting);
+                            cx.notify();
+                            ws.spawn_md_connect(token, cx);
+                        }
+                        Err(e) => {
+                            ws.connections
+                                .set_md_status(ConnectionStatus::Error(e.to_string()));
+                            cx.notify();
+                        }
+                    }
+                }
+                NamePromptEvent::Cancel => {
+                    ws.md_token_prompt = None;
+                    ws.md_token_prompt_sub = None;
+                    cx.notify();
+                }
+            },
+        );
+        self.md_token_prompt_sub = Some(sub);
+        self.md_token_prompt = Some(prompt);
+        cx.notify();
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -2303,6 +2548,20 @@ impl Render for WorkspaceShell {
                 .into_any_element()
         });
 
+        // MotherDuck token-entry overlay (P5c T11). Mounted by
+        // `open_md_token_prompt`; emits `NamePromptEvent` routed via the stored
+        // `md_token_prompt_sub` subscription (Confirm → store token + connect,
+        // Cancel → dismiss). Same top-centre placement as the other modals.
+        let md_token_prompt_overlay: Option<gpui::AnyElement> =
+            self.md_token_prompt.as_ref().map(|p| {
+                div()
+                    .absolute()
+                    .top_16()
+                    .left_1_2()
+                    .child(p.clone())
+                    .into_any_element()
+            });
+
         // Saved-query picker overlay (P5b T8). Window-level, flag-gated on
         // `saved_picker_open`; reads `session.saved_queries()` LIVE so a delete
         // refreshes the list on the next render. Picking a row routes the SQL
@@ -2603,6 +2862,13 @@ impl Render for WorkspaceShell {
                     }
                 },
             ))
+            // ── Connections panel toggle (P5c T11) ────────────────────────────
+            .on_action(cx.listener(
+                |ws: &mut Self, _: &crate::menu_macos::ConnectionsToggle, _window, cx| {
+                    ws.connections_panel_visible = !ws.connections_panel_visible;
+                    cx.notify();
+                },
+            ))
             .on_key_down(key_handler)
             .on_click(click_to_focus)
             .drag_over::<ExternalPaths>(|style, _, _, _| style.bg(gpui::rgba(0x0088_ff22)))
@@ -2610,11 +2876,30 @@ impl Render for WorkspaceShell {
             .children(tab_strip)
             .children(pipeline_bar)
             .children(sql_console_panel)
-            .child(div().flex_1().child(body))
+            // Body row: the Connections panel (left dock, when visible) + the
+            // grid/console body (P5c T10/T11). When the panel is hidden this is
+            // just the body in a flex_row — identical layout to before.
+            .child(
+                div()
+                    .flex()
+                    .flex_row()
+                    .flex_1()
+                    .children(self.connections_panel_visible.then(|| {
+                        div()
+                            .w_64()
+                            .border_r_1()
+                            .child(crate::connections::panel::render_connections(
+                                &self.connections,
+                                cx,
+                            ))
+                    }))
+                    .child(div().flex_1().child(body)),
+            )
             .children(popover_overlay)
             .children(editor_overlay)
             .children(export_overlay)
             .children(name_prompt_overlay)
             .children(saved_picker_overlay)
+            .children(md_token_prompt_overlay)
     }
 }
