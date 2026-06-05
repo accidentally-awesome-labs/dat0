@@ -43,14 +43,11 @@ pub async fn run_connect(engine: Arc<DuckDBEngine>, token: String) -> Connection
     }
 }
 
-/// Detach every attached MotherDuck database (best-effort). Workspace mode has
-/// no single `md` alias, so the caller passes the real db names (from
-/// [`list_databases`]).
-pub async fn run_disconnect(engine: Arc<DuckDBEngine>, md_databases: Vec<String>) {
-    for db in md_databases {
-        let _ = engine.detach(&db).await;
-    }
-}
+// NOTE: there is intentionally no `run_disconnect` that DETACHes MotherDuck.
+// In workspace mode `DETACH` persists to the account's saved workspace, so
+// dat0's Disconnect is a SOFT disconnect (UI/state only) — see
+// `WorkspaceShell::disconnect_md`. The in-session attachment is dropped when
+// the engine/window closes.
 
 /// Shallow catalog enumeration for the panel (design §4.3): the names of the
 /// attached **MotherDuck** databases only. CI confirmed (run 27028725998) that

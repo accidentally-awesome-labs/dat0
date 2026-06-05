@@ -97,8 +97,10 @@ async fn engine_attaches_md_and_queries_then_detaches() {
     engine.attach("md:", "md", opts).await.expect("attach md");
 
     // The app filters MD databases by `type = 'motherduck'` (see
-    // connections::connect::list_databases). Validate that filter here: every
-    // MotherDuck account has a `sample_data` database. On failure, dump
+    // connections::connect::list_databases). Validate that filter: a connected
+    // account always has at least one MD database (the user's default, e.g.
+    // `my_db`). We do NOT assert a specific db like `sample_data` — in workspace
+    // mode a prior DETACH persists, so shares can be absent. On failure, dump
     // name|path|type for ALL databases so a wrong filter is self-diagnosing.
     let md_dbs = scalar_list(
         &engine,
@@ -106,8 +108,8 @@ async fn engine_attaches_md_and_queries_then_detaches() {
     )
     .await;
     assert!(
-        md_dbs.iter().any(|d| d == "sample_data"),
-        "expected `sample_data` among md dbs (type='motherduck'); got {md_dbs:?}; ALL dbs (name|path|type): {:?}",
+        !md_dbs.is_empty(),
+        "expected ≥1 md db (type='motherduck'); got {md_dbs:?}; ALL dbs (name|path|type): {:?}",
         scalar_list(
             &engine,
             "SELECT database_name || '|' || COALESCE(path,'') || '|' || COALESCE(type,'') FROM duckdb_databases() ORDER BY 1",
@@ -115,22 +117,23 @@ async fn engine_attaches_md_and_queries_then_detaches() {
         .await
     );
 
-    // A real catalog query scoped to the attached MD database. `duckdb_tables()`
-    // is a global table function spanning all attached catalogs with a
-    // `database_name` column (unlike `<db>.information_schema.schemata`, which
-    // DuckDB does not expose as a 3-part path). Proves the attached MD db is
-    // queryable end-to-end.
+    // A real catalog query scoped to the first attached MD database.
+    // `duckdb_tables()` is a global table function spanning all attached catalogs
+    // with a `database_name` column (unlike `<db>.information_schema.schemata`,
+    // which DuckDB does not expose as a 3-part path). Proves the attached MD db
+    // is queryable end-to-end.
+    let first = md_dbs[0].replace('\'', "''");
     let n = scalar(
         &engine,
-        "SELECT count(*)::TEXT FROM duckdb_tables() WHERE database_name = 'sample_data';",
+        &format!("SELECT count(*)::TEXT FROM duckdb_tables() WHERE database_name = '{first}';"),
     )
     .await;
     assert!(n.parse::<i64>().unwrap() >= 0);
 
-    // Detach every attached MD database (best-effort), then close.
-    for db in &md_dbs {
-        engine.detach(db).await.ok();
-    }
+    // Do NOT detach: in workspace mode DETACH persists to the account's saved
+    // workspace (it would mutate the user's MotherDuck account and break
+    // concurrent CI jobs sharing the account). Closing the engine drops the
+    // session connection without persisting any workspace change.
     engine.close().await.expect("close");
     // Token must never appear in any output this test produced.
 }

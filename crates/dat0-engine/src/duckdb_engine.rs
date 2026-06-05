@@ -561,6 +561,22 @@ impl crate::QueryEngine for DuckDBEngine {
                     let conn = conn.lock().map_err(|_| EngineError::EnginePoisoned)?;
                     conn.execute_batch("LOAD motherduck;")
                         .map_err(|_| EngineError::ExtensionLoad { name: "motherduck" })?;
+                    // Idempotent: if MotherDuck is already attached in this
+                    // session (e.g. reconnect after a soft disconnect, or a
+                    // second connect), skip the ATTACH — re-running `ATTACH 'md:'`
+                    // errors, and we must NOT DETACH first (workspace-mode DETACH
+                    // persists to the account's saved workspace).
+                    let already_attached: bool = conn
+                        .query_row(
+                            "SELECT count(*) FROM duckdb_databases() WHERE lower(type) = 'motherduck'",
+                            [],
+                            |r| r.get::<_, i64>(0),
+                        )
+                        .map(|n| n > 0)
+                        .unwrap_or(false);
+                    if already_attached {
+                        return Ok(());
+                    }
                     // `ATTACH 'md:'` (workspace mode) can switch the current
                     // database to a MotherDuck db; capture + restore the local
                     // one so the engine's scratch tables stay reachable unqualified.

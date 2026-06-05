@@ -2070,18 +2070,16 @@ impl WorkspaceShell {
         }
     }
 
-    /// Disconnect MotherDuck: spawn the async detach, flip the manager to
-    /// Disconnected, and drop the persisted md attachment. Shared by the
-    /// Disconnect and Forget flows (P5c T11).
+    /// Disconnect MotherDuck: a SOFT disconnect — flip the manager to
+    /// Disconnected and drop the persisted md attachment, but DO NOT `DETACH`.
+    /// In workspace mode `DETACH` persists to the account's saved MotherDuck
+    /// workspace (the db moves to "Detached Databases", needing manual
+    /// re-attach), so a local disconnect must not mutate the user's cloud
+    /// workspace. The in-session attachment lingers harmlessly until the window
+    /// closes; dat0 simply stops surfacing it, and a later Connect is idempotent
+    /// (the engine arm skips a redundant ATTACH). Shared by Disconnect + Forget.
     fn disconnect_md(&mut self, cx: &mut Context<Self>) {
         use crate::connections::ConnectionStatus;
-        let engine = self.engine();
-        // Workspace mode has no single `md` alias — detach each attached MD db
-        // by its real name. Capture the names BEFORE set_md_status clears them.
-        let md_dbs = self.connections.md_databases().to_vec();
-        tokio::spawn(async move {
-            crate::connections::connect::run_disconnect(engine, md_dbs).await;
-        });
         self.connections
             .set_md_status(ConnectionStatus::Disconnected);
         // Drop the persisted md attachment so a session recover does not re-attach.
