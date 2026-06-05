@@ -33,6 +33,10 @@ pub struct Attachment {
 pub struct ConnectionManager {
     md: Option<ConnectionStatus>,
     sqlite: Vec<Attachment>,
+    /// Shallow catalog enumeration for the panel (design §4.3): database names
+    /// only, NO per-table origins (D-012 stays deferred). Cleared whenever the
+    /// md status leaves `Connected` so a disconnect/error drops the stale list.
+    md_databases: Vec<String>,
 }
 
 impl ConnectionManager {
@@ -40,9 +44,16 @@ impl ConnectionManager {
         self.md.as_ref().unwrap_or(&ConnectionStatus::Disconnected)
     }
     pub fn set_md_status(&mut self, s: ConnectionStatus) {
+        // Leaving Connected drops the stale catalog list (design §4.3).
+        if !matches!(s, ConnectionStatus::Connected) {
+            self.md_databases.clear();
+        }
         self.md = Some(s);
     }
     pub fn md_alias(&self) -> &'static str { MD_ALIAS }
+    /// Cached database names from the last successful enumeration (design §4.3).
+    pub fn md_databases(&self) -> &[String] { &self.md_databases }
+    pub fn set_md_databases(&mut self, dbs: Vec<String>) { self.md_databases = dbs; }
     pub fn sqlite(&self) -> &[Attachment] { &self.sqlite }
     pub fn add_sqlite(&mut self, alias: String, path: String) {
         self.sqlite.push(Attachment {
@@ -76,6 +87,17 @@ mod state_tests {
         m.set_md_status(ConnectionStatus::Connected);
         assert_eq!(m.md_status(), &ConnectionStatus::Connected);
         assert_eq!(m.md_alias(), "md");
+    }
+
+    #[test]
+    fn md_databases_cleared_on_disconnect() {
+        let mut m = ConnectionManager::default();
+        m.set_md_status(ConnectionStatus::Connected);
+        m.set_md_databases(vec!["a".to_string()]);
+        assert_eq!(m.md_databases().len(), 1);
+        // Leaving Connected (disconnect) drops the stale catalog list.
+        m.set_md_status(ConnectionStatus::Disconnected);
+        assert!(m.md_databases().is_empty());
     }
 
     #[test]

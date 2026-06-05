@@ -41,6 +41,34 @@ pub async fn run_disconnect(engine: Arc<DuckDBEngine>) {
     let _ = engine.detach(MD_ALIAS).await; // best-effort
 }
 
+/// Shallow catalog enumeration for the panel (design §4.3): database names only,
+/// NO per-table origins (D-012 stays deferred). TRIM-VALVE ①.
+pub async fn list_databases(engine: Arc<DuckDBEngine>) -> Vec<String> {
+    use dat0_engine::QueryEngine as _;
+    use duckdb::arrow::array::Array as _;
+    let Ok(result) = engine
+        .execute("SELECT database_name FROM duckdb_databases() ORDER BY 1;")
+        .await
+    else {
+        return Vec::new();
+    };
+    let mut out = Vec::new();
+    for batch in &result.batches {
+        if let Some(arr) = batch
+            .column(0)
+            .as_any()
+            .downcast_ref::<duckdb::arrow::array::StringArray>()
+        {
+            for i in 0..arr.len() {
+                if arr.is_valid(i) {
+                    out.push(arr.value(i).to_string());
+                }
+            }
+        }
+    }
+    out
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

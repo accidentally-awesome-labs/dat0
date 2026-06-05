@@ -104,7 +104,11 @@ pub(crate) fn spawn_window(
             ..Default::default()
         },
         move |window, cx| {
-            let view = cx.new(|cx| WorkspaceShell::new(Arc::clone(&session), cx));
+            let view = cx.new(|cx| {
+                let mut shell = WorkspaceShell::new(Arc::clone(&session), cx);
+                shell.reconnect_persisted_md(cx);
+                shell
+            });
             // T13: register this workspace as the focused one so that
             // view.undo / view.redo dispatch closures can reach it.
             crate::window_registry::install_focused_workspace(view.downgrade().into());
@@ -458,8 +462,12 @@ pub fn run_app(lock: AppLock, initial_paths: Vec<PathBuf>, main_loop: MainLoop) 
                     ..Default::default()
                 },
                 |window, cx| {
-                    let view =
-                        cx.new(|cx| WorkspaceShell::new(Arc::clone(&session_for_window), cx));
+                    let view = cx.new(|cx| {
+                        let mut shell =
+                            WorkspaceShell::new(Arc::clone(&session_for_window), cx);
+                        shell.reconnect_persisted_md(cx);
+                        shell
+                    });
                     // T13: register this workspace as the focused one so that
                     // view.undo / view.redo dispatch closures can reach it.
                     crate::window_registry::install_focused_workspace(view.downgrade().into());
@@ -2110,19 +2118,27 @@ impl WorkspaceShell {
     /// [`save_view_as_table`]: Self::save_view_as_table
     fn spawn_md_connect(&mut self, token: String, cx: &mut Context<Self>) {
         let engine = self.engine();
+        let engine_for_list = engine.clone();
         let ws_weak = cx.entity().downgrade();
         tokio::spawn(async move {
             let status = crate::connections::connect::run_connect(engine, token).await;
+            let connected =
+                matches!(status, crate::connections::ConnectionStatus::Connected);
+            // On success, enumerate database names for the panel (design §4.3).
+            let dbs = if connected {
+                crate::connections::connect::list_databases(engine_for_list).await
+            } else {
+                Vec::new()
+            };
             if let Some(dispatcher) = crate::window_registry::dispatcher() {
                 let _ = dispatcher.dispatch(move |app: &mut gpui::App| {
                     if let Some(ws) = ws_weak.upgrade() {
                         ws.update(app, |ws, cx| {
-                            let connected = matches!(
-                                status,
-                                crate::connections::ConnectionStatus::Connected
-                            );
+                            // `set_md_status` clears md_databases when not
+                            // Connected, so set the list AFTER it on success.
                             ws.connections.set_md_status(status.clone());
                             if connected {
+                                ws.connections.set_md_databases(dbs.clone());
                                 // Persist the md attachment (idempotent).
                                 let mut sess = ws.session.lock();
                                 let mut atts = sess.attachments().to_vec();
@@ -2148,6 +2164,35 @@ impl WorkspaceShell {
                 tracing::warn!("spawn_md_connect: no MainThreadDispatcher installed; result dropped");
             }
         });
+    }
+
+    /// On workspace load, if this session had MotherDuck attached, background-
+    /// reconnect it (design §5). Non-md workspaces never touch the network: the
+    /// early return guards on the persisted attachment set. The token comes from
+    /// the keychain (never session.json); if it is gone, we leave the panel
+    /// Disconnected so the user can reconnect manually.
+    pub(crate) fn reconnect_persisted_md(&mut self, cx: &mut Context<Self>) {
+        use crate::connections::connect::{precheck, Precheck};
+        use crate::connections::token_store::KeychainTokenStore;
+        use crate::connections::ConnectionStatus;
+        let has_md = self
+            .session
+            .lock()
+            .attachments()
+            .iter()
+            .any(|a| matches!(a.kind, crate::session::PersistedAttachmentKind::Md));
+        if !has_md {
+            return;
+        }
+        let Ok(store) = KeychainTokenStore::new() else {
+            return;
+        };
+        if let Ok(Precheck::Ready(token)) = precheck(&store) {
+            self.connections.set_md_status(ConnectionStatus::Connecting);
+            cx.notify();
+            self.spawn_md_connect(token, cx);
+        }
+        // NeedToken / errors: leave Disconnected (panel shows Connect).
     }
 
     /// Open the MotherDuck token-entry modal (reuses

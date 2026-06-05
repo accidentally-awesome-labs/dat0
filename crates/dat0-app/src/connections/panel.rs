@@ -96,6 +96,17 @@ pub fn render_connections(
             )),
     };
 
+    // Shallow catalog enumeration (design §4.3): when Connected, list the cached
+    // database names indented under the MotherDuck section. Pure function of
+    // `manager.md_databases()` — empty (e.g. not Connected) renders nothing.
+    let mut md_databases = div().flex().flex_col().gap_1();
+    if matches!(status, ConnectionStatus::Connected) {
+        for name in manager.md_databases() {
+            md_databases =
+                md_databases.child(div().pl_4().child(SharedString::from(name.clone())));
+        }
+    }
+
     let md_section = div()
         .flex()
         .flex_col()
@@ -103,7 +114,8 @@ pub fn render_connections(
         .p_2()
         .child(div().child(SharedString::from(dat0_i18n::t("connections.md.heading"))))
         .child(div().child(status_label(status)))
-        .child(md_actions);
+        .child(md_actions)
+        .child(md_databases);
 
     // Attached-files section: one row per sqlite attachment + an "Attach…" button.
     let mut files = div().flex().flex_col().gap_1();
