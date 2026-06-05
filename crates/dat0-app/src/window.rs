@@ -1493,7 +1493,10 @@ impl WorkspaceShell {
             .unwrap_or(0);
         let (sql_text, _) = console.read(cx).active_sql_and_cursor(cx);
         let ok = !matches!(outcome, SqlRunOutcome::Error(_) | SqlRunOutcome::Cancelled);
-        console.update(cx, |c, cx| c.set_last_elapsed(elapsed_ms, cx));
+        // P5c T9: routing tag for the chip. T11 replaces `&[]` with
+        // `self.connections.attached_aliases()` once the ConnectionManager field exists.
+        let routing = crate::connections::routing::classify_routing(&sql_text, &Vec::<String>::new());
+        console.update(cx, |c, cx| c.set_last_elapsed(elapsed_ms, routing, cx));
         {
             let entry = crate::session::queries::HistoryEntry {
                 sql: sql_text,
