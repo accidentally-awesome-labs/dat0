@@ -9,7 +9,7 @@ use crate::types::{ColumnInfo, DerivedOrigin, TableInfo, TableOrigin};
 /// position. DuckDB doubles `"` to `""` inside `"..."`, the same way SQL
 /// string literals double `'` to `''`. Without this, a name containing
 /// `"` could break out of the quoted-identifier and inject SQL.
-pub(crate) fn quote_ident(name: &str) -> String {
+pub fn quote_ident(name: &str) -> String {
     format!("\"{}\"", name.replace('"', "\"\""))
 }
 

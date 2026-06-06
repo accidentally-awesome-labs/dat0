@@ -1557,8 +1557,8 @@ impl WorkspaceShell {
                 if col.approx_distinct > 24 {
                     let engine = engine.clone();
                     let col_name = col.name.clone();
-                    let col_q = Self::quote_ident(&col_name);
-                    let tbl_q = Self::quote_ident(&table);
+                    let col_q = dat0_engine::quote_ident(&col_name);
+                    let tbl_q = dat0_engine::quote_ident(&table);
                     let sql = format!(
                         "SELECT CAST({c} AS DOUBLE) AS v FROM {t} \
                          WHERE {c} IS NOT NULL USING SAMPLE 2048 ROWS",
@@ -1605,13 +1605,6 @@ impl WorkspaceShell {
                 }
             }
         }
-    }
-
-    /// Quote a bare SQL identifier for app-built SQL strings (the engine quotes
-    /// its own args, but these query strings are assembled here). Doubles any
-    /// embedded `"`.
-    fn quote_ident(s: &str) -> String {
-        format!("\"{}\"", s.replace('"', "\"\""))
     }
 
     /// Hop an extras-write back to the main thread via the registry dispatcher

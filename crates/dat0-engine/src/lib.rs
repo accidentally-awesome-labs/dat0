@@ -20,6 +20,7 @@ pub mod trait_def;
 pub mod transform;
 pub mod types;
 
+pub use catalog::quote_ident;
 pub use duckdb_engine::DuckDBEngine;
 pub use error::EngineError;
 pub use profile::{ColumnProfile, LengthStats, NumericStats, TableProfile};

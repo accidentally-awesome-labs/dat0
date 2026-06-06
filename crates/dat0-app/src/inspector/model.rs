@@ -5,7 +5,7 @@ use dat0_engine::TableProfile;
 #[derive(Default)]
 pub struct InspectorModel {
     pub target_table: Option<String>,
-    pub mode: ProfileTargetMode,   // consumed in T9
+    pub mode: ProfileTargetMode,   // WholeTable ⇄ CurrentView profiling toggle
     epoch: HashMap<String, u64>,
     cache: HashMap<(String, u64), TableProfile>,
     load_gen: u64,
