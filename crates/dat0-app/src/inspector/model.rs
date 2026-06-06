@@ -101,6 +101,19 @@ impl InspectorModel {
         *self.epoch.entry(table.to_string()).or_insert(0) += 1;
     }
 
+    /// Replace a single column's profile in the current cache entry (Hybrid write
+    /// path D4): a cell-edit / single-column transform recomputes only this column.
+    pub fn patch_column(&mut self, col: &str, new: dat0_engine::ColumnProfile) {
+        if let Some(t) = self.target_table.clone() {
+            let e = self.epoch_of(&t);
+            if let Some(p) = self.cache.get_mut(&(t, e)) {
+                if let Some(slot) = p.columns.iter_mut().find(|c| c.name == col) {
+                    *slot = new;
+                }
+            }
+        }
+    }
+
     pub fn begin_load(&mut self) -> u64 {
         self.load_gen += 1;
         self.load_gen
@@ -133,6 +146,35 @@ mod tests {
         let g2 = m.begin_load();
         assert!(!m.is_current(g1), "older load superseded");
         assert!(m.is_current(g2), "latest load current");
+    }
+
+    #[test]
+    fn patch_column_replaces_single_column_only() {
+        use dat0_engine::{ColumnProfile, TableProfile};
+        let mut m = InspectorModel::new();
+        m.set_target("orders".into());
+        let mk = |name: &str, distinct: u64| ColumnProfile {
+            name: name.into(),
+            ty: "T".into(),
+            null_pct: 0.0,
+            approx_distinct: distinct,
+            count: 1,
+            numeric: None,
+            length: None,
+        };
+        m.put(TableProfile { rows: 1, columns: vec![mk("a", 1), mk("b", 1)] });
+        m.patch_column("b", mk("b", 99));
+        let cols = &m.cached().unwrap().columns;
+        assert_eq!(
+            cols.iter().find(|c| c.name == "a").unwrap().approx_distinct,
+            1,
+            "a untouched"
+        );
+        assert_eq!(
+            cols.iter().find(|c| c.name == "b").unwrap().approx_distinct,
+            99,
+            "b patched"
+        );
     }
 
     fn fake_profile() -> dat0_engine::TableProfile {

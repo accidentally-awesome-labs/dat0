@@ -1461,6 +1461,21 @@ impl WorkspaceShell {
         }
     }
 
+    /// A mutation touched `table`'s data/schema. Invalidate the inspector's cached
+    /// profile for it (epoch bump) and, if that table is the live inspector target,
+    /// re-profile it now so the open dock updates. (Hybrid write path, P6a T12.)
+    pub(crate) fn on_table_mutated_structural(
+        &mut self,
+        table: &str,
+        cx: &mut gpui::Context<Self>,
+    ) {
+        self.inspector.bump_epoch(table);
+        if self.inspector.target_table.as_deref() == Some(table) {
+            self.load_inspector_profile(cx); // re-SUMMARIZE the now-invalidated table
+        }
+        cx.notify();
+    }
+
     /// Load the profile for the current inspector target off-thread, then write
     /// it back on the main thread under the supersede guard (P6a T9). Mirrors
     /// [`Self::open_table_tab`] / [`Self::refresh_catalog`]: `tokio::spawn` +
@@ -1469,7 +1484,7 @@ impl WorkspaceShell {
     /// In [`ProfileTargetMode::CurrentView`] the active view's `SELECT` is
     /// compiled off the live `view_model` and profiled via `profile_query`;
     /// otherwise the stored table is profiled via `profile_table`.
-    fn load_inspector_profile(&mut self, cx: &mut gpui::Context<Self>) {
+    pub(crate) fn load_inspector_profile(&mut self, cx: &mut gpui::Context<Self>) {
         let Some(target) = self.inspector.target_table.clone() else {
             return;
         };

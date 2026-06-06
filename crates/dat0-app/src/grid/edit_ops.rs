@@ -46,6 +46,17 @@ pub enum CommitAdvance {
 }
 
 impl WorkspaceShell {
+    /// Hybrid write-path hook (P6a T12) for a multi-cell / bulk DATA mutation
+    /// (paste, cut, delete-rows, fill-down, set-null, set-value). Drives a
+    /// STRUCTURAL inspector-profile refresh for the live target table. The bare
+    /// table name is the inspector target (set bare by `open_table_tab`). No-op
+    /// when no table is open / no inspector target is set.
+    fn refresh_inspector_after_bulk_mutation(&mut self, cx: &mut Context<Self>) {
+        if let Some(table) = self.inspector.target_table.clone() {
+            self.on_table_mutated_structural(&table, cx);
+        }
+    }
+
     /// Commit the in-flight cell edit (T6). Resolves the active selection cell
     /// to a [`dat0_engine::RowKey::Surrogate`] + column name via the active
     /// `GridDataSource`, builds a single-cell [`dat0_engine::CellEdit`], pushes
@@ -95,6 +106,19 @@ impl WorkspaceShell {
         self.spawn_rebind(change, cx);
         self.cell_editor = None;
         self.cell_editor_sub = None;
+        // Hybrid write path (P6a T12): a single cell changed → refresh the
+        // inspector profile. We use the STRUCTURAL strategy (not the single-column
+        // `on_cell_mutated` patch) deliberately: in this architecture an `Edit` is
+        // a display-layer OVERLAY compiled into the active view's SQL
+        // (`SELECT * REPLACE (CASE … END)`, see engine `render.rs`) — the BASE
+        // table is never mutated in place. So a single-column re-profile of the
+        // bare base table (`SELECT col FROM "orders"`) would NOT reflect the edit
+        // in `CurrentView` mode and would be a no-op in `WholeTable` mode. The
+        // structural refresh re-runs `load_inspector_profile`, which in
+        // `CurrentView` re-compiles the live view SQL (overlay included) and in
+        // `WholeTable` re-profiles the base table (correctly unchanged). Bare
+        // table name = the inspector target (set bare by `open_table_tab`).
+        self.refresh_inspector_after_bulk_mutation(cx);
     }
 
     /// Commit the in-flight cell edit, then advance the active cell and re-open
@@ -236,6 +260,16 @@ impl WorkspaceShell {
             cx.notify();
         } else {
             self.spawn_rebind(change, cx);
+        }
+        // Hybrid write path (P6a T12): projection/transform applies routed here
+        // (reorder, rename, delete-column, transform-apply) change the table's
+        // schema/derivation → STRUCTURAL refresh of the inspector profile. A pure
+        // display-only change leaves the WholeTable profile unchanged, but bumping
+        // the epoch is harmless (at most one extra re-SUMMARIZE) and keeps a
+        // CurrentView profile honest, so we refresh unconditionally. The bare
+        // table name is the inspector target (set bare by `open_table_tab`).
+        if let Some(table) = self.inspector.target_table.clone() {
+            self.on_table_mutated_structural(&table, cx);
         }
     }
 
@@ -385,6 +419,8 @@ impl WorkspaceShell {
             .expect("view_model checked above")
             .edit_cells(edits);
         self.spawn_rebind(change, cx);
+        // Multi-cell DATA mutation → structural inspector refresh (P6a T12).
+        self.refresh_inspector_after_bulk_mutation(cx);
     }
 
     /// Paste the clipboard's TSV block, anchored at the active selection cell
@@ -465,6 +501,10 @@ impl WorkspaceShell {
                 .expect("view_model checked above")
                 .edit_cells(edits);
             self.spawn_rebind(change, cx);
+            // DATA changed → structural inspector refresh (P6a T12). Only when
+            // some cells were actually applied (the empty branch is a pure
+            // re-render and leaves the table untouched).
+            self.refresh_inspector_after_bulk_mutation(cx);
         } else {
             // Nothing applied — still re-render (e.g. to clear any prior state).
             cx.notify();
@@ -589,6 +629,8 @@ impl WorkspaceShell {
             .expect("view_model checked above")
             .edit_cells(edits);
         self.spawn_rebind(change, cx);
+        // Fill-down DATA mutation → structural inspector refresh (P6a T12).
+        self.refresh_inspector_after_bulk_mutation(cx);
     }
 
     /// Set every selected cell to `Scalar::Null` in ONE undo step (T8).
@@ -628,6 +670,8 @@ impl WorkspaceShell {
             .expect("view_model checked above")
             .edit_cells(edits);
         self.spawn_rebind(change, cx);
+        // Set-null DATA mutation → structural inspector refresh (P6a T12).
+        self.refresh_inspector_after_bulk_mutation(cx);
     }
 
     /// Set every selected cell to `value` in ONE undo step (T8).
@@ -667,6 +711,8 @@ impl WorkspaceShell {
             .expect("view_model checked above")
             .edit_cells(edits);
         self.spawn_rebind(change, cx);
+        // Set-value DATA mutation → structural inspector refresh (P6a T12).
+        self.refresh_inspector_after_bulk_mutation(cx);
     }
 
     /// Delete the distinct rows represented in the current selection in ONE
@@ -709,6 +755,8 @@ impl WorkspaceShell {
             .expect("view_model checked above")
             .delete_rows(keys);
         self.spawn_rebind(change, cx);
+        // Rows removed → structural inspector refresh (P6a T12).
+        self.refresh_inspector_after_bulk_mutation(cx);
     }
 
     /// Hide a column via `DeleteColumn` (display-only; the underlying data column
