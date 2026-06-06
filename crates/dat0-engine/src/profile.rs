@@ -107,7 +107,7 @@ pub(crate) fn profile_blocking(conn: &Connection, target: &str) -> Result<TableP
         let c_null = batch.column(idx("null_percentage"));
         for row in 0..batch.num_rows() {
             let count = cell_f64(c_count, row).unwrap_or(0.0) as u64;
-            rows_total = rows_total.max(count); // upper bound across cols; exact total via count(*) below
+            rows_total = rows_total.max(count); // lower bound (max non-null count per col); overridden by exact count(*) below
             let avg = cell_f64(c_avg, row);
             let numeric = avg.map(|avg| NumericStats {
                 min: cell_f64(c_min, row).unwrap_or(0.0),
@@ -139,4 +139,48 @@ pub(crate) fn profile_blocking(conn: &Connection, target: &str) -> Result<TableP
         .map(|n| n as u64)
         .unwrap_or(rows_total);
     Ok(TableProfile { rows, columns })
+}
+
+/// Top-`n` most frequent values of `col` in `table`, as `(value, count)` pairs
+/// ordered by descending count. Values are cast to VARCHAR; NULL renders as `∅`.
+pub(crate) fn topn_blocking(
+    conn: &Connection,
+    table: &str,
+    col: &str,
+    n: u64,
+) -> Result<Vec<(String, u64)>> {
+    let q = crate::catalog::quote_ident;
+    let sql = format!(
+        "SELECT CAST({c} AS VARCHAR) AS v, COUNT(*)::BIGINT AS c FROM {t} GROUP BY 1 ORDER BY 2 DESC LIMIT {n}",
+        c = q(col),
+        t = q(table)
+    );
+    let mut out = Vec::new();
+    let mut stmt = conn.prepare(&sql).map_err(EngineError::DuckDb)?;
+    let mut rows = stmt.query([]).map_err(EngineError::DuckDb)?;
+    while let Some(r) = rows.next().map_err(EngineError::DuckDb)? {
+        let v: Option<String> = r.get(0).ok();
+        let c: i64 = r.get(1).map_err(EngineError::DuckDb)?;
+        out.push((v.unwrap_or_else(|| "∅".into()), c as u64));
+    }
+    Ok(out)
+}
+
+/// Min/max/avg of `length(col)` over `table`. Empty input or all-NULL yields
+/// zeros. `avg` is a DOUBLE; min/max are clamped to `u64` (negative impossible).
+pub(crate) fn length_blocking(conn: &Connection, table: &str, col: &str) -> Result<LengthStats> {
+    let q = crate::catalog::quote_ident;
+    let sql = format!(
+        "SELECT MIN(length({c}))::BIGINT, MAX(length({c}))::BIGINT, AVG(length({c}))::DOUBLE FROM {t}",
+        c = q(col),
+        t = q(table)
+    );
+    conn.query_row(&sql, [], |r| {
+        Ok(LengthStats {
+            min: r.get::<_, Option<i64>>(0)?.unwrap_or(0) as u64,
+            max: r.get::<_, Option<i64>>(1)?.unwrap_or(0) as u64,
+            avg: r.get::<_, Option<f64>>(2)?.unwrap_or(0.0),
+        })
+    })
+    .map_err(EngineError::DuckDb)
 }

@@ -95,6 +95,41 @@ pub trait QueryEngine: Send + Sync {
         schema: Option<&str>,
     ) -> Result<crate::profile::TableProfile>;
 
+    /// Profile the result set of an arbitrary `SELECT` (a view target) via one
+    /// `SUMMARIZE` over the wrapped subquery, plus an exact `count(*)`. Use this
+    /// for derived/filtered views where the rows are not a stored table.
+    ///
+    /// `sql` is a complete SELECT; it is wrapped in parens internally.
+    ///
+    /// # Errors
+    /// - `EngineError::EngineClosed` — if the engine has been closed.
+    /// - `EngineError::DuckDb` — if `sql` is invalid or SUMMARIZE fails.
+    /// - `EngineError::EnginePoisoned` — if the connection mutex was poisoned.
+    async fn profile_query(&self, sql: &str) -> Result<crate::profile::TableProfile>;
+
+    /// Top-`n` most frequent values of `col` in `table`, as `(value, count)`
+    /// pairs ordered by descending count. Values are cast to VARCHAR; NULL
+    /// renders as `∅`. `table`/`col` are plain identifiers (quoted internally).
+    ///
+    /// # Errors
+    /// - `EngineError::EngineClosed` — if the engine has been closed.
+    /// - `EngineError::DuckDb` — if the table/column does not exist.
+    /// - `EngineError::EnginePoisoned` — if the connection mutex was poisoned.
+    async fn column_topn(&self, table: &str, col: &str, n: u64) -> Result<Vec<(String, u64)>>;
+
+    /// Min/max/avg of `length(col)` over `table` (string-length distribution).
+    /// `table`/`col` are plain identifiers (quoted internally).
+    ///
+    /// # Errors
+    /// - `EngineError::EngineClosed` — if the engine has been closed.
+    /// - `EngineError::DuckDb` — if the table/column does not exist.
+    /// - `EngineError::EnginePoisoned` — if the connection mutex was poisoned.
+    async fn column_length_stats(
+        &self,
+        table: &str,
+        col: &str,
+    ) -> Result<crate::profile::LengthStats>;
+
     async fn export_table(&self, name: &str, format: ExportFormat) -> Result<Vec<u8>>;
 
     /// Stream a SELECT to `dest` via DuckDB `COPY … TO`. Writes straight to

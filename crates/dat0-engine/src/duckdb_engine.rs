@@ -511,6 +511,51 @@ impl crate::QueryEngine for DuckDBEngine {
         .map_err(|e| EngineError::TaskJoin(e.to_string()))?
     }
 
+    #[instrument(skip(self), fields(sql_len = sql.len()))]
+    async fn profile_query(&self, sql: &str) -> Result<crate::profile::TableProfile> {
+        self.assert_open()?;
+        let conn = self.conn.clone();
+        let target = format!("({sql})");
+        tokio::task::spawn_blocking(move || -> Result<crate::profile::TableProfile> {
+            let conn = conn.lock().map_err(|_| EngineError::EnginePoisoned)?;
+            crate::profile::profile_blocking(&conn, &target)
+        })
+        .await
+        .map_err(|e| EngineError::TaskJoin(e.to_string()))?
+    }
+
+    #[instrument(skip(self), fields(table = table, col = col, n))]
+    async fn column_topn(&self, table: &str, col: &str, n: u64) -> Result<Vec<(String, u64)>> {
+        self.assert_open()?;
+        let conn = self.conn.clone();
+        let table = table.to_string();
+        let col = col.to_string();
+        tokio::task::spawn_blocking(move || -> Result<Vec<(String, u64)>> {
+            let conn = conn.lock().map_err(|_| EngineError::EnginePoisoned)?;
+            crate::profile::topn_blocking(&conn, &table, &col, n)
+        })
+        .await
+        .map_err(|e| EngineError::TaskJoin(e.to_string()))?
+    }
+
+    #[instrument(skip(self), fields(table = table, col = col))]
+    async fn column_length_stats(
+        &self,
+        table: &str,
+        col: &str,
+    ) -> Result<crate::profile::LengthStats> {
+        self.assert_open()?;
+        let conn = self.conn.clone();
+        let table = table.to_string();
+        let col = col.to_string();
+        tokio::task::spawn_blocking(move || -> Result<crate::profile::LengthStats> {
+            let conn = conn.lock().map_err(|_| EngineError::EnginePoisoned)?;
+            crate::profile::length_blocking(&conn, &table, &col)
+        })
+        .await
+        .map_err(|e| EngineError::TaskJoin(e.to_string()))?
+    }
+
     #[instrument(skip(self), fields(name = name, format = ?format))]
     async fn export_table(
         &self,
