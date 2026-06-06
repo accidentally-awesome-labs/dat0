@@ -62,6 +62,8 @@ pub fn build_menus(_cx: &mut gpui::App) -> Vec<gpui::Menu> {
                 MenuItem::action(dat0_i18n::t("connections.toggle"), ConnectionsToggle),
                 // P6a T7: Catalog left-dock toggle.
                 MenuItem::action(dat0_i18n::t("catalog.toggle"), CatalogToggle),
+                // P6a T9: Inspector right-dock toggle.
+                MenuItem::action(dat0_i18n::t("inspector.toggle"), InspectorToggle),
             ],
         },
         Menu {
@@ -122,6 +124,8 @@ gpui::actions!(
         ConnectionsToggle,
         // P6a T7: Catalog left-dock toggle.
         CatalogToggle,
+        // P6a T9: Inspector right-dock toggle.
+        InspectorToggle,
     ]
 );
 

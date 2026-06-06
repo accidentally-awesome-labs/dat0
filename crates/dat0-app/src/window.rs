@@ -742,6 +742,13 @@ pub struct WorkspaceShell {
     /// by [`Self::refresh_catalog`] whenever the catalog could change (toggle /
     /// import / create / drop).
     pub(crate) catalog_tree: crate::catalog::CatalogTree,
+    /// Whether the right-dock Inspector panel is shown (P6a T9). Toggled by the
+    /// `InspectorToggle` action; gates the inspector dock in `render`.
+    pub(crate) inspector_panel_visible: bool,
+    /// Inspector state: profile target + (table,epoch)-keyed profile cache +
+    /// load supersede (P6a T8). Profiles are loaded off-thread by
+    /// [`Self::load_inspector_profile`].
+    pub(crate) inspector: crate::inspector::InspectorModel,
     /// Per-window live banner list (PD-021). Drained from `error_ux::banner::PENDING`
     /// on each render; rendered as a host strip atop the shell.
     pub(crate) banners: Vec<crate::error_ux::banner::Banner>,
@@ -792,6 +799,8 @@ impl WorkspaceShell {
             connections_panel_visible: false,
             catalog_panel_visible: false,
             catalog_tree: crate::catalog::CatalogTree::default(),
+            inspector_panel_visible: false,
+            inspector: crate::inspector::InspectorModel::new(),
             banners: Vec::new(),
             md_token_prompt: None,
             md_token_prompt_sub: None,
@@ -1359,6 +1368,9 @@ impl WorkspaceShell {
                                 ws.view_model =
                                     Some(crate::view::model::ViewModel::new(name.clone(), quoted));
                                 ws.set_data_source(std::sync::Arc::new(ds));
+                                // P6a T9: point the Inspector at the freshly-opened
+                                // table and (lazily) load its profile.
+                                ws.set_inspector_target(name.clone(), cx);
                                 cx.notify();
                             });
                         });
@@ -1408,6 +1420,100 @@ impl WorkspaceShell {
                 );
             }
         });
+    }
+
+    /// Point the Inspector at `name` and load its profile (P6a T9). If the
+    /// (table,epoch) profile is already cached the load is skipped (warm hit);
+    /// otherwise [`Self::load_inspector_profile`] fetches it off-thread.
+    ///
+    /// Takes no `Window` — none of the inspector methods need one, which lets
+    /// `open_table_tab`'s dispatcher closure (which has no `window`) call this.
+    pub(crate) fn set_inspector_target(&mut self, name: String, cx: &mut gpui::Context<Self>) {
+        self.inspector.set_target(name);
+        if self.inspector.cached().is_some() {
+            // Warm hit — nothing to load; just repaint the dock.
+            cx.notify();
+            return;
+        }
+        self.load_inspector_profile(cx);
+        cx.notify();
+    }
+
+    /// Load the profile for the current inspector target off-thread, then write
+    /// it back on the main thread under the supersede guard (P6a T9). Mirrors
+    /// [`Self::open_table_tab`] / [`Self::refresh_catalog`]: `tokio::spawn` +
+    /// `window_registry::dispatcher()` + upgraded weak handle.
+    ///
+    /// In [`ProfileTargetMode::CurrentView`] the active view's `SELECT` is
+    /// compiled off the live `view_model` and profiled via `profile_query`;
+    /// otherwise the stored table is profiled via `profile_table`.
+    fn load_inspector_profile(&mut self, cx: &mut gpui::Context<Self>) {
+        let Some(target) = self.inspector.target_table.clone() else {
+            return;
+        };
+        let mode = self.inspector.mode;
+        let load_id = self.inspector.begin_load();
+        let engine = self.engine();
+        // For CurrentView mode, compile the active view's SELECT off the view_model.
+        let view_sql: Option<String> =
+            if matches!(mode, crate::inspector::ProfileTargetMode::CurrentView) {
+                self.view_model.as_ref().and_then(|vm| {
+                    dat0_engine::compile_view_sql(vm.base_table(), vm.active()).ok()
+                })
+            } else {
+                None
+            };
+        let ws_weak = cx.entity().downgrade();
+        tokio::spawn(async move {
+            use dat0_engine::QueryEngine as _;
+            let result = match view_sql {
+                Some(sql) => engine.profile_query(&sql).await,
+                None => engine.profile_table(&target, None).await,
+            };
+            let profile = match result {
+                Ok(p) => p,
+                Err(e) => {
+                    tracing::warn!(error = %e, "inspector profile load failed");
+                    return;
+                }
+            };
+            if let Some(dispatcher) = crate::window_registry::dispatcher() {
+                let _ = dispatcher.dispatch(move |app_cx: &mut gpui::App| {
+                    let Some(ws) = ws_weak.upgrade() else {
+                        return;
+                    };
+                    ws.update(app_cx, |ws, cx| {
+                        // Supersede guard: only the latest load writes its result.
+                        if ws.inspector.is_current(load_id) {
+                            ws.inspector.put(profile);
+                            cx.notify();
+                        }
+                    });
+                });
+            } else {
+                tracing::warn!(
+                    "load_inspector_profile: no MainThreadDispatcher installed; profile dropped"
+                );
+            }
+        });
+    }
+
+    /// Flip the inspector between Whole-table and Current-view profiling and
+    /// re-profile (P6a T9). The cache is keyed by (table,epoch) — *not* by mode —
+    /// so a toggle always `begin_load`s and re-fetches; the latest mode's profile
+    /// wins (switching back re-fetches). Takes no `Window` (none needed).
+    pub(crate) fn toggle_inspector_mode(
+        &mut self,
+        _window: &mut gpui::Window,
+        cx: &mut gpui::Context<Self>,
+    ) {
+        use crate::inspector::ProfileTargetMode::*;
+        self.inspector.mode = match self.inspector.mode {
+            WholeTable => CurrentView,
+            CurrentView => WholeTable,
+        };
+        self.load_inspector_profile(cx);
+        cx.notify();
     }
 
     /// Route a [`SqlConsoleEvent`] from the console.
@@ -3061,6 +3167,13 @@ impl Render for WorkspaceShell {
                     cx.notify();
                 },
             ))
+            // ── Inspector panel toggle (P6a T9) ───────────────────────────────
+            .on_action(cx.listener(
+                |ws: &mut Self, _: &crate::menu_macos::InspectorToggle, _window, cx| {
+                    ws.inspector_panel_visible = !ws.inspector_panel_visible;
+                    cx.notify();
+                },
+            ))
             .on_key_down(key_handler)
             .on_click(click_to_focus)
             .drag_over::<ExternalPaths>(|style, _, _, _| style.bg(gpui::rgba(0x0088_ff22)))
@@ -3088,7 +3201,13 @@ impl Render for WorkspaceShell {
                             crate::connections::panel::render_connections(&self.connections, cx),
                         )
                     }))
-                    .child(div().flex_1().child(body)),
+                    .child(div().flex_1().child(body))
+                    // Inspector right dock last → Catalog | Connections | body | Inspector.
+                    .children(self.inspector_panel_visible.then(|| {
+                        div().w_72().border_l_1().child(
+                            crate::inspector::panel::render_inspector(&self.inspector, cx),
+                        )
+                    })),
             )
             .children(popover_overlay)
             .children(editor_overlay)
