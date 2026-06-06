@@ -13,6 +13,11 @@ pub struct InspectorModel {
     /// Per-column lazy chart data (T10), keyed by column name. Cleared on any
     /// table change in `set_target` so table A's bars never paint over table B.
     column_extras: HashMap<String, ColumnExtra>,
+    /// Live reverse-lineage dependents for the current target (P6a T11).
+    /// Populated from `catalog_tables` by `WorkspaceShell::recompute_dependents`
+    /// on every catalog refresh and on `set_inspector_target`. Only Transform
+    /// children are matched in P6a; Sql references are deferred to P6b.
+    pub dependents: Vec<String>,
 }
 
 /// Lazily-fetched inline-chart data for one column (P6a T10). Populated after
@@ -69,6 +74,11 @@ impl InspectorModel {
     /// WholeTable bar never paints over a CurrentView card with the same name.
     pub fn clear_extras(&mut self) {
         self.column_extras.clear();
+    }
+
+    /// Overwrite the live dependents list (called by `WorkspaceShell::recompute_dependents`).
+    pub fn set_dependents(&mut self, deps: Vec<String>) {
+        self.dependents = deps;
     }
 
     fn epoch_of(&self, t: &str) -> u64 {

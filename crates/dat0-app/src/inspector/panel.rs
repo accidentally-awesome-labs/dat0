@@ -64,6 +64,24 @@ pub fn render_inspector(
             })),
     );
 
+    // Dependents section (P6a T11): shown whenever a target is selected.
+    // An empty list still shows the header with a "none" hint so users know
+    // the section exists. Forward lineage (Sql refs) is P6b.
+    if model.target_table.is_some() {
+        let heading =
+            div().child(SharedString::from(dat0_i18n::t("inspector.dependents")));
+        let body = if model.dependents.is_empty() {
+            div().child(SharedString::from("—"))
+        } else {
+            let mut rows = div().flex().flex_col().gap_1();
+            for dep in &model.dependents {
+                rows = rows.child(div().child(SharedString::from(dep.clone())));
+            }
+            rows
+        };
+        root = root.child(div().flex().flex_col().gap_1().child(heading).child(body));
+    }
+
     // Per-column cards (only when a profile is cached).
     if let Some(profile) = model.cached() {
         let mut cards = div().flex().flex_col().gap_2();

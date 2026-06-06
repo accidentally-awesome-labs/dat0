@@ -742,6 +742,11 @@ pub struct WorkspaceShell {
     /// by [`Self::refresh_catalog`] whenever the catalog could change (toggle /
     /// import / create / drop).
     pub(crate) catalog_tree: crate::catalog::CatalogTree,
+    /// Raw table list last fetched by [`Self::refresh_catalog`] (P6a T11).
+    /// Stored so `recompute_dependents` can run `dependents_of` without another
+    /// engine round-trip. The `CatalogTree` discards origin/parent info, so we
+    /// keep the full `Vec<TableInfo>` separately.
+    pub(crate) catalog_tables: Vec<dat0_engine::TableInfo>,
     /// Whether the right-dock Inspector panel is shown (P6a T9). Toggled by the
     /// `InspectorToggle` action; gates the inspector dock in `render`.
     pub(crate) inspector_panel_visible: bool,
@@ -799,6 +804,7 @@ impl WorkspaceShell {
             connections_panel_visible: false,
             catalog_panel_visible: false,
             catalog_tree: crate::catalog::CatalogTree::default(),
+            catalog_tables: Vec::new(),
             inspector_panel_visible: false,
             inspector: crate::inspector::InspectorModel::new(),
             banners: Vec::new(),
@@ -1411,6 +1417,8 @@ impl WorkspaceShell {
                     };
                     ws.update(app_cx, |ws, cx| {
                         ws.catalog_tree = crate::catalog::CatalogTree::build(&tables);
+                        ws.catalog_tables = tables;
+                        ws.recompute_dependents();
                         cx.notify();
                     });
                 });
@@ -1430,6 +1438,7 @@ impl WorkspaceShell {
     /// `open_table_tab`'s dispatcher closure (which has no `window`) call this.
     pub(crate) fn set_inspector_target(&mut self, name: String, cx: &mut gpui::Context<Self>) {
         self.inspector.set_target(name);
+        self.recompute_dependents();
         if self.inspector.cached().is_some() {
             // Warm hit — nothing to load; just repaint the dock.
             cx.notify();
@@ -1437,6 +1446,19 @@ impl WorkspaceShell {
         }
         self.load_inspector_profile(cx);
         cx.notify();
+    }
+
+    /// Recompute the Inspector's reverse-lineage dependents from the cached
+    /// `catalog_tables` (P6a T11). Called on every catalog refresh and on
+    /// `set_inspector_target`. Takes no `cx` so it can be called from closures
+    /// that hold `cx` borrowed elsewhere; the caller is responsible for
+    /// `cx.notify()` afterward.
+    pub(crate) fn recompute_dependents(&mut self) {
+        if let Some(target) = self.inspector.target_table.clone() {
+            let deps =
+                crate::inspector::dependents::dependents_of(&target, &self.catalog_tables);
+            self.inspector.set_dependents(deps);
+        }
     }
 
     /// Load the profile for the current inspector target off-thread, then write

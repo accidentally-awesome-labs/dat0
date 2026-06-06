@@ -78,6 +78,7 @@
   "inspector.empty": "No table selected",
   "inspector.mode.whole": "Whole table",
   "inspector.mode.view": "Current view",
+  "inspector.dependents": "Dependents",
   "connections.md.heading": "MotherDuck",
   "connections.md.status.disconnected": "Disconnected",
   "connections.md.status.connecting": "Connecting…",
