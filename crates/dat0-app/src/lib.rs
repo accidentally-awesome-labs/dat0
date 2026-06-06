@@ -12,6 +12,7 @@ pub mod file_drop;
 pub mod grid;
 pub mod import_progress;
 pub mod import_wizard;
+pub mod inspector;
 pub mod main_bridge;
 pub mod menu_macos;
 pub mod platform;
