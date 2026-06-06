@@ -9,7 +9,7 @@ pub struct InspectorModel {
     epoch: HashMap<String, u64>,
     cache: HashMap<(String, u64), TableProfile>,
     load_gen: u64,
-    pub search: String,            // consumed in T9
+    pub search: String,            // column-search box; wired in a later slice
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]

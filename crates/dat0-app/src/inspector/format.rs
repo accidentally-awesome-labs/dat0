@@ -41,6 +41,11 @@ pub fn format_stats_line(c: &ColumnProfile) -> String {
 /// Render a float compactly: integers drop the trailing `.0`, fractions keep two
 /// decimals (so `28.0 -> "28"`, `41.25 -> "41.25"`).
 fn trim(f: f64) -> String {
+    // `f as i64` is UB-adjacent for non-finite floats (saturates in practice);
+    // render NaN/±inf verbatim instead of casting.
+    if !f.is_finite() {
+        return format!("{f}");
+    }
     if f.fract() == 0.0 {
         format!("{}", f as i64)
     } else {
