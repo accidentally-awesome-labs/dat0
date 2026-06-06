@@ -74,7 +74,8 @@ that's modifying it; merge conflicts are signals worth investigating.
 | PD-018 | Pre-existing (P3a-era) grid-render gap surfaced during P4b T7: `GridTableDelegate::render_td` (`grid/mod.rs`) renders the em-dash placeholder for EVERY cell — it never calls `render_cell` or `page_for`, and `page_for` (the only method that populates the page LRU from DuckDB) has ZERO production callers (no `load_more`/visible-range/prefetch). So in the running app the grid shows `—` and the cache is empty. P4b's cache-only reads (`cell_display`/`row_key`/`column_arrow_type`) resolve nothing on screen, so copy reads empty strings and paste/cut/edit skip every cell. P4b edit/select/clipboard LOGIC is correct + fully test-green (engine round-trips), but the headline T14 manual Excel/Sheets UAT is BLOCKED until the paged-render cache is wired (render_td → real values via the page LRU + prefetch visible page on bind). Out of every P4b plan task's scope. **Closed (Path A):** `render_td` now does a synchronous LRU lookup → real `render_cell` value; the LRU is populated off-thread by `WorkspaceShell::prefetch_visible_rows` (page-0 prefetch on grid bind + the gpui-component `TableDelegate::visible_rows_changed` scroll hook), notifying the main thread via the `MainThreadDispatcher`. Also wired the right-click context menu (`ContextMenuExt`), a per-cell focus ring, and the forward-incompat recover banner. | closed | high |
 | PD-019 | P4c T13 wired header single-click → select-column but could NOT wire row-gutter click → select-row: the gpui-component `TableDelegate` trait (rev `0f0ab35`) has no `render_row_header`/gutter seam, and `TableState::render_table_row` owns the row layout internally. Two alternatives were rejected: (a) subscribing to `TableEvent::SelectRow` makes every row-body click select a whole row, clobbering the single-cell click selection wired in T5; (b) a fake first column holding row numbers corrupts the `col_ix` passed to `render_td` and breaks column addressing. `WorkspaceShell::select_row_at` IS implemented + reachable programmatically; the click wiring is unwired. | open | low |
 | PD-020 | P4c T14 wired inline-editor `Enter` → commit + move-DOWN + focus-on-mount, but `Tab` → commit + move-RIGHT could NOT be wired: gpui-component `Input` (rev `0f0ab35`) consumes Tab internally for focus tab-stops and surfaces no `InputEvent::PressTab` variant (`InputEvent` is `{ Change, PressEnter, Focus, Blur }`). `EditorAdvance` is enum-shaped so adding `Right` is a one-line extension once an upstream Tab seam exists. | open | low |
-| PD-021 | P4c (T11 review): `error_ux::push` enqueues success/error banners into the global `PENDING` queue, but NOTHING drains it in the runtime render tree — only `#[cfg(test)]` code calls `drain_pending`. So export completion/failure feedback (`window.rs::run_export`) AND the pre-existing P4b paste-reject banner (`grid/edit_ops.rs`) are invisible to the user at runtime. Needs a banner host mounted in the `WorkspaceShell` render tree that drains `error_ux::PENDING` and renders the `Banner`s. | open | medium |
+| PD-021 | P4c (T11 review): `error_ux::push` enqueues success/error banners into the global `PENDING` queue, but NOTHING drains it in the runtime render tree — only `#[cfg(test)]` code calls `drain_pending`. So export completion/failure feedback (`window.rs::run_export`) AND the pre-existing P4b paste-reject banner (`grid/edit_ops.rs`) are invisible to the user at runtime. **Closed by P6a T1:** `WorkspaceShell::render` now calls `error_ux::banner::merge_pending` into a per-window `banners` field and renders a host strip atop the shell. | closed | medium |
+| PD-022 | P6a (T12 review): the Inspector profile is refreshed on forward data/schema mutations (cell edit, paste, cut, delete, rename, reorder, transform-apply via `route_change`), but NOT on `undo`/`redo` or SQL-console grid-bind — those rebind via `apply_view_change`, which has no inspector hook. So undoing an edit (or rebinding a grid from the SQL console) leaves the inspector profile stale until the next forward mutation. Single well-scoped fix: hook `apply_view_change` (or an `on_rebind_complete` seam) to invalidate/re-profile the inspected table. Not a regression — the inspector did not refresh at all before P6a. | open | low |
 
 ## At-a-glance — Closed plan defects
 
@@ -437,7 +438,21 @@ that's modifying it; merge conflicts are signals worth investigating.
   **database-names-only** (`duckdb_databases()`). Per-table `TableOrigin::Attached`
   origins for attached databases remain deferred — the engine `attach()` still
   does not enumerate attached tables or record them in the origin registry.
-- **Last touched:** 2026-06-05
+- **P6a delivery (2026-06-06) — the attach remainder is now DONE.** P6a T4
+  implemented the deferred per-table attach enumeration: `catalog::list_attached_tables`
+  enumerates an attached catalog's tables/views (`duckdb_tables()`/`duckdb_views()`
+  filtered by `database_name`), and `attach()` writes a `TableOrigin::Attached {
+  alias, source }` per object into `table_origins` after a successful ATTACH (both
+  the sqlite/file branch and the MotherDuck workspace branch, keyed by real db
+  name); `detach()` prunes by alias. Enumeration is best-effort (a hiccup never
+  fails an already-successful ATTACH — see `refactor(p6a): attach origin-enumeration
+  best-effort`). This also fixed a latent bug: `get_tables` used an unqualified
+  `DESCRIBE "schema"."table"` that errored for any attached table, so `get_tables`
+  failed whenever a database was attached — now qualified 3-part
+  (`"db"."schema"."table"`). Commits `ff9926f` + `0d0b169`; test
+  `attach_records_per_table_attached_origin` in `tests/catalog_origin.rs`. The
+  P4/P5c attach remainder of D-012 is closed.
+- **Last touched:** 2026-06-06
 
 ### D-013 — Self-hosted macOS CI runner (cut hosted macos-14 10× billing)
 
@@ -1217,7 +1232,7 @@ that's modifying it; merge conflicts are signals worth investigating.
 
 ### PD-021 — Banner host unmounted: `error_ux::PENDING` is never drained at runtime
 
-- **Status:** open
+- **Status:** CLOSED — 2026-06-06 (P6a T1)
 - **Severity:** medium (no data loss; the operation succeeds — but the user gets
   zero on-screen confirmation/error feedback for exports and paste-rejects)
 - **Affected files:**
@@ -1258,7 +1273,42 @@ that's modifying it; merge conflicts are signals worth investigating.
 - **Originating doc:** `docs/plans/2026-05-31-dat0-p4c-plan.md` T11;
   `docs/deferrals.md` PD-007 (the queue's original "render layer drains later"
   intent).
-- **Last touched:** 2026-06-01.
+- **Closed by:** P6a T1 commit `13fdc6e` (`feat(p6a): mount banner host draining
+  error_ux PENDING (closes PD-021)`). `error_ux::banner::merge_pending(&mut
+  self.banners)` runs at the top of `WorkspaceShell::render`, draining the global
+  `PENDING` into a per-window `banners: Vec<Banner>` field; a host strip
+  (`render_banner` per banner, kind-accented left border) is mounted as the first
+  child of the shell root, before the tab strip. Test
+  `merge_pending_moves_global_into_live_vec` in `error_ux/banner.rs`.
+- **Last touched:** 2026-06-06.
+
+### PD-022 — Inspector profile not refreshed on undo/redo or SQL-console grid-bind
+
+- **Status:** open
+- **Severity:** low (transient visual staleness only; the next forward mutation,
+  table reselection, or mode toggle re-profiles correctly — no wrong data is
+  persisted, and the inspector did not auto-refresh at all before P6a)
+- **Affected files:**
+  - `crates/dat0-app/src/actions/view_actions.rs` (`dispatch_undo` / `dispatch_redo`
+    apply their `ViewChange` via `spawn_view_change` → `apply_view_change`)
+  - `crates/dat0-app/src/window.rs` (`apply_view_change` has no inspector hook;
+    the SQL-console `Bound(ds)` rebind in `MainGrid` mode also lands here)
+  - `crates/dat0-app/src/grid/edit_ops.rs` (forward mutations DO refresh, via
+    `on_table_mutated_structural` / `route_change` — the asymmetry is the gap)
+- **Symptom:** P6a T12 wired the hybrid write path so that forward data/schema
+  mutations (cell edit, paste, cut, delete, fill, set-null/value, column
+  rename/reorder/delete, transform-apply) invalidate + re-profile the inspected
+  table. Undo/redo and SQL-console grid-binds rebind the grid through
+  `apply_view_change`, which T12 did not hook, so the inspector profile (and its
+  inline charts/dependents) can show pre-undo state until the next forward event.
+- **Discovered:** P6a T12 code-quality + spec review (2026-06-06).
+- **Suggested fix:** Add a single inspector-refresh seam at the rebind convergence
+  point — either call `on_table_mutated_structural(target, cx)` from
+  `apply_view_change` (gated to data/schema-affecting changes to avoid a redundant
+  re-SUMMARIZE on pure display sort/filter), or introduce an `on_rebind_complete`
+  callback that both the undo/redo and SQL-bind paths already funnel through.
+- **Originating doc:** `docs/plans/2026-06-06-dat0-p6a-plan.md` T12.
+- **Last touched:** 2026-06-06.
 
 ---
 
