@@ -622,7 +622,17 @@ impl crate::QueryEngine for DuckDBEngine {
                 let _ = alias;
                 let sql = crate::attach::build_attach_md_sql(&opts);
                 let conn = self.conn.clone();
-                return tokio::task::spawn_blocking(move || -> Result<()> {
+                // D-012: enumerate the account's databases (those with
+                // `lower(type)='motherduck'` in `duckdb_databases()`) and record
+                // an `Attached` origin per table/view, keyed by the REAL db name
+                // (workspace mode has no alias). Returns the `(real_db, table)`
+                // pairs from the blocking task; the origin-map write happens after
+                // the await. This runs on BOTH the fresh ATTACH and the idempotent
+                // `already_attached` short-circuit so reconnect re-populates.
+                // Best-effort: an enumeration hiccup must NOT fail an attach that
+                // already succeeded, so enumeration errors collapse to an empty
+                // list rather than propagating.
+                let pairs = tokio::task::spawn_blocking(move || -> Result<Vec<(String, String)>> {
                     let conn = conn.lock().map_err(|_| EngineError::EnginePoisoned)?;
                     conn.execute_batch("LOAD motherduck;")
                         .map_err(|_| EngineError::ExtensionLoad { name: "motherduck" })?;
@@ -639,45 +649,98 @@ impl crate::QueryEngine for DuckDBEngine {
                         )
                         .map(|n| n > 0)
                         .unwrap_or(false);
-                    if already_attached {
-                        return Ok(());
+                    if !already_attached {
+                        // `ATTACH 'md:'` (workspace mode) can switch the current
+                        // database to a MotherDuck db; capture + restore the local
+                        // one so the engine's scratch tables stay reachable unqualified.
+                        let current_db: Option<String> = conn
+                            .query_row("SELECT current_database()", [], |r| r.get(0))
+                            .ok();
+                        conn.execute_batch(&sql).map_err(|_| {
+                            // A failed ATTACH after a good extension load is almost
+                            // always a bad/expired token; surface as auth. The error
+                            // is dropped (not logged) because it can echo token-
+                            // adjacent text.
+                            EngineError::MotherDuckAuth
+                        })?;
+                        if let Some(db) = current_db {
+                            let _ = conn.execute_batch(&format!("USE {};", quote_ident(&db)));
+                        }
                     }
-                    // `ATTACH 'md:'` (workspace mode) can switch the current
-                    // database to a MotherDuck db; capture + restore the local
-                    // one so the engine's scratch tables stay reachable unqualified.
-                    let current_db: Option<String> = conn
-                        .query_row("SELECT current_database()", [], |r| r.get(0))
-                        .ok();
-                    conn.execute_batch(&sql).map_err(|_| {
-                        // A failed ATTACH after a good extension load is almost
-                        // always a bad/expired token; surface as auth. The error
-                        // is dropped (not logged) because it can echo token-
-                        // adjacent text.
-                        EngineError::MotherDuckAuth
-                    })?;
-                    if let Some(db) = current_db {
-                        let _ = conn.execute_batch(&format!("USE {};", quote_ident(&db)));
+                    // Enumerate the attached MotherDuck catalogs by real db name.
+                    let md_dbs: Vec<String> = (|| -> Result<Vec<String>> {
+                        let mut stmt = conn.prepare(
+                            "SELECT database_name FROM duckdb_databases() \
+                             WHERE lower(type) = 'motherduck'",
+                        )?;
+                        let v = stmt
+                            .query_map([], |r| r.get::<_, String>(0))?
+                            .filter_map(std::result::Result::ok)
+                            .collect();
+                        Ok(v)
+                    })()
+                    .unwrap_or_default();
+                    let mut pairs = Vec::new();
+                    for db in md_dbs {
+                        if let Ok(rows) = crate::catalog::list_attached_tables(&conn, &db) {
+                            for (_schema, table) in rows {
+                                pairs.push((db.clone(), table));
+                            }
+                        }
                     }
-                    Ok(())
+                    Ok(pairs)
                 })
                 .await
-                .map_err(|e| EngineError::TaskJoin(e.to_string()))?;
+                .map_err(|e| EngineError::TaskJoin(e.to_string()))??;
+                let mut origins = self.table_origins.write().expect("table_origins poisoned");
+                for (db, table) in pairs {
+                    origins.insert(
+                        table,
+                        TableOrigin::Attached {
+                            alias: db,
+                            source: dsn.to_owned(),
+                        },
+                    );
+                }
+                return Ok(());
             }
             crate::attach::AttachScheme::Sqlite => {}
         }
         let sql = crate::attach::build_attach_sqlite_sql(rest, alias, &opts);
         let conn = self.conn.clone();
-        tokio::task::spawn_blocking(move || -> Result<()> {
+        // D-012: after a successful ATTACH, enumerate the attached catalog's
+        // tables/views (`database_name = <alias>`) and record an
+        // `Attached { alias, source }` origin per object. We do the enumeration
+        // inside the SAME spawn_blocking that ran the ATTACH (the connection is
+        // already held there) and return the names; the map write happens after
+        // the await, off the blocking lock.
+        let alias_owned = alias.to_owned();
+        let source = dsn.to_owned();
+        let names = tokio::task::spawn_blocking(move || -> Result<Vec<String>> {
             let conn = conn.lock().map_err(|_| EngineError::EnginePoisoned)?;
             conn.execute_batch(&sql)?;
-            Ok(())
+            let names = crate::catalog::list_attached_tables(&conn, &alias_owned)?
+                .into_iter()
+                .map(|(_schema, table)| table)
+                .collect();
+            Ok(names)
         })
         .await
-        .map_err(|e| EngineError::TaskJoin(e.to_string()))?
-        // TODO P4 (D-012 partial): `attach` does not enumerate attached tables,
-        // so per-table `TableOrigin::Attached { alias, source }` entries are not
-        // recorded in `table_origins` here. Enumeration logic belongs in P4;
-        // the map write site will be added at that point.
+        .map_err(|e| EngineError::TaskJoin(e.to_string()))??;
+        // Bare-name keying matches the existing `table_origins` convention
+        // (last-writer-wins): a local and attached table sharing a name collide.
+        // Qualified-key resolution is out of P6a scope.
+        let mut origins = self.table_origins.write().expect("table_origins poisoned");
+        for name in names {
+            origins.insert(
+                name,
+                TableOrigin::Attached {
+                    alias: alias.to_owned(),
+                    source: source.clone(),
+                },
+            );
+        }
+        Ok(())
     }
 
     #[instrument(skip(self), fields(alias))]
@@ -691,7 +754,17 @@ impl crate::QueryEngine for DuckDBEngine {
             Ok(())
         })
         .await
-        .map_err(|e| EngineError::TaskJoin(e.to_string()))?
+        .map_err(|e| EngineError::TaskJoin(e.to_string()))??;
+        // D-012: prune the origins this alias contributed. Keyed by bare table
+        // name (matching the existing convention), so we match on the recorded
+        // Attached.alias rather than the table name.
+        self.table_origins
+            .write()
+            .expect("table_origins poisoned")
+            .retain(|_, o| {
+                !matches!(o, crate::types::TableOrigin::Attached { alias: a, .. } if a == alias)
+            });
+        Ok(())
     }
 
     #[instrument(skip(self), fields(table = table))]
