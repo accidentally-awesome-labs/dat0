@@ -131,11 +131,9 @@ pub(crate) fn profile_blocking(conn: &Connection, target: &str) -> Result<TableP
     }
     // Total row count = exact via count(*).
     let rows: u64 = conn
-        .query_row(
-            &format!("SELECT count(*)::BIGINT FROM {target}"),
-            [],
-            |r| r.get::<_, i64>(0),
-        )
+        .query_row(&format!("SELECT count(*)::BIGINT FROM {target}"), [], |r| {
+            r.get::<_, i64>(0)
+        })
         .map(|n| n as u64)
         .unwrap_or(rows_total);
     Ok(TableProfile { rows, columns })

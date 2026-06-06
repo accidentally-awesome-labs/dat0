@@ -157,7 +157,7 @@ pub fn merge_pending(live: &mut Vec<Banner>) {
     live.append(&mut drain_pending());
 }
 
-use gpui::{div, px, IntoElement, ParentElement, Styled};
+use gpui::{IntoElement, ParentElement, Styled, div, px};
 
 /// Render one banner as an inline notice. Kind drives the accent color.
 pub fn render_banner(b: &Banner) -> impl IntoElement {
@@ -176,7 +176,11 @@ pub fn render_banner(b: &Banner) -> impl IntoElement {
         .border_l_4()
         .border_color(accent)
         .bg(gpui::rgba(0x80808014))
-        .child(div().font_weight(gpui::FontWeight::SEMIBOLD).child(b.title.clone()))
+        .child(
+            div()
+                .font_weight(gpui::FontWeight::SEMIBOLD)
+                .child(b.title.clone()),
+        )
         .children((!b.body.is_empty()).then(|| div().text_size(px(12.0)).child(b.body.clone())))
 }
 

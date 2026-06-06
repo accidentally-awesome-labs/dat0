@@ -791,8 +791,14 @@ mod tests {
 
         let ui = recovered.ui();
         assert!(ui.catalog_panel_visible, "catalog dock visibility survived");
-        assert!(ui.inspector_panel_visible, "inspector dock visibility survived");
-        assert_eq!(ui.catalog_expanded, vec!["orders".to_string(), "sales".to_string()]);
+        assert!(
+            ui.inspector_panel_visible,
+            "inspector dock visibility survived"
+        );
+        assert_eq!(
+            ui.catalog_expanded,
+            vec!["orders".to_string(), "sales".to_string()]
+        );
         assert_eq!(ui.catalog_selection.as_deref(), Some("orders"));
     }
 

@@ -57,7 +57,11 @@ pub fn render_catalog(
 /// A clickable catalog row that opens `name` into the main grid. Mirrors the
 /// `action_button` idiom in [`crate::connections::panel`]
 /// (`div().id(..).cursor_pointer().on_click(cx.listener(..))`).
-fn catalog_row(section: &str, name: &str, cx: &mut Context<WorkspaceShell>) -> gpui::Stateful<gpui::Div> {
+fn catalog_row(
+    section: &str,
+    name: &str,
+    cx: &mut Context<WorkspaceShell>,
+) -> gpui::Stateful<gpui::Div> {
     let name = name.to_string();
     // ElementId must be unique within the render pass: a table name can recur
     // across sections (e.g. an attached `events` and a local derived `events`),

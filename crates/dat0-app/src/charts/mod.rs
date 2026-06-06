@@ -56,12 +56,7 @@ pub fn bar_fraction(count: u64, max: u64) -> f64 {
 /// Histogram as a row of vertical quads, each scaled to the tallest bin.
 pub fn render_histogram(bins: &[Bin]) -> impl IntoElement {
     let max = bins.iter().map(|b| b.count).max().unwrap_or(0);
-    let mut row = div()
-        .flex()
-        .flex_row()
-        .items_end()
-        .gap(px(1.0))
-        .h(px(28.0));
+    let mut row = div().flex().flex_row().items_end().gap(px(1.0)).h(px(28.0));
     for b in bins {
         let frac = bar_fraction(b.count, max);
         row = row.child(
@@ -87,12 +82,7 @@ pub fn render_topn(items: &[(String, u64)]) -> impl IntoElement {
                 .flex_row()
                 .items_center()
                 .gap_2()
-                .child(
-                    div()
-                        .w(px(70.0))
-                        .text_size(px(11.0))
-                        .child(label.clone()),
-                )
+                .child(div().w(px(70.0)).text_size(px(11.0)).child(label.clone()))
                 .child(
                     div()
                         .h(px(8.0))

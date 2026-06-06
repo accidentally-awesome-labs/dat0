@@ -68,8 +68,7 @@ pub fn render_inspector(
     // An empty list still shows the header with a "none" hint so users know
     // the section exists. Forward lineage (Sql refs) is P6b.
     if model.target_table.is_some() {
-        let heading =
-            div().child(SharedString::from(dat0_i18n::t("inspector.dependents")));
+        let heading = div().child(SharedString::from(dat0_i18n::t("inspector.dependents")));
         let body = if model.dependents.is_empty() {
             div().child(SharedString::from("—"))
         } else {

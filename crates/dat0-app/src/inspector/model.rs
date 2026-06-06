@@ -1,15 +1,15 @@
 //! Pure Inspector state: target + (table,epoch)-keyed profile cache + load supersede.
-use std::collections::HashMap;
 use dat0_engine::TableProfile;
+use std::collections::HashMap;
 
 #[derive(Default)]
 pub struct InspectorModel {
     pub target_table: Option<String>,
-    pub mode: ProfileTargetMode,   // WholeTable ⇄ CurrentView profiling toggle
+    pub mode: ProfileTargetMode, // WholeTable ⇄ CurrentView profiling toggle
     epoch: HashMap<String, u64>,
     cache: HashMap<(String, u64), TableProfile>,
     load_gen: u64,
-    pub search: String,            // column-search box; wired in a later slice
+    pub search: String, // column-search box; wired in a later slice
     /// Per-column lazy chart data (T10), keyed by column name. Cleared on any
     /// table change in `set_target` so table A's bars never paint over table B.
     column_extras: HashMap<String, ColumnExtra>,
@@ -168,7 +168,10 @@ mod tests {
             numeric: None,
             length: None,
         };
-        m.put(TableProfile { rows: 1, columns: vec![mk("a", 1), mk("b", 1)] });
+        m.put(TableProfile {
+            rows: 1,
+            columns: vec![mk("a", 1), mk("b", 1)],
+        });
         m.patch_column("b", mk("b", 99));
         let cols = &m.cached().unwrap().columns;
         assert_eq!(
@@ -184,6 +187,9 @@ mod tests {
     }
 
     fn fake_profile() -> dat0_engine::TableProfile {
-        dat0_engine::TableProfile { rows: 1, columns: vec![] }
+        dat0_engine::TableProfile {
+            rows: 1,
+            columns: vec![],
+        }
     }
 }

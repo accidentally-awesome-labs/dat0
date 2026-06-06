@@ -29,10 +29,7 @@ async fn profile_table_maps_numeric_and_string() {
     let n = amount.numeric.as_ref().unwrap();
     assert_eq!(n.min, 10.0);
     assert_eq!(n.max, 40.0);
-    assert!(
-        (amount.null_pct - 25.0).abs() < 0.01,
-        "1 of 4 null → 25%"
-    );
+    assert!((amount.null_pct - 25.0).abs() < 0.01, "1 of 4 null → 25%");
 
     let status = prof
         .columns

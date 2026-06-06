@@ -1,5 +1,5 @@
 //! Reverse-lineage dependents for the Inspector (P6a T11). Forward lineage = P6b.
-use dat0_engine::{TableInfo, TableOrigin, DerivedOrigin};
+use dat0_engine::{DerivedOrigin, TableInfo, TableOrigin};
 
 /// Tables whose origin is a Transform with `parent == table`. Best-effort:
 /// `Derived::Sql` references are NOT matched in P6a (P6b formalizes lineage).
@@ -18,7 +18,7 @@ pub fn dependents_of(table: &str, tables: &[TableInfo]) -> Vec<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use dat0_engine::{TableInfo, TableOrigin, DerivedOrigin};
+    use dat0_engine::{DerivedOrigin, TableInfo, TableOrigin};
 
     fn t(name: &str, o: TableOrigin) -> TableInfo {
         TableInfo {

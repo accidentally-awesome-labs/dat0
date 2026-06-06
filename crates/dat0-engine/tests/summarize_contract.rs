@@ -65,10 +65,7 @@ async fn summarize_emits_expected_columns() {
         // column_name is the first projected column and is a string.
         let b = res.batches.first().expect("one batch");
         assert!(
-            b.column(0)
-                .as_any()
-                .downcast_ref::<StringArray>()
-                .is_some(),
+            b.column(0).as_any().downcast_ref::<StringArray>().is_some(),
             "column_name expected StringArray"
         );
     }

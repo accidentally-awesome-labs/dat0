@@ -79,9 +79,6 @@ mod tests {
         let s = format_stats_line(&c);
         assert!(s.contains("min 0"), "{s}");
         assert!(s.contains("med 28"), "{s}");
-        assert!(
-            format_distinct(&c).contains("approx"),
-            "HLL labeled approx"
-        );
+        assert!(format_distinct(&c).contains("approx"), "HLL labeled approx");
     }
 }

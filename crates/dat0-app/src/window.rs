@@ -1427,9 +1427,7 @@ impl WorkspaceShell {
                     });
                 });
             } else {
-                tracing::warn!(
-                    "refresh_catalog: no MainThreadDispatcher installed; catalog stale"
-                );
+                tracing::warn!("refresh_catalog: no MainThreadDispatcher installed; catalog stale");
             }
         });
     }
@@ -1459,8 +1457,7 @@ impl WorkspaceShell {
     /// `cx.notify()` afterward.
     pub(crate) fn recompute_dependents(&mut self) {
         if let Some(target) = self.inspector.target_table.clone() {
-            let deps =
-                crate::inspector::dependents::dependents_of(&target, &self.catalog_tables);
+            let deps = crate::inspector::dependents::dependents_of(&target, &self.catalog_tables);
             self.inspector.set_dependents(deps);
         }
     }
@@ -1498,9 +1495,9 @@ impl WorkspaceShell {
         // For CurrentView mode, compile the active view's SELECT off the view_model.
         let view_sql: Option<String> =
             if matches!(mode, crate::inspector::ProfileTargetMode::CurrentView) {
-                self.view_model.as_ref().and_then(|vm| {
-                    dat0_engine::compile_view_sql(vm.base_table(), vm.active()).ok()
-                })
+                self.view_model
+                    .as_ref()
+                    .and_then(|vm| dat0_engine::compile_view_sql(vm.base_table(), vm.active()).ok())
             } else {
                 None
             };
@@ -1560,7 +1557,10 @@ impl WorkspaceShell {
         profile: dat0_engine::TableProfile,
         cx: &mut gpui::Context<Self>,
     ) {
-        if !matches!(self.inspector.mode, crate::inspector::ProfileTargetMode::WholeTable) {
+        if !matches!(
+            self.inspector.mode,
+            crate::inspector::ProfileTargetMode::WholeTable
+        ) {
             return;
         }
         let Some(table) = self.inspector.target_table.clone() else {
@@ -1619,8 +1619,7 @@ impl WorkspaceShell {
                         };
                         let mut values: Vec<f64> = Vec::new();
                         for batch in &result.batches {
-                            if let Some(a) =
-                                batch.column(0).as_any().downcast_ref::<Float64Array>()
+                            if let Some(a) = batch.column(0).as_any().downcast_ref::<Float64Array>()
                             {
                                 for row in 0..a.len() {
                                     if a.is_valid(row) {
@@ -1632,12 +1631,8 @@ impl WorkspaceShell {
                         if values.is_empty() {
                             return;
                         }
-                        let bins = crate::charts::histogram_bins(
-                            numeric.min,
-                            numeric.max,
-                            &values,
-                            16,
-                        );
+                        let bins =
+                            crate::charts::histogram_bins(numeric.min, numeric.max, &values, 16);
                         Self::dispatch_extra(ws_weak, load_id, move |ws, cx| {
                             ws.inspector.put_histogram(&col_name, bins);
                             cx.notify();
@@ -3390,9 +3385,13 @@ impl Render for WorkspaceShell {
                     .flex_1()
                     // Catalog dock first → order is Catalog | Connections | body.
                     .children(self.catalog_panel_visible.then(|| {
-                        div().w_64().border_r_1().child(
-                            crate::catalog::panel::render_catalog(&self.catalog_tree, cx),
-                        )
+                        div()
+                            .w_64()
+                            .border_r_1()
+                            .child(crate::catalog::panel::render_catalog(
+                                &self.catalog_tree,
+                                cx,
+                            ))
                     }))
                     .children(self.connections_panel_visible.then(|| {
                         div().w_64().border_r_1().child(
@@ -3402,9 +3401,13 @@ impl Render for WorkspaceShell {
                     .child(div().flex_1().child(body))
                     // Inspector right dock last → Catalog | Connections | body | Inspector.
                     .children(self.inspector_panel_visible.then(|| {
-                        div().w_72().border_l_1().child(
-                            crate::inspector::panel::render_inspector(&self.inspector, cx),
-                        )
+                        div()
+                            .w_72()
+                            .border_l_1()
+                            .child(crate::inspector::panel::render_inspector(
+                                &self.inspector,
+                                cx,
+                            ))
                     })),
             )
             .children(popover_overlay)
