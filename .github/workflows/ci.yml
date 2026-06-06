@@ -156,16 +156,20 @@ jobs:
       # Bench is macOS-only (single host class — variance across runners
       # makes cross-OS comparison meaningless). Artifact-only at P3a; spec
       # line 819 defers the merge-gate threshold to P10.
-      - name: Bench — grid scroll (macOS only)
-        if: runner.os == 'macOS'
+      #
+      # Gated to push events (i.e. merges to main), NOT pull_request: `cargo
+      # bench` recompiles DuckDB from source in a THIRD profile on top of the
+      # debug (Test) + release (Build) trees, which exhausted the macOS runner's
+      # ~14 GB disk on P5c PR runs ("No space left on device" in libduckdb-sys
+      # ranlib), failing the whole job — and a disk-dead runner can't be rescued
+      # by continue-on-error. Since the bench is advisory (not a gate), skip it
+      # on PR CI to keep disk headroom; it still runs post-merge on main.
+      - name: Bench — grid scroll (macOS only, push to main)
+        if: runner.os == 'macOS' && github.event_name != 'pull_request'
         run: |
           cargo bench -p dat0-app --bench grid_scroll -- --output-format=bencher | tee bench.txt
       - name: Upload bench artifact
-        if: runner.os == 'macOS'
-        # The bench is advisory/artifact-only (not a merge gate; threshold
-        # deferred to P10), so a flaky upload must NOT red the build-and-test
-        # check — observed `actions/upload-artifact` hang on a P5c run while
-        # every real step (incl. the MotherDuck integration tests) passed.
+        if: runner.os == 'macOS' && github.event_name != 'pull_request'
         continue-on-error: true
         uses: actions/upload-artifact@v4
         with:
