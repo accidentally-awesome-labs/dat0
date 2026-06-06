@@ -9,7 +9,7 @@ use crate::types::{ColumnInfo, DerivedOrigin, TableInfo, TableOrigin};
 /// position. DuckDB doubles `"` to `""` inside `"..."`, the same way SQL
 /// string literals double `'` to `''`. Without this, a name containing
 /// `"` could break out of the quoted-identifier and inject SQL.
-pub(crate) fn quote_ident(name: &str) -> String {
+pub fn quote_ident(name: &str) -> String {
     format!("\"{}\"", name.replace('"', "\"\""))
 }
 
@@ -18,7 +18,18 @@ pub(crate) fn describe_table(
     name: &str,
     schema: Option<&str>,
 ) -> Result<Vec<ColumnInfo>> {
-    let qualified = qualified_name(name, schema);
+    describe_qualified(conn, &qualified_name(name, schema))
+}
+
+/// Run `DESCRIBE <fully-qualified>` and map the column rows.
+///
+/// Shared by the public `describe_table` (default-database, 1- or 2-part name)
+/// and by `get_tables`, which qualifies with the catalog/`database_name` so that
+/// ATTACHed tables resolve. A `DESCRIBE "main"."items"` for an attached table is
+/// a DuckDB Catalog Error ("Table with name items does not exist! Did you mean
+/// \"sq.items\"?") because the unqualified 2-part name binds against the DEFAULT
+/// database, not the attached catalog — hence the database-aware path below.
+fn describe_qualified(conn: &duckdb::Connection, qualified: &str) -> Result<Vec<ColumnInfo>> {
     let mut stmt = conn.prepare(&format!("DESCRIBE {}", qualified))?;
     let cols: Vec<ColumnInfo> = stmt
         .query_map([], |row| {
@@ -34,6 +45,32 @@ pub(crate) fn describe_table(
         .filter_map(std::result::Result::ok)
         .collect();
     Ok(cols)
+}
+
+/// Enumerate `(schema, table)` of an attached catalog by its `database_name`.
+///
+/// Covers both base tables (`duckdb_tables()`) and views (`duckdb_views()`),
+/// excluding internal/temporary objects. Used by `attach` (D-012) to record an
+/// `Attached` origin per object; verified against a live SQLite attach where the
+/// rows surface with `database_name='<alias>'`, `schema_name='main'`.
+pub(crate) fn list_attached_tables(
+    conn: &duckdb::Connection,
+    database: &str,
+) -> Result<Vec<(String, String)>> {
+    let mut stmt = conn.prepare(
+        "SELECT schema_name, table_name FROM duckdb_tables()
+         WHERE database_name = ? AND NOT internal AND NOT temporary
+         UNION ALL
+         SELECT schema_name, view_name FROM duckdb_views()
+         WHERE database_name = ? AND NOT internal AND NOT temporary",
+    )?;
+    let rows = stmt
+        .query_map([database, database], |r| {
+            Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?))
+        })?
+        .filter_map(std::result::Result::ok)
+        .collect();
+    Ok(rows)
 }
 
 pub(crate) fn get_tables(
@@ -59,31 +96,53 @@ pub(crate) fn get_tables(
     //
     // PD-014 context: T13 calls create_or_replace_view on every chain mutation;
     // without this filter every active tab would inject a phantom sidebar entry.
+    //
+    // database_name (D-012): we also select `database_name` so attached catalogs
+    // (e.g. an ATTACHed SQLite db) are described against the RIGHT database.
+    // `describe_table(conn, name, Some("main"))` builds `DESCRIBE "main"."items"`,
+    // which binds against the DEFAULT database and errors for an attached table
+    // ("Table with name items does not exist! Did you mean \"sq.items\"?"). We
+    // therefore qualify DESCRIBE with all three parts: `"db"."schema"."table"`.
+    // This is correct for local tables too — the engine's own db carries a real
+    // `database_name` and the 3-part name resolves identically. `system`/`temp`
+    // are excluded so we never surface DuckDB's internal catalogs.
     let mut stmt = conn.prepare(
-        "SELECT schema_name AS table_schema, table_name
+        "SELECT database_name, schema_name AS table_schema, table_name
          FROM duckdb_tables()
          WHERE schema_name NOT IN ('information_schema', 'pg_catalog')
+           AND database_name NOT IN ('system', 'temp')
            AND NOT internal
            AND NOT temporary
            AND table_name NOT LIKE '__dat0_meta%'
          UNION ALL
-         SELECT schema_name AS table_schema, view_name AS table_name
+         SELECT database_name, schema_name AS table_schema, view_name AS table_name
          FROM duckdb_views()
          WHERE schema_name NOT IN ('information_schema', 'pg_catalog')
+           AND database_name NOT IN ('system', 'temp')
            AND NOT internal
            AND NOT temporary
            AND view_name NOT LIKE '__dat0_meta%'",
     )?;
-    let rows: Vec<(String, String)> = stmt
+    let rows: Vec<(String, String, String)> = stmt
         .query_map([], |row| {
-            Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+            Ok((
+                row.get::<_, String>(0)?,
+                row.get::<_, String>(1)?,
+                row.get::<_, String>(2)?,
+            ))
         })?
         .filter_map(std::result::Result::ok)
         .collect();
 
     let mut tables = Vec::with_capacity(rows.len());
-    for (schema, name) in rows {
-        let cols = describe_table(conn, &name, Some(&schema))?;
+    for (database, schema, name) in rows {
+        let qualified = format!(
+            "{}.{}.{}",
+            quote_ident(&database),
+            quote_ident(&schema),
+            quote_ident(&name)
+        );
+        let cols = describe_qualified(conn, &qualified)?;
         let origin = origins
             .get(&name)
             .cloned()

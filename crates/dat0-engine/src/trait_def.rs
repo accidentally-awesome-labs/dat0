@@ -78,6 +78,58 @@ pub trait QueryEngine: Send + Sync {
     async fn describe_table(&self, name: &str, schema: Option<&str>) -> Result<Vec<ColumnInfo>>;
     async fn get_tables(&self) -> Result<Vec<TableInfo>>;
 
+    /// Profile every column of `name` in one `SUMMARIZE` scan (per design D2):
+    /// null%, approx-distinct, per-type min/max, and numeric stats (avg/std/
+    /// quartiles) where applicable. Distinct% is approximate (HLL).
+    ///
+    /// `name` is a plain (unquoted) identifier; quoting is applied internally.
+    /// `schema` qualifies the table when present.
+    ///
+    /// # Errors
+    /// - `EngineError::EngineClosed` — if the engine has been closed.
+    /// - `EngineError::DuckDb` — if the table does not exist or SUMMARIZE fails.
+    /// - `EngineError::EnginePoisoned` — if the connection mutex was poisoned.
+    async fn profile_table(
+        &self,
+        name: &str,
+        schema: Option<&str>,
+    ) -> Result<crate::profile::TableProfile>;
+
+    /// Profile the result set of an arbitrary `SELECT` (a view target) via one
+    /// `SUMMARIZE` over the wrapped subquery, plus an exact `count(*)`. Use this
+    /// for derived/filtered views where the rows are not a stored table.
+    ///
+    /// `sql` is a complete SELECT; it is wrapped in parens internally.
+    ///
+    /// # Errors
+    /// - `EngineError::EngineClosed` — if the engine has been closed.
+    /// - `EngineError::DuckDb` — if `sql` is invalid or SUMMARIZE fails.
+    /// - `EngineError::EnginePoisoned` — if the connection mutex was poisoned.
+    async fn profile_query(&self, sql: &str) -> Result<crate::profile::TableProfile>;
+
+    /// Top-`n` most frequent values of `col` in `table`, as `(value, count)`
+    /// pairs ordered by descending count. Values are cast to VARCHAR; NULL
+    /// renders as `∅`. `table`/`col` are plain identifiers (quoted internally).
+    ///
+    /// # Errors
+    /// - `EngineError::EngineClosed` — if the engine has been closed.
+    /// - `EngineError::DuckDb` — if the table/column does not exist.
+    /// - `EngineError::EnginePoisoned` — if the connection mutex was poisoned.
+    async fn column_topn(&self, table: &str, col: &str, n: u64) -> Result<Vec<(String, u64)>>;
+
+    /// Min/max/avg of `length(col)` over `table` (string-length distribution).
+    /// `table`/`col` are plain identifiers (quoted internally).
+    ///
+    /// # Errors
+    /// - `EngineError::EngineClosed` — if the engine has been closed.
+    /// - `EngineError::DuckDb` — if the table/column does not exist.
+    /// - `EngineError::EnginePoisoned` — if the connection mutex was poisoned.
+    async fn column_length_stats(
+        &self,
+        table: &str,
+        col: &str,
+    ) -> Result<crate::profile::LengthStats>;
+
     async fn export_table(&self, name: &str, format: ExportFormat) -> Result<Vec<u8>>;
 
     /// Stream a SELECT to `dest` via DuckDB `COPY … TO`. Writes straight to

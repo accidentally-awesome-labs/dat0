@@ -735,6 +735,28 @@ pub struct WorkspaceShell {
     /// Whether the left-dock Connections panel is shown (P5c T10/T11). Toggled by
     /// the `ConnectionsToggle` action; gates the panel in `render`.
     pub(crate) connections_panel_visible: bool,
+    /// Whether the left-dock Catalog panel is shown (P6a T7). Toggled by the
+    /// `CatalogToggle` action; gates the catalog dock in `render`.
+    pub(crate) catalog_panel_visible: bool,
+    /// Live catalog tree rendered by the Catalog dock (P6a T7). Rebuilt off-thread
+    /// by [`Self::refresh_catalog`] whenever the catalog could change (toggle /
+    /// import / create / drop).
+    pub(crate) catalog_tree: crate::catalog::CatalogTree,
+    /// Raw table list last fetched by [`Self::refresh_catalog`] (P6a T11).
+    /// Stored so `recompute_dependents` can run `dependents_of` without another
+    /// engine round-trip. The `CatalogTree` discards origin/parent info, so we
+    /// keep the full `Vec<TableInfo>` separately.
+    pub(crate) catalog_tables: Vec<dat0_engine::TableInfo>,
+    /// Whether the right-dock Inspector panel is shown (P6a T9). Toggled by the
+    /// `InspectorToggle` action; gates the inspector dock in `render`.
+    pub(crate) inspector_panel_visible: bool,
+    /// Inspector state: profile target + (table,epoch)-keyed profile cache +
+    /// load supersede (P6a T8). Profiles are loaded off-thread by
+    /// [`Self::load_inspector_profile`].
+    pub(crate) inspector: crate::inspector::InspectorModel,
+    /// Per-window live banner list (PD-021). Drained from `error_ux::banner::PENDING`
+    /// on each render; rendered as a host strip atop the shell.
+    pub(crate) banners: Vec<crate::error_ux::banner::Banner>,
     /// Token-entry modal (reuses [`NamePrompt`](crate::view::name_prompt::NamePrompt)).
     /// `Some` while the MotherDuck token prompt is open; cleared on Confirm /
     /// Cancel. Rendered as a window overlay child in `render` when present.
@@ -748,6 +770,10 @@ pub struct WorkspaceShell {
 
 impl WorkspaceShell {
     pub fn new(session: Arc<Mutex<Session>>, cx: &mut Context<Self>) -> Self {
+        // Restore persisted catalog/inspector dock visibility (P6a T13, session
+        // v8 `ui`). Read into a local BEFORE building the struct so we don't hold
+        // the session lock across the whole ctor.
+        let ui = session.lock().ui().clone();
         Self {
             session,
             data_source: None,
@@ -780,6 +806,12 @@ impl WorkspaceShell {
             saved_picker_open: false,
             connections: Default::default(),
             connections_panel_visible: false,
+            catalog_panel_visible: ui.catalog_panel_visible,
+            catalog_tree: crate::catalog::CatalogTree::default(),
+            catalog_tables: Vec::new(),
+            inspector_panel_visible: ui.inspector_panel_visible,
+            inspector: crate::inspector::InspectorModel::new(),
+            banners: Vec::new(),
             md_token_prompt: None,
             md_token_prompt_sub: None,
         }
@@ -1252,6 +1284,10 @@ impl WorkspaceShell {
         if self.sql_console_visible {
             self.refresh_completion_snapshot(cx);
         }
+        // Keep the Catalog dock fresh if it's open (P6a T7).
+        if self.catalog_panel_visible {
+            self.refresh_catalog(cx);
+        }
         cx.notify();
     }
 
@@ -1308,6 +1344,348 @@ impl WorkspaceShell {
                 );
             }
         });
+    }
+
+    /// Open `name` into the main grid (P6a T7). The main window is single-view —
+    /// one `view_model` at a time — so "open" mirrors the file-import load path
+    /// (window.rs `last_registered` branch): build a `GridDataSource` off-thread,
+    /// then on the main thread install a fresh `ViewModel` + data source.
+    ///
+    /// Bridge: a raw `tokio::spawn` + the `window_registry::dispatcher()` →
+    /// upgraded weak handle, matching `refresh_completion_snapshot` (the import
+    /// branch's `async_cx.update` bridge is only reachable from inside the render
+    /// `cx.spawn`; this is an on-click handler, so the dispatcher bridge is the
+    /// canonical off-thread→main-thread write here).
+    pub(crate) fn open_table_tab(
+        &mut self,
+        name: String,
+        _window: &mut gpui::Window,
+        cx: &mut gpui::Context<Self>,
+    ) {
+        let engine = self.engine();
+        let ws_weak = cx.entity().downgrade();
+        tokio::spawn(async move {
+            match crate::grid::GridDataSource::new(engine, name.clone()).await {
+                Ok(ds) => {
+                    if let Some(dispatcher) = crate::window_registry::dispatcher() {
+                        let _ = dispatcher.dispatch(move |app_cx: &mut gpui::App| {
+                            let Some(ws) = ws_weak.upgrade() else {
+                                return;
+                            };
+                            ws.update(app_cx, |ws, cx| {
+                                // base_table passed to ViewModel must already be quoted.
+                                let quoted = format!("\"{}\"", name.replace('"', "\"\""));
+                                ws.view_model =
+                                    Some(crate::view::model::ViewModel::new(name.clone(), quoted));
+                                ws.set_data_source(std::sync::Arc::new(ds));
+                                // P6a T9: point the Inspector at the freshly-opened
+                                // table and (lazily) load its profile.
+                                ws.set_inspector_target(name.clone(), cx);
+                                cx.notify();
+                            });
+                        });
+                    } else {
+                        tracing::warn!(
+                            "open_table_tab: no MainThreadDispatcher installed; table not opened"
+                        );
+                    }
+                }
+                Err(e) => {
+                    tracing::warn!(error = %e, "open_table_tab: GridDataSource::new failed")
+                }
+            }
+        });
+    }
+
+    /// Rebuild [`Self::catalog_tree`] from the engine's table list (P6a T7).
+    /// Mirrors `refresh_completion_snapshot`: enumerate `get_tables()` off-thread,
+    /// then write the freshly-built tree on the main thread via the dispatcher +
+    /// upgraded weak handle. Called on every catalog-mutation point (toggle /
+    /// import / create / drop / save-as-table).
+    pub(crate) fn refresh_catalog(&mut self, cx: &mut gpui::Context<Self>) {
+        let engine = self.engine();
+        let ws_weak = cx.entity().downgrade();
+        tokio::spawn(async move {
+            use dat0_engine::QueryEngine as _;
+            let tables = match engine.get_tables().await {
+                Ok(t) => t,
+                Err(e) => {
+                    tracing::warn!(error = %e, "refresh_catalog: get_tables failed");
+                    return;
+                }
+            };
+            if let Some(dispatcher) = crate::window_registry::dispatcher() {
+                let _ = dispatcher.dispatch(move |app_cx: &mut gpui::App| {
+                    let Some(ws) = ws_weak.upgrade() else {
+                        return;
+                    };
+                    ws.update(app_cx, |ws, cx| {
+                        ws.catalog_tree = crate::catalog::CatalogTree::build(&tables);
+                        ws.catalog_tables = tables;
+                        ws.recompute_dependents();
+                        cx.notify();
+                    });
+                });
+            } else {
+                tracing::warn!("refresh_catalog: no MainThreadDispatcher installed; catalog stale");
+            }
+        });
+    }
+
+    /// Point the Inspector at `name` and load its profile (P6a T9). If the
+    /// (table,epoch) profile is already cached the load is skipped (warm hit);
+    /// otherwise [`Self::load_inspector_profile`] fetches it off-thread.
+    ///
+    /// Takes no `Window` — none of the inspector methods need one, which lets
+    /// `open_table_tab`'s dispatcher closure (which has no `window`) call this.
+    pub(crate) fn set_inspector_target(&mut self, name: String, cx: &mut gpui::Context<Self>) {
+        self.inspector.set_target(name);
+        self.recompute_dependents();
+        if self.inspector.cached().is_some() {
+            // Warm hit — nothing to load; just repaint the dock.
+            cx.notify();
+            return;
+        }
+        self.load_inspector_profile(cx);
+        cx.notify();
+    }
+
+    /// Recompute the Inspector's reverse-lineage dependents from the cached
+    /// `catalog_tables` (P6a T11). Called on every catalog refresh and on
+    /// `set_inspector_target`. Takes no `cx` so it can be called from closures
+    /// that hold `cx` borrowed elsewhere; the caller is responsible for
+    /// `cx.notify()` afterward.
+    pub(crate) fn recompute_dependents(&mut self) {
+        if let Some(target) = self.inspector.target_table.clone() {
+            let deps = crate::inspector::dependents::dependents_of(&target, &self.catalog_tables);
+            self.inspector.set_dependents(deps);
+        }
+    }
+
+    /// A mutation touched `table`'s data/schema. Invalidate the inspector's cached
+    /// profile for it (epoch bump) and, if that table is the live inspector target,
+    /// re-profile it now so the open dock updates. (Hybrid write path, P6a T12.)
+    pub(crate) fn on_table_mutated_structural(
+        &mut self,
+        table: &str,
+        cx: &mut gpui::Context<Self>,
+    ) {
+        self.inspector.bump_epoch(table);
+        if self.inspector.target_table.as_deref() == Some(table) {
+            self.load_inspector_profile(cx); // re-SUMMARIZE the now-invalidated table
+        }
+        cx.notify();
+    }
+
+    /// Load the profile for the current inspector target off-thread, then write
+    /// it back on the main thread under the supersede guard (P6a T9). Mirrors
+    /// [`Self::open_table_tab`] / [`Self::refresh_catalog`]: `tokio::spawn` +
+    /// `window_registry::dispatcher()` + upgraded weak handle.
+    ///
+    /// In [`ProfileTargetMode::CurrentView`] the active view's `SELECT` is
+    /// compiled off the live `view_model` and profiled via `profile_query`;
+    /// otherwise the stored table is profiled via `profile_table`.
+    pub(crate) fn load_inspector_profile(&mut self, cx: &mut gpui::Context<Self>) {
+        let Some(target) = self.inspector.target_table.clone() else {
+            return;
+        };
+        let mode = self.inspector.mode;
+        let load_id = self.inspector.begin_load();
+        let engine = self.engine();
+        // For CurrentView mode, compile the active view's SELECT off the view_model.
+        let view_sql: Option<String> =
+            if matches!(mode, crate::inspector::ProfileTargetMode::CurrentView) {
+                self.view_model
+                    .as_ref()
+                    .and_then(|vm| dat0_engine::compile_view_sql(vm.base_table(), vm.active()).ok())
+            } else {
+                None
+            };
+        let ws_weak = cx.entity().downgrade();
+        tokio::spawn(async move {
+            use dat0_engine::QueryEngine as _;
+            let result = match view_sql {
+                Some(sql) => engine.profile_query(&sql).await,
+                None => engine.profile_table(&target, None).await,
+            };
+            let profile = match result {
+                Ok(p) => p,
+                Err(e) => {
+                    tracing::warn!(error = %e, "inspector profile load failed");
+                    return;
+                }
+            };
+            if let Some(dispatcher) = crate::window_registry::dispatcher() {
+                let _ = dispatcher.dispatch(move |app_cx: &mut gpui::App| {
+                    let Some(ws) = ws_weak.upgrade() else {
+                        return;
+                    };
+                    ws.update(app_cx, |ws, cx| {
+                        // Supersede guard: only the latest load writes its result.
+                        if ws.inspector.is_current(load_id) {
+                            ws.inspector.put(profile.clone());
+                            cx.notify();
+                            // Fetch inline-chart extras for the columns that
+                            // qualify, reusing this load's `load_id` to guard
+                            // against stale bars when tables switch fast (T10).
+                            ws.load_column_extras(load_id, profile, cx);
+                        }
+                    });
+                });
+            } else {
+                tracing::warn!(
+                    "load_inspector_profile: no MainThreadDispatcher installed; profile dropped"
+                );
+            }
+        });
+    }
+
+    /// Fetch inline-chart extras for a freshly-loaded profile (P6a T10), reusing
+    /// the profile load's `load_id` as the supersede guard so switching tables
+    /// fast never lands stale bars. Eager-on-load (vs lazy-on-expand): acceptable
+    /// because the *qualifying* set is small — only low-cardinality columns get a
+    /// `column_topn` fetch and only numeric high-cardinality columns get a
+    /// sampled histogram; everything else issues no query. This naturally bounds
+    /// the query count for typical tables.
+    ///
+    /// Extras are only fetched in `WholeTable` mode: they query the base table by
+    /// its bare name, so they match the profiled data only when the profile is of
+    /// the whole table (in `CurrentView` the profile is of a filtered SELECT).
+    fn load_column_extras(
+        &mut self,
+        load_id: u64,
+        profile: dat0_engine::TableProfile,
+        cx: &mut gpui::Context<Self>,
+    ) {
+        if !matches!(
+            self.inspector.mode,
+            crate::inspector::ProfileTargetMode::WholeTable
+        ) {
+            return;
+        }
+        let Some(table) = self.inspector.target_table.clone() else {
+            return;
+        };
+        let engine = self.engine();
+
+        for col in profile.columns {
+            // Low-cardinality → top-N horizontal bars.
+            if col.approx_distinct > 0 && col.approx_distinct <= 24 {
+                let engine = engine.clone();
+                let table = table.clone();
+                let col_name = col.name.clone();
+                let ws_weak = cx.entity().downgrade();
+                tokio::spawn(async move {
+                    use dat0_engine::QueryEngine as _;
+                    let data = match engine.column_topn(&table, &col_name, 8).await {
+                        Ok(d) => d,
+                        Err(e) => {
+                            tracing::warn!(error = %e, col = %col_name, "column_topn failed");
+                            return;
+                        }
+                    };
+                    Self::dispatch_extra(ws_weak, load_id, move |ws, cx| {
+                        ws.inspector.put_topn(&col_name, data);
+                        cx.notify();
+                    });
+                });
+                continue;
+            }
+
+            // Numeric high-cardinality → sampled histogram. Cast to DOUBLE so the
+            // Arrow column is always Float64 regardless of the source numeric type.
+            if let Some(numeric) = col.numeric.clone() {
+                if col.approx_distinct > 24 {
+                    let engine = engine.clone();
+                    let col_name = col.name.clone();
+                    let col_q = dat0_engine::quote_ident(&col_name);
+                    let tbl_q = dat0_engine::quote_ident(&table);
+                    let sql = format!(
+                        "SELECT CAST({c} AS DOUBLE) AS v FROM {t} \
+                         WHERE {c} IS NOT NULL USING SAMPLE 2048 ROWS",
+                        c = col_q,
+                        t = tbl_q
+                    );
+                    let ws_weak = cx.entity().downgrade();
+                    tokio::spawn(async move {
+                        use dat0_engine::QueryEngine as _;
+                        use duckdb::arrow::array::{Array, Float64Array};
+                        let result = match engine.execute(&sql).await {
+                            Ok(r) => r,
+                            Err(e) => {
+                                tracing::warn!(error = %e, col = %col_name, "histogram sample failed");
+                                return;
+                            }
+                        };
+                        let mut values: Vec<f64> = Vec::new();
+                        for batch in &result.batches {
+                            if let Some(a) = batch.column(0).as_any().downcast_ref::<Float64Array>()
+                            {
+                                for row in 0..a.len() {
+                                    if a.is_valid(row) {
+                                        values.push(a.value(row));
+                                    }
+                                }
+                            }
+                        }
+                        if values.is_empty() {
+                            return;
+                        }
+                        let bins =
+                            crate::charts::histogram_bins(numeric.min, numeric.max, &values, 16);
+                        Self::dispatch_extra(ws_weak, load_id, move |ws, cx| {
+                            ws.inspector.put_histogram(&col_name, bins);
+                            cx.notify();
+                        });
+                    });
+                }
+            }
+        }
+    }
+
+    /// Hop an extras-write back to the main thread via the registry dispatcher
+    /// under the supersede guard (T10). `f` runs only if `load_id` is still the
+    /// current inspector load.
+    fn dispatch_extra(
+        ws_weak: gpui::WeakEntity<Self>,
+        load_id: u64,
+        f: impl FnOnce(&mut Self, &mut gpui::Context<Self>) + Send + 'static,
+    ) {
+        let Some(dispatcher) = crate::window_registry::dispatcher() else {
+            tracing::warn!("load_column_extras: no MainThreadDispatcher; extra dropped");
+            return;
+        };
+        let _ = dispatcher.dispatch(move |app_cx: &mut gpui::App| {
+            let Some(ws) = ws_weak.upgrade() else {
+                return;
+            };
+            ws.update(app_cx, |ws, cx| {
+                if ws.inspector.is_current(load_id) {
+                    f(ws, cx);
+                }
+            });
+        });
+    }
+
+    /// Flip the inspector between Whole-table and Current-view profiling and
+    /// re-profile (P6a T9). The cache is keyed by (table,epoch) — *not* by mode —
+    /// so a toggle always `begin_load`s and re-fetches; the latest mode's profile
+    /// wins (switching back re-fetches). Takes no `Window` (none needed).
+    pub(crate) fn toggle_inspector_mode(
+        &mut self,
+        _window: &mut gpui::Window,
+        cx: &mut gpui::Context<Self>,
+    ) {
+        use crate::inspector::ProfileTargetMode::*;
+        self.inspector.mode = match self.inspector.mode {
+            WholeTable => CurrentView,
+            CurrentView => WholeTable,
+        };
+        // Drop stale extras so a WholeTable column's bars don't survive onto a
+        // CurrentView card with the same name (T10).
+        self.inspector.clear_extras();
+        self.load_inspector_profile(cx);
+        cx.notify();
     }
 
     /// Route a [`SqlConsoleEvent`] from the console.
@@ -1397,6 +1775,23 @@ impl WorkspaceShell {
             let app: &gpui::App = cx;
             let (tabs, active) = console.read(app).snapshot(app);
             let _ = self.session.lock().set_sql_tabs(tabs, active);
+        }
+    }
+
+    /// Persist the catalog/inspector dock UI state to `session.json` (P6a T13,
+    /// session v8 `ui`). Builds a [`crate::session::SessionUiState`] from the
+    /// current shell visibility flags and writes it through the session. The
+    /// `catalog_expanded` / `catalog_selection` fields stay at their defaults
+    /// (empty / `None`) because the T7 catalog dock renders flat — there is no
+    /// expand/collapse/selection UI to read from yet.
+    pub(crate) fn persist_dock_ui(&self) {
+        let ui = crate::session::SessionUiState {
+            catalog_panel_visible: self.catalog_panel_visible,
+            inspector_panel_visible: self.inspector_panel_visible,
+            ..Default::default()
+        };
+        if let Err(e) = self.session.lock().set_ui(ui) {
+            tracing::warn!(error = %e, "persist_dock_ui: set_ui failed");
         }
     }
 
@@ -1580,6 +1975,8 @@ impl WorkspaceShell {
         // Pick up tables created/dropped by this run (CREATE/DROP/Save-as-Table)
         // so autocomplete reflects the new schema on the next keystroke (P5b T2).
         self.refresh_completion_snapshot(cx);
+        // Mirror into the Catalog dock so created/dropped tables appear (P6a T7).
+        self.refresh_catalog(cx);
     }
 
     /// Open the native save panel, then stream the export via COPY (P4c T11).
@@ -1786,6 +2183,7 @@ impl WorkspaceShell {
                                     )
                                 });
                                 ws.refresh_completion_snapshot(cx);
+                                ws.refresh_catalog(cx);
                             }
                             Err(e) => console.update(cx, |c, cx| {
                                 c.set_region(
@@ -1876,7 +2274,10 @@ impl WorkspaceShell {
                 let _ = dispatcher.dispatch(move |app: &mut gpui::App| {
                     if let Some(ws) = ws_weak.upgrade() {
                         ws.update(app, |ws, cx| match &outcome {
-                            Ok(_) => ws.refresh_completion_snapshot(cx),
+                            Ok(_) => {
+                                ws.refresh_completion_snapshot(cx);
+                                ws.refresh_catalog(cx);
+                            }
                             Err(e) => {
                                 tracing::warn!(error = %e, "save_view_as_table failed");
                                 crate::error_ux::push(crate::error_ux::Banner::warning_with_body(
@@ -2356,6 +2757,26 @@ impl Render for WorkspaceShell {
             self.theme_subscription = Some(sub);
         }
 
+        // PD-021 banner host: drain any globally-stashed banners into this
+        // window's live list, then build an OWNED host element. Computing
+        // `banner_host` here (after the `&mut self.banners` drain, before the
+        // builder chain) keeps the `self.banners.iter()` borrow from outliving
+        // the later `&mut self` mutations in this render.
+        crate::error_ux::banner::merge_pending(&mut self.banners);
+        let banner_host: Option<gpui::AnyElement> = (!self.banners.is_empty()).then(|| {
+            gpui::div()
+                .flex()
+                .flex_col()
+                .gap_1()
+                .p_1()
+                .children(
+                    self.banners
+                        .iter()
+                        .map(|b| crate::error_ux::banner::render_banner(b).into_any_element()),
+                )
+                .into_any_element()
+        });
+
         // Lazily promote `Arc<GridDataSource>` → `Entity<TableState<…>>`
         // on the first render after the data source landed. `TableState::new`
         // requires `&mut Window`, which is only available inside `render`
@@ -2473,6 +2894,9 @@ impl Render for WorkspaceShell {
                                                 quoted,
                                             ));
                                             view.set_data_source(Arc::new(ds));
+                                            // Reflect the newly-imported table in the
+                                            // Catalog dock (P6a T7).
+                                            view.refresh_catalog(cx);
                                             cx.notify();
                                         });
                                     });
@@ -2923,10 +3347,31 @@ impl Render for WorkspaceShell {
                     cx.notify();
                 },
             ))
+            // ── Catalog panel toggle (P6a T7) ─────────────────────────────────
+            .on_action(cx.listener(
+                |ws: &mut Self, _: &crate::menu_macos::CatalogToggle, _window, cx| {
+                    ws.catalog_panel_visible = !ws.catalog_panel_visible;
+                    // Refresh on open so the dock always shows fresh tables.
+                    ws.refresh_catalog(cx);
+                    // Persist the dock visibility (session v8 `ui`).
+                    ws.persist_dock_ui();
+                    cx.notify();
+                },
+            ))
+            // ── Inspector panel toggle (P6a T9) ───────────────────────────────
+            .on_action(cx.listener(
+                |ws: &mut Self, _: &crate::menu_macos::InspectorToggle, _window, cx| {
+                    ws.inspector_panel_visible = !ws.inspector_panel_visible;
+                    // Persist the dock visibility (session v8 `ui`).
+                    ws.persist_dock_ui();
+                    cx.notify();
+                },
+            ))
             .on_key_down(key_handler)
             .on_click(click_to_focus)
             .drag_over::<ExternalPaths>(|style, _, _, _| style.bg(gpui::rgba(0x0088_ff22)))
             .on_drop::<ExternalPaths>(drop_listener)
+            .children(banner_host)
             .children(tab_strip)
             .children(pipeline_bar)
             .children(sql_console_panel)
@@ -2938,12 +3383,32 @@ impl Render for WorkspaceShell {
                     .flex()
                     .flex_row()
                     .flex_1()
+                    // Catalog dock first → order is Catalog | Connections | body.
+                    .children(self.catalog_panel_visible.then(|| {
+                        div()
+                            .w_64()
+                            .border_r_1()
+                            .child(crate::catalog::panel::render_catalog(
+                                &self.catalog_tree,
+                                cx,
+                            ))
+                    }))
                     .children(self.connections_panel_visible.then(|| {
                         div().w_64().border_r_1().child(
                             crate::connections::panel::render_connections(&self.connections, cx),
                         )
                     }))
-                    .child(div().flex_1().child(body)),
+                    .child(div().flex_1().child(body))
+                    // Inspector right dock last → Catalog | Connections | body | Inspector.
+                    .children(self.inspector_panel_visible.then(|| {
+                        div()
+                            .w_72()
+                            .border_l_1()
+                            .child(crate::inspector::panel::render_inspector(
+                                &self.inspector,
+                                cx,
+                            ))
+                    })),
             )
             .children(popover_overlay)
             .children(editor_overlay)

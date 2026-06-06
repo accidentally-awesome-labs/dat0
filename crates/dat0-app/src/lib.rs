@@ -3,6 +3,8 @@
 pub mod actions;
 pub mod app_lock;
 pub mod boot;
+pub mod catalog;
+pub mod charts;
 pub mod command_palette;
 pub mod connections;
 pub mod empty_state;
@@ -11,6 +13,7 @@ pub mod file_drop;
 pub mod grid;
 pub mod import_progress;
 pub mod import_wizard;
+pub mod inspector;
 pub mod main_bridge;
 pub mod menu_macos;
 pub mod platform;

@@ -12,6 +12,7 @@ pub(crate) mod execute;
 pub(crate) mod export;
 pub mod extension_bootstrap;
 pub mod migrations;
+pub mod profile;
 pub(crate) mod register;
 pub mod render;
 pub(crate) mod tracing_helpers;
@@ -19,8 +20,10 @@ pub mod trait_def;
 pub mod transform;
 pub mod types;
 
+pub use catalog::quote_ident;
 pub use duckdb_engine::DuckDBEngine;
 pub use error::EngineError;
+pub use profile::{ColumnProfile, LengthStats, NumericStats, TableProfile};
 pub use render::{RenderError, compile_view_sql, render_export_select};
 pub use trait_def::QueryEngine;
 pub use transform::{

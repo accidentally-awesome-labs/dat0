@@ -4,9 +4,27 @@
 //! not exist on `DuckDBEngine`. Adapted to call `engine.get_tables().await`
 //! directly via the `QueryEngine` trait. Filed as PD-009.
 
+use std::path::PathBuf;
+
 use dat0_engine::{
-    DerivedOrigin, DuckDBEngine, MemoryBudget, QueryEngine, RegisterOpts, TableOrigin,
+    AttachOpts, DerivedOrigin, DuckDBEngine, MemoryBudget, QueryEngine, RegisterOpts, TableOrigin,
 };
+
+fn fixture(rel: &str) -> PathBuf {
+    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .unwrap()
+        .parent()
+        .unwrap()
+        .join("tests/fixtures/small")
+        .join(rel)
+}
+
+fn budget() -> MemoryBudget {
+    MemoryBudget {
+        bytes: 256 * 1024 * 1024,
+    }
+}
 
 #[tokio::test]
 async fn register_file_origin_is_file() {
@@ -232,4 +250,66 @@ async fn create_table_records_both_origins() {
         }
         other => panic!("expected Transform origin, got {other:?}"),
     }
+}
+
+/// P6a T4 (closes D-012): attaching a database enumerates its tables/views into
+/// the origin registry as `TableOrigin::Attached { alias, source }`, surfaced via
+/// `get_tables()`; `detach` prunes them.
+///
+/// Uses the real sqlite_scanner attach mechanism (a deterministic on-disk SQLite
+/// fixture `simple.sqlite`, which holds a table `items` with 3 rows) — the same
+/// path exercised by tests/attach_sqlite.rs. No network.
+#[tokio::test]
+async fn attach_records_per_table_attached_origin() {
+    dat0_engine::extension_bootstrap::__test_install_sqlite_scanner().expect("ext install");
+    let dir = tempfile::tempdir().unwrap();
+    let engine = DuckDBEngine::new(dir.path().join("main.duckdb"), budget()).unwrap();
+    engine.init().await.unwrap();
+
+    let dsn = format!("sqlite:{}", fixture("simple.sqlite").display());
+    engine
+        .attach(
+            &dsn,
+            "sq",
+            AttachOpts {
+                read_only: true,
+                schema_filter: None,
+                token: None,
+            },
+        )
+        .await
+        .unwrap();
+
+    // The attached table is enumerated in get_tables() WITH its columns and
+    // carries an Attached origin tagged with the attach alias (= catalog name).
+    let tables = engine.get_tables().await.unwrap();
+    let items = tables
+        .iter()
+        .find(|t| t.name == "items")
+        .expect("attached table enumerated in get_tables");
+    assert!(
+        !items.columns.is_empty(),
+        "attached table must describe its columns cross-database"
+    );
+    match &items.origin {
+        TableOrigin::Attached { alias, source } => {
+            assert_eq!(alias, "sq");
+            assert!(source.contains("simple.sqlite"), "source dsn: {source}");
+        }
+        other => panic!("expected Attached origin, got {other:?}"),
+    }
+
+    // detach prunes the attached entries from both the catalog and the origin map.
+    engine.detach("sq").await.unwrap();
+    let after = engine.get_tables().await.unwrap();
+    assert!(
+        !after.iter().any(|t| t.name == "items"),
+        "detach removes attached entries from get_tables"
+    );
+    assert!(
+        engine.table_origin("items").is_none(),
+        "detach removes attached entries from the origin map"
+    );
+
+    engine.close().await.unwrap();
 }
