@@ -58,7 +58,7 @@ The Inspector profiles the **selected table** in a single pass and shows:
 Profiling is built on DuckDB's `SUMMARIZE`, which computes all column statistics
 in a single table scan. Whole-table mode runs `SUMMARIZE <table>`; current-view
 mode runs `SUMMARIZE (<the compiled view SQL>)`. Profiling a 1M-row table
-completes well under the 2-second target (≈80 ms on a typical machine).
+completes well under the 2-second target (≈85 ms measured on a typical machine).
 
 ### Live refresh on edits
 
