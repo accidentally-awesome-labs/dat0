@@ -88,6 +88,8 @@ pub struct SqlConsole {
     /// [`set_last_elapsed`](Self::set_last_elapsed) from `finish_sql_run`
     /// (P5b T4). Drives the timing chip (T9). `None` until the first run.
     pub(crate) last_elapsed_ms: Option<u64>,
+    /// Routing tag for the last run (P5c T9). Drives the chip suffix.
+    pub(crate) last_routing: Option<crate::connections::routing::Routing>,
     /// Transient query-history overlay (P5b T5). `Some(entries)` while the
     /// history panel is open; `None` when closed. Populated by
     /// [`show_history`](Self::show_history) (fed from the session by
@@ -211,6 +213,7 @@ impl SqlConsole {
             pane_ws: WeakEntity::new_invalid(),
             snapshot,
             last_elapsed_ms: None,
+            last_routing: None,
             history_overlay: None,
             pending_load: None,
         }
@@ -250,9 +253,16 @@ impl SqlConsole {
         cx.notify();
     }
 
-    /// Record the most recent run's wall time (P5b T4/T9). Drives the timing chip.
-    pub fn set_last_elapsed(&mut self, ms: u64, cx: &mut Context<Self>) {
+    /// Record the most recent run's wall time + routing (P5b T4 / P5c T9).
+    /// Drives the timing chip.
+    pub fn set_last_elapsed(
+        &mut self,
+        ms: u64,
+        routing: crate::connections::routing::Routing,
+        cx: &mut Context<Self>,
+    ) {
         self.last_elapsed_ms = Some(ms);
+        self.last_routing = Some(routing);
         cx.notify();
     }
 
@@ -755,14 +765,20 @@ impl Render for SqlConsole {
                                 // local-vs-md slot.
                                 let timing_chip: gpui::AnyElement =
                                     match (self.running, self.last_elapsed_ms) {
-                                        (false, Some(ms)) => div()
-                                            .px_2()
-                                            .py_1()
-                                            .child(SharedString::from(format!(
-                                                "⏱ {ms} ms · {}",
-                                                dat0_i18n::t("sql.local")
-                                            )))
-                                            .into_any_element(),
+                                        (false, Some(ms)) => {
+                                            let key = self
+                                                .last_routing
+                                                .map(|r| r.i18n_key())
+                                                .unwrap_or("sql.local");
+                                            div()
+                                                .px_2()
+                                                .py_1()
+                                                .child(SharedString::from(format!(
+                                                    "⏱ {ms} ms · {}",
+                                                    dat0_i18n::t(key)
+                                                )))
+                                                .into_any_element()
+                                        }
                                         _ => div().into_any_element(),
                                     };
                                 timing_chip

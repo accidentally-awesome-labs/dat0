@@ -136,15 +136,41 @@ jobs:
           # non-Linux branch so cargo treats it as the unset semantics.
           CARGO_BUILD_JOBS: ${{ (runner.os == 'Linux' && runner.environment == 'github-hosted') && '2' || 'default' }}
         run: cargo test --workspace --target ${{ matrix.target.triple }}
+      # P5c (D3): MotherDuck integration is a REQUIRED gate. The token is a
+      # repo secret (Settings → Secrets and variables → Actions → MOTHERDUCK_TOKEN).
+      # Fork PRs receive no secrets and will fail this step — acceptable for a
+      # solo repo (design §7).
+      - name: Require MotherDuck token
+        env:
+          MOTHERDUCK_TOKEN: ${{ secrets.MOTHERDUCK_TOKEN }}
+        run: |
+          if [ -z "$MOTHERDUCK_TOKEN" ]; then
+            echo "::error::MOTHERDUCK_TOKEN secret is required for P5c integration tests"
+            exit 1
+          fi
+      - name: MotherDuck integration tests
+        env:
+          MOTHERDUCK_TOKEN: ${{ secrets.MOTHERDUCK_TOKEN }}
+          CARGO_BUILD_JOBS: ${{ (runner.os == 'Linux' && runner.environment == 'github-hosted') && '2' || 'default' }}
+        run: cargo test -p dat0-engine --test md_attach --target ${{ matrix.target.triple }} -- --include-ignored
       # Bench is macOS-only (single host class — variance across runners
       # makes cross-OS comparison meaningless). Artifact-only at P3a; spec
       # line 819 defers the merge-gate threshold to P10.
-      - name: Bench — grid scroll (macOS only)
-        if: runner.os == 'macOS'
+      #
+      # Gated to push events (i.e. merges to main), NOT pull_request: `cargo
+      # bench` recompiles DuckDB from source in a THIRD profile on top of the
+      # debug (Test) + release (Build) trees, which exhausted the macOS runner's
+      # ~14 GB disk on P5c PR runs ("No space left on device" in libduckdb-sys
+      # ranlib), failing the whole job — and a disk-dead runner can't be rescued
+      # by continue-on-error. Since the bench is advisory (not a gate), skip it
+      # on PR CI to keep disk headroom; it still runs post-merge on main.
+      - name: Bench — grid scroll (macOS only, push to main)
+        if: runner.os == 'macOS' && github.event_name != 'pull_request'
         run: |
           cargo bench -p dat0-app --bench grid_scroll -- --output-format=bencher | tee bench.txt
       - name: Upload bench artifact
-        if: runner.os == 'macOS'
+        if: runner.os == 'macOS' && github.event_name != 'pull_request'
+        continue-on-error: true
         uses: actions/upload-artifact@v4
         with:
           name: grid-scroll-bench-${{ github.sha }}

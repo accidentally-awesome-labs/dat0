@@ -22,11 +22,17 @@ pub enum EngineError {
     #[error("Invalid option for {field}: {reason}")]
     InvalidOption { field: &'static str, reason: String },
 
-    #[error("Unknown ATTACH scheme: {0}; supported: sqlite:")]
+    #[error("Unknown ATTACH scheme: {0}; supported: sqlite:, md:")]
     UnknownAttachScheme(String),
 
     #[error("Feature not yet implemented: {feature}")]
     NotImplemented { feature: &'static str },
+
+    #[error("MotherDuck authentication failed (missing or invalid token)")]
+    MotherDuckAuth,
+
+    #[error("DuckDB extension '{name}' failed to install/load")]
+    ExtensionLoad { name: &'static str },
 
     #[error("Migration {version} ({name}) failed: {source}")]
     Migration {

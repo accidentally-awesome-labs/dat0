@@ -36,3 +36,82 @@ pub(crate) fn build_attach_sqlite_sql(path: &str, alias: &str, opts: &AttachOpts
 pub(crate) fn build_detach_sql(alias: &str) -> String {
     format!("DETACH {};", quote_ident(alias))
 }
+
+pub(crate) fn build_attach_md_sql(opts: &AttachOpts) -> String {
+    // Caller guarantees opts.token is Some (attach() md-arm checks). Trim
+    // surrounding whitespace — a real token never has any, but a trailing
+    // newline (e.g. from a pasted CI/keychain secret) survives the non-empty
+    // check yet corrupts `SET motherduck_token`. Then escape as a SQL string
+    // literal; never log it.
+    //
+    // `ATTACH 'md:'` enters MotherDuck **workspace mode**, attaching ALL of the
+    // account's databases under their REAL names (e.g. `sample_data`, `my_db`).
+    // There is deliberately NO `AS <alias>`: MotherDuck rejects aliasing an
+    // owned database in workspace mode ("Database aliases are not yet supported
+    // by MotherDuck in workspace mode"). `SET motherduck_attach_mode` makes the
+    // mode explicit/deterministic.
+    let token = opts
+        .token
+        .as_deref()
+        .unwrap_or_default()
+        .trim()
+        .replace('\'', "''");
+    format!(
+        "SET motherduck_token = '{token}'; SET motherduck_attach_mode = 'workspace'; ATTACH 'md:';"
+    )
+}
+
+#[cfg(test)]
+mod md_sql_tests {
+    use crate::types::AttachOpts;
+
+    #[test]
+    fn build_md_sql_sets_token_then_attaches_no_alias() {
+        let opts = AttachOpts {
+            token: Some("tok'123".into()),
+            ..Default::default()
+        };
+        let sql = super::build_attach_md_sql(&opts);
+        // Token single-quote escaped; SET precedes ATTACH; workspace mode set;
+        // NO `AS <alias>` (MotherDuck rejects aliasing owned dbs).
+        assert!(
+            sql.contains("SET motherduck_token = 'tok''123';"),
+            "got: {sql}"
+        );
+        assert!(
+            sql.contains("SET motherduck_attach_mode = 'workspace';"),
+            "got: {sql}"
+        );
+        assert!(sql.contains("ATTACH 'md:';"), "got: {sql}");
+        assert!(
+            !sql.contains(" AS "),
+            "must not alias the md attachment: {sql}"
+        );
+        assert!(sql.find("SET motherduck_token").unwrap() < sql.find("ATTACH").unwrap());
+    }
+
+    #[test]
+    fn build_md_sql_trims_surrounding_whitespace() {
+        // A trailing newline (e.g. a pasted CI secret) must not reach the SET.
+        let opts = AttachOpts {
+            token: Some("  tok123\n".into()),
+            ..Default::default()
+        };
+        let sql = super::build_attach_md_sql(&opts);
+        assert!(
+            sql.contains("SET motherduck_token = 'tok123';"),
+            "got: {sql}"
+        );
+        assert!(!sql.contains("tok123\n"), "newline leaked into SET: {sql}");
+    }
+
+    #[test]
+    fn attach_opts_debug_redacts_token() {
+        let opts = AttachOpts {
+            token: Some("SECRET".into()),
+            ..Default::default()
+        };
+        let dbg = format!("{opts:?}");
+        assert!(!dbg.contains("SECRET"), "token leaked into Debug: {dbg}");
+    }
+}

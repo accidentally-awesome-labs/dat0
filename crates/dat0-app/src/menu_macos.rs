@@ -58,6 +58,8 @@ pub fn build_menus(_cx: &mut gpui::App) -> Vec<gpui::Menu> {
                 MenuItem::action(dat0_i18n::t("sql.console_toggle"), SqlConsoleToggle),
                 MenuItem::action(dat0_i18n::t("sql.run"), SqlRun),
                 MenuItem::action(dat0_i18n::t("sql.cancel"), SqlCancel),
+                // P5c T11: Connections panel toggle.
+                MenuItem::action(dat0_i18n::t("connections.toggle"), ConnectionsToggle),
             ],
         },
         Menu {
@@ -114,6 +116,8 @@ gpui::actions!(
         SqlCancel,
         SqlNewTab,
         SqlCloseTab,
+        // P5c T11: Connections panel toggle.
+        ConnectionsToggle,
     ]
 );
 

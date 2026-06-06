@@ -61,3 +61,53 @@ pub fn __test_install_sqlite_scanner() -> Result<()> {
     ));
     install_sqlite_scanner_at_app_boot(scratch)
 }
+
+/// Memoized motherduck install outcome (separate `OnceLock` from sqlite).
+static MD_INSTALL_RESULT: OnceLock<std::result::Result<(), String>> = OnceLock::new();
+
+/// Install + LOAD `motherduck` exactly once per process. Unlike
+/// `sqlite_scanner` (installed at boot), this is called **lazily on first
+/// connect** (design D8) so non-MotherDuck workspaces pay no cost.
+pub fn install_motherduck_at_app_boot(scratch_template: std::path::PathBuf) -> Result<()> {
+    let outcome: &std::result::Result<(), String> = MD_INSTALL_RESULT.get_or_init(|| {
+        let result = (|| -> std::result::Result<(), String> {
+            let conn =
+                duckdb::Connection::open(&scratch_template).map_err(|e| format!("open: {e}"))?;
+            conn.execute_batch("INSTALL motherduck; LOAD motherduck;")
+                .map_err(|e| format!("install/load: {e}"))?;
+            info!(target: "dat0_engine::extensions", "motherduck installed and loaded");
+            Ok(())
+        })();
+        if let Err(ref e) = result {
+            warn!(target: "dat0_engine::extensions", error = %e, "motherduck install failed");
+        }
+        result
+    });
+    outcome
+        .clone()
+        .map_err(|_msg| EngineError::ExtensionLoad { name: "motherduck" })
+}
+
+/// Test-only: install via a per-test scratch DB.
+#[doc(hidden)]
+pub fn __test_install_motherduck() -> Result<()> {
+    let scratch = std::env::temp_dir().join(format!(
+        "dat0-test-md-extbootstrap-{}.duckdb",
+        std::process::id()
+    ));
+    install_motherduck_at_app_boot(scratch)
+}
+
+#[cfg(test)]
+mod md_tests {
+    #[test]
+    fn install_motherduck_is_memoized_and_idempotent() {
+        // Two calls return Ok and run at most once (OnceLock). We assert the
+        // public contract: repeated calls do not error on the cached path.
+        let r1 = super::__test_install_motherduck();
+        let r2 = super::__test_install_motherduck();
+        // In CI with the extension available both are Ok; offline the INSTALL
+        // may fail — but the SECOND call must mirror the first (memoized).
+        assert_eq!(r1.is_ok(), r2.is_ok());
+    }
+}

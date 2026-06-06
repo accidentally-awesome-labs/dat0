@@ -22,21 +22,19 @@ async fn attach_unknown_scheme_errors() {
     engine.close().await.unwrap();
 }
 
+/// P5c T3: a token-less `md:` ATTACH no longer returns `NotImplemented`
+/// (D-007 closed) — it must fail fast with `MotherDuckAuth` BEFORE any
+/// network/extension work, since the arm requires `opts.token`.
 #[tokio::test]
-async fn attach_md_returns_not_implemented() {
+async fn attach_md_without_token_is_auth_error() {
     let dir = tempfile::tempdir().unwrap();
     let engine = DuckDBEngine::new(dir.path().join("a.duckdb"), budget()).unwrap();
     engine.init().await.unwrap();
     let err = engine
-        .attach("md:my_db", "md", AttachOpts::default())
+        .attach("md:", "md", AttachOpts::default())
         .await
-        .expect_err("md: deferred to P5 (D-007)");
-    match err {
-        dat0_engine::EngineError::NotImplemented { feature } => {
-            assert_eq!(feature, "MotherDuck");
-        }
-        other => panic!("expected NotImplemented, got {other:?}"),
-    }
+        .expect_err("missing token");
+    assert!(matches!(err, dat0_engine::EngineError::MotherDuckAuth));
     engine.close().await.unwrap();
 }
 
