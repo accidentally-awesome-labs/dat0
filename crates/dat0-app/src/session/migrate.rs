@@ -2,7 +2,8 @@
 //! → v3 (additive `Edit`/`RowDelete` transform variants, P4b) → v4 (projection
 //! variants allowlist + active-stack-only persistence, P4c) → v5 (additive SQL
 //! console tabs `sql_tabs` + `active_sql_tab`, P5a) → v6 (additive query stores
-//! `query_history` + `saved_queries`, P5b) → v7 (additive `attachments`, P5c).
+//! `query_history` + `saved_queries`, P5b) → v7 (additive `attachments`, P5c) →
+//! v8 (additive `ui` catalog/inspector dock + tree state, P6a).
 //!
 //! Migration is load-and-write-back (eager): a successful migration is
 //! immediately followed by the caller's `Session::persist` call to land the
@@ -193,8 +194,9 @@ pub fn load_str(raw: &str) -> Result<SessionState, SessionLoadError> {
         4 => migrate_v4_to_v7(raw),
         5 => migrate_v5_to_v7(raw),
         6 => migrate_v6_to_v7(raw),
-        7 => {
-            // Forward-incompat guard: a NEWER dat0 (writing the same v7 schema)
+        7 => migrate_v7_to_v8(raw),
+        8 => {
+            // Forward-incompat guard: a NEWER dat0 (writing the same v8 schema)
             // may have introduced a transform variant this build doesn't know.
             // Scan the current-version document's transform stacks and map any
             // unknown TOP-LEVEL `kind` to the forward-incompat banner path BEFORE
@@ -213,7 +215,7 @@ pub fn load_str(raw: &str) -> Result<SessionState, SessionLoadError> {
             Ok(state)
         }
         // When SESSION_SCHEMA_VERSION advances, add: N => migrate_vN_to_v(N+1)(raw)
-        // and make the new current-version (now 7) arm above the "load as-is"
+        // and make the new current-version (now 8) arm above the "load as-is"
         // target.
         n => Err(SessionLoadError::UnsupportedVersion(n)),
     }
@@ -318,6 +320,18 @@ fn migrate_v5_to_v7(raw: &str) -> Result<SessionState, SessionLoadError> {
 /// the field, so `#[serde(default)]` fills it with an empty vec. Just stamp the
 /// version.
 fn migrate_v6_to_v7(raw: &str) -> Result<SessionState, SessionLoadError> {
+    let mut state: SessionState = serde_json::from_str(raw)?;
+    state.schema_version = SESSION_SCHEMA_VERSION;
+    Ok(state)
+}
+
+/// Migrate a raw v7 JSON string to a v8 `SessionState` — IDENTITY.
+///
+/// v8 adds `ui` (catalog/inspector dock + tree state); additive,
+/// serde-defaulted: a v7 file lacks the `ui` field, so `#[serde(default)]`
+/// fills it with `SessionUiState::default()` (both docks hidden, no expanded
+/// nodes, no selection). Re-parse + stamp the version.
+fn migrate_v7_to_v8(raw: &str) -> Result<SessionState, SessionLoadError> {
     let mut state: SessionState = serde_json::from_str(raw)?;
     state.schema_version = SESSION_SCHEMA_VERSION;
     Ok(state)

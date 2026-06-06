@@ -770,6 +770,10 @@ pub struct WorkspaceShell {
 
 impl WorkspaceShell {
     pub fn new(session: Arc<Mutex<Session>>, cx: &mut Context<Self>) -> Self {
+        // Restore persisted catalog/inspector dock visibility (P6a T13, session
+        // v8 `ui`). Read into a local BEFORE building the struct so we don't hold
+        // the session lock across the whole ctor.
+        let ui = session.lock().ui().clone();
         Self {
             session,
             data_source: None,
@@ -802,10 +806,10 @@ impl WorkspaceShell {
             saved_picker_open: false,
             connections: Default::default(),
             connections_panel_visible: false,
-            catalog_panel_visible: false,
+            catalog_panel_visible: ui.catalog_panel_visible,
             catalog_tree: crate::catalog::CatalogTree::default(),
             catalog_tables: Vec::new(),
-            inspector_panel_visible: false,
+            inspector_panel_visible: ui.inspector_panel_visible,
             inspector: crate::inspector::InspectorModel::new(),
             banners: Vec::new(),
             md_token_prompt: None,
@@ -1776,6 +1780,23 @@ impl WorkspaceShell {
             let app: &gpui::App = cx;
             let (tabs, active) = console.read(app).snapshot(app);
             let _ = self.session.lock().set_sql_tabs(tabs, active);
+        }
+    }
+
+    /// Persist the catalog/inspector dock UI state to `session.json` (P6a T13,
+    /// session v8 `ui`). Builds a [`crate::session::SessionUiState`] from the
+    /// current shell visibility flags and writes it through the session. The
+    /// `catalog_expanded` / `catalog_selection` fields stay at their defaults
+    /// (empty / `None`) because the T7 catalog dock renders flat — there is no
+    /// expand/collapse/selection UI to read from yet.
+    pub(crate) fn persist_dock_ui(&self) {
+        let ui = crate::session::SessionUiState {
+            catalog_panel_visible: self.catalog_panel_visible,
+            inspector_panel_visible: self.inspector_panel_visible,
+            ..Default::default()
+        };
+        if let Err(e) = self.session.lock().set_ui(ui) {
+            tracing::warn!(error = %e, "persist_dock_ui: set_ui failed");
         }
     }
 
@@ -3337,6 +3358,8 @@ impl Render for WorkspaceShell {
                     ws.catalog_panel_visible = !ws.catalog_panel_visible;
                     // Refresh on open so the dock always shows fresh tables.
                     ws.refresh_catalog(cx);
+                    // Persist the dock visibility (session v8 `ui`).
+                    ws.persist_dock_ui();
                     cx.notify();
                 },
             ))
@@ -3344,6 +3367,8 @@ impl Render for WorkspaceShell {
             .on_action(cx.listener(
                 |ws: &mut Self, _: &crate::menu_macos::InspectorToggle, _window, cx| {
                     ws.inspector_panel_visible = !ws.inspector_panel_visible;
+                    // Persist the dock visibility (session v8 `ui`).
+                    ws.persist_dock_ui();
                     cx.notify();
                 },
             ))

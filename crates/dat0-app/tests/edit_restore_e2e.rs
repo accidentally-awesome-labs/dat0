@@ -161,21 +161,25 @@ async fn edit_delete_filter_round_trip_through_v3_session() {
         query_history: Vec::new(),
         saved_queries: Vec::new(),
         attachments: Vec::new(),
+        ui: Default::default(),
     };
     std::fs::write(&session_json, serde_json::to_vec_pretty(&state).unwrap()).unwrap();
 
     // The on-disk file must declare the current schema version.
     let raw = std::fs::read_to_string(&session_json).unwrap();
     assert!(
-        raw.contains("\"schema_version\": 7") || raw.contains("\"schema_version\":7"),
-        "session.json must declare schema_version 7"
+        raw.contains("\"schema_version\": 8") || raw.contains("\"schema_version\":8"),
+        "session.json must declare schema_version 8"
     );
-    assert_eq!(SESSION_SCHEMA_VERSION, 7, "current schema must be v7");
+    assert_eq!(SESSION_SCHEMA_VERSION, 8, "current schema must be v8");
 
     // --- Phase 4: simulate crash + reload via migrate::load ---
     drop(vm);
     let restored = migrate::load(&session_json).unwrap();
-    assert_eq!(restored.schema_version, 7, "reloaded schema must be v7");
+    assert_eq!(
+        restored.schema_version, SESSION_SCHEMA_VERSION,
+        "reloaded schema must be the current version"
+    );
 
     let tab = &restored.tabs[0];
     assert_eq!(tab.transform_stack.len(), 3, "full stack must survive");

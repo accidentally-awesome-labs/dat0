@@ -45,7 +45,10 @@ use queries::{HistoryEntry, SavedQuery};
 ///
 /// v6 → v7 (P5c) adds persisted `attachments` (MotherDuck + sqlite). Purely
 /// additive: v6 files default to an empty vec.
-pub const SESSION_SCHEMA_VERSION: u32 = 7;
+///
+/// v7 → v8 (P6a) adds `ui` (catalog/inspector dock + tree state). Purely
+/// additive: v7 files default `ui` to all-collapsed / both-docks-hidden.
+pub const SESSION_SCHEMA_VERSION: u32 = 8;
 
 /// A single tab within a scratch session.
 ///
@@ -76,6 +79,25 @@ pub struct SqlTabState {
     pub id: uuid::Uuid,
     pub title: String,
     pub sql: String,
+}
+
+/// Persisted catalog/inspector UI state (v8+, P6a). Additive: a v7 file lacks
+/// the enclosing `ui` field, so the whole struct serde-defaults to
+/// all-collapsed / both-docks-hidden.
+///
+/// `catalog_expanded` / `catalog_selection` are forward-looking — the T7
+/// catalog dock currently renders flat (no expand/collapse/selection UI), so
+/// they persist as empty / `None` for now.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
+pub struct SessionUiState {
+    #[serde(default)]
+    pub catalog_panel_visible: bool,
+    #[serde(default)]
+    pub inspector_panel_visible: bool,
+    #[serde(default)]
+    pub catalog_expanded: Vec<String>, // expanded node names
+    #[serde(default)]
+    pub catalog_selection: Option<String>,
 }
 
 // ---------------------------------------------------------------------------
@@ -119,6 +141,8 @@ pub struct SessionState {
     pub saved_queries: Vec<SavedQuery>,
     #[serde(default)]
     pub attachments: Vec<PersistedAttachment>,
+    #[serde(default)]
+    pub ui: SessionUiState,
 }
 
 fn default_schema_version_v1() -> u32 {
@@ -136,6 +160,7 @@ impl Default for SessionState {
             query_history: Vec::new(),
             saved_queries: Vec::new(),
             attachments: Vec::new(),
+            ui: SessionUiState::default(),
         }
     }
 }
@@ -160,6 +185,7 @@ pub struct Session {
     query_history: Vec<HistoryEntry>,
     saved_queries: Vec<SavedQuery>,
     attachments: Vec<PersistedAttachment>,
+    ui: SessionUiState,
 }
 
 impl Session {
@@ -197,6 +223,7 @@ impl Session {
             query_history: Vec::new(),
             saved_queries: Vec::new(),
             attachments: Vec::new(),
+            ui: SessionUiState::default(),
         };
         sess.persist()
             .context("session::new: initial persist failed")?;
@@ -271,6 +298,7 @@ impl Session {
             query_history: state.query_history,
             saved_queries: state.saved_queries,
             attachments: state.attachments,
+            ui: state.ui,
         };
 
         // Eagerly persist after recovery. This matches Session::new's pattern and
@@ -379,6 +407,17 @@ impl Session {
         &self.attachments
     }
 
+    /// Read-only access to the persisted catalog/inspector UI state (P6a).
+    pub fn ui(&self) -> &SessionUiState {
+        &self.ui
+    }
+
+    /// Replace the persisted catalog/inspector UI state and persist (P6a).
+    pub fn set_ui(&mut self, ui: SessionUiState) -> Result<()> {
+        self.ui = ui;
+        self.persist().context("session::set_ui: persist failed")
+    }
+
     // -----------------------------------------------------------------------
     // Persistence
     // -----------------------------------------------------------------------
@@ -400,6 +439,7 @@ impl Session {
             query_history: self.query_history.clone(),
             saved_queries: self.saved_queries.clone(),
             attachments: self.attachments.clone(),
+            ui: self.ui.clone(),
         };
 
         let bytes =
@@ -561,6 +601,20 @@ mod tests {
         let json = r#"{"schema_version":6,"tabs":[],"active_tab":null}"#;
         let state: SessionState = serde_json::from_str(json).unwrap();
         assert!(state.attachments.is_empty());
+    }
+
+    #[test]
+    fn v7_file_loads_as_v8_with_default_ui() {
+        // a v7 SessionState JSON (no `ui` field) must load with default UI state.
+        let v7 = serde_json::json!({
+            "schema_version": 7, "tabs": [], "attachments": []
+        });
+        let state: super::SessionState = serde_json::from_value(v7).unwrap();
+        assert!(
+            state.ui.catalog_panel_visible == false,
+            "default dock hidden"
+        );
+        assert!(state.ui.catalog_expanded.is_empty());
     }
 
     #[test]

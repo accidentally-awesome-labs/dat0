@@ -97,11 +97,11 @@ fn sample_v2_session_json() -> String {
 /// Take a v2 sample JSON and splice an unrecognized transform `kind` into the
 /// first tab's `transform_stack` — simulating a session a newer dat0 binary
 /// wrote with a variant this build doesn't know. The `schema_version` is also
-/// bumped to the current version (7) so the doc looks like a real current file
+/// bumped to the current version (8) so the doc looks like a real current file
 /// (the unknown-kind guard, not the version arm, is what must reject it).
 fn inject_unknown_kind(sample: String) -> String {
     let mut doc: serde_json::Value = serde_json::from_str(&sample).unwrap();
-    doc["schema_version"] = serde_json::json!(7);
+    doc["schema_version"] = serde_json::json!(SESSION_SCHEMA_VERSION);
     let stack = doc["tabs"][0]["transform_stack"].as_array_mut().unwrap();
     stack.push(serde_json::json!({
         "kind": "frobnicate",
@@ -150,7 +150,6 @@ fn v2_fixture_migrates_to_v7_preserving_content() {
     let state: SessionState = migrate::load(&p).unwrap();
 
     assert_eq!(state.schema_version, SESSION_SCHEMA_VERSION);
-    assert_eq!(state.schema_version, 7);
     assert_eq!(state.tabs.len(), 1);
     assert_eq!(state.tabs[0].transform_stack.len(), 2);
     assert_eq!(state.tabs[0].undo_cursor, 2);
@@ -231,7 +230,7 @@ fn v2_round_trip_through_serialization() {
 }
 
 /// Session::recover eagerly calls persist() after loading, so a v1 file is
-/// rewritten as the current schema (v7) on the first open — no subsequent
+/// rewritten as the current schema (v8) on the first open — no subsequent
 /// mutation required.
 #[tokio::test]
 async fn recover_eagerly_writes_back_current_version_on_first_open() {
@@ -255,12 +254,12 @@ async fn recover_eagerly_writes_back_current_version_on_first_open() {
         .await
         .expect("Session::recover should succeed on a v1 file");
 
-    // The on-disk file must now be the current schema (v7) without any further
+    // The on-disk file must now be the current schema (v8) without any further
     // persist() call.
     let after = fs::read_to_string(&session_path).unwrap();
     assert!(
-        after.contains("\"schema_version\": 7") || after.contains("\"schema_version\":7"),
-        "post-recover file should be current schema (v7), got: {}",
+        after.contains("\"schema_version\": 8") || after.contains("\"schema_version\":8"),
+        "post-recover file should be current schema (v8), got: {}",
         &after[..after.len().min(300)]
     );
 }
@@ -295,11 +294,12 @@ fn v1_migration_write_back_produces_current_version_on_disk() {
 #[test]
 fn v2_session_migrates_to_v7_identity() {
     // A v2 session.json (no Edit/RowDelete — filter + sort only) loads and is
-    // stamped v7 with NO field reshape: the stack + cursor pass through unchanged.
+    // stamped to the current schema with NO field reshape: the stack + cursor
+    // pass through unchanged.
     let v2 = sample_v2_session_json();
     let migrated = migrate::load_str(&v2).unwrap();
 
-    assert_eq!(migrated.schema_version, 7);
+    assert_eq!(migrated.schema_version, SESSION_SCHEMA_VERSION);
     // Identity: the active stack contents and cursor are preserved verbatim.
     assert_eq!(migrated.tabs.len(), 1);
     assert_eq!(migrated.tabs[0].transform_stack.len(), 2);
@@ -315,7 +315,7 @@ fn v2_session_migrates_to_v7_identity() {
     migrated_canonical["schema_version"] = serde_json::json!(2);
     assert_eq!(
         migrated_canonical, v2_canonical,
-        "v2 → v7 must change ONLY the version (identity migration)"
+        "v2 → current must change ONLY the version (identity migration)"
     );
 }
 
@@ -428,7 +428,7 @@ fn v5_round_trips_sql_tabs() {
       "active_sql_tab": 0
     }"#;
     let state = migrate::load_str(v5_json).unwrap();
-    assert_eq!(state.schema_version, 7);
+    assert_eq!(state.schema_version, SESSION_SCHEMA_VERSION);
     assert_eq!(state.sql_tabs.len(), 1);
     assert_eq!(state.sql_tabs[0].title, "Query 1");
     assert_eq!(state.sql_tabs[0].sql, "SELECT 1");
@@ -445,7 +445,7 @@ fn v5_file_migrates_to_v7_with_empty_query_stores() {
     let raw =
         r#"{"schema_version":5,"tabs":[],"active_tab":null,"sql_tabs":[],"active_sql_tab":null}"#;
     let state = migrate::load_str(raw).expect("v5 should migrate");
-    assert_eq!(state.schema_version, 7);
+    assert_eq!(state.schema_version, SESSION_SCHEMA_VERSION);
     assert!(state.query_history.is_empty());
     assert!(state.saved_queries.is_empty());
 }
@@ -470,24 +470,66 @@ fn v6_file_migrates_to_v7_with_empty_attachments() {
     // the migrate_v6_to_v7 arm, defaulting `attachments` to an empty vec.
     let raw = r#"{"schema_version":6,"tabs":[],"active_tab":null,"sql_tabs":[],"active_sql_tab":null,
         "query_history":[],"saved_queries":[]}"#;
-    let state = migrate::load_str(raw).expect("v6 should migrate to v7");
-    assert_eq!(state.schema_version, 7);
+    let state = migrate::load_str(raw).expect("v6 should migrate to v8");
+    assert_eq!(state.schema_version, SESSION_SCHEMA_VERSION);
     assert!(
         state.attachments.is_empty(),
-        "v6 -> v7: attachments defaults empty"
+        "v6 -> current: attachments defaults empty"
     );
 }
 
 #[test]
 fn v7_roundtrips_attachments() {
-    // A v7 document with attachments loads as-is via the current-version arm.
+    // A v7 document with attachments migrates to v8 via migrate_v7_to_v8,
+    // preserving the attachments verbatim while stamping the current version.
     let raw = r#"{"schema_version":7,"tabs":[],"active_tab":null,"sql_tabs":[],"active_sql_tab":null,
         "query_history":[],"saved_queries":[],
         "attachments":[{"alias":"md","kind":"md"},
                        {"alias":"local","kind":{"sqlite":{"path":"/tmp/x.db"}}}]}"#;
     let state = migrate::load_str(raw).expect("v7 loads");
-    assert_eq!(state.schema_version, 7);
+    assert_eq!(state.schema_version, SESSION_SCHEMA_VERSION);
     assert_eq!(state.attachments.len(), 2);
     assert_eq!(state.attachments[0].alias, "md");
     assert_eq!(state.attachments[1].alias, "local");
+}
+
+// ---------------------------------------------------------------------------
+// T13 (P6a) — session v8 (additive `ui` catalog/inspector dock + tree state)
+// ---------------------------------------------------------------------------
+
+#[test]
+fn v7_file_migrates_to_v8_with_default_ui() {
+    // A v7 document (has attachments but no `ui`) migrates to v8 via the
+    // migrate_v7_to_v8 arm, defaulting `ui` to both-docks-hidden / all-collapsed.
+    let raw = r#"{"schema_version":7,"tabs":[],"active_tab":null,"sql_tabs":[],"active_sql_tab":null,
+        "query_history":[],"saved_queries":[],"attachments":[]}"#;
+    let state = migrate::load_str(raw).expect("v7 should migrate to v8");
+    assert_eq!(state.schema_version, SESSION_SCHEMA_VERSION);
+    assert_eq!(state.schema_version, 8);
+    assert!(
+        !state.ui.catalog_panel_visible,
+        "v7 -> v8: catalog dock defaults hidden"
+    );
+    assert!(
+        !state.ui.inspector_panel_visible,
+        "v7 -> v8: inspector dock defaults hidden"
+    );
+    assert!(state.ui.catalog_expanded.is_empty());
+    assert!(state.ui.catalog_selection.is_none());
+}
+
+#[test]
+fn v8_roundtrips_ui() {
+    // A v8 document with `ui` loads as-is via the current-version arm, preserving
+    // the dock visibility + tree state verbatim.
+    let raw = r#"{"schema_version":8,"tabs":[],"active_tab":null,"sql_tabs":[],"active_sql_tab":null,
+        "query_history":[],"saved_queries":[],"attachments":[],
+        "ui":{"catalog_panel_visible":true,"inspector_panel_visible":true,
+              "catalog_expanded":["orders","customers"],"catalog_selection":"orders"}}"#;
+    let state = migrate::load_str(raw).expect("v8 loads");
+    assert_eq!(state.schema_version, 8);
+    assert!(state.ui.catalog_panel_visible);
+    assert!(state.ui.inspector_panel_visible);
+    assert_eq!(state.ui.catalog_expanded, vec!["orders", "customers"]);
+    assert_eq!(state.ui.catalog_selection.as_deref(), Some("orders"));
 }
