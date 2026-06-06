@@ -240,7 +240,7 @@ that's modifying it; merge conflicts are signals worth investigating.
 - **Originating doc:** `docs/specs/2026-04-27-dat0-p2-engine-design.md` §7
 - **Closes:** spec §6.5 entirely (partial closure — `sqlite:` lands in P2;
   `md:` lands in P5c).
-- **Closed by:** P5c (branch `p5c-motherduck`; squash SHA filled at merge).
+- **Closed by:** P5c — PR #12, squash `6d406e6` (merged 2026-06-06).
   P5c delivered: runtime `INSTALL/LOAD motherduck` on duckdb-rs 1.4.4
   (S1 spike confirmed it works), the `attach()` md arm (`LOAD motherduck` on
   live conn + `SET motherduck_token` + `ATTACH 'md:'`),
@@ -255,7 +255,19 @@ that's modifying it; merge conflicts are signals worth investigating.
   reusable native file-picker exists in this codebase; files attach only via
   drag-and-drop. Engine `attach()`/`detach()` + the Detach button are fully
   implemented; only the panel "pick a file" UI entry point is deferred.
-- **Last touched:** 2026-06-05 (closed by P5c).
+- **CI-discovered design correction (the design assumed an alias that does not
+  exist):** MotherDuck rejects `ATTACH 'md:' AS <alias>` ("Database aliases are
+  not yet supported by MotherDuck in workspace mode"), so the design's single
+  `md` alias model was invalid. Corrected to **workspace mode** — `ATTACH 'md:'`
+  attaches the account's databases under their real names (identified by
+  `duckdb_databases().type = 'motherduck'`); the routing classifier keys on
+  those real names. Also: workspace-mode `DETACH` **persists** to the account's
+  saved workspace, so dat0's Disconnect is a **soft disconnect** (UI/state only,
+  no `DETACH`) to avoid mutating the user's cloud workspace; Connect is
+  idempotent. The integration test runs green against a live account on both
+  macOS + linux in CI. (macOS PR CI skips the advisory grid bench — its release
+  recompile of DuckDB exhausted runner disk.)
+- **Last touched:** 2026-06-06 (closed by P5c, PR #12 `6d406e6`).
 
 ### D-008 — Cancellation-token wiring through `QueryEngine` trait
 
