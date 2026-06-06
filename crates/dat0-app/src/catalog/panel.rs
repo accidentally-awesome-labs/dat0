@@ -15,7 +15,7 @@ use gpui::{Context, SharedString, div};
 /// A section header label, e.g. `section_label("Tables", 3) == "Tables (3)"`.
 /// The section titles ("Sources"/"Tables"/"Derived") are structural group names,
 /// not user-facing toggle strings, so they are passed as literals (not i18n).
-pub fn section_label(name: &str, n: usize) -> String {
+pub(crate) fn section_label(name: &str, n: usize) -> String {
     format!("{name} ({n})")
 }
 
@@ -46,7 +46,7 @@ pub fn render_catalog(
             .gap_1()
             .child(div().child(SharedString::from(section_label(title, nodes.len()))));
         for node in nodes {
-            section = section.child(catalog_row(&node.name, cx));
+            section = section.child(catalog_row(title, &node.name, cx));
         }
         root = root.child(section);
     }
@@ -57,10 +57,13 @@ pub fn render_catalog(
 /// A clickable catalog row that opens `name` into the main grid. Mirrors the
 /// `action_button` idiom in [`crate::connections::panel`]
 /// (`div().id(..).cursor_pointer().on_click(cx.listener(..))`).
-fn catalog_row(name: &str, cx: &mut Context<WorkspaceShell>) -> gpui::Stateful<gpui::Div> {
+fn catalog_row(section: &str, name: &str, cx: &mut Context<WorkspaceShell>) -> gpui::Stateful<gpui::Div> {
     let name = name.to_string();
+    // ElementId must be unique within the render pass: a table name can recur
+    // across sections (e.g. an attached `events` and a local derived `events`),
+    // so the section qualifies the id to avoid GPUI click/hover cross-talk.
     div()
-        .id(SharedString::from(format!("cat-{name}")))
+        .id(SharedString::from(format!("cat-{section}-{name}")))
         .px_2()
         .py_1()
         .cursor_pointer()
