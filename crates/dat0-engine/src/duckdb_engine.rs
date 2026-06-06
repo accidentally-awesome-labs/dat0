@@ -679,13 +679,26 @@ impl crate::QueryEngine for DuckDBEngine {
                             .collect();
                         Ok(v)
                     })()
-                    .unwrap_or_default();
+                    .unwrap_or_else(|_| {
+                        tracing::warn!(
+                            "attach(md): catalog enumeration for origins failed; \
+                             origins/chip may be incomplete"
+                        );
+                        Vec::new()
+                    });
                     let mut pairs = Vec::new();
                     for db in md_dbs {
-                        if let Ok(rows) = crate::catalog::list_attached_tables(&conn, &db) {
-                            for (_schema, table) in rows {
-                                pairs.push((db.clone(), table));
+                        match crate::catalog::list_attached_tables(&conn, &db) {
+                            Ok(rows) => {
+                                for (_schema, table) in rows {
+                                    pairs.push((db.clone(), table));
+                                }
                             }
+                            Err(_) => tracing::warn!(
+                                database = %db,
+                                "attach(md): table enumeration for origins failed; \
+                                 origins may be incomplete"
+                            ),
                         }
                     }
                     Ok(pairs)
@@ -719,10 +732,20 @@ impl crate::QueryEngine for DuckDBEngine {
         let names = tokio::task::spawn_blocking(move || -> Result<Vec<String>> {
             let conn = conn.lock().map_err(|_| EngineError::EnginePoisoned)?;
             conn.execute_batch(&sql)?;
-            let names = crate::catalog::list_attached_tables(&conn, &alias_owned)?
-                .into_iter()
-                .map(|(_schema, table)| table)
-                .collect();
+            // Best-effort: the ATTACH already succeeded; an enumeration hiccup must
+            // not undo it. Swallow + warn (matches the md arm) so origins may be
+            // incomplete rather than failing a good attach.
+            let names = match crate::catalog::list_attached_tables(&conn, &alias_owned) {
+                Ok(rows) => rows.into_iter().map(|(_schema, table)| table).collect(),
+                Err(e) => {
+                    tracing::warn!(
+                        alias = %alias_owned,
+                        error = %e,
+                        "attach: attached-table enumeration failed; origins may be incomplete"
+                    );
+                    Vec::new()
+                }
+            };
             Ok(names)
         })
         .await
