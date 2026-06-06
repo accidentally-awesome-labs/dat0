@@ -1485,8 +1485,12 @@ impl WorkspaceShell {
                     ws.update(app_cx, |ws, cx| {
                         // Supersede guard: only the latest load writes its result.
                         if ws.inspector.is_current(load_id) {
-                            ws.inspector.put(profile);
+                            ws.inspector.put(profile.clone());
                             cx.notify();
+                            // Fetch inline-chart extras for the columns that
+                            // qualify, reusing this load's `load_id` to guard
+                            // against stale bars when tables switch fast (T10).
+                            ws.load_column_extras(load_id, profile, cx);
                         }
                     });
                 });
@@ -1495,6 +1499,142 @@ impl WorkspaceShell {
                     "load_inspector_profile: no MainThreadDispatcher installed; profile dropped"
                 );
             }
+        });
+    }
+
+    /// Fetch inline-chart extras for a freshly-loaded profile (P6a T10), reusing
+    /// the profile load's `load_id` as the supersede guard so switching tables
+    /// fast never lands stale bars. Eager-on-load (vs lazy-on-expand): acceptable
+    /// because the *qualifying* set is small — only low-cardinality columns get a
+    /// `column_topn` fetch and only numeric high-cardinality columns get a
+    /// sampled histogram; everything else issues no query. This naturally bounds
+    /// the query count for typical tables.
+    ///
+    /// Extras are only fetched in `WholeTable` mode: they query the base table by
+    /// its bare name, so they match the profiled data only when the profile is of
+    /// the whole table (in `CurrentView` the profile is of a filtered SELECT).
+    fn load_column_extras(
+        &mut self,
+        load_id: u64,
+        profile: dat0_engine::TableProfile,
+        cx: &mut gpui::Context<Self>,
+    ) {
+        if !matches!(self.inspector.mode, crate::inspector::ProfileTargetMode::WholeTable) {
+            return;
+        }
+        let Some(table) = self.inspector.target_table.clone() else {
+            return;
+        };
+        let engine = self.engine();
+
+        for col in profile.columns {
+            // Low-cardinality → top-N horizontal bars.
+            if col.approx_distinct > 0 && col.approx_distinct <= 24 {
+                let engine = engine.clone();
+                let table = table.clone();
+                let col_name = col.name.clone();
+                let ws_weak = cx.entity().downgrade();
+                tokio::spawn(async move {
+                    use dat0_engine::QueryEngine as _;
+                    let data = match engine.column_topn(&table, &col_name, 8).await {
+                        Ok(d) => d,
+                        Err(e) => {
+                            tracing::warn!(error = %e, col = %col_name, "column_topn failed");
+                            return;
+                        }
+                    };
+                    Self::dispatch_extra(ws_weak, load_id, move |ws, cx| {
+                        ws.inspector.put_topn(&col_name, data);
+                        cx.notify();
+                    });
+                });
+                continue;
+            }
+
+            // Numeric high-cardinality → sampled histogram. Cast to DOUBLE so the
+            // Arrow column is always Float64 regardless of the source numeric type.
+            if let Some(numeric) = col.numeric.clone() {
+                if col.approx_distinct > 24 {
+                    let engine = engine.clone();
+                    let col_name = col.name.clone();
+                    let col_q = Self::quote_ident(&col_name);
+                    let tbl_q = Self::quote_ident(&table);
+                    let sql = format!(
+                        "SELECT CAST({c} AS DOUBLE) AS v FROM {t} \
+                         WHERE {c} IS NOT NULL USING SAMPLE 2048 ROWS",
+                        c = col_q,
+                        t = tbl_q
+                    );
+                    let ws_weak = cx.entity().downgrade();
+                    tokio::spawn(async move {
+                        use dat0_engine::QueryEngine as _;
+                        use duckdb::arrow::array::{Array, Float64Array};
+                        let result = match engine.execute(&sql).await {
+                            Ok(r) => r,
+                            Err(e) => {
+                                tracing::warn!(error = %e, col = %col_name, "histogram sample failed");
+                                return;
+                            }
+                        };
+                        let mut values: Vec<f64> = Vec::new();
+                        for batch in &result.batches {
+                            if let Some(a) =
+                                batch.column(0).as_any().downcast_ref::<Float64Array>()
+                            {
+                                for row in 0..a.len() {
+                                    if a.is_valid(row) {
+                                        values.push(a.value(row));
+                                    }
+                                }
+                            }
+                        }
+                        if values.is_empty() {
+                            return;
+                        }
+                        let bins = crate::charts::histogram_bins(
+                            numeric.min,
+                            numeric.max,
+                            &values,
+                            16,
+                        );
+                        Self::dispatch_extra(ws_weak, load_id, move |ws, cx| {
+                            ws.inspector.put_histogram(&col_name, bins);
+                            cx.notify();
+                        });
+                    });
+                }
+            }
+        }
+    }
+
+    /// Quote a bare SQL identifier for app-built SQL strings (the engine quotes
+    /// its own args, but these query strings are assembled here). Doubles any
+    /// embedded `"`.
+    fn quote_ident(s: &str) -> String {
+        format!("\"{}\"", s.replace('"', "\"\""))
+    }
+
+    /// Hop an extras-write back to the main thread via the registry dispatcher
+    /// under the supersede guard (T10). `f` runs only if `load_id` is still the
+    /// current inspector load.
+    fn dispatch_extra(
+        ws_weak: gpui::WeakEntity<Self>,
+        load_id: u64,
+        f: impl FnOnce(&mut Self, &mut gpui::Context<Self>) + Send + 'static,
+    ) {
+        let Some(dispatcher) = crate::window_registry::dispatcher() else {
+            tracing::warn!("load_column_extras: no MainThreadDispatcher; extra dropped");
+            return;
+        };
+        let _ = dispatcher.dispatch(move |app_cx: &mut gpui::App| {
+            let Some(ws) = ws_weak.upgrade() else {
+                return;
+            };
+            ws.update(app_cx, |ws, cx| {
+                if ws.inspector.is_current(load_id) {
+                    f(ws, cx);
+                }
+            });
         });
     }
 
@@ -1512,6 +1652,9 @@ impl WorkspaceShell {
             WholeTable => CurrentView,
             CurrentView => WholeTable,
         };
+        // Drop stale extras so a WholeTable column's bars don't survive onto a
+        // CurrentView card with the same name (T10).
+        self.inspector.clear_extras();
         self.load_inspector_profile(cx);
         cx.notify();
     }

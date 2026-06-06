@@ -68,7 +68,7 @@ pub fn render_inspector(
     if let Some(profile) = model.cached() {
         let mut cards = div().flex().flex_col().gap_2();
         for col in &profile.columns {
-            cards = cards.child(column_card(col));
+            cards = cards.child(column_card(col, model));
         }
         root = root.child(cards);
     }
@@ -76,9 +76,10 @@ pub fn render_inspector(
     root.into_any_element()
 }
 
-/// One column card: name · type, then the three formatted stat lines. T10 adds
-/// an inline chart below these lines; for now the card is text-only.
-fn column_card(col: &dat0_engine::ColumnProfile) -> gpui::Div {
+/// One column card: name · type, then the three formatted stat lines, then —
+/// when its lazy data has landed (T10) — an inline chart: top-N bars for
+/// low-cardinality columns, a histogram for numeric high-cardinality ones.
+fn column_card(col: &dat0_engine::ColumnProfile, model: &InspectorModel) -> gpui::Div {
     let header = format!("{} · {}", col.name, col.ty);
     let stats = format::format_stats_line(col);
 
@@ -98,6 +99,14 @@ fn column_card(col: &dat0_engine::ColumnProfile) -> gpui::Div {
     card = card.child(div().child(SharedString::from(format::format_distinct(col))));
     card = card.child(div().child(SharedString::from(format::format_null(col))));
 
-    // T10: inline chart goes here (under the stat lines).
+    // Inline chart (T10): top-N bars for low-card, histogram for numeric — only
+    // when its lazy data has been fetched (see `load_column_extras`).
+    if let Some(extra) = model.extra(&col.name) {
+        if let Some(topn) = &extra.topn {
+            card = card.child(crate::charts::render_topn(topn));
+        } else if let Some(bins) = &extra.histogram {
+            card = card.child(crate::charts::render_histogram(bins));
+        }
+    }
     card
 }
