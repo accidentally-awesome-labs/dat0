@@ -610,10 +610,7 @@ mod tests {
             "schema_version": 7, "tabs": [], "attachments": []
         });
         let state: super::SessionState = serde_json::from_value(v7).unwrap();
-        assert!(
-            state.ui.catalog_panel_visible == false,
-            "default dock hidden"
-        );
+        assert!(!state.ui.catalog_panel_visible, "default dock hidden");
         assert!(state.ui.catalog_expanded.is_empty());
     }
 
@@ -759,6 +756,44 @@ mod tests {
         assert_eq!(recovered.saved_queries().len(), 1);
         assert_eq!(recovered.saved_queries()[0].name, "Daily");
         assert_eq!(recovered.saved_queries()[0].sql, "select count(*) from t");
+    }
+
+    #[tokio::test]
+    async fn ui_round_trips_through_persist_and_recover() {
+        // Dock/tree UI state (P6a v8) must survive a restart — set_ui persists it,
+        // recover reads it back verbatim (all four fields, incl. the forward-looking
+        // catalog_expanded/catalog_selection).
+        let root = tempfile::tempdir().expect("tempdir");
+
+        let scratch_dir = {
+            let mut sess = Session::new(root.path(), TEST_BUDGET)
+                .await
+                .expect("Session::new");
+
+            // Fresh session has default (all-hidden / empty) UI state.
+            assert_eq!(sess.ui(), &SessionUiState::default());
+
+            sess.set_ui(SessionUiState {
+                catalog_panel_visible: true,
+                inspector_panel_visible: true,
+                catalog_expanded: vec!["orders".into(), "sales".into()],
+                catalog_selection: Some("orders".into()),
+            })
+            .expect("set_ui");
+
+            sess.scratch_dir.clone()
+            // sess drops here, releasing the engine + DB lock
+        };
+
+        let recovered = Session::recover(scratch_dir, TEST_BUDGET)
+            .await
+            .expect("Session::recover");
+
+        let ui = recovered.ui();
+        assert!(ui.catalog_panel_visible, "catalog dock visibility survived");
+        assert!(ui.inspector_panel_visible, "inspector dock visibility survived");
+        assert_eq!(ui.catalog_expanded, vec!["orders".to_string(), "sales".to_string()]);
+        assert_eq!(ui.catalog_selection.as_deref(), Some("orders"));
     }
 
     #[tokio::test]
