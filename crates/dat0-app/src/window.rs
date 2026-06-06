@@ -735,6 +735,9 @@ pub struct WorkspaceShell {
     /// Whether the left-dock Connections panel is shown (P5c T10/T11). Toggled by
     /// the `ConnectionsToggle` action; gates the panel in `render`.
     pub(crate) connections_panel_visible: bool,
+    /// Per-window live banner list (PD-021). Drained from `error_ux::banner::PENDING`
+    /// on each render; rendered as a host strip atop the shell.
+    pub(crate) banners: Vec<crate::error_ux::banner::Banner>,
     /// Token-entry modal (reuses [`NamePrompt`](crate::view::name_prompt::NamePrompt)).
     /// `Some` while the MotherDuck token prompt is open; cleared on Confirm /
     /// Cancel. Rendered as a window overlay child in `render` when present.
@@ -780,6 +783,7 @@ impl WorkspaceShell {
             saved_picker_open: false,
             connections: Default::default(),
             connections_panel_visible: false,
+            banners: Vec::new(),
             md_token_prompt: None,
             md_token_prompt_sub: None,
         }
@@ -2356,6 +2360,26 @@ impl Render for WorkspaceShell {
             self.theme_subscription = Some(sub);
         }
 
+        // PD-021 banner host: drain any globally-stashed banners into this
+        // window's live list, then build an OWNED host element. Computing
+        // `banner_host` here (after the `&mut self.banners` drain, before the
+        // builder chain) keeps the `self.banners.iter()` borrow from outliving
+        // the later `&mut self` mutations in this render.
+        crate::error_ux::banner::merge_pending(&mut self.banners);
+        let banner_host: Option<gpui::AnyElement> = (!self.banners.is_empty()).then(|| {
+            gpui::div()
+                .flex()
+                .flex_col()
+                .gap_1()
+                .p_1()
+                .children(
+                    self.banners
+                        .iter()
+                        .map(|b| crate::error_ux::banner::render_banner(b).into_any_element()),
+                )
+                .into_any_element()
+        });
+
         // Lazily promote `Arc<GridDataSource>` → `Entity<TableState<…>>`
         // on the first render after the data source landed. `TableState::new`
         // requires `&mut Window`, which is only available inside `render`
@@ -2927,6 +2951,7 @@ impl Render for WorkspaceShell {
             .on_click(click_to_focus)
             .drag_over::<ExternalPaths>(|style, _, _, _| style.bg(gpui::rgba(0x0088_ff22)))
             .on_drop::<ExternalPaths>(drop_listener)
+            .children(banner_host)
             .children(tab_strip)
             .children(pipeline_bar)
             .children(sql_console_panel)

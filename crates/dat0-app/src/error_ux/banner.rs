@@ -151,6 +151,35 @@ pub fn drain_pending() -> Vec<Banner> {
     }
 }
 
+/// Move any globally-stashed banners into a per-window live list (PD-021).
+/// Called once per shell render so boot-time + background `push`es surface.
+pub fn merge_pending(live: &mut Vec<Banner>) {
+    live.append(&mut drain_pending());
+}
+
+use gpui::{div, px, IntoElement, ParentElement, Styled};
+
+/// Render one banner as an inline notice. Kind drives the accent color.
+pub fn render_banner(b: &Banner) -> impl IntoElement {
+    let accent = match b.kind {
+        BannerKind::Info => gpui::rgb(0x3b82f6),
+        BannerKind::Warning => gpui::rgb(0xd97706),
+        BannerKind::Error => gpui::rgb(0xdc2626),
+    };
+    div()
+        .flex()
+        .flex_col()
+        .gap_1()
+        .w_full()
+        .px_3()
+        .py_2()
+        .border_l_4()
+        .border_color(accent)
+        .bg(gpui::rgba(0x80808014))
+        .child(div().font_weight(gpui::FontWeight::SEMIBOLD).child(b.title.clone()))
+        .children((!b.body.is_empty()).then(|| div().text_size(px(12.0)).child(b.body.clone())))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -165,5 +194,17 @@ mod tests {
         assert_eq!(drained[0].title, "first");
         assert_eq!(drained[1].title, "second");
         assert!(drain_pending().is_empty());
+    }
+
+    #[test]
+    fn merge_pending_moves_global_into_live_vec() {
+        // clear any cross-test residue
+        let _ = drain_pending();
+        push(Banner::error("export failed", "disk full"));
+        push(Banner::info("done"));
+        let mut live: Vec<Banner> = Vec::new();
+        merge_pending(&mut live);
+        assert_eq!(live.len(), 2, "both pending banners moved into live vec");
+        assert!(drain_pending().is_empty(), "PENDING drained after merge");
     }
 }
