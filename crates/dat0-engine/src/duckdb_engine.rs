@@ -491,6 +491,26 @@ impl crate::QueryEngine for DuckDBEngine {
         .map_err(|e| EngineError::TaskJoin(e.to_string()))?
     }
 
+    #[instrument(skip(self), fields(name = name))]
+    async fn profile_table(
+        &self,
+        name: &str,
+        schema: Option<&str>,
+    ) -> Result<crate::profile::TableProfile> {
+        self.assert_open()?;
+        let conn = self.conn.clone();
+        let target = match schema {
+            Some(s) => format!("{}.{}", quote_ident(s), quote_ident(name)),
+            None => quote_ident(name),
+        };
+        tokio::task::spawn_blocking(move || -> Result<crate::profile::TableProfile> {
+            let conn = conn.lock().map_err(|_| EngineError::EnginePoisoned)?;
+            crate::profile::profile_blocking(&conn, &target)
+        })
+        .await
+        .map_err(|e| EngineError::TaskJoin(e.to_string()))?
+    }
+
     #[instrument(skip(self), fields(name = name, format = ?format))]
     async fn export_table(
         &self,

@@ -78,6 +78,23 @@ pub trait QueryEngine: Send + Sync {
     async fn describe_table(&self, name: &str, schema: Option<&str>) -> Result<Vec<ColumnInfo>>;
     async fn get_tables(&self) -> Result<Vec<TableInfo>>;
 
+    /// Profile every column of `name` in one `SUMMARIZE` scan (per design D2):
+    /// null%, approx-distinct, per-type min/max, and numeric stats (avg/std/
+    /// quartiles) where applicable. Distinct% is approximate (HLL).
+    ///
+    /// `name` is a plain (unquoted) identifier; quoting is applied internally.
+    /// `schema` qualifies the table when present.
+    ///
+    /// # Errors
+    /// - `EngineError::EngineClosed` — if the engine has been closed.
+    /// - `EngineError::DuckDb` — if the table does not exist or SUMMARIZE fails.
+    /// - `EngineError::EnginePoisoned` — if the connection mutex was poisoned.
+    async fn profile_table(
+        &self,
+        name: &str,
+        schema: Option<&str>,
+    ) -> Result<crate::profile::TableProfile>;
+
     async fn export_table(&self, name: &str, format: ExportFormat) -> Result<Vec<u8>>;
 
     /// Stream a SELECT to `dest` via DuckDB `COPY … TO`. Writes straight to
