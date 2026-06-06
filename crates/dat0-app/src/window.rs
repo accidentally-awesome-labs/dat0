@@ -735,6 +735,13 @@ pub struct WorkspaceShell {
     /// Whether the left-dock Connections panel is shown (P5c T10/T11). Toggled by
     /// the `ConnectionsToggle` action; gates the panel in `render`.
     pub(crate) connections_panel_visible: bool,
+    /// Whether the left-dock Catalog panel is shown (P6a T7). Toggled by the
+    /// `CatalogToggle` action; gates the catalog dock in `render`.
+    pub(crate) catalog_panel_visible: bool,
+    /// Live catalog tree rendered by the Catalog dock (P6a T7). Rebuilt off-thread
+    /// by [`Self::refresh_catalog`] whenever the catalog could change (toggle /
+    /// import / create / drop).
+    pub(crate) catalog_tree: crate::catalog::CatalogTree,
     /// Per-window live banner list (PD-021). Drained from `error_ux::banner::PENDING`
     /// on each render; rendered as a host strip atop the shell.
     pub(crate) banners: Vec<crate::error_ux::banner::Banner>,
@@ -783,6 +790,8 @@ impl WorkspaceShell {
             saved_picker_open: false,
             connections: Default::default(),
             connections_panel_visible: false,
+            catalog_panel_visible: false,
+            catalog_tree: crate::catalog::CatalogTree::default(),
             banners: Vec::new(),
             md_token_prompt: None,
             md_token_prompt_sub: None,
@@ -1256,6 +1265,10 @@ impl WorkspaceShell {
         if self.sql_console_visible {
             self.refresh_completion_snapshot(cx);
         }
+        // Keep the Catalog dock fresh if it's open (P6a T7).
+        if self.catalog_panel_visible {
+            self.refresh_catalog(cx);
+        }
         cx.notify();
     }
 
@@ -1309,6 +1322,89 @@ impl WorkspaceShell {
             } else {
                 tracing::warn!(
                     "refresh_completion_snapshot: no MainThreadDispatcher installed; snapshot stale"
+                );
+            }
+        });
+    }
+
+    /// Open `name` into the main grid (P6a T7). The main window is single-view —
+    /// one `view_model` at a time — so "open" mirrors the file-import load path
+    /// (window.rs `last_registered` branch): build a `GridDataSource` off-thread,
+    /// then on the main thread install a fresh `ViewModel` + data source.
+    ///
+    /// Bridge: a raw `tokio::spawn` + the `window_registry::dispatcher()` →
+    /// upgraded weak handle, matching `refresh_completion_snapshot` (the import
+    /// branch's `async_cx.update` bridge is only reachable from inside the render
+    /// `cx.spawn`; this is an on-click handler, so the dispatcher bridge is the
+    /// canonical off-thread→main-thread write here).
+    pub(crate) fn open_table_tab(
+        &mut self,
+        name: String,
+        _window: &mut gpui::Window,
+        cx: &mut gpui::Context<Self>,
+    ) {
+        let engine = self.engine();
+        let ws_weak = cx.entity().downgrade();
+        tokio::spawn(async move {
+            match crate::grid::GridDataSource::new(engine, name.clone()).await {
+                Ok(ds) => {
+                    if let Some(dispatcher) = crate::window_registry::dispatcher() {
+                        let _ = dispatcher.dispatch(move |app_cx: &mut gpui::App| {
+                            let Some(ws) = ws_weak.upgrade() else {
+                                return;
+                            };
+                            ws.update(app_cx, |ws, cx| {
+                                // base_table passed to ViewModel must already be quoted.
+                                let quoted = format!("\"{}\"", name.replace('"', "\"\""));
+                                ws.view_model =
+                                    Some(crate::view::model::ViewModel::new(name.clone(), quoted));
+                                ws.set_data_source(std::sync::Arc::new(ds));
+                                cx.notify();
+                            });
+                        });
+                    } else {
+                        tracing::warn!(
+                            "open_table_tab: no MainThreadDispatcher installed; table not opened"
+                        );
+                    }
+                }
+                Err(e) => {
+                    tracing::warn!(error = %e, "open_table_tab: GridDataSource::new failed")
+                }
+            }
+        });
+    }
+
+    /// Rebuild [`Self::catalog_tree`] from the engine's table list (P6a T7).
+    /// Mirrors `refresh_completion_snapshot`: enumerate `get_tables()` off-thread,
+    /// then write the freshly-built tree on the main thread via the dispatcher +
+    /// upgraded weak handle. Called on every catalog-mutation point (toggle /
+    /// import / create / drop / save-as-table).
+    pub(crate) fn refresh_catalog(&mut self, cx: &mut gpui::Context<Self>) {
+        let engine = self.engine();
+        let ws_weak = cx.entity().downgrade();
+        tokio::spawn(async move {
+            use dat0_engine::QueryEngine as _;
+            let tables = match engine.get_tables().await {
+                Ok(t) => t,
+                Err(e) => {
+                    tracing::warn!(error = %e, "refresh_catalog: get_tables failed");
+                    return;
+                }
+            };
+            if let Some(dispatcher) = crate::window_registry::dispatcher() {
+                let _ = dispatcher.dispatch(move |app_cx: &mut gpui::App| {
+                    let Some(ws) = ws_weak.upgrade() else {
+                        return;
+                    };
+                    ws.update(app_cx, |ws, cx| {
+                        ws.catalog_tree = crate::catalog::CatalogTree::build(&tables);
+                        cx.notify();
+                    });
+                });
+            } else {
+                tracing::warn!(
+                    "refresh_catalog: no MainThreadDispatcher installed; catalog stale"
                 );
             }
         });
@@ -1584,6 +1680,8 @@ impl WorkspaceShell {
         // Pick up tables created/dropped by this run (CREATE/DROP/Save-as-Table)
         // so autocomplete reflects the new schema on the next keystroke (P5b T2).
         self.refresh_completion_snapshot(cx);
+        // Mirror into the Catalog dock so created/dropped tables appear (P6a T7).
+        self.refresh_catalog(cx);
     }
 
     /// Open the native save panel, then stream the export via COPY (P4c T11).
@@ -1790,6 +1888,7 @@ impl WorkspaceShell {
                                     )
                                 });
                                 ws.refresh_completion_snapshot(cx);
+                                ws.refresh_catalog(cx);
                             }
                             Err(e) => console.update(cx, |c, cx| {
                                 c.set_region(
@@ -1880,7 +1979,10 @@ impl WorkspaceShell {
                 let _ = dispatcher.dispatch(move |app: &mut gpui::App| {
                     if let Some(ws) = ws_weak.upgrade() {
                         ws.update(app, |ws, cx| match &outcome {
-                            Ok(_) => ws.refresh_completion_snapshot(cx),
+                            Ok(_) => {
+                                ws.refresh_completion_snapshot(cx);
+                                ws.refresh_catalog(cx);
+                            }
                             Err(e) => {
                                 tracing::warn!(error = %e, "save_view_as_table failed");
                                 crate::error_ux::push(crate::error_ux::Banner::warning_with_body(
@@ -2497,6 +2599,9 @@ impl Render for WorkspaceShell {
                                                 quoted,
                                             ));
                                             view.set_data_source(Arc::new(ds));
+                                            // Reflect the newly-imported table in the
+                                            // Catalog dock (P6a T7).
+                                            view.refresh_catalog(cx);
                                             cx.notify();
                                         });
                                     });
@@ -2947,6 +3052,15 @@ impl Render for WorkspaceShell {
                     cx.notify();
                 },
             ))
+            // ── Catalog panel toggle (P6a T7) ─────────────────────────────────
+            .on_action(cx.listener(
+                |ws: &mut Self, _: &crate::menu_macos::CatalogToggle, _window, cx| {
+                    ws.catalog_panel_visible = !ws.catalog_panel_visible;
+                    // Refresh on open so the dock always shows fresh tables.
+                    ws.refresh_catalog(cx);
+                    cx.notify();
+                },
+            ))
             .on_key_down(key_handler)
             .on_click(click_to_focus)
             .drag_over::<ExternalPaths>(|style, _, _, _| style.bg(gpui::rgba(0x0088_ff22)))
@@ -2963,6 +3077,12 @@ impl Render for WorkspaceShell {
                     .flex()
                     .flex_row()
                     .flex_1()
+                    // Catalog dock first → order is Catalog | Connections | body.
+                    .children(self.catalog_panel_visible.then(|| {
+                        div().w_64().border_r_1().child(
+                            crate::catalog::panel::render_catalog(&self.catalog_tree, cx),
+                        )
+                    }))
                     .children(self.connections_panel_visible.then(|| {
                         div().w_64().border_r_1().child(
                             crate::connections::panel::render_connections(&self.connections, cx),

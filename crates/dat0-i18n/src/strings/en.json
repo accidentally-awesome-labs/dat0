@@ -70,6 +70,8 @@
   "boot.sqlite_scanner_install_failed.body": "dat0 couldn't install the SQLite reader extension. Reading .sqlite/.db files will fail until this is resolved. If you're behind a corporate proxy, set HTTP_PROXY/HTTPS_PROXY env vars and restart. See CONTRIBUTING for details.",
   "connections.title": "Connections",
   "connections.toggle": "Toggle Connections panel",
+  "catalog.title": "Catalog",
+  "catalog.toggle": "Toggle Catalog",
   "connections.md.heading": "MotherDuck",
   "connections.md.status.disconnected": "Disconnected",
   "connections.md.status.connecting": "Connecting…",

@@ -60,6 +60,8 @@ pub fn build_menus(_cx: &mut gpui::App) -> Vec<gpui::Menu> {
                 MenuItem::action(dat0_i18n::t("sql.cancel"), SqlCancel),
                 // P5c T11: Connections panel toggle.
                 MenuItem::action(dat0_i18n::t("connections.toggle"), ConnectionsToggle),
+                // P6a T7: Catalog left-dock toggle.
+                MenuItem::action(dat0_i18n::t("catalog.toggle"), CatalogToggle),
             ],
         },
         Menu {
@@ -118,6 +120,8 @@ gpui::actions!(
         SqlCloseTab,
         // P5c T11: Connections panel toggle.
         ConnectionsToggle,
+        // P6a T7: Catalog left-dock toggle.
+        CatalogToggle,
     ]
 );
 
