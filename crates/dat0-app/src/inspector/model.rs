@@ -101,8 +101,14 @@ impl InspectorModel {
         *self.epoch.entry(table.to_string()).or_insert(0) += 1;
     }
 
-    /// Replace a single column's profile in the current cache entry (Hybrid write
-    /// path D4): a cell-edit / single-column transform recomputes only this column.
+    /// Replace a single column's profile in the current cache entry — the D4
+    /// single-column patch primitive.
+    ///
+    /// RESERVED / not on the live write path: in dat0 a cell edit is a display
+    /// overlay (`compile_view_sql` emits `SELECT * REPLACE (CASE …)`), not an
+    /// in-place base mutation, so T12 routes edits through a full structural
+    /// re-profile instead (correct in both WholeTable and CurrentView modes).
+    /// This stays as a tested primitive for a future per-column fast path.
     pub fn patch_column(&mut self, col: &str, new: dat0_engine::ColumnProfile) {
         if let Some(t) = self.target_table.clone() {
             let e = self.epoch_of(&t);
