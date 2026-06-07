@@ -75,7 +75,7 @@ that's modifying it; merge conflicts are signals worth investigating.
 | PD-019 | P4c T13 wired header single-click → select-column but could NOT wire row-gutter click → select-row: the gpui-component `TableDelegate` trait (rev `0f0ab35`) has no `render_row_header`/gutter seam, and `TableState::render_table_row` owns the row layout internally. Two alternatives were rejected: (a) subscribing to `TableEvent::SelectRow` makes every row-body click select a whole row, clobbering the single-cell click selection wired in T5; (b) a fake first column holding row numbers corrupts the `col_ix` passed to `render_td` and breaks column addressing. `WorkspaceShell::select_row_at` IS implemented + reachable programmatically; the click wiring is unwired. | open | low |
 | PD-020 | P4c T14 wired inline-editor `Enter` → commit + move-DOWN + focus-on-mount, but `Tab` → commit + move-RIGHT could NOT be wired: gpui-component `Input` (rev `0f0ab35`) consumes Tab internally for focus tab-stops and surfaces no `InputEvent::PressTab` variant (`InputEvent` is `{ Change, PressEnter, Focus, Blur }`). `EditorAdvance` is enum-shaped so adding `Right` is a one-line extension once an upstream Tab seam exists. | open | low |
 | PD-021 | P4c (T11 review): `error_ux::push` enqueues success/error banners into the global `PENDING` queue, but NOTHING drains it in the runtime render tree — only `#[cfg(test)]` code calls `drain_pending`. So export completion/failure feedback (`window.rs::run_export`) AND the pre-existing P4b paste-reject banner (`grid/edit_ops.rs`) are invisible to the user at runtime. **Closed by P6a T1:** `WorkspaceShell::render` now calls `error_ux::banner::merge_pending` into a per-window `banners` field and renders a host strip atop the shell. | closed | medium |
-| PD-022 | P6a (T12 review): the Inspector profile is refreshed on forward data/schema mutations (cell edit, paste, cut, delete, rename, reorder, transform-apply via `route_change`), but NOT on `undo`/`redo` or SQL-console grid-bind — those rebind via `apply_view_change`, which has no inspector hook. So undoing an edit (or rebinding a grid from the SQL console) leaves the inspector profile stale until the next forward mutation. Single well-scoped fix: hook `apply_view_change` (or an `on_rebind_complete` seam) to invalidate/re-profile the inspected table. Not a regression — the inspector did not refresh at all before P6a. | open | low |
+| PD-022 | P6a (T12 review): the Inspector profile is refreshed on forward data/schema mutations (cell edit, paste, cut, delete, rename, reorder, transform-apply via `route_change`), but NOT on `undo`/`redo` or SQL-console grid-bind — those rebind via `apply_view_change`, which has no inspector hook. So undoing an edit (or rebinding a grid from the SQL console) leaves the inspector profile stale until the next forward mutation. Single well-scoped fix: hook `apply_view_change` (or an `on_rebind_complete` seam) to invalidate/re-profile the inspected table. Not a regression — the inspector did not refresh at all before P6a. | closed | low |
 
 ## At-a-glance — Closed plan defects
 
@@ -1284,7 +1284,7 @@ that's modifying it; merge conflicts are signals worth investigating.
 
 ### PD-022 — Inspector profile not refreshed on undo/redo or SQL-console grid-bind
 
-- **Status:** open
+- **Status:** closed
 - **Severity:** low (transient visual staleness only; the next forward mutation,
   table reselection, or mode toggle re-profiles correctly — no wrong data is
   persisted, and the inspector did not auto-refresh at all before P6a)
@@ -1308,6 +1308,18 @@ that's modifying it; merge conflicts are signals worth investigating.
   re-SUMMARIZE on pure display sort/filter), or introduce an `on_rebind_complete`
   callback that both the undo/redo and SQL-bind paths already funnel through.
 - **Originating doc:** `docs/plans/2026-06-06-dat0-p6a-plan.md` T12.
+- **Closed by:** P6b — `docs/plans/2026-06-06-dat0-p6b-plan.md`, Task 7
+  (2026-06-06). Fix: `apply_view_change` now, when an inspector target is set,
+  calls `recompute_lineage()` (rebuilds the lineage chain from `catalog_tables`
+  + `sql_parents` for the current target) and `on_table_mutated_structural(target,
+  cx)` (bumps the profile epoch + re-profiles via SUMMARIZE + notifies) — so
+  undo/redo and SQL-console grid-binds refresh the Inspector profile, inline
+  charts, and lineage chain at the rebind convergence point, matching the
+  forward-mutation behavior wired in P6a T12. The target `String` is cloned
+  before the calls so the `&mut self` methods don't conflict with the borrow of
+  `self.inspector`. Verified by compile + green suite (`dat0-engine` + `dat0-app`
+  pass, clippy/fmt clean); behavioral confirmation is owed in the P6b UAT
+  (undo an edit → Inspector profile + chain update at the rebind point).
 - **Last touched:** 2026-06-06.
 
 ---

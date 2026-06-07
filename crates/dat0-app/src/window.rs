@@ -856,6 +856,14 @@ impl WorkspaceShell {
         // ColumnView so the header labels/order and screen-col→source addressing
         // track the (possibly new) active stack (P4c T5).
         self.refresh_column_view();
+        // PD-022: a rebind (undo/redo or SQL-console bind) may change the
+        // inspected table's data; refresh its profile + lineage so the dock is
+        // not stale. on_table_mutated_structural bumps the epoch, re-profiles,
+        // and notifies; recompute_lineage rebuilds the chain.
+        if let Some(target) = self.inspector.target_table.clone() {
+            self.recompute_lineage();
+            self.on_table_mutated_structural(&target, cx); // bumps epoch + reprofiles + notifies
+        }
         cx.notify();
     }
 
