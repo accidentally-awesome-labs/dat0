@@ -592,6 +592,7 @@ fn forward_incompat_banner(err: &SessionLoadError) -> crate::error_ux::Banner {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use serial_test::serial;
 
     const TEST_BUDGET: u64 = 256 * 1024 * 1024;
 
@@ -897,7 +898,12 @@ mod tests {
     /// pushes the forward-incompat Banner AND returns an error — it must NOT
     /// silently fall back to default state (which would overwrite the user's
     /// newer file via the eager post-recover persist).
+    ///
+    /// `#[serial]`: this drains the process-global PENDING banner queue, so it
+    /// must join the crate-wide serial group (banner/file_drop tests) to avoid
+    /// stealing banners from — or losing banners to — a concurrent test.
     #[tokio::test]
+    #[serial]
     async fn recover_forward_incompat_pushes_banner_and_errors() {
         // Drain any banners other tests left pending so our assertion is clean.
         let _ = crate::error_ux::drain_pending();

@@ -187,8 +187,14 @@ pub fn render_banner(b: &Banner) -> impl IntoElement {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use serial_test::serial;
 
+    // These tests mutate the process-global PENDING queue. `#[serial]` joins the
+    // crate-wide serial group (shared with the file_drop/session banner tests) so
+    // a concurrent test's `drain_pending()` can't steal banners mid-test — the CI
+    // linux flake on 2026-06-07 where `push_drain_round_trip` saw 1 banner, not 2.
     #[test]
+    #[serial]
     fn push_drain_round_trip() {
         let _ = drain_pending();
         push(Banner::warning("first"));
@@ -201,6 +207,7 @@ mod tests {
     }
 
     #[test]
+    #[serial]
     fn merge_pending_moves_global_into_live_vec() {
         // clear any cross-test residue
         let _ = drain_pending();
