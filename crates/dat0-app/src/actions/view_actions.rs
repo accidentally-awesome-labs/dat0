@@ -217,6 +217,16 @@ fn dispatch_undo(app: &mut gpui::App) {
             // that keeps the header labels/order + addressing fresh for those.
             // For a real data-view undo it is harmless (the source columns are
             // unchanged) and `apply_view_change` refreshes again on rebind.
+            //
+            // Deliberately NOT refreshed here: the Inspector (profile + lineage).
+            // A display-only undo cannot stale it — projection ops are no-ops in
+            // `compile_view_sql` (engine `render.rs`), so the SUMMARIZE source and
+            // the table-level lineage are byte-identical across the undo. The
+            // PD-022 hook in `apply_view_change` would be a pure no-op on this
+            // path. Guarded by `view::consumer_tests::
+            // display_only_undo_keeps_inspector_profile_source_stable`; if a
+            // projection op ever emits SQL, that guard fails and an Inspector
+            // refresh becomes required here.
             ws.refresh_column_view();
             change
         });
