@@ -55,6 +55,7 @@ that's modifying it; merge conflicts are signals worth investigating.
 | D-013 | Self-hosted macOS CI runner (cut hosted macos-14 10× billing) | open | P2 | TBD |
 | D-014 | Memory Budget Settings section | open | P3b | P3c / P9c |
 | D-015 | AccessKit / screen-reader selection-tree exposure | open | P4b | P10 |
+| D-018 | Workspace lineage DAG — node-edge graph with auto-layout (left→right topological), pan/zoom, whole-workspace view | open | P6b | — |
 
 ## At-a-glance — Plan defects
 
@@ -537,6 +538,29 @@ that's modifying it; merge conflicts are signals worth investigating.
   controls) and token-prompt modal are additional AccessKit / screen-reader surfaces
   to cover in P10 alongside the selection tree (still deferred).
 - **Last touched:** 2026-06-05.
+
+---
+
+### D-018 — Workspace lineage DAG
+
+- **Status:** open
+- **Deferred from:** P6b (lineage-half scope split; user pick — option A)
+- **Target phase:** —
+- **What it is:** a whole-workspace lineage **DAG** — a node-edge graph with
+  auto-layout (left→right topological ordering), pan/zoom — that renders the
+  entire workspace's table/file/external lineage at once, versus the per-table
+  Inspector lineage chain shipped in P6b.
+- **Reason:** the P6 lineage work was split into two halves; the user picked
+  **option A** (the Inspector lineage chain only) for P6b and dropped the
+  workspace-DAG visualization, leaving it as a standalone deferral.
+- **Substrate already shipped in P6b:** the Inspector lineage chain, the
+  `json_serialize_sql`-based SQL-edge resolution (`engine::referenced_tables`),
+  the pure `LineageGraph` (build + transitive closure) in
+  `inspector/lineage.rs`, and click-to-open re-rooting. D-018 is purely the
+  graph-rendering surface built on top of that existing substrate.
+- **Originating doc:** `docs/plans/2026-06-06-dat0-p6b-design.md` (P6b design —
+  lineage split).
+- **Last touched:** 2026-06-06.
 
 ---
 
