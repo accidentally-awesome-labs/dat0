@@ -11,6 +11,7 @@ pub mod error;
 pub(crate) mod execute;
 pub(crate) mod export;
 pub mod extension_bootstrap;
+pub(crate) mod lineage;
 pub mod migrations;
 pub mod profile;
 pub(crate) mod register;
