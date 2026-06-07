@@ -27,8 +27,6 @@ pub enum EdgeKind {
 }
 
 /// One rendered row in the chain (an ancestor or a descendant of the target).
-// Consumed by `closure()` in the next P6b task; not yet referenced here.
-#[allow(dead_code)]
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ChainStep {
     pub label: String, // display text (table name / file basename / external name)
@@ -38,8 +36,6 @@ pub struct ChainStep {
     pub open_name: Option<String>, // table to open on click; None for File leaves
 }
 
-// Consumed by `closure()` in the next P6b task; not yet referenced here.
-#[allow(dead_code)]
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct LineageChain {
     pub ancestors: Vec<ChainStep>,   // ordered root → … → immediate parent
@@ -47,8 +43,6 @@ pub struct LineageChain {
 }
 
 pub struct LineageGraph {
-    // `parents` is unused until `closure()` walks it in the next P6b task.
-    #[allow(dead_code)]
     parents: HashMap<NodeKey, Vec<(NodeKey, EdgeKind)>>,
     children: HashMap<NodeKey, Vec<(NodeKey, EdgeKind)>>,
     kind: HashMap<NodeKey, NodeKind>,
@@ -110,6 +104,52 @@ impl LineageGraph {
         self.parents.entry(to).or_default().push((from, edge));
     }
 
+    /// Full transitive closure around `target`: all ancestors (up to roots) and
+    /// all descendants (down to leaves). Cycle-guarded; deterministic ordering.
+    pub fn closure(&self, target: &str) -> LineageChain {
+        let start = NodeKey::Table(target.to_string());
+
+        // Ancestors: BFS up the `parents` map. Collect (node, edge, depth).
+        let mut ancestors = self.walk(&start, &self.parents);
+        // Roots first → depth descending, then by label for determinism.
+        ancestors.sort_by(|a, b| b.depth.cmp(&a.depth).then(a.label.cmp(&b.label)));
+
+        // Descendants: BFS down the `children` map. Immediate first → depth asc.
+        let mut descendants = self.walk(&start, &self.children);
+        descendants.sort_by(|a, b| a.depth.cmp(&b.depth).then(a.label.cmp(&b.label)));
+
+        LineageChain {
+            ancestors,
+            descendants,
+        }
+    }
+
+    fn walk(
+        &self,
+        start: &NodeKey,
+        adj: &HashMap<NodeKey, Vec<(NodeKey, EdgeKind)>>,
+    ) -> Vec<ChainStep> {
+        let mut out = Vec::new();
+        let mut visited: HashSet<NodeKey> = HashSet::from([start.clone()]);
+        let mut frontier: Vec<(NodeKey, u32)> = vec![(start.clone(), 0)];
+        while let Some((node, depth)) = frontier.pop() {
+            for (next, edge) in adj.get(&node).into_iter().flatten() {
+                if !visited.insert(next.clone()) {
+                    continue; // cycle / diamond guard
+                }
+                out.push(ChainStep {
+                    label: label_for(next),
+                    kind: self.kind.get(next).copied().unwrap_or(NodeKind::Table),
+                    edge: edge.clone(),
+                    depth: depth + 1,
+                    open_name: open_name_for(next),
+                });
+                frontier.push((next.clone(), depth + 1));
+            }
+        }
+        out
+    }
+
     #[cfg(test)]
     fn has_edge(&self, from: &NodeKey, to: &NodeKey) -> bool {
         self.children
@@ -124,8 +164,6 @@ impl LineageGraph {
 }
 
 /// Display label for a node key given its kind.
-// Used by `closure()` in the next P6b task; not yet referenced here.
-#[allow(dead_code)]
 fn label_for(key: &NodeKey) -> String {
     match key {
         NodeKey::Table(n) | NodeKey::External(n) => n.clone(),
@@ -134,8 +172,6 @@ fn label_for(key: &NodeKey) -> String {
 }
 
 /// `Some(name)` to open on click; File leaves are not openable.
-// Used by `closure()` in the next P6b task; not yet referenced here.
-#[allow(dead_code)]
 fn open_name_for(key: &NodeKey) -> Option<String> {
     match key {
         NodeKey::Table(n) | NodeKey::External(n) => Some(n.clone()),
@@ -158,6 +194,82 @@ mod tests {
             row_count_estimate: None,
             origin,
         }
+    }
+
+    fn sales_chain() -> (Vec<TableInfo>, HashMap<String, Vec<String>>) {
+        let tables = vec![
+            tbl("sales", TableOrigin::File(PathBuf::from("/data/sales.csv"))),
+            tbl(
+                "sales_open",
+                TableOrigin::Derived(DerivedOrigin::Transform {
+                    parent: "sales".into(),
+                    ops: vec![],
+                }),
+            ),
+            tbl(
+                "revenue",
+                TableOrigin::Derived(DerivedOrigin::Sql("…".into())),
+            ),
+        ];
+        let mut sp = HashMap::new();
+        sp.insert("revenue".to_string(), vec!["sales_open".to_string()]);
+        (tables, sp)
+    }
+
+    #[test]
+    fn closure_walks_full_ancestry_and_descendants() {
+        let (tables, sp) = sales_chain();
+        let g = LineageGraph::build(&tables, &sp);
+        let c = g.closure("sales_open");
+
+        // ancestors: root file first → … (depth descending)
+        assert_eq!(
+            c.ancestors
+                .iter()
+                .map(|s| s.label.clone())
+                .collect::<Vec<_>>(),
+            vec!["sales.csv".to_string(), "sales".to_string()]
+        );
+        assert_eq!(c.ancestors[0].kind, NodeKind::File);
+        assert_eq!(c.ancestors[0].open_name, None);
+
+        // descendants: immediate child first (depth ascending)
+        assert_eq!(
+            c.descendants
+                .iter()
+                .map(|s| s.label.clone())
+                .collect::<Vec<_>>(),
+            vec!["revenue".to_string()]
+        );
+        assert_eq!(c.descendants[0].edge, EdgeKind::SqlRef);
+        assert_eq!(c.descendants[0].open_name, Some("revenue".to_string()));
+    }
+
+    #[test]
+    fn closure_is_cycle_safe() {
+        // Two tables that (pathologically) reference each other via Sql.
+        let tables = vec![
+            tbl("a", TableOrigin::Derived(DerivedOrigin::Sql("…".into()))),
+            tbl("b", TableOrigin::Derived(DerivedOrigin::Sql("…".into()))),
+        ];
+        let mut sp = HashMap::new();
+        sp.insert("a".to_string(), vec!["b".to_string()]);
+        sp.insert("b".to_string(), vec!["a".to_string()]);
+        let g = LineageGraph::build(&tables, &sp);
+        // Must terminate (visited-set guard), not loop forever.
+        let c = g.closure("a");
+        assert!(c.ancestors.len() <= 1 && c.descendants.len() <= 1);
+    }
+
+    #[test]
+    fn closure_of_leaf_table_is_empty_both_ways() {
+        let tables = vec![tbl(
+            "lonely",
+            TableOrigin::Derived(DerivedOrigin::Sql("…".into())),
+        )];
+        let g = LineageGraph::build(&tables, &HashMap::new());
+        let c = g.closure("lonely");
+        assert!(c.ancestors.is_empty() && c.descendants.is_empty());
     }
 
     #[test]
