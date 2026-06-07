@@ -491,6 +491,19 @@ impl crate::QueryEngine for DuckDBEngine {
         .map_err(|e| EngineError::TaskJoin(e.to_string()))?
     }
 
+    #[instrument(skip(self), fields(sql_len = sql.len()))]
+    async fn referenced_tables(&self, sql: &str) -> Result<Vec<String>> {
+        self.assert_open()?;
+        let conn = self.conn.clone();
+        let sql = sql.to_owned();
+        tokio::task::spawn_blocking(move || -> Result<Vec<String>> {
+            let conn = conn.lock().map_err(|_| EngineError::EnginePoisoned)?;
+            crate::lineage::referenced_tables_blocking(&conn, &sql)
+        })
+        .await
+        .map_err(|e| EngineError::TaskJoin(e.to_string()))?
+    }
+
     #[instrument(skip(self), fields(name = name))]
     async fn profile_table(
         &self,

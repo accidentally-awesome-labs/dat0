@@ -50,8 +50,9 @@ The Inspector profiles the **selected table** in a single pass and shows:
   - **top-N bars** for low-cardinality columns (the most frequent values), and
   - a **histogram** for numeric high-cardinality columns (16 even-width bins over
     the column's true min/max, counts sampled from the data).
-- **Dependents (live)** — the tables derived (via a transform) from the selected
-  table. This list updates whenever the catalog changes (create/drop/transform).
+- **Lineage chain (live)** — the selected table's full ancestry and descendants
+  as a clickable chain (see [Lineage](#lineage) below). Updates whenever the
+  catalog changes (create/drop/transform).
 
 ### How profiling works
 
@@ -64,8 +65,30 @@ completes well under the 2-second target (≈85 ms measured on a typical machine
 
 When you edit the inspected table (cell edits, paste, cut, delete, fill, column
 rename/reorder/delete, or applying a transform), the Inspector re-profiles so the
-stats, charts, and dependents stay current. (Refresh on **undo/redo** and on
-SQL-console grid-binds is tracked as a follow-up — see PD-022.)
+stats, charts, and lineage stay current. Refresh now also fires on
+**undo/redo** and on SQL-console grid-binds (this closed the PD-022 follow-up).
+
+### Lineage
+
+The Inspector shows the selected table's full lineage as a clickable chain. Its
+ancestry — the source files and upstream tables it derives from — is laid out
+above, the selected table itself sits in the middle (marked `▸`), and its
+descendants — the tables that use it, listed under **Used by** — appear below.
+The chain is the full transitive closure in both directions, not just the
+immediate neighbours, so you can see everything a table ultimately came from and
+everything that ultimately depends on it.
+
+- **Edge labels** name *how* one node feeds another: file imports, transforms
+  (annotated with the op count), and SQL references — a table named in a derived
+  table's `CREATE TABLE AS` SQL, resolved from the query AST via DuckDB's
+  `json_serialize_sql`.
+- **Node glyphs** distinguish the kinds: files (📄), external/attached database
+  tables (☁), and regular tables (▦).
+- **Click any table node** to open it in a grid tab and re-root the Inspector on
+  it — this lets you walk the lineage hop by hop. File leaves are not clickable.
+
+This chain replaces the P6a flat **Dependents** list, which only surfaced
+transform children; descendants now include SQL references as well.
 
 ## Error banners
 

@@ -13,11 +13,11 @@ pub struct InspectorModel {
     /// Per-column lazy chart data (T10), keyed by column name. Cleared on any
     /// table change in `set_target` so table A's bars never paint over table B.
     column_extras: HashMap<String, ColumnExtra>,
-    /// Live reverse-lineage dependents for the current target (P6a T11).
-    /// Populated from `catalog_tables` by `WorkspaceShell::recompute_dependents`
-    /// on every catalog refresh and on `set_inspector_target`. Only Transform
-    /// children are matched in P6a; Sql references are deferred to P6b.
-    pub dependents: Vec<String>,
+    /// Live lineage chain for the current target (P6b): ancestors↑ + descendants↓
+    /// (full transitive closure). Built by `WorkspaceShell::recompute_lineage`
+    /// from `catalog_tables` + the cached `sql_parents` map. Supersedes the P6a
+    /// flat Dependents list (descendants now include Sql refs, not only Transforms).
+    pub lineage: crate::inspector::lineage::LineageChain,
 }
 
 /// Lazily-fetched inline-chart data for one column (P6a T10). Populated after
@@ -76,9 +76,9 @@ impl InspectorModel {
         self.column_extras.clear();
     }
 
-    /// Overwrite the live dependents list (called by `WorkspaceShell::recompute_dependents`).
-    pub fn set_dependents(&mut self, deps: Vec<String>) {
-        self.dependents = deps;
+    /// Overwrite the live lineage chain (called by `WorkspaceShell::recompute_lineage`).
+    pub fn set_lineage(&mut self, chain: crate::inspector::lineage::LineageChain) {
+        self.lineage = chain;
     }
 
     fn epoch_of(&self, t: &str) -> u64 {
@@ -184,6 +184,25 @@ mod tests {
             99,
             "b patched"
         );
+    }
+
+    #[test]
+    fn set_lineage_overwrites_chain() {
+        use crate::inspector::lineage::{ChainStep, EdgeKind, LineageChain, NodeKind};
+        let mut m = InspectorModel::new();
+        assert!(m.lineage.ancestors.is_empty() && m.lineage.descendants.is_empty());
+        m.set_lineage(LineageChain {
+            ancestors: vec![ChainStep {
+                label: "sales".into(),
+                kind: NodeKind::Table,
+                edge: EdgeKind::FileImport,
+                depth: 1,
+                open_name: Some("sales".into()),
+            }],
+            descendants: vec![],
+        });
+        assert_eq!(m.lineage.ancestors.len(), 1);
+        assert_eq!(m.lineage.ancestors[0].label, "sales");
     }
 
     fn fake_profile() -> dat0_engine::TableProfile {

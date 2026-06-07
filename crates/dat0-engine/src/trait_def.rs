@@ -78,6 +78,17 @@ pub trait QueryEngine: Send + Sync {
     async fn describe_table(&self, name: &str, schema: Option<&str>) -> Result<Vec<ColumnInfo>>;
     async fn get_tables(&self) -> Result<Vec<TableInfo>>;
 
+    /// Base-table names that `sql` references (its lineage parents), resolved
+    /// via DuckDB's `json_serialize_sql`. CTE names are excluded; their sources
+    /// are kept. Names are unquoted, de-duplicated, first-seen order. Used by the
+    /// app to draw Sql-table lineage edges (P6b).
+    ///
+    /// # Errors
+    /// - `EngineError::EngineClosed` — if the engine has been closed.
+    /// - `EngineError::DuckDb` — if `sql` cannot be parsed by DuckDB.
+    /// - `EngineError::EnginePoisoned` — if the connection mutex was poisoned.
+    async fn referenced_tables(&self, sql: &str) -> Result<Vec<String>>;
+
     /// Profile every column of `name` in one `SUMMARIZE` scan (per design D2):
     /// null%, approx-distinct, per-type min/max, and numeric stats (avg/std/
     /// quartiles) where applicable. Distinct% is approximate (HLL).

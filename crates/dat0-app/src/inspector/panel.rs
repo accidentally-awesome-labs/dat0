@@ -13,6 +13,7 @@
 //! only arranges divs. Inline charts are a separate task (T10) — each card
 //! leaves room below the stat lines but contains no chart code yet.
 
+use crate::inspector::lineage::{ChainStep, EdgeKind, NodeKind};
 use crate::inspector::{InspectorModel, ProfileTargetMode, format};
 use crate::window::WorkspaceShell;
 use gpui::prelude::*;
@@ -64,21 +65,46 @@ pub fn render_inspector(
             })),
     );
 
-    // Dependents section (P6a T11): shown whenever a target is selected.
-    // An empty list still shows the header with a "none" hint so users know
-    // the section exists. Forward lineage (Sql refs) is P6b.
-    if model.target_table.is_some() {
-        let heading = div().child(SharedString::from(dat0_i18n::t("inspector.dependents")));
-        let body = if model.dependents.is_empty() {
-            div().child(SharedString::from("—"))
-        } else {
-            let mut rows = div().flex().flex_col().gap_1();
-            for dep in &model.dependents {
-                rows = rows.child(div().child(SharedString::from(dep.clone())));
+    // Lineage chain (P6b): ancestors↑, the inspected table, descendants↓ — the
+    // full transitive closure. Replaces the P6a flat Dependents list. Clicking a
+    // node opens that table (which re-roots the Inspector via open_table_tab).
+    if let Some(target) = model.target_table.clone() {
+        let mut section = div()
+            .flex()
+            .flex_col()
+            .gap_1()
+            .child(div().child(SharedString::from(dat0_i18n::t("inspector.lineage"))));
+
+        // Ancestors (roots → parent), each indented by depth.
+        if !model.lineage.ancestors.is_empty() {
+            section = section.child(div().child(SharedString::from(dat0_i18n::t(
+                "inspector.lineage.sources",
+            ))));
+            for step in &model.lineage.ancestors {
+                section = section.child(chain_row(step, cx));
             }
-            rows
+        }
+
+        // The inspected table itself (highlighted, not clickable).
+        section = section.child(
+            div()
+                .px_1()
+                .border_1()
+                .child(SharedString::from(format!("▸ {target}"))),
+        );
+
+        // Descendants (child → leaf).
+        let usedby = if model.lineage.descendants.is_empty() {
+            dat0_i18n::t("inspector.lineage.none")
+        } else {
+            dat0_i18n::t("inspector.lineage.usedby")
         };
-        root = root.child(div().flex().flex_col().gap_1().child(heading).child(body));
+        section = section.child(div().child(SharedString::from(usedby)));
+        for step in &model.lineage.descendants {
+            section = section.child(chain_row(step, cx));
+        }
+
+        root = root.child(section);
     }
 
     // Per-column cards (only when a profile is cached).
@@ -126,4 +152,66 @@ fn column_card(col: &dat0_engine::ColumnProfile, model: &InspectorModel) -> gpui
         }
     }
     card
+}
+
+/// A short, human-readable label for a lineage edge.
+fn edge_label(edge: &EdgeKind) -> String {
+    match edge {
+        EdgeKind::FileImport => dat0_i18n::t("inspector.edge.file"),
+        EdgeKind::SqlRef => dat0_i18n::t("inspector.edge.sql"),
+        EdgeKind::Transform(n) => format!("{} ({n} ops)", dat0_i18n::t("inspector.edge.transform")),
+    }
+}
+
+/// One lineage row: a per-kind glyph, the node label, and the edge label.
+/// Clickable (opens + re-roots the Inspector) when the node maps to a table.
+/// Every row is `Stateful` (carries an `.id()`) so the clickable/leaf branches
+/// share one return type; only table-backed rows wire the `on_click`.
+fn chain_row(step: &ChainStep, cx: &mut Context<WorkspaceShell>) -> gpui::Stateful<gpui::Div> {
+    let glyph = match step.kind {
+        NodeKind::File => "📄",
+        NodeKind::External => "☁",
+        NodeKind::Table => "▦",
+    };
+    let indent = (step.depth.min(6) as f32) * 12.0;
+    let text = format!("{glyph} {}  ·  {}", step.label, edge_label(&step.edge));
+
+    let mut row = div()
+        .id(SharedString::from(format!(
+            "lineage-{}-{}",
+            step.depth, step.label
+        )))
+        .pl(gpui::px(indent))
+        .child(SharedString::from(text));
+
+    if let Some(name) = step.open_name.clone() {
+        row = row
+            .cursor_pointer()
+            .on_click(cx.listener(move |ws, _ev, window, cx| {
+                ws.open_table_tab(name.clone(), window, cx);
+            }));
+    }
+    row
+}
+
+#[cfg(test)]
+mod tests {
+    use super::edge_label;
+    use crate::inspector::lineage::EdgeKind;
+
+    #[test]
+    fn edge_labels_are_human_readable() {
+        assert_eq!(
+            edge_label(&EdgeKind::FileImport),
+            dat0_i18n::t("inspector.edge.file")
+        );
+        assert_eq!(
+            edge_label(&EdgeKind::SqlRef),
+            dat0_i18n::t("inspector.edge.sql")
+        );
+        assert_eq!(
+            edge_label(&EdgeKind::Transform(2)),
+            format!("{} (2 ops)", dat0_i18n::t("inspector.edge.transform"))
+        );
+    }
 }

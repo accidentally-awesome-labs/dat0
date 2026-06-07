@@ -743,10 +743,14 @@ pub struct WorkspaceShell {
     /// import / create / drop).
     pub(crate) catalog_tree: crate::catalog::CatalogTree,
     /// Raw table list last fetched by [`Self::refresh_catalog`] (P6a T11).
-    /// Stored so `recompute_dependents` can run `dependents_of` without another
+    /// Stored so `recompute_lineage` can build the lineage graph without another
     /// engine round-trip. The `CatalogTree` discards origin/parent info, so we
     /// keep the full `Vec<TableInfo>` separately.
     pub(crate) catalog_tables: Vec<dat0_engine::TableInfo>,
+    /// Sql-table → referenced base tables (lineage parents), resolved off-thread
+    /// by the engine in `refresh_catalog`. Cached so `recompute_lineage` stays
+    /// synchronous. Keyed by table name; only Sql-origin tables appear (P6b).
+    pub(crate) sql_parents: std::collections::HashMap<String, Vec<String>>,
     /// Whether the right-dock Inspector panel is shown (P6a T9). Toggled by the
     /// `InspectorToggle` action; gates the inspector dock in `render`.
     pub(crate) inspector_panel_visible: bool,
@@ -809,6 +813,7 @@ impl WorkspaceShell {
             catalog_panel_visible: ui.catalog_panel_visible,
             catalog_tree: crate::catalog::CatalogTree::default(),
             catalog_tables: Vec::new(),
+            sql_parents: Default::default(),
             inspector_panel_visible: ui.inspector_panel_visible,
             inspector: crate::inspector::InspectorModel::new(),
             banners: Vec::new(),
@@ -851,6 +856,14 @@ impl WorkspaceShell {
         // ColumnView so the header labels/order and screen-col→source addressing
         // track the (possibly new) active stack (P4c T5).
         self.refresh_column_view();
+        // PD-022: a rebind (undo/redo or SQL-console bind) may change the
+        // inspected table's data; refresh its profile + lineage so the dock is
+        // not stale. on_table_mutated_structural bumps the epoch, re-profiles,
+        // and notifies; recompute_lineage rebuilds the chain.
+        if let Some(target) = self.inspector.target_table.clone() {
+            self.recompute_lineage();
+            self.on_table_mutated_structural(&target, cx); // bumps epoch + reprofiles + notifies
+        }
         cx.notify();
     }
 
@@ -1406,7 +1419,7 @@ impl WorkspaceShell {
         let engine = self.engine();
         let ws_weak = cx.entity().downgrade();
         tokio::spawn(async move {
-            use dat0_engine::QueryEngine as _;
+            use dat0_engine::{DerivedOrigin, QueryEngine as _, TableOrigin};
             let tables = match engine.get_tables().await {
                 Ok(t) => t,
                 Err(e) => {
@@ -1414,6 +1427,22 @@ impl WorkspaceShell {
                     return;
                 }
             };
+            // Resolve each Sql-origin table's lineage parents off-thread so
+            // `recompute_lineage` (on the main thread) stays synchronous (P6b).
+            let mut sql_parents = std::collections::HashMap::new();
+            for t in &tables {
+                if let TableOrigin::Derived(DerivedOrigin::Sql(sql)) = &t.origin {
+                    if !sql.is_empty() {
+                        match engine.referenced_tables(sql).await {
+                            Ok(parents) => {
+                                sql_parents.insert(t.name.clone(), parents);
+                            }
+                            Err(e) => tracing::warn!(error = %e, table = %t.name,
+                                "refresh_catalog: referenced_tables failed; lineage edge skipped"),
+                        }
+                    }
+                }
+            }
             if let Some(dispatcher) = crate::window_registry::dispatcher() {
                 let _ = dispatcher.dispatch(move |app_cx: &mut gpui::App| {
                     let Some(ws) = ws_weak.upgrade() else {
@@ -1422,7 +1451,8 @@ impl WorkspaceShell {
                     ws.update(app_cx, |ws, cx| {
                         ws.catalog_tree = crate::catalog::CatalogTree::build(&tables);
                         ws.catalog_tables = tables;
-                        ws.recompute_dependents();
+                        ws.sql_parents = sql_parents;
+                        ws.recompute_lineage();
                         cx.notify();
                     });
                 });
@@ -1440,7 +1470,7 @@ impl WorkspaceShell {
     /// `open_table_tab`'s dispatcher closure (which has no `window`) call this.
     pub(crate) fn set_inspector_target(&mut self, name: String, cx: &mut gpui::Context<Self>) {
         self.inspector.set_target(name);
-        self.recompute_dependents();
+        self.recompute_lineage();
         if self.inspector.cached().is_some() {
             // Warm hit — nothing to load; just repaint the dock.
             cx.notify();
@@ -1450,15 +1480,17 @@ impl WorkspaceShell {
         cx.notify();
     }
 
-    /// Recompute the Inspector's reverse-lineage dependents from the cached
-    /// `catalog_tables` (P6a T11). Called on every catalog refresh and on
-    /// `set_inspector_target`. Takes no `cx` so it can be called from closures
-    /// that hold `cx` borrowed elsewhere; the caller is responsible for
-    /// `cx.notify()` afterward.
-    pub(crate) fn recompute_dependents(&mut self) {
+    /// Rebuild the Inspector's lineage chain for the current target from the
+    /// cached `catalog_tables` + `sql_parents` (P6b). Called on every catalog
+    /// refresh, on `set_inspector_target`, and on rebind (PD-022). Takes no `cx`;
+    /// the caller is responsible for `cx.notify()` afterward.
+    pub(crate) fn recompute_lineage(&mut self) {
         if let Some(target) = self.inspector.target_table.clone() {
-            let deps = crate::inspector::dependents::dependents_of(&target, &self.catalog_tables);
-            self.inspector.set_dependents(deps);
+            let graph = crate::inspector::lineage::LineageGraph::build(
+                &self.catalog_tables,
+                &self.sql_parents,
+            );
+            self.inspector.set_lineage(graph.closure(&target));
         }
     }
 
