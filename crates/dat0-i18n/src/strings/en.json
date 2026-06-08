@@ -78,6 +78,8 @@
   "inspector.empty": "No table selected",
   "inspector.mode.whole": "Whole table",
   "inspector.mode.view": "Current view",
+  "inspector.hidden": "Hidden",
+  "inspector.col.was": "was",
   "inspector.lineage": "Lineage",
   "inspector.lineage.sources": "Sources",
   "inspector.lineage.usedby": "Used by",
