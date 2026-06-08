@@ -264,6 +264,57 @@ mod consumer_tests {
             .expect("display-only undo must NOT drop the still-active view");
     }
 
+    /// PD-022 follow-up — a display-only undo/redo does NOT stale the Inspector,
+    /// so `dispatch_undo`/`dispatch_redo` intentionally skip the Inspector refresh
+    /// on that path (they only `refresh_column_view` for the header).
+    ///
+    /// The Inspector profiles the bound view's SQL (Current-view mode) or the base
+    /// table (Whole-table mode). Projection ops (Rename/Reorder/DeleteColumn) are
+    /// no-ops in `compile_view_sql` (engine `render.rs`; see the engine test
+    /// `projection_ops_are_sql_noops_flat_parity`), so undoing/redoing one leaves
+    /// that SQL — and hence the profile and the table-level lineage — byte-identical.
+    /// This guards the premise: if a projection op ever starts emitting SQL, the
+    /// undo's `ViewChange` stops being display-only and this assertion fails,
+    /// flagging that an Inspector refresh hook is then required at that seam.
+    #[tokio::test]
+    async fn display_only_undo_keeps_inspector_profile_source_stable() {
+        use dat0_engine::compile_view_sql;
+        let tmp = TempDir::new().unwrap();
+        let (engine, base) = engine_with_table(&tmp).await;
+        let mut vm = ViewModel::new("tab1".into(), base.clone());
+
+        // A real data op defines what the Inspector's Current-view mode profiles.
+        let create = vm.apply(filter_a_gte(50));
+        let profiled_sql = create.sql.clone().expect("filter is a real data change");
+        run_view_change_inner(engine.clone(), base.clone(), create, noop_rebind())
+            .await
+            .unwrap();
+
+        // Apply then undo a projection Rename — display-only in both directions.
+        let proj = vm.apply(Transformation::Rename {
+            column: "a".into(),
+            to: "A".into(),
+        });
+        assert!(
+            proj.is_display_only() && proj.sql.is_none(),
+            "applying a projection op is display-only (no profiled-SQL change)"
+        );
+        let undo = vm.undo().expect("undo yields a ViewChange");
+        assert!(
+            undo.is_display_only(),
+            "undo of a projection op is display-only — the Inspector needs no refresh"
+        );
+
+        // The profile source is invariant: the data SQL the Inspector would
+        // SUMMARIZE is byte-identical to before the projection op, so there is
+        // nothing for an Inspector refresh on this path to change.
+        let after_undo = compile_view_sql(&base, &[filter_a_gte(50)]).unwrap();
+        assert_eq!(
+            after_undo, profiled_sql,
+            "display-only undo leaves the profiled SQL unchanged"
+        );
+    }
+
     #[tokio::test]
     async fn invalid_sql_without_view_still_bails() {
         // The only shape that remains a genuine invariant violation: (None, Some).
