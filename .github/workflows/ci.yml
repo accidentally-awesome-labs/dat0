@@ -164,6 +164,22 @@ jobs:
       # ranlib), failing the whole job — and a disk-dead runner can't be rescued
       # by continue-on-error. Since the bench is advisory (not a gate), skip it
       # on PR CI to keep disk headroom; it still runs post-merge on main.
+      # Reclaim disk before the bench. The bench command below has no `--target`,
+      # so cargo builds a FRESH host tree in `target/{debug,release}` and
+      # recompiles DuckDB a third time — on top of the Build (release) + Test
+      # (debug) trees under `target/<triple>/`, which the bench never reuses.
+      # That third profile exhausted the macOS runner's ~14 GB disk ("No space
+      # left on device" crashing the runner worker — uncatchable by
+      # continue-on-error). Dropping the `target/<triple>` tree (unused from here
+      # on; MotherDuck tests already ran) frees both prior DuckDB builds first.
+      # (A deeper fix would add `--target ${{ matrix.target.triple }}` to the
+      # bench so it reuses the release tree; left as a future optimization.)
+      - name: Reclaim disk before bench (macOS, push to main)
+        if: runner.os == 'macOS' && github.event_name != 'pull_request'
+        run: |
+          df -h /
+          rm -rf "target/${{ matrix.target.triple }}"
+          df -h /
       - name: Bench — grid scroll (macOS only, push to main)
         if: runner.os == 'macOS' && github.event_name != 'pull_request'
         run: |
