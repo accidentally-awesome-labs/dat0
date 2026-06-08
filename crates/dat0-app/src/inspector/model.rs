@@ -18,6 +18,10 @@ pub struct InspectorModel {
     /// from `catalog_tables` + the cached `sql_parents` map. Supersedes the P6a
     /// flat Dependents list (descendants now include Sql refs, not only Transforms).
     pub lineage: crate::inspector::lineage::LineageChain,
+    /// Whether the Inspector's collapsible "Hidden" section is expanded
+    /// (projection-aware Inspector). Ephemeral UI state — not persisted; reset
+    /// to collapsed whenever the inspected table changes.
+    pub hidden_expanded: bool,
 }
 
 /// Lazily-fetched inline-chart data for one column (P6a T10). Populated after
@@ -47,6 +51,7 @@ impl InspectorModel {
         // name, which collides across tables).
         if self.target_table.as_deref() != Some(table.as_str()) {
             self.column_extras.clear();
+            self.hidden_expanded = false; // collapse the Hidden section for the new table
         }
         self.target_table = Some(table);
     }
@@ -79,6 +84,11 @@ impl InspectorModel {
     /// Overwrite the live lineage chain (called by `WorkspaceShell::recompute_lineage`).
     pub fn set_lineage(&mut self, chain: crate::inspector::lineage::LineageChain) {
         self.lineage = chain;
+    }
+
+    /// Flip the "Hidden" section's expanded state (projection-aware Inspector).
+    pub fn toggle_hidden(&mut self) {
+        self.hidden_expanded = !self.hidden_expanded;
     }
 
     fn epoch_of(&self, t: &str) -> u64 {
@@ -203,6 +213,25 @@ mod tests {
         });
         assert_eq!(m.lineage.ancestors.len(), 1);
         assert_eq!(m.lineage.ancestors[0].label, "sales");
+    }
+
+    #[test]
+    fn hidden_section_toggles_and_resets_on_table_change() {
+        let mut m = InspectorModel::new();
+        m.set_target("orders".into());
+        assert!(!m.hidden_expanded, "collapsed by default");
+        m.toggle_hidden();
+        assert!(m.hidden_expanded, "toggles open");
+        m.set_target("orders".into()); // same table → state preserved (no reset branch)
+        assert!(
+            m.hidden_expanded,
+            "re-targeting the SAME table keeps the section state"
+        );
+        m.set_target("customers".into()); // different table → reset branch fires
+        assert!(
+            !m.hidden_expanded,
+            "switching tables collapses the Hidden section"
+        );
     }
 
     fn fake_profile() -> dat0_engine::TableProfile {
