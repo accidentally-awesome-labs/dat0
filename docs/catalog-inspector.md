@@ -46,6 +46,14 @@ The Inspector profiles the **selected table** in a single pass and shows:
   - text columns: length stats (`len min–max`),
   - approximate distinct count (HLL — labelled *approx*),
   - null percentage.
+
+  The cards mirror the grid's current **column projection**, not the physical
+  table layout: they follow the same order, show renamed columns by their new
+  label (as `New name · was <original>`), and move any columns you've hidden into
+  a collapsed **"Hidden (N)"** section you can expand. The internal row-id
+  surrogate is never shown. This holds in both Whole-table and Current-view modes
+  — the toggle changes only which rows are profiled, not which cards appear or
+  their order.
 - **Inline charts** (drawn as lightweight GPUI quads, no chart library):
   - **top-N bars** for low-cardinality columns (the most frequent values), and
   - a **histogram** for numeric high-cardinality columns (16 even-width bins over
@@ -63,10 +71,15 @@ completes well under the 2-second target (≈85 ms measured on a typical machine
 
 ### Live refresh on edits
 
-When you edit the inspected table (cell edits, paste, cut, delete, fill, column
-rename/reorder/delete, or applying a transform), the Inspector re-profiles so the
-stats, charts, and lineage stay current. Refresh now also fires on
-**undo/redo** and on SQL-console grid-binds (this closed the PD-022 follow-up).
+When you edit the inspected table (cell edits, paste, cut, delete, fill, or
+applying a transform), the Inspector re-profiles so the stats, charts, and
+lineage stay current. Refresh now also fires on **undo/redo** and on SQL-console
+grid-binds (this closed the PD-022 follow-up).
+
+A display-only column edit — rename, reorder, or hide a column — only re-arranges
+the per-column cards to match the new projection; it does not re-profile, since
+the underlying data (and so the stats) is unchanged. **Undo/redo** of such an
+edit likewise re-projects the cards (and the grid header) without a re-profile.
 
 ### Lineage
 

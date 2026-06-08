@@ -209,25 +209,21 @@ fn dispatch_undo(app: &mut gpui::App) {
         // Release the immutable borrow of `ws` before the `update` call below
         // requires mutable access to the same entity.
         let _ = ws;
-        let change = workspace.update(app, |ws, _cx| {
+        let change = workspace.update(app, |ws, cx| {
             let change = ws.view_model.as_mut().and_then(|vm| vm.undo());
             // Refresh the ColumnView off the new active stack (P4c T5). A
-            // display-only undo (e.g. undoing a Rename/Reorder, T6+) never
+            // display-only undo (undoing a Rename/Reorder/DeleteColumn) never
             // round-trips through `apply_view_change`, so this is the only hook
-            // that keeps the header labels/order + addressing fresh for those.
-            // For a real data-view undo it is harmless (the source columns are
-            // unchanged) and `apply_view_change` refreshes again on rebind.
+            // that keeps the grid header AND the projection-aware Inspector fresh.
             //
-            // Deliberately NOT refreshed here: the Inspector (profile + lineage).
-            // A display-only undo cannot stale it — projection ops are no-ops in
-            // `compile_view_sql` (engine `render.rs`), so the SUMMARIZE source and
-            // the table-level lineage are byte-identical across the undo. The
-            // PD-022 hook in `apply_view_change` would be a pure no-op on this
-            // path. Guarded by `view::consumer_tests::
-            // display_only_undo_keeps_inspector_profile_source_stable`; if a
-            // projection op ever emits SQL, that guard fails and an Inspector
-            // refresh becomes required here.
+            // The Inspector is re-PROJECTED here (it reads the live `column_view`
+            // on render), but never re-PROFILED — projection ops are no-ops in
+            // `compile_view_sql`, so the SUMMARIZE source is unchanged (guarded by
+            // `view::consumer_tests::display_only_undo_keeps_inspector_profile_source_stable`).
+            // For a real data-view undo the notify is harmless (apply_view_change
+            // repaints + re-profiles again on rebind).
             ws.refresh_column_view();
+            cx.notify();
             change
         });
         (engine, base_table, change, ws_weak)
@@ -287,11 +283,12 @@ fn dispatch_redo(app: &mut gpui::App) {
         // Release the immutable borrow of `ws` before the `update` call below
         // requires mutable access to the same entity.
         let _ = ws;
-        let change = workspace.update(app, |ws, _cx| {
+        let change = workspace.update(app, |ws, cx| {
             let change = ws.view_model.as_mut().and_then(|vm| vm.redo());
-            // Refresh the ColumnView off the new active stack (P4c T5);
-            // symmetric to `dispatch_undo` — see the rationale there.
+            // Symmetric to dispatch_undo — re-project the Inspector + refresh the
+            // grid header on a display-only redo (re-projected, not re-profiled).
             ws.refresh_column_view();
+            cx.notify();
             change
         });
         (engine, base_table, change, ws_weak)

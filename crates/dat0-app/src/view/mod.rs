@@ -264,9 +264,10 @@ mod consumer_tests {
             .expect("display-only undo must NOT drop the still-active view");
     }
 
-    /// PD-022 follow-up — a display-only undo/redo does NOT stale the Inspector,
-    /// so `dispatch_undo`/`dispatch_redo` intentionally skip the Inspector refresh
-    /// on that path (they only `refresh_column_view` for the header).
+    /// PD-022 follow-up — a display-only undo/redo re-PROJECTS the Inspector
+    /// (cards re-arrange to the new column projection) but never re-PROFILES it:
+    /// the profiled SQL is unchanged. `dispatch_undo`/`dispatch_redo` `cx.notify()`
+    /// to re-render (cheap), and this guard pins that no re-SUMMARIZE is needed.
     ///
     /// The Inspector profiles the bound view's SQL (Current-view mode) or the base
     /// table (Whole-table mode). Projection ops (Rename/Reorder/DeleteColumn) are
