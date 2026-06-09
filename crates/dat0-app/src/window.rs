@@ -1007,6 +1007,34 @@ impl WorkspaceShell {
         self.column_view = crate::view::fold_columns(&base, ops);
     }
 
+    /// The active grid tab's column projection, for the Inspector to mirror —
+    /// but only when the Inspector is actually targeting that tab's table, so
+    /// inspecting table X while the grid shows Y never mis-projects. `None`
+    /// otherwise (no view/data source, or a cross-table target) → the Inspector
+    /// falls back to its raw, unprojected card list. Identity is the bare
+    /// (unquoted) table name, consistent with the app's catalog/lineage keying.
+    pub(crate) fn inspector_projection(
+        &self,
+    ) -> Option<crate::inspector::projection::ProjectionContext> {
+        let target = self.inspector.target_table.as_deref()?;
+        let vm = self.view_model.as_ref()?;
+        let ds = self.data_source.as_ref()?;
+        // `base_table()` is quoted `"schema"."table"`; reduce to the bare name.
+        let active = vm
+            .base_table()
+            .rsplit('.')
+            .next()
+            .unwrap_or("")
+            .trim_matches('"');
+        if active != target {
+            return None;
+        }
+        Some(crate::inspector::projection::ProjectionContext {
+            visible: self.column_view.clone(),
+            base_sources: ds.visible_column_names(),
+        })
+    }
+
     /// Resolve a header (screen) column index to its bare SOURCE column name via
     /// the active `ColumnView` (P4c T5). Returns `None` if no column maps to
     /// `col_ix`.
@@ -3438,6 +3466,7 @@ impl Render for WorkspaceShell {
                             .border_l_1()
                             .child(crate::inspector::panel::render_inspector(
                                 &self.inspector,
+                                self.inspector_projection(),
                                 cx,
                             ))
                     })),

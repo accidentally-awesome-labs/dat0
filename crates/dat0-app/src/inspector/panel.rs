@@ -14,6 +14,7 @@
 //! leaves room below the stat lines but contains no chart code yet.
 
 use crate::inspector::lineage::{ChainStep, EdgeKind, NodeKind};
+use crate::inspector::projection::{ProjectionContext, RenderCard, project_cards};
 use crate::inspector::{InspectorModel, ProfileTargetMode, format};
 use crate::window::WorkspaceShell;
 use gpui::prelude::*;
@@ -24,6 +25,7 @@ use gpui::{Context, SharedString, div};
 /// button listener).
 pub fn render_inspector(
     model: &InspectorModel,
+    projection: Option<ProjectionContext>,
     cx: &mut Context<WorkspaceShell>,
 ) -> gpui::AnyElement {
     let mut root = div()
@@ -107,51 +109,103 @@ pub fn render_inspector(
         root = root.child(section);
     }
 
-    // Per-column cards (only when a profile is cached).
+    // Per-column cards (only when a profile is cached). Projection-aware: cards
+    // follow the grid's column projection (order + renames), hidden columns go
+    // under a collapsible "Hidden" section, the surrogate is dropped. When the
+    // Inspector targets a non-active table, `projection` is None → raw list.
     if let Some(profile) = model.cached() {
-        let mut cards = div().flex().flex_col().gap_2();
-        for col in &profile.columns {
-            cards = cards.child(column_card(col, model));
+        let cards = project_cards(&profile.columns, projection.as_ref());
+
+        let mut visible = div().flex().flex_col().gap_2();
+        for card in &cards.visible {
+            if let Some(col) = profile.columns.iter().find(|c| c.name == card.source) {
+                visible = visible.child(column_card(col, card, model, false));
+            }
         }
-        root = root.child(cards);
+        root = root.child(visible);
+
+        if !cards.hidden.is_empty() {
+            let header = format!(
+                "{} ({})",
+                dat0_i18n::t("inspector.hidden"),
+                cards.hidden.len()
+            );
+            let caret = if model.hidden_expanded { "▾" } else { "▸" };
+            let mut section = div().flex().flex_col().gap_2().child(
+                div()
+                    .id("inspector-hidden-toggle")
+                    .cursor_pointer()
+                    .child(SharedString::from(format!("{caret} {header}")))
+                    .on_click(cx.listener(|ws, _ev, _window, cx| {
+                        ws.inspector.toggle_hidden();
+                        cx.notify();
+                    })),
+            );
+            if model.hidden_expanded {
+                for card in &cards.hidden {
+                    if let Some(col) = profile.columns.iter().find(|c| c.name == card.source) {
+                        section = section.child(column_card(col, card, model, true));
+                    }
+                }
+            }
+            root = root.child(section);
+        }
     }
 
     root.into_any_element()
 }
 
-/// One column card: name · type, then the three formatted stat lines, then —
-/// when its lazy data has landed (T10) — an inline chart: top-N bars for
-/// low-cardinality columns, a histogram for numeric high-cardinality ones.
-fn column_card(col: &dat0_engine::ColumnProfile, model: &InspectorModel) -> gpui::Div {
-    let header = format!("{} · {}", col.name, col.ty);
+/// One column card: the projected header (label, plus a subtle "· was <orig>"
+/// when renamed), the three formatted stat lines, then — when its lazy data has
+/// landed (T10) — an inline chart. `dimmed` styles hidden-section cards.
+fn column_card(
+    col: &dat0_engine::ColumnProfile,
+    card: &RenderCard,
+    model: &InspectorModel,
+    dimmed: bool,
+) -> gpui::Div {
+    let header = match &card.original {
+        Some(orig) => format!(
+            "{} · {}  ·  {} {}",
+            card.label,
+            col.ty,
+            dat0_i18n::t("inspector.col.was"),
+            orig
+        ),
+        None => format!("{} · {}", card.label, col.ty),
+    };
     let stats = format::format_stats_line(col);
 
-    let mut card = div()
+    let mut card_div = div()
         .flex()
         .flex_col()
         .gap_1()
         .p_2()
         .border_1()
         .child(div().child(SharedString::from(header)));
+    if dimmed {
+        card_div = card_div.opacity(0.55);
+    }
 
     // `format_stats_line` is empty for columns with neither numeric nor length
     // stats (booleans, all-null, …); skip the empty line for those.
     if !stats.is_empty() {
-        card = card.child(div().child(SharedString::from(stats)));
+        card_div = card_div.child(div().child(SharedString::from(stats)));
     }
-    card = card.child(div().child(SharedString::from(format::format_distinct(col))));
-    card = card.child(div().child(SharedString::from(format::format_null(col))));
+    card_div = card_div.child(div().child(SharedString::from(format::format_distinct(col))));
+    card_div = card_div.child(div().child(SharedString::from(format::format_null(col))));
 
     // Inline chart (T10): top-N bars for low-card, histogram for numeric — only
-    // when its lazy data has been fetched (see `load_column_extras`).
+    // when its lazy data has been fetched (see `load_column_extras`). Keyed by
+    // the real source column name, not the renamed label.
     if let Some(extra) = model.extra(&col.name) {
         if let Some(topn) = &extra.topn {
-            card = card.child(crate::charts::render_topn(topn));
+            card_div = card_div.child(crate::charts::render_topn(topn));
         } else if let Some(bins) = &extra.histogram {
-            card = card.child(crate::charts::render_histogram(bins));
+            card_div = card_div.child(crate::charts::render_histogram(bins));
         }
     }
-    card
+    card_div
 }
 
 /// A short, human-readable label for a lineage edge.
