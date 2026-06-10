@@ -241,6 +241,8 @@ gpui::actions!(
 pub fn menu_i18n_keys() -> &'static [&'static str] {
     &[
         "menu.file",
+        "menu.file.save_workspace",
+        "menu.file.open_recent",
         "menu.edit",
         "menu.view",
         "menu.window",

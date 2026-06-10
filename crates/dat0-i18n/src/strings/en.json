@@ -5,6 +5,8 @@
   "menu.file.new_window": "New Window",
   "menu.file.open_file": "Open File…",
   "menu.file.open_workspace": "Open Workspace…",
+  "menu.file.open_recent": "Open Recent",
+  "menu.file.save_workspace": "Save Workspace…",
   "menu.file.open_package": "Open .dat0 Package…",
   "menu.file.export": "Export…",
   "menu.file.close": "Close Window",
@@ -103,5 +105,14 @@
   "connections.error.auth": "MotherDuck token was rejected. Check the token and try again.",
   "connections.error.extension": "Could not load the MotherDuck extension.",
   "connections.error.network": "Could not reach MotherDuck.",
-  "save_as_table.failed.title": "Save as Table failed"
+  "save_as_table.failed.title": "Save as Table failed",
+  "workspace.prompt.title": "Save this as a workspace to keep it?",
+  "workspace.prompt.save": "Save Workspace",
+  "workspace.open.not_a_workspace": "Not a dat0 workspace — no .dat0/ directory found.",
+  "workspace.open.incomplete.title": "Incomplete workspace",
+  "workspace.open.incomplete.body": "A previous Save Workspace was interrupted. The folder may be corrupted.",
+  "workspace.open.failed.title": "Could not open workspace",
+  "workspace.save.already": "Already saved — this session is already a workspace.",
+  "workspace.save.done.title": "Workspace saved",
+  "workspace.save.failed.title": "Save Workspace failed"
 }

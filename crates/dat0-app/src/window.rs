@@ -106,15 +106,15 @@ pub(crate) fn open_workspace_at(cx: &mut App, folder: PathBuf) {
     let folder = std::fs::canonicalize(&folder).unwrap_or(folder);
     let dat0 = Home::dat0_dir_for(&folder);
     if !dat0.exists() {
-        crate::error_ux::push(crate::error_ux::Banner::warning(
-            "Not a dat0 workspace — no .dat0/ directory found.",
-        ));
+        crate::error_ux::push(crate::error_ux::Banner::warning(dat0_i18n::t(
+            "workspace.open.not_a_workspace",
+        )));
         return;
     }
     if crate::workspace::promote::detect_incomplete(&dat0) {
         crate::error_ux::push(crate::error_ux::Banner::warning_with_body(
-            "Incomplete workspace",
-            "A previous Save Workspace was interrupted. The folder may be corrupted.",
+            dat0_i18n::t("workspace.open.incomplete.title"),
+            dat0_i18n::t("workspace.open.incomplete.body"),
         ));
         return;
     }
@@ -154,7 +154,7 @@ pub(crate) fn spawn_workspace_window(cx: &mut App, folder: PathBuf) {
         Ok(s) => Arc::new(Mutex::new(s)),
         Err(e) => {
             crate::error_ux::push(crate::error_ux::Banner::warning_with_body(
-                "Could not open workspace",
+                dat0_i18n::t("workspace.open.failed.title"),
                 format!("{e}"),
             ));
             return;
@@ -211,9 +211,9 @@ fn promote_focused_into(cx: &mut App, target: PathBuf) {
         let session = shell.session_arc();
         let mut guard = session.lock();
         if guard.is_workspace() {
-            crate::error_ux::push(crate::error_ux::Banner::info(
-                "Already saved — this session is already a workspace.",
-            ));
+            crate::error_ux::push(crate::error_ux::Banner::info(dat0_i18n::t(
+                "workspace.save.already",
+            )));
             return;
         }
         let scratch_dir = guard.home.root_dir().to_path_buf();
@@ -245,13 +245,14 @@ fn promote_focused_into(cx: &mut App, target: PathBuf) {
             Ok(root) => {
                 recents_push_workspace(&root);
                 crate::menu_macos::rebuild_menus_with_recents();
-                let mut b = crate::error_ux::Banner::info("Workspace saved");
+                let mut b =
+                    crate::error_ux::Banner::info(dat0_i18n::t("workspace.save.done.title"));
                 b.body = root.display().to_string();
                 crate::error_ux::push(b);
             }
             Err(e) => {
                 crate::error_ux::push(crate::error_ux::Banner::warning_with_body(
-                    "Save Workspace failed",
+                    dat0_i18n::t("workspace.save.failed.title"),
                     format!("{e}"),
                 ));
             }
