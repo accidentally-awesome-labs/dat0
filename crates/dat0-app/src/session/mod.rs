@@ -180,10 +180,6 @@ pub struct Session {
     /// Where this session persists (scratch dir or `.dat0/` workspace home).
     pub home: Home,
     /// Advisory flock guard, held only when `home` is a workspace.
-    #[expect(
-        dead_code,
-        reason = "set by T5 workspace-session constructor; scratch always None"
-    )]
     lock: Option<WorkspaceLock>,
     /// Live DuckDB engine bound to the scratch directory.
     pub engine: Arc<DuckDBEngine>,
@@ -395,6 +391,74 @@ impl Session {
     /// `true` if this session is workspace-backed.
     pub fn is_workspace(&self) -> bool {
         self.home.is_workspace()
+    }
+
+    /// Adopt a newly promoted workspace: re-open the engine against the moved
+    /// DB, switch `home` to `Workspace`, hold the flock, and persist.
+    ///
+    /// HAZARD INVESTIGATION (P7a T6): `promote_files` moves `scratch.duckdb`
+    /// to `.dat0/workspace.duckdb` while `self.engine` is still alive (only
+    /// `close()`-flagged, not dropped). The old DuckDB connection followed the
+    /// inode and still holds the connection on `workspace.duckdb`. EMPIRICAL
+    /// FINDING (macOS, duckdb 1.4): opening a SECOND connection while the old
+    /// Arc is alive does NOT error — it silently returns an EMPTY database (the
+    /// old connection's committed data sits in its WAL/buffer, invisible to a
+    /// new connection until the old one DROPS). So the swap-and-drop is required
+    /// for DATA INTEGRITY, not merely to dodge a lock error. The fix: swap in a
+    /// throwaway engine first, which drops the old Arc (flushing its WAL into the
+    /// moved file), THEN open the real workspace engine.
+    ///
+    /// We empirically verified this via the integration test in
+    /// `tests/workspace_promote.rs` — see the T6 report for findings.
+    ///
+    /// On error after the swap, this Session is left holding the throwaway
+    /// engine and a stale `home`; it is indeterminate and must not be reused
+    /// (the caller surfaces a banner and tears the window down). The workspace
+    /// data on disk is intact and can be reopened via `recover_workspace`.
+    pub async fn adopt_workspace(
+        &mut self,
+        root: PathBuf,
+        lock: crate::workspace::lock::WorkspaceLock,
+        budget_bytes: u64,
+    ) -> Result<()> {
+        self.engine.close().await.ok();
+        let dat0 = Home::dat0_dir_for(&root);
+        let home = Home::Workspace {
+            root,
+            dat0: dat0.clone(),
+        };
+        // Drop the old engine (release the moved DB's lock) BEFORE opening the
+        // new connection. We swap in a throwaway engine so `self.engine` is
+        // never empty. (T0 finding: close() only flags; the lock releases on
+        // DROP of the last Arc strong-ref.)
+        let throwaway_dir = std::env::temp_dir().join(format!("dat0-promote-{}", Uuid::now_v7()));
+        std::fs::create_dir_all(&throwaway_dir).ok();
+        let throwaway = build_engine(
+            &Home::Scratch {
+                dir: throwaway_dir.clone(),
+            },
+            budget_bytes,
+        )
+        .await?;
+        let old = std::mem::replace(&mut self.engine, Arc::new(throwaway));
+        drop(old); // releases workspace.duckdb's file lock
+        // Open the real engine. On failure, clean the temp dir before returning;
+        // the workspace data on disk is intact (the caller reopens from disk),
+        // but this Session is left holding the throwaway engine — see the doc
+        // note above: on error the Session is indeterminate and must not be reused.
+        let engine = match build_engine(&home, budget_bytes).await {
+            Ok(e) => e,
+            Err(e) => {
+                let _ = std::fs::remove_dir_all(&throwaway_dir);
+                return Err(e);
+            }
+        };
+        self.home = home;
+        self.engine = Arc::new(engine); // throwaway dropped here
+        let _ = std::fs::remove_dir_all(&throwaway_dir);
+        self.lock = Some(lock);
+        self.persist()?;
+        Ok(())
     }
 
     /// Total active transforms across all tabs (sum of each tab's `undo_cursor`,
