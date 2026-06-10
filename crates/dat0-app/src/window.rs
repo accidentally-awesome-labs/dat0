@@ -162,6 +162,9 @@ pub(crate) fn spawn_workspace_window(cx: &mut App, folder: PathBuf) {
     };
     let window_id = session.lock().window_id;
     recents_push_workspace(&folder);
+    // Refresh File → Open Recent so the just-opened workspace appears (the save
+    // flow does the same after a promote — keep open/save symmetric).
+    crate::menu_macos::rebuild_menus_with_recents();
     open_window_view(cx, session, window_id, Some(folder), registry);
 }
 
@@ -254,6 +257,35 @@ fn promote_focused_into(cx: &mut App, target: PathBuf) {
             }
         }
     });
+}
+
+/// Open the Nth recent workspace (P7a T10).
+///
+/// `idx` is a 0-based index into the filtered list of `RecentEntry::Workspace`
+/// entries (most recent first).  If the index is now out of range (recents
+/// changed between menu-rebuild and click) this is a silent no-op.
+pub(crate) fn open_recent_n(cx: &mut App, idx: usize) {
+    let Some(recents_arc) = crate::window_registry::recents() else {
+        return;
+    };
+    let Ok(guard) = recents_arc.lock() else {
+        return;
+    };
+    let path = guard
+        .list()
+        .iter()
+        .filter_map(|e| {
+            if let crate::recents::RecentEntry::Workspace { path } = e {
+                Some(path.clone())
+            } else {
+                None
+            }
+        })
+        .nth(idx);
+    drop(guard); // release lock before opening a window (which may block_on)
+    if let Some(folder) = path {
+        open_workspace_at(cx, folder);
+    }
 }
 
 /// Epoch-seconds timestamp string used as the `now_rfc3339` argument to
@@ -664,6 +696,44 @@ pub fn run_app(lock: AppLock, initial_paths: Vec<PathBuf>, main_loop: MainLoop) 
         });
         cx.on_action(|_action: &crate::menu_macos::SaveWorkspace, cx: &mut App| {
             save_workspace_flow(cx);
+        });
+
+        // Wire File → Open Recent fan-out (P7a T10).
+        //
+        // Each OpenRecentN action maps to slot N in the filtered workspace-recents
+        // list.  The helper reads the live recents store at invocation time so a
+        // stale menu (e.g. the recents store changed between menu-rebuild and click)
+        // is handled gracefully: if the index is now out of range the handler is a
+        // no-op.  Cap is OPEN_RECENT_MENU_CAP=10; entries ≥10 are not in the menu.
+        cx.on_action(|_: &crate::menu_macos::OpenRecent0, cx: &mut App| {
+            open_recent_n(cx, 0);
+        });
+        cx.on_action(|_: &crate::menu_macos::OpenRecent1, cx: &mut App| {
+            open_recent_n(cx, 1);
+        });
+        cx.on_action(|_: &crate::menu_macos::OpenRecent2, cx: &mut App| {
+            open_recent_n(cx, 2);
+        });
+        cx.on_action(|_: &crate::menu_macos::OpenRecent3, cx: &mut App| {
+            open_recent_n(cx, 3);
+        });
+        cx.on_action(|_: &crate::menu_macos::OpenRecent4, cx: &mut App| {
+            open_recent_n(cx, 4);
+        });
+        cx.on_action(|_: &crate::menu_macos::OpenRecent5, cx: &mut App| {
+            open_recent_n(cx, 5);
+        });
+        cx.on_action(|_: &crate::menu_macos::OpenRecent6, cx: &mut App| {
+            open_recent_n(cx, 6);
+        });
+        cx.on_action(|_: &crate::menu_macos::OpenRecent7, cx: &mut App| {
+            open_recent_n(cx, 7);
+        });
+        cx.on_action(|_: &crate::menu_macos::OpenRecent8, cx: &mut App| {
+            open_recent_n(cx, 8);
+        });
+        cx.on_action(|_: &crate::menu_macos::OpenRecent9, cx: &mut App| {
+            open_recent_n(cx, 9);
         });
 
         // Wire the SQL Console keystrokes (P5a T11):

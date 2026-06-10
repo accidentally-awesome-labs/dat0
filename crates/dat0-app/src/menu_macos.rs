@@ -8,6 +8,7 @@
 //! - `Menu { name: SharedString, items: Vec<MenuItem> }`
 //! - `MenuItem::action(name: impl Into<SharedString>, action: impl Action)`
 //! - `MenuItem::separator()`
+//! - `MenuItem::submenu(Menu { name, items })`
 //! - `actions!(namespace, [Name1, Name2, ...])` derives
 //!   `Clone + PartialEq + Default + Debug + gpui::Action` unit structs.
 //!
@@ -15,24 +16,114 @@
 //! returning an empty `Vec<gpui::Menu>`, plus the same `menu_i18n_keys()`
 //! list so the i18n invariant test runs cross-platform.
 
+/// Maximum number of recent workspace entries shown in File → Open Recent.
+///
+/// Design note: the recents store holds up to 25 entries; we cap the menu at
+/// 10 to keep the submenu compact and because the fan-out approach requires a
+/// fixed set of action types (OpenRecent0..OpenRecent9).  If the user has more
+/// than 10 workspace recents, the oldest ones are silently omitted from the
+/// menu (they remain in the full recents store / drawer).
+const OPEN_RECENT_MENU_CAP: usize = 10;
+
+/// Build the Open Recent submenu items from the current recents store.
+///
+/// Returns a `Vec<MenuItem>` containing one action per recent workspace (up to
+/// [`OPEN_RECENT_MENU_CAP`]).  Returns an empty `Vec` when there are no recent
+/// workspaces (the caller omits the submenu entirely in that case).
+#[cfg(target_os = "macos")]
+fn open_recent_items() -> Vec<gpui::MenuItem> {
+    use gpui::MenuItem;
+
+    let Some(recents_arc) = crate::window_registry::recents() else {
+        return vec![];
+    };
+    let Ok(guard) = recents_arc.lock() else {
+        return vec![];
+    };
+
+    let workspace_entries: Vec<std::path::PathBuf> = guard
+        .list()
+        .iter()
+        .filter_map(|e| {
+            if let crate::recents::RecentEntry::Workspace { path } = e {
+                Some(path.clone())
+            } else {
+                None
+            }
+        })
+        .take(OPEN_RECENT_MENU_CAP)
+        .collect();
+
+    workspace_entries
+        .into_iter()
+        .enumerate()
+        .map(|(idx, path)| {
+            let label = path
+                .file_name()
+                .map(|n| n.to_string_lossy().into_owned())
+                .unwrap_or_else(|| path.display().to_string());
+            let action: Box<dyn gpui::Action> = match idx {
+                0 => Box::new(OpenRecent0),
+                1 => Box::new(OpenRecent1),
+                2 => Box::new(OpenRecent2),
+                3 => Box::new(OpenRecent3),
+                4 => Box::new(OpenRecent4),
+                5 => Box::new(OpenRecent5),
+                6 => Box::new(OpenRecent6),
+                7 => Box::new(OpenRecent7),
+                8 => Box::new(OpenRecent8),
+                9 => Box::new(OpenRecent9),
+                _ => unreachable!("capped at OPEN_RECENT_MENU_CAP=10"),
+            };
+            MenuItem::Action {
+                name: label.into(),
+                action,
+                os_action: None,
+            }
+        })
+        .collect()
+}
+
 #[cfg(target_os = "macos")]
 pub fn build_menus(_cx: &mut gpui::App) -> Vec<gpui::Menu> {
     use gpui::{Menu, MenuItem};
+
+    // Build the File → Open Recent submenu. If there are no recent workspaces
+    // we omit the submenu entirely (GPUI doesn't support disabled items).
+    let recent_items = open_recent_items();
+    let open_recent_entry = if recent_items.is_empty() {
+        None
+    } else {
+        Some(MenuItem::submenu(Menu {
+            name: dat0_i18n::t("menu.file.open_recent").into(),
+            items: recent_items,
+        }))
+    };
+
+    let mut file_items = vec![
+        MenuItem::action(dat0_i18n::t("menu.file.new_window"), NewWindow),
+        MenuItem::separator(),
+        MenuItem::action(dat0_i18n::t("menu.file.open_file"), OpenFile),
+        MenuItem::action(dat0_i18n::t("menu.file.open_workspace"), OpenWorkspace),
+        MenuItem::action(dat0_i18n::t("menu.file.open_package"), OpenPackage),
+    ];
+    if let Some(recent) = open_recent_entry {
+        file_items.push(recent);
+    }
+    file_items.extend([
+        MenuItem::separator(),
+        MenuItem::action(dat0_i18n::t("menu.file.save_workspace"), SaveWorkspace),
+        MenuItem::separator(),
+        MenuItem::action(dat0_i18n::t("menu.file.export"), Export),
+        MenuItem::separator(),
+        MenuItem::action(dat0_i18n::t("menu.file.close"), CloseWindow),
+        MenuItem::action(dat0_i18n::t("menu.file.quit"), Quit),
+    ]);
+
     vec![
         Menu {
             name: dat0_i18n::t("menu.file").into(),
-            items: vec![
-                MenuItem::action(dat0_i18n::t("menu.file.new_window"), NewWindow),
-                MenuItem::separator(),
-                MenuItem::action(dat0_i18n::t("menu.file.open_file"), OpenFile),
-                MenuItem::action(dat0_i18n::t("menu.file.open_workspace"), OpenWorkspace),
-                MenuItem::action(dat0_i18n::t("menu.file.open_package"), OpenPackage),
-                MenuItem::separator(),
-                MenuItem::action(dat0_i18n::t("menu.file.export"), Export),
-                MenuItem::separator(),
-                MenuItem::action(dat0_i18n::t("menu.file.close"), CloseWindow),
-                MenuItem::action(dat0_i18n::t("menu.file.quit"), Quit),
-            ],
+            items: file_items,
         },
         Menu {
             name: dat0_i18n::t("menu.edit").into(),
@@ -128,6 +219,20 @@ gpui::actions!(
         InspectorToggle,
         // P7a T7: workspace save flow.
         SaveWorkspace,
+        // P7a T10: File → Open Recent fan-out (10-slot cap; see OPEN_RECENT_MENU_CAP).
+        // Each action maps to an index into the filtered workspace-recents list.
+        // Entries beyond index 9 are silently omitted from the menu (still in the
+        // recents store / drawer).  Handlers are registered in window.rs run_app.
+        OpenRecent0,
+        OpenRecent1,
+        OpenRecent2,
+        OpenRecent3,
+        OpenRecent4,
+        OpenRecent5,
+        OpenRecent6,
+        OpenRecent7,
+        OpenRecent8,
+        OpenRecent9,
     ]
 );
 
@@ -143,12 +248,30 @@ pub fn menu_i18n_keys() -> &'static [&'static str] {
     ]
 }
 
-/// Rebuild the native macOS menu bar to reflect the current recents list.
+/// Re-apply the menu bar so File → Open Recent reflects the latest entries.
 ///
-/// **Stub** — T10 fills in the real implementation once the Open Recent
-/// submenu is scaffolded. Called from the workspace save flow so the menu
-/// is eventually updated without blocking compilation.
+/// Reads the recents singleton via `build_menus` and posts `cx.set_menus` onto
+/// the GPUI main thread via [`crate::window_registry::dispatcher`].  No-op if
+/// the dispatcher isn't installed yet (e.g., very early during startup before
+/// `Application::run` fires).
+///
+/// Called by the workspace save/open flows after pushing to the recents store
+/// so the menu immediately shows the new entry.
 pub fn rebuild_menus_with_recents() {
-    // T10 wires the real rebuild: read recents singleton, build submenu items,
-    // call cx.set_menus via the MainThreadDispatcher.
+    let Some(dispatcher) = crate::window_registry::dispatcher() else {
+        return;
+    };
+    // `build_menus` reads the recents singleton synchronously inside the closure
+    // so it runs on the main thread with the freshest store state.
+    let _ = dispatcher.dispatch(|cx: &mut gpui::App| {
+        #[cfg(target_os = "macos")]
+        {
+            let menus = build_menus(cx);
+            cx.set_menus(menus);
+        }
+        #[cfg(not(target_os = "macos"))]
+        {
+            let _ = cx;
+        }
+    });
 }
