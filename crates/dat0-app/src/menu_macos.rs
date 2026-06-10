@@ -23,6 +23,11 @@
 /// fixed set of action types (OpenRecent0..OpenRecent9).  If the user has more
 /// than 10 workspace recents, the oldest ones are silently omitted from the
 /// menu (they remain in the full recents store / drawer).
+///
+/// Gated to macOS: its only user, `open_recent_items`, is `#[cfg(macos)]`, so on
+/// other platforms an ungated const is dead code (CI's linux clippy job catches
+/// what a darwin-local `cargo clippy` cannot).
+#[cfg(target_os = "macos")]
 const OPEN_RECENT_MENU_CAP: usize = 10;
 
 /// Build the Open Recent submenu items from the current recents store.
