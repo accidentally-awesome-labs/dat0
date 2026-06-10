@@ -78,8 +78,9 @@ dat0 validates the folder before opening a window:
 - If the folder has no `.dat0/` subdir, a warning banner appears.
 - If the `.dat0/` layout looks incomplete (interrupted save), a warning banner
   appears with guidance.
-- If the workspace is already open in another window, dat0 silently focuses
-  that window instead of opening a second one.
+- If the workspace is already open in another window of this dat0 instance, dat0
+  declines to open a second one (bringing the existing window to the front is a
+  later refinement).
 
 ## Open Recent
 
@@ -94,8 +95,8 @@ one.
 
 A workspace can be open in **only one dat0 window at a time** (on the same
 machine). When dat0 opens a workspace it acquires an exclusive `flock` lock on
-the `lock` file. If you try to open the same workspace again, dat0 detects the
-open window and focuses it instead.
+the `lock` file. If you try to open the same workspace again in this dat0
+instance, dat0 detects the open window and declines to open a duplicate.
 
 **Stale locks self-heal.** If dat0 exited uncleanly (crash, force-quit), the OS
 releases the flock when the process terminates. The next time you open the
