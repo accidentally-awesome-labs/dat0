@@ -30,5 +30,6 @@ pub mod updater;
 pub mod view;
 pub mod window;
 pub mod window_registry;
+pub mod workspace;
 
 pub use window::run_app;
