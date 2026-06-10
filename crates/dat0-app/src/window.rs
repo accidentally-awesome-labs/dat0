@@ -55,6 +55,265 @@ use crate::recents::Recents;
 use crate::session::Session;
 use crate::view::ViewModel;
 use crate::window_registry::{WindowHandle, WindowRegistry};
+use crate::workspace::Home;
+
+// ─── Recents helper ──────────────────────────────────────────────────────────
+
+/// Push a workspace path into the persisted recents store.
+///
+/// Silently no-ops if the recents singleton was not installed (e.g., in tests
+/// that exercise sub-modules without booting the full app).
+pub(crate) fn recents_push_workspace(path: &std::path::Path) {
+    if let Some(recents) = crate::window_registry::recents() {
+        if let Ok(mut guard) = recents.lock() {
+            let _ = guard.push(crate::recents::RecentEntry::Workspace {
+                path: path.to_path_buf(),
+            });
+        }
+    }
+}
+
+// ─── Workspace open flow (T8) ─────────────────────────────────────────────
+
+/// Global on_action handler for `OpenWorkspace` / `workspace.open`.
+///
+/// Shows the native folder-picker then delegates to [`open_workspace_at`].
+pub(crate) fn open_workspace_flow(cx: &mut App) {
+    let rx = cx.prompt_for_paths(gpui::PathPromptOptions {
+        files: false,
+        directories: true,
+        multiple: false,
+        prompt: None,
+    });
+    cx.spawn(async move |cx: &mut gpui::AsyncApp| {
+        let folder = match rx.await {
+            Ok(Ok(Some(mut v))) if !v.is_empty() => v.remove(0),
+            _ => return,
+        };
+        let _ = cx.update(|cx| open_workspace_at(cx, folder));
+    })
+    .detach();
+}
+
+/// Validate `folder` is a `.dat0/` workspace and open a window for it.
+///
+/// Called by [`open_workspace_flow`] after the user picks a folder. Also
+/// callable directly (e.g. from a "Recent workspaces" list). Shows a warning
+/// banner if the folder is not a workspace or if a promote is incomplete.
+/// If a window already has this path, logs and returns (bring-to-front lands
+/// in P7b).
+pub(crate) fn open_workspace_at(cx: &mut App, folder: PathBuf) {
+    let folder = std::fs::canonicalize(&folder).unwrap_or(folder);
+    let dat0 = Home::dat0_dir_for(&folder);
+    if !dat0.exists() {
+        crate::error_ux::push(crate::error_ux::Banner::warning(
+            "Not a dat0 workspace — no .dat0/ directory found.",
+        ));
+        return;
+    }
+    if crate::workspace::promote::detect_incomplete(&dat0) {
+        crate::error_ux::push(crate::error_ux::Banner::warning_with_body(
+            "Incomplete workspace",
+            "A previous Save Workspace was interrupted. The folder may be corrupted.",
+        ));
+        return;
+    }
+    if let Some(reg) = crate::window_registry::window_registry() {
+        if reg.lock().find_by_workspace(&folder).is_some() {
+            tracing::info!(path = %folder.display(), "workspace already open — focusing (P7b)");
+            return;
+        }
+    }
+    spawn_workspace_window(cx, folder);
+}
+
+/// Open a new window backed by a `.dat0/` workspace at `folder`.
+///
+/// Recovers the session (acquire flock, reopen DB) then calls
+/// [`open_window_view`] to create the GPUI window.
+pub(crate) fn spawn_workspace_window(cx: &mut App, folder: PathBuf) {
+    let registry = match crate::window_registry::window_registry() {
+        Some(r) => r,
+        None => {
+            tracing::warn!("spawn_workspace_window: window_registry singleton not installed");
+            return;
+        }
+    };
+    let budget = 1024 * 1024 * 1024;
+    let rt = match tokio::runtime::Handle::try_current() {
+        Ok(h) => h,
+        Err(_) => {
+            tracing::warn!("spawn_workspace_window: no tokio runtime on calling thread");
+            return;
+        }
+    };
+    let session = match rt.block_on(crate::session::Session::recover_workspace(
+        folder.clone(),
+        budget,
+    )) {
+        Ok(s) => Arc::new(Mutex::new(s)),
+        Err(e) => {
+            crate::error_ux::push(crate::error_ux::Banner::warning_with_body(
+                "Could not open workspace",
+                format!("{e}"),
+            ));
+            return;
+        }
+    };
+    let window_id = session.lock().window_id;
+    recents_push_workspace(&folder);
+    open_window_view(cx, session, window_id, Some(folder), registry);
+}
+
+// ─── Workspace save flow (T9) ─────────────────────────────────────────────
+
+/// Global on_action handler for `SaveWorkspace` / `workspace.save`.
+///
+/// Shows the native folder-picker then delegates to [`promote_focused_into`].
+pub(crate) fn save_workspace_flow(cx: &mut App) {
+    let rx = cx.prompt_for_paths(gpui::PathPromptOptions {
+        files: false,
+        directories: true,
+        multiple: false,
+        prompt: None,
+    });
+    cx.spawn(async move |cx: &mut gpui::AsyncApp| {
+        let folder = match rx.await {
+            Ok(Ok(Some(mut v))) if !v.is_empty() => v.remove(0),
+            _ => return,
+        };
+        let _ = cx.update(|cx| promote_focused_into(cx, folder));
+    })
+    .detach();
+}
+
+/// Promote the currently-focused scratch session into `target` folder.
+///
+/// Acquires the session from the focused workspace shell, calls
+/// `promote_files` to move the DuckDB + session.json into `target/.dat0/`,
+/// then calls `Session::adopt_workspace` to reopen from the new location.
+fn promote_focused_into(cx: &mut App, target: PathBuf) {
+    let Some(weak) = crate::window_registry::focused_workspace_weak() else {
+        tracing::warn!("promote_focused_into: no focused workspace");
+        return;
+    };
+    let Some(any_entity) = weak.upgrade() else {
+        return;
+    };
+    let Ok(shell) = any_entity.downcast::<WorkspaceShell>() else {
+        return;
+    };
+    let budget = 1024 * 1024 * 1024;
+    shell.update(cx, |shell, _cx| {
+        let session = shell.session_arc();
+        let mut guard = session.lock();
+        if guard.is_workspace() {
+            crate::error_ux::push(crate::error_ux::Banner::info(
+                "Already saved — this session is already a workspace.",
+            ));
+            return;
+        }
+        let scratch_dir = guard.home.root_dir().to_path_buf();
+        let now = now_epoch_secs();
+        let rt = match tokio::runtime::Handle::try_current() {
+            Ok(h) => h,
+            Err(_) => {
+                tracing::warn!("promote_focused_into: no tokio runtime");
+                return;
+            }
+        };
+        let result = rt.block_on(async {
+            // `close` is a `QueryEngine` trait method (imported locally, matching
+            // the other engine-call sites in this file).
+            use dat0_engine::QueryEngine as _;
+            // Close the engine before moving its file — matches the sequence the
+            // T6 integration test proved lossless (close → promote_files →
+            // adopt_workspace). `close()` only flags; the data-preserving flush
+            // is the old engine's DROP inside `adopt_workspace` after the move.
+            guard.engine.close().await.ok();
+            let promoted = crate::workspace::promote::promote_files(&target, &scratch_dir, now)?;
+            guard
+                .adopt_workspace(promoted.root.clone(), promoted.lock, budget)
+                .await?;
+            std::fs::remove_dir_all(&promoted.old_scratch_dir).ok();
+            anyhow::Ok(promoted.root)
+        });
+        match result {
+            Ok(root) => {
+                recents_push_workspace(&root);
+                crate::menu_macos::rebuild_menus_with_recents();
+                let mut b = crate::error_ux::Banner::info("Workspace saved");
+                b.body = root.display().to_string();
+                crate::error_ux::push(b);
+            }
+            Err(e) => {
+                crate::error_ux::push(crate::error_ux::Banner::warning_with_body(
+                    "Save Workspace failed",
+                    format!("{e}"),
+                ));
+            }
+        }
+    });
+}
+
+/// Epoch-seconds timestamp string used as the `now_rfc3339` argument to
+/// `promote_files`. No time/chrono/jiff dep exists in dat0-app yet; an
+/// integer seconds string is acceptable for P7a (the manifest timestamp is
+/// informational, not load-bearing). T12 can upgrade to RFC3339 once a time
+/// dep is added.
+fn now_epoch_secs() -> String {
+    use std::time::{SystemTime, UNIX_EPOCH};
+    format!(
+        "{}",
+        SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs()
+    )
+}
+
+// ─── Shared open-window helper ────────────────────────────────────────────
+
+/// Open a new GPUI window for `session`, register it in `registry`, and
+/// install the focused-workspace singleton. Extracted from `spawn_window` so
+/// both the scratch path and the workspace path can share the same logic.
+///
+/// `workspace_path`: `Some(folder)` for workspace windows, `None` for scratch.
+fn open_window_view(
+    cx: &mut App,
+    session: Arc<Mutex<Session>>,
+    window_id: uuid::Uuid,
+    workspace_path: Option<PathBuf>,
+    registry: Arc<Mutex<WindowRegistry>>,
+) {
+    let bounds = Bounds::centered(None, size(px(1200.), px(800.)), cx);
+    cx.open_window(
+        WindowOptions {
+            window_bounds: Some(WindowBounds::Windowed(bounds)),
+            titlebar: Some(TitlebarOptions {
+                title: Some(t("app.name").into()),
+                ..Default::default()
+            }),
+            ..Default::default()
+        },
+        move |window, cx| {
+            let view = cx.new(|cx| {
+                let mut shell = WorkspaceShell::new(Arc::clone(&session), cx);
+                shell.reconnect_persisted_md(cx);
+                shell
+            });
+            crate::window_registry::install_focused_workspace(view.downgrade().into());
+            cx.new(|cx| Root::new(view, window, cx))
+        },
+    )
+    .expect("open window");
+
+    registry.lock().register(WindowHandle {
+        window_id,
+        workspace_path,
+    });
+    tracing::debug!(%window_id, "open_window_view: window registered");
+}
 
 /// Spawn a new workspace window.
 ///
@@ -93,31 +352,7 @@ pub(crate) fn spawn_window(
     };
 
     let window_id = session.lock().window_id;
-    let bounds = Bounds::centered(None, size(px(1200.), px(800.)), cx);
-    cx.open_window(
-        WindowOptions {
-            window_bounds: Some(WindowBounds::Windowed(bounds)),
-            titlebar: Some(TitlebarOptions {
-                title: Some(t("app.name").into()),
-                ..Default::default()
-            }),
-            ..Default::default()
-        },
-        move |window, cx| {
-            let view = cx.new(|cx| {
-                let mut shell = WorkspaceShell::new(Arc::clone(&session), cx);
-                shell.reconnect_persisted_md(cx);
-                shell
-            });
-            // T13: register this workspace as the focused one so that
-            // view.undo / view.redo dispatch closures can reach it.
-            crate::window_registry::install_focused_workspace(view.downgrade().into());
-            cx.new(|cx| Root::new(view, window, cx))
-        },
-    )
-    .expect("open window");
-
-    registry.lock().register(WindowHandle { window_id });
+    open_window_view(cx, session, window_id, None, registry);
     tracing::debug!(%window_id, "spawn_window: window registered in WindowRegistry");
 }
 
@@ -214,6 +449,10 @@ pub fn run_app(lock: AppLock, initial_paths: Vec<PathBuf>, main_loop: MainLoop) 
     // no-op rather than a panic.
     crate::window_registry::install_state_root(state_root.clone());
     crate::window_registry::install_window_registry(Arc::clone(&registry));
+
+    // P7a T9: the recents store singleton is installed from `main.rs` using the
+    // canonical `AppContext.recents` instance (the same one the rest of the app
+    // shares), so the workspace open/save flows push into the live store.
 
     // Spawn UDS server on the tokio runtime. Each received OpenWindowMessage
     // dispatches a visual-spawn closure onto the GPUI main thread via the
@@ -417,6 +656,16 @@ pub fn run_app(lock: AppLock, initial_paths: Vec<PathBuf>, main_loop: MainLoop) 
             });
         }
 
+        // Wire OpenWorkspace / SaveWorkspace → workspace flows (P7a T7-T9).
+        // Both actions are declared in menu_macos.rs (unconditional), so the
+        // handlers resolve on Linux too even without a visible menu item.
+        cx.on_action(|_action: &crate::menu_macos::OpenWorkspace, cx: &mut App| {
+            open_workspace_flow(cx);
+        });
+        cx.on_action(|_action: &crate::menu_macos::SaveWorkspace, cx: &mut App| {
+            save_workspace_flow(cx);
+        });
+
         // Wire the SQL Console keystrokes (P5a T11):
         //   Cmd+Enter / Ctrl+Enter      → SqlRun    (run the active statement)
         //   Cmd+.     / Ctrl+.          → SqlCancel (interrupt the in-flight run)
@@ -482,6 +731,7 @@ pub fn run_app(lock: AppLock, initial_paths: Vec<PathBuf>, main_loop: MainLoop) 
         // assert window count immediately after cold start.
         registry_for_run.lock().register(WindowHandle {
             window_id: first_window_id,
+            workspace_path: None,
         });
         tracing::debug!(%first_window_id, "run_app: first window registered in WindowRegistry");
 
@@ -975,6 +1225,12 @@ impl WorkspaceShell {
     /// The `Arc<DuckDBEngine>` bound to this session (T13 helper).
     pub fn engine(&self) -> Arc<dat0_engine::DuckDBEngine> {
         Arc::clone(&self.session.lock().engine)
+    }
+
+    /// Return a clone of the `Arc<Mutex<Session>>` so workspace flows can
+    /// promote the session without holding a borrow on `self`.
+    pub fn session_arc(&self) -> Arc<Mutex<Session>> {
+        Arc::clone(&self.session)
     }
 
     /// The base table name (already-quoted, suitable for ViewModel construction).

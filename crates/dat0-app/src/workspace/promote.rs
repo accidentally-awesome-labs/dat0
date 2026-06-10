@@ -27,8 +27,11 @@ impl std::fmt::Debug for Promoted {
 }
 
 /// Move a scratch home's files into a new `.dat0/` workspace under `target`.
-/// The DuckDB engine MUST already be closed AND DROPPED by the caller before
-/// calling this (the DB file is moved on disk).
+/// The caller MUST `close()` the DuckDB engine before calling this. The engine
+/// need NOT be dropped first: on POSIX the open handle follows the moved inode,
+/// and `Session::adopt_workspace` releases it by DROPPING the old engine after
+/// the move (which also flushes its WAL into the new location). This
+/// close → move → drop sequence is what the T6 integration test proves lossless.
 pub fn promote_files(target: &Path, scratch_dir: &Path, now_rfc3339: String) -> Result<Promoted> {
     let dat0 = Home::dat0_dir_for(target);
     if dat0.exists() {

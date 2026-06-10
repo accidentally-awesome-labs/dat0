@@ -4,7 +4,13 @@ use dat0_app::main_bridge::MainThreadDispatcher;
 
 fn main() -> Result<()> {
     dat0_app::boot::init_logging()?;
-    let _ctx = dat0_app::boot::AppContext::boot()?;
+    let ctx = dat0_app::boot::AppContext::boot()?;
+    // P7a T9: publish the canonical recents store as a process-wide singleton so
+    // the workspace open/save flows push into the same instance the app shares
+    // (mirrors how the ActionRegistry singleton is installed below). `ctx` is
+    // held for the lifetime of `main` (telemetry guard etc.), so the store lives
+    // as long as the app.
+    dat0_app::window_registry::install_recents(std::sync::Arc::clone(&ctx.recents));
     let state_dir = dat0_app::platform::data_dir()?;
     let cli_paths: Vec<std::path::PathBuf> = std::env::args().skip(1).map(Into::into).collect();
     let lock = match AppLock::try_acquire(&state_dir)? {
