@@ -53,6 +53,11 @@ static STATE_ROOT: OnceCell<PathBuf> = OnceCell::new();
 /// window spawned, regardless of trigger).
 static WINDOW_REGISTRY: OnceCell<Arc<parking_lot::Mutex<WindowRegistry>>> = OnceCell::new();
 
+/// Process-wide recents store slot. Set by `run_app` (after AppContext::boot
+/// provides the recents path) before `Application::run`. Used by the workspace
+/// open/save flows to push entries without re-reading the file from scratch.
+static RECENTS: OnceCell<Arc<std::sync::Mutex<crate::recents::Recents>>> = OnceCell::new();
+
 /// Process-wide "focused workspace" slot (T13). Stores the most-recently
 /// created `WorkspaceShell` as a type-erased weak entity so `dispatch_undo`
 /// / `dispatch_redo` can reach it without a circular import.
@@ -129,9 +134,23 @@ pub fn focused_workspace_weak() -> Option<AnyWeakEntity> {
     FOCUSED_WORKSPACE.get()?.lock().as_ref().cloned()
 }
 
+/// Install the recents store for process-wide access. Idempotent.
+pub fn install_recents(r: Arc<std::sync::Mutex<crate::recents::Recents>>) {
+    let _ = RECENTS.set(r);
+}
+
+/// Access the installed recents store. Returns `None` if
+/// [`install_recents`] has not yet been called.
+pub fn recents() -> Option<Arc<std::sync::Mutex<crate::recents::Recents>>> {
+    RECENTS.get().cloned()
+}
+
 #[derive(Debug, Clone)]
 pub struct WindowHandle {
     pub window_id: Uuid,
+    /// Set when the window is backed by a `.dat0/` workspace folder.
+    /// `None` for scratch windows.
+    pub workspace_path: Option<PathBuf>,
 }
 
 pub struct WindowRegistry {
@@ -167,6 +186,17 @@ impl WindowRegistry {
         self.windows.iter()
     }
 
+    /// Find the window currently backing `path`.
+    ///
+    /// Compares `workspace_path` fields directly; the caller is responsible
+    /// for canonicalizing `path` before calling (use `std::fs::canonicalize`
+    /// or pass the path stored at registration time verbatim).
+    pub fn find_by_workspace(&self, path: &std::path::Path) -> Option<Uuid> {
+        self.live_windows()
+            .find(|w| w.workspace_path.as_deref() == Some(path))
+            .map(|w| w.window_id)
+    }
+
     /// P4 SCAFFOLD — returns a per-workspace-path mutex. Same path returns
     /// the same `Arc<TokioMutex<()>>`; concurrent workspace opens serialize
     /// on it. P3a does not call this; tests prove correctness in advance.
@@ -194,12 +224,31 @@ mod tests {
         assert!(reg.is_empty());
         let h = WindowHandle {
             window_id: Uuid::now_v7(),
+            workspace_path: None,
         };
         let id = h.window_id;
         reg.register(h);
         assert_eq!(reg.len(), 1);
         reg.unregister(id);
         assert!(reg.is_empty());
+    }
+
+    #[test]
+    fn find_by_workspace_matches_registered_path() {
+        let mut reg = WindowRegistry::new();
+        let id = uuid::Uuid::now_v7();
+        reg.register(WindowHandle {
+            window_id: id,
+            workspace_path: Some("/u/proj".into()),
+        });
+        assert_eq!(
+            reg.find_by_workspace(std::path::Path::new("/u/proj")),
+            Some(id)
+        );
+        assert_eq!(
+            reg.find_by_workspace(std::path::Path::new("/u/other")),
+            None
+        );
     }
 
     #[test]

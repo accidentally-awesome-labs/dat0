@@ -55,6 +55,9 @@ pub mod ids {
     pub const SQL_HISTORY: &str = "sql.history";
     pub const SQL_SAVE_AS_TABLE: &str = "sql.save_as_table";
     pub const VIEW_SAVE_AS_TABLE: &str = "view.save_as_table";
+    // P7a: Workspace open/save flows.
+    pub const WORKSPACE_OPEN: &str = "workspace.open";
+    pub const WORKSPACE_SAVE: &str = "workspace.save";
 }
 
 /// Register every built-in action onto `reg`. Returns an error if any id
@@ -172,6 +175,22 @@ pub fn register_all(reg: &ActionRegistry) -> Result<(), RegisterError> {
                 "action: sample_data.retry_taxi dispatched (stub — T7 follow-up wires re-fetch)"
             );
         }),
+    })?;
+
+    reg.register(ActionDescriptor {
+        id: ActionId::from(ids::WORKSPACE_OPEN),
+        title: "Open Workspace…".into(),
+        group: ActionGroup::File,
+        keybinding: None,
+        dispatch: Arc::new(crate::window::open_workspace_flow),
+    })?;
+
+    reg.register(ActionDescriptor {
+        id: ActionId::from(ids::WORKSPACE_SAVE),
+        title: "Save Workspace…".into(),
+        group: ActionGroup::File,
+        keybinding: None,
+        dispatch: Arc::new(crate::window::save_workspace_flow),
     })?;
 
     super::view_actions::register(reg)?;

@@ -126,6 +126,8 @@ gpui::actions!(
         CatalogToggle,
         // P6a T9: Inspector right-dock toggle.
         InspectorToggle,
+        // P7a T7: workspace save flow.
+        SaveWorkspace,
     ]
 );
 
@@ -139,4 +141,14 @@ pub fn menu_i18n_keys() -> &'static [&'static str] {
         "menu.window",
         "menu.help",
     ]
+}
+
+/// Rebuild the native macOS menu bar to reflect the current recents list.
+///
+/// **Stub** — T10 fills in the real implementation once the Open Recent
+/// submenu is scaffolded. Called from the workspace save flow so the menu
+/// is eventually updated without blocking compilation.
+pub fn rebuild_menus_with_recents() {
+    // T10 wires the real rebuild: read recents singleton, build submenu items,
+    // call cx.set_menus via the MainThreadDispatcher.
 }
