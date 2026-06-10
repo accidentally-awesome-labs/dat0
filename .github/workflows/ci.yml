@@ -67,7 +67,7 @@ jobs:
           android: true
           dotnet: true
           haskell: true
-          large-packages: false
+          large-packages: true
           swap-storage: true
       - uses: dtolnay/rust-toolchain@stable
         with:
@@ -117,9 +117,14 @@ jobs:
         run: cargo build --workspace --release --target ${{ matrix.target.triple }}
       - name: Prime sqlite_scanner extension cache (avoid concurrent INSTALL race)
         run: |
-          cargo run --release -p dat0-fixtures -- --out /tmp/dat0-prime --csv-bytes 4096 --sqlite-target-bytes 4096 || true
+          # `--target` keeps these in the SAME target/<triple>/ trees as the Build
+          # (release) + Test (debug) steps. Without it, cargo builds separate host
+          # `target/{release,debug}` trees — i.e. two MORE full DuckDB compiles
+          # (one debug) on disk, which exhausted the ~14 GB ubuntu runner once
+          # P7a added more test binaries. Reusing the trees frees that headroom.
+          cargo run --release --target ${{ matrix.target.triple }} -p dat0-fixtures -- --out /tmp/dat0-prime --csv-bytes 4096 --sqlite-target-bytes 4096 || true
           # Force a one-shot INSTALL so subsequent test-binary processes find the extension cached.
-          cargo test -p dat0-engine --test attach_dispatch -- --nocapture || true
+          cargo test -p dat0-engine --target ${{ matrix.target.triple }} --test attach_dispatch -- --nocapture || true
       - name: Test
         # `--include-ignored` deliberately omitted. Heavy exit_criteria tests
         # (1 GB CSV / 500 MB Parquet / 100 MB SQLite) run nightly via
