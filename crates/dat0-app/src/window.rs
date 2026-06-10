@@ -1090,6 +1090,9 @@ pub struct WorkspaceShell {
     /// deregisters silently (the P4a T10b trap). Cleared alongside
     /// `md_token_prompt`.
     pub(crate) md_token_prompt_sub: Option<gpui::Subscription>,
+    /// Whether the "Save as workspace?" prompt has been shown this session
+    /// (in-memory only — never persisted; shows at most once per launch).
+    workspace_prompt_shown: bool,
 }
 
 impl WorkspaceShell {
@@ -1139,6 +1142,7 @@ impl WorkspaceShell {
             banners: Vec::new(),
             md_token_prompt: None,
             md_token_prompt_sub: None,
+            workspace_prompt_shown: false,
         }
     }
 
@@ -1185,6 +1189,33 @@ impl WorkspaceShell {
             self.on_table_mutated_structural(&target, cx); // bumps epoch + reprofiles + notifies
         }
         cx.notify();
+        self.maybe_prompt_save_workspace();
+    }
+
+    /// Surface the gentle "save as workspace" prompt once per session, after
+    /// ≥3 applied transforms OR ≥1 saved query, while still scratch-backed
+    /// (P7a T11). In-memory only — `workspace_prompt_shown` is never persisted.
+    pub fn maybe_prompt_save_workspace(&mut self) {
+        if self.workspace_prompt_shown {
+            return;
+        }
+        let (is_scratch, transforms, saved) = {
+            let s = self.session.lock();
+            (
+                !s.is_workspace(),
+                s.transform_count(),
+                s.saved_queries().len(),
+            )
+        };
+        if is_scratch && (transforms >= 3 || saved >= 1) {
+            self.workspace_prompt_shown = true;
+            let banner = crate::error_ux::Banner::info(dat0_i18n::t("workspace.prompt.title"))
+                .with_primary(
+                    dat0_i18n::t("workspace.prompt.save"),
+                    crate::actions::builtin::ids::WORKSPACE_SAVE,
+                );
+            crate::error_ux::push(banner);
+        }
     }
 
     /// Prefetch the page(s) covering screen rows `[start, end)` into the MAIN
@@ -2512,6 +2543,8 @@ impl WorkspaceShell {
         let mut list = sess.saved_queries().to_vec();
         crate::session::queries::upsert_saved(&mut list, q);
         let _ = sess.set_saved_queries(list);
+        drop(sess);
+        self.maybe_prompt_save_workspace();
     }
 
     /// Promote the statement under the cursor to a derived table (P5b T10).
