@@ -327,6 +327,82 @@ impl Session {
         Ok(sess)
     }
 
+    /// Recover a session from a `.dat0/` workspace under `root`. Acquires the
+    /// advisory flock (held for the session lifetime) and reads the same
+    /// `session.json` shape as scratch (schema v8). Errors with a contention
+    /// message if the lock is already held by a live holder.
+    pub async fn recover_workspace(root: PathBuf, engine_budget_bytes: u64) -> Result<Self> {
+        let dat0 = Home::dat0_dir_for(&root);
+        let home = Home::Workspace {
+            root,
+            dat0: dat0.clone(),
+        };
+
+        let lock = WorkspaceLock::try_acquire(&dat0.join("lock"))
+            .context("recover_workspace: open lock")?
+            .ok_or_else(|| anyhow::anyhow!("workspace is locked by another dat0 window"))?;
+
+        let manifest = crate::workspace::manifest::read(&dat0.join("manifest.json"))
+            .context("recover_workspace: read manifest")?;
+        let window_id = manifest.workspace_id;
+
+        let json_path = home.session_json();
+        let state: SessionState = match migrate::load(&json_path) {
+            Ok(state) => state,
+            Err(SessionLoadError::Io(e)) if e.kind() == std::io::ErrorKind::NotFound => {
+                tracing::warn!(
+                    window_id = %window_id,
+                    path = %json_path.display(),
+                    "workspace session.json missing; using empty default state"
+                );
+                SessionState::default()
+            }
+            Err(e) if e.is_forward_incompat() => {
+                crate::error_ux::push(forward_incompat_banner(&e));
+                return Err(anyhow::Error::from(e))
+                    .context("recover_workspace: session.json is from a newer dat0 version");
+            }
+            Err(e) => {
+                return Err(anyhow::Error::from(e))
+                    .context("recover_workspace: session.json migration failed");
+            }
+        };
+
+        let engine = build_engine(&home, engine_budget_bytes).await?;
+
+        let sess = Self {
+            window_id,
+            home,
+            lock: Some(lock),
+            engine: Arc::new(engine),
+            tabs: state.tabs,
+            active_tab: state.active_tab,
+            sql_tabs: state.sql_tabs,
+            active_sql_tab: state.active_sql_tab,
+            query_history: state.query_history,
+            saved_queries: state.saved_queries,
+            attachments: state.attachments,
+            ui: state.ui,
+        };
+
+        sess.persist()
+            .context("recover_workspace: post-recover persist failed")?;
+
+        tracing::debug!(window_id = %sess.window_id, "workspace recovered");
+        Ok(sess)
+    }
+
+    /// `true` if this session is workspace-backed.
+    pub fn is_workspace(&self) -> bool {
+        self.home.is_workspace()
+    }
+
+    /// Total active transforms across all tabs (sum of each tab's `undo_cursor`,
+    /// i.e. its applied slice). Used by the promotion prompt.
+    pub fn transform_count(&self) -> usize {
+        self.tabs.iter().map(|t| t.undo_cursor).sum()
+    }
+
     // -----------------------------------------------------------------------
     // Accessors
     // -----------------------------------------------------------------------
