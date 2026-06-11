@@ -8,6 +8,7 @@
 
 pub mod profile;
 pub mod theme;
+pub mod workspace;
 
 /// Trait implemented by every settings panel section.
 ///
