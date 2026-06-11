@@ -1,4 +1,5 @@
 //! Workspace mode (P7a): located `.dat0/` homes, promotion, flock.
+pub mod identity;
 pub mod lock;
 pub mod manifest;
 pub mod networked;

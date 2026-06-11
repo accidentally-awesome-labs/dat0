@@ -35,6 +35,10 @@ dirs = "5"
 # P3a: advisory file lock (PID + flock for AppLock singleton).
 fs4 = { version = "0.9", features = ["sync"] }
 
+# P7b: process identity (hostname + pid liveness for cross-machine lock manifest).
+gethostname = "1"
+libc = "0.2"
+
 # P3a: cross-platform IPC. We use the unix-only Unix Domain Socket
 # path; the crate's Windows shim ships separately (P3a is macOS+Linux only).
 interprocess = { version = "2", features = ["tokio"] }
