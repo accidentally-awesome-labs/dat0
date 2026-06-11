@@ -1,6 +1,7 @@
 //! Workspace mode (P7a): located `.dat0/` homes, promotion, flock.
 pub mod lock;
 pub mod manifest;
+pub mod networked;
 pub mod promote;
 
 use std::path::{Path, PathBuf};
@@ -63,6 +64,14 @@ impl Home {
         }
     }
 
+    /// The cross-machine lock manifest path — `Some` only for workspaces.
+    pub fn lock_json_path(&self) -> Option<PathBuf> {
+        match self {
+            Home::Scratch { .. } => None,
+            Home::Workspace { dat0, .. } => Some(dat0.join("lock.json")),
+        }
+    }
+
     pub fn is_workspace(&self) -> bool {
         matches!(self, Home::Workspace { .. })
     }
@@ -84,6 +93,7 @@ mod tests {
         );
         assert_eq!(h.lock_path(), None);
         assert_eq!(h.manifest_path(), None);
+        assert_eq!(h.lock_json_path(), None);
         assert!(!h.is_workspace());
     }
 
@@ -103,6 +113,10 @@ mod tests {
         assert_eq!(
             h.manifest_path(),
             Some(PathBuf::from("/u/proj/.dat0/manifest.json"))
+        );
+        assert_eq!(
+            h.lock_json_path(),
+            Some(PathBuf::from("/u/proj/.dat0/lock.json"))
         );
         assert!(h.is_workspace());
     }
