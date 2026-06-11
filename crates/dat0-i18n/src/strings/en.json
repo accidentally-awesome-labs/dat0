@@ -116,5 +116,12 @@
   "workspace.open.failed.title": "Could not open workspace",
   "workspace.save.already": "Already saved — this session is already a workspace.",
   "workspace.save.done.title": "Workspace saved",
-  "workspace.save.failed.title": "Save Workspace failed"
+  "workspace.save.failed.title": "Save Workspace failed",
+  "workspace.in_use.conflict.title": "Workspace may be open elsewhere",
+  "workspace.in_use.conflict.body": "Open on {host}, started {age}. Editing on two machines at once can corrupt this workspace.",
+  "workspace.in_use.open_anyway": "Open anyway",
+  "workspace.in_use.same_machine.title": "This workspace is already open",
+  "workspace.in_use.focus_existing": "Focus existing window",
+  "workspace.in_use.claim_failed.title": "Couldn't record the workspace lock (opened anyway)",
+  "common.cancel": "Cancel"
 }

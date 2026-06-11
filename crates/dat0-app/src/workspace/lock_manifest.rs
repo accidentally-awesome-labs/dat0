@@ -13,7 +13,7 @@ use super::identity;
 pub struct LockManifest {
     pub pid: u32,
     pub hostname: String,
-    pub started_at: String, // RFC3339 / display-only; never used for a liveness decision
+    pub started_at: String, // epoch-secs string (e.g. `now_epoch_secs().to_string()`); display-only, never used for a liveness decision
     pub dat0_version: String,
     #[serde(default)]
     pub tombstoned: bool,
