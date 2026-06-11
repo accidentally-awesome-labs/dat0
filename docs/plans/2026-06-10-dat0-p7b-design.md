@@ -1,6 +1,10 @@
 # dat0 P7b — Concurrency & sync-drive safety (design STUB)
 
-> **STATUS: STUB — not yet brainstormed.** This file captures the scope deferred *from* P7a
+> **STATUS: SUPERSEDED** by the brainstormed design
+> `docs/plans/2026-06-11-dat0-p7b-design.md` (2026-06-11). Kept for history; the real design's
+> Decisions table is authoritative. Original stub text follows.
+>
+> **STATUS (original): STUB — not yet brainstormed.** This file captures the scope deferred *from* P7a
 > (`docs/plans/2026-06-10-dat0-p7a-design.md`) so the P7b brainstorm has a starting point. The
 > decisions below are **open questions**, not locked. Run `superpowers:brainstorming` before
 > planning P7b.
