@@ -237,6 +237,8 @@ window.open_dialog(cx, move |dialog, _, _| {
 });
 ```
 
+⚠️ The `.child(...)` body-text call requires `use gpui::ParentElement;` (or `as _`) in scope — without it this fails to compile with `E0599: no method named child`. See §7.2/§7.5(a) for the verified detail.
+
 ### 2.5 Fallback (NOT needed for P3b)
 
 Plan asked for the fallback if no drawer primitive exists. Since `Sheet`
@@ -572,3 +574,276 @@ gpui-component gates ~28 grammar deps behind its `tree-sitter-languages` feature
 deliberately stays off that feature and supplies the single SQL grammar directly
 as a dat0-app dependency, registered at runtime. Under no circumstance enable the
 bundle.
+
+---
+
+## 7. Dialog-from-App + window activation (P7b T0 spike)
+
+- **Verification date:** 2026-06-11
+- **Verifier:** P7b.T0 spike (read-only inspection of pinned source + a deleted
+  throwaway external-consumer example).
+- **gpui-component pinned commit:** `0f0ab35233212f8f3277028995caf0c41e13ee6c`
+  (tag `v0.5.1`).
+- **gpui version:** `=0.2.2` (crates.io); source at
+  `~/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/gpui-0.2.2/`.
+
+De-risk spike for P7b T6 (sync-drive conflict + same-machine modal) and T8
+(bring-to-front). Three GPUI calls not yet exercised anywhere in dat0:
+(1) reaching a `&mut Window` from an `&mut App` action context, (2) wiring a
+two-button confirm `Dialog` with body text, (3) raising a specific window to the
+foreground. The core unknown: dat0's call site `open_workspace_at(cx: &mut App,
+folder: PathBuf)` (`crates/dat0-app/src/window.rs:105`) holds only `&mut App` —
+no `Window` — yet `open_dialog` is a method on `Window`.
+
+**Method (mirrors §6 P5a precedent):** a throwaway
+`crates/dat0-app/examples/p7b_spike.rs` compiled as an **external** consumer of
+`gpui` + `gpui-component` (the exact visibility boundary the shipped code faces).
+`cargo build -p dat0-app --example p7b_spike` **succeeded (clean compile + link;
+`target/debug/examples/p7b_spike` produced)** after one fix the proof caught
+(see §7.5(a)). The example was then DELETED (not committed). A headless agent
+cannot click buttons, so **runtime button-fire (`on_ok`/`on_cancel` actually
+firing on click) is owed to manual UAT** — exactly as §6(a) recorded visual
+colour confirmation as owed. This spike proves only that the API paths compile
+and link.
+
+### 7.1 STEP 1 — reaching `&mut Window` from `&mut App` (PRIMARY path confirmed)
+
+`App` exposes `active_window`, and `AnyWindowHandle::update` yields a `&mut
+Window` inside its closure. Verbatim signatures:
+
+`App::active_window` — gpui `src/app.rs:936`:
+
+```rust
+/// Returns a handle to the window that is currently focused at the platform level, if one exists.
+pub fn active_window(&self) -> Option<AnyWindowHandle> {
+    self.platform.active_window()
+}
+```
+
+`AnyWindowHandle::update` — gpui `src/window.rs:4818`:
+
+```rust
+/// Updates the state of the root view of this window.
+/// This will fail if the window has been closed.
+pub fn update<C, R>(
+    self,
+    cx: &mut C,
+    update: impl FnOnce(AnyView, &mut Window, &mut App) -> R,
+) -> Result<R>
+where
+    C: AppContext,
+```
+
+**Exact param/return facts (do NOT trust the target-shape guess; these are the
+confirmed forms):**
+
+- The first closure param is **`AnyView`** (the type-erased root view) — NOT a
+  typed `_root_view`. dat0 does not need it, so bind it `_root: AnyView` (or
+  `_`).
+- `update` returns **`Result<R>`** (the window may have closed). In an action
+  path that cannot propagate, swallow it with `let _ = handle.update(...)`. (Use
+  `?` only where the caller returns `Result`.)
+- The `C: AppContext` bound is satisfied by `App` — `impl AppContext for App` at
+  gpui `src/app.rs:2106` (`update_window` impl at `src/app.rs:2183`). So passing
+  `cx: &mut App` straight through compiles.
+
+### 7.2 STEP 2 — two-button confirm Dialog with body text
+
+The trait carrying `open_dialog` is **`WindowExt`** (re-exported as
+`gpui_component::WindowExt`, `crates/ui/src/lib.rs:85`), implemented for
+`Window`. NOTE: it is `WindowExt`, not `ContextModal` as the task brief
+guessed. Signature — `crates/ui/src/root.rs:45`:
+
+```rust
+/// Opens a Dialog.
+fn open_dialog<F>(&mut self, cx: &mut App, build: F)
+where
+    F: Fn(Dialog, &mut Window, &mut App) -> Dialog + 'static;
+```
+
+The build closure receives `(Dialog, &mut Window, &mut App)` and **returns the
+built `Dialog`** (fluent style). `close_dialog(&mut self, cx: &mut App)` is the
+matching close (`root.rs:53`); the confirm/cancel buttons auto-close (see
+return-`bool` below), so T6 rarely needs `close_dialog` directly.
+
+`Dialog` builder (all on the value returned through the closure):
+
+- `.title(impl IntoElement)` — `crates/ui/src/dialog.rs:138`.
+- `.confirm()` — OK+Cancel footer; also sets `overlay_closable(false)` +
+  `close_button(false)` — `dialog.rs:168`. `.alert()` is OK-only — `dialog.rs:177`.
+- `.button_props(DialogButtonProps::default().ok_text(..).cancel_text(..))` —
+  `dialog.rs:184`; `DialogButtonProps` at `dialog.rs:34` (reach it as
+  `gpui_component::dialog::DialogButtonProps`); `ok_text`/`cancel_text` at
+  `dialog.rs:54`/`:66`. Default OK text is `OK`, cancel is `Cancel`.
+- **Body text is set via `ParentElement::child(impl IntoElement)`** — `Dialog`
+  implements `ParentElement` (`dialog.rs:279-283`, forwarding to an inner
+  `content: Div`). Confirmed in the upstream example
+  `crates/story/src/dialog_story.rs:274`: `.child("Are you sure to submit?")`.
+  There is **no** `.content(...)` / `.body(...)` method — it is `.child(...)`.
+  ⚠️ **The proof caught this:** calling `.child(...)` requires the
+  `gpui::ParentElement` trait to be **in scope** (`use gpui::ParentElement as
+  _;`), else `E0599: no method named child`. The shipped T6 module must import
+  it. (Most dat0 render modules already do; the conflict-dialog helper must too.)
+- `.on_ok(impl Fn(&ClickEvent, &mut Window, &mut App) -> bool + 'static)` —
+  `dialog.rs:203`. **Returns `bool`: `true` = close the dialog after running;
+  `false` = keep it open.** For T6 the "Open anyway" branch runs the follow-up
+  (`open_workspace_proceed(...)`) and returns `true`.
+- `.on_cancel(impl Fn(&ClickEvent, &mut Window, &mut App) -> bool + 'static)` —
+  `dialog.rs:214`. Same `bool` close-semantics; the abort branch returns `true`.
+- A `move` closure that runs a follow-up action captures fine: the closures are
+  `Fn` (stored as `Rc<dyn Fn(...) -> bool>` — `dialog.rs:90-91`), so any captured
+  data must be `Clone`/copy-per-call-safe (in the spike `title`/`body` `String`s
+  are `.clone()`d into the build closure, which is itself `Fn`).
+
+Upstream reference call (`crates/story/src/dialog_story.rs:269-289`, verbatim
+shape): `window.open_dialog(cx, move |dialog, _, _| { dialog.confirm()
+.child("Are you sure to submit?").on_ok(|_, window, cx| { …; true })
+.on_cancel(|_, window, cx| { …; true }) });`.
+
+### 7.3 STEP 3 — bring a window to the foreground (PRIMARY path; per-window raise EXISTS)
+
+A real per-window raise exists; no fallback needed for T8.
+
+`Window::activate_window` — gpui `src/window.rs:4112`:
+
+```rust
+/// Focus the current window and bring it to the foreground at the platform level.
+pub fn activate_window(&self) {
+    self.platform_window.activate();
+}
+```
+
+`App::activate` (app-level foreground, already used by dat0 at
+`crates/dat0-app/src/window.rs:840` — `cx.activate(true)`) — gpui `src/app.rs:979`:
+
+```rust
+/// Instructs the platform to activate the application by bringing it to the foreground.
+pub fn activate(&self, ignoring_other_apps: bool) {
+    self.platform.activate(ignoring_other_apps);
+}
+```
+
+**T8 ([Focus existing] → raise the already-open same-machine window) uses
+BOTH:** reach the target window via `handle.update(...)` and call
+`window.activate_window()` (raises that specific window), plus `cx.activate(true)`
+(brings the dat0 app to the foreground at the OS level). The fallback the task
+brief described ("no per-window API → re-run `cx.activate(true)` + log") is
+**NOT** triggered: per-window activation is available at this pin.
+
+⚠️ **Limitation for T8:** `cx.active_window()` returns the window *currently
+focused at the platform level*, which is not necessarily the workspace window T8
+wants to raise. T8 must obtain the **correct** target handle — dat0 already
+tracks open workspace windows in `window_registry` (see
+`open_workspace_at` → `reg.lock().find_by_workspace(&folder)` at
+`crates/dat0-app/src/window.rs:121-126`). T8 should store the per-window
+`AnyWindowHandle` (or `WindowHandle<Root>`, downcastable via
+`AnyWindowHandle::downcast`, gpui `src/window.rs:4804`) in that registry at
+window creation and call `.update(cx, |_, window, _| window.activate_window())`
+on the **registry-resolved** handle — NOT blindly on `active_window()`. The
+spike only proves the *call* compiles from `active_window()`; choosing the right
+handle is T8 design, not an API gap.
+
+### 7.4 Confirmed compiling pattern (PRIMARY path — copy into T6/T8)
+
+This is the exact form the throwaway example compiled+linked as an external
+consumer (imports included — the `ParentElement` import is load-bearing per
+§7.2):
+
+```rust
+use gpui::{App, AnyView, ParentElement as _, Window};
+use gpui_component::WindowExt as _;
+use gpui_component::dialog::{Dialog, DialogButtonProps};
+
+// T6: open_workspace_at(cx: &mut App, …) reaches a &mut Window and opens a
+// real two-button confirm Dialog with a body string.
+fn open_conflict_dialog(cx: &mut App, title: String, body: String) {
+    if let Some(handle) = cx.active_window() {
+        let _ = handle.update(cx, move |_root: AnyView, window: &mut Window, cx| {
+            window.open_dialog(cx, move |dialog: Dialog, _w, _cx| {
+                dialog
+                    .title(title.clone())
+                    .confirm()
+                    .button_props(
+                        DialogButtonProps::default()
+                            .ok_text("Open anyway")
+                            .cancel_text("Cancel"),
+                    )
+                    .child(body.clone()) // body text — needs ParentElement in scope
+                    .on_ok(move |_ev, _window, _cx| {
+                        // T6: call open_workspace_proceed(...) here; return true to close
+                        true
+                    })
+                    .on_cancel(move |_ev, _window, _cx| {
+                        true // abort; true closes the dialog
+                    })
+            });
+        });
+    }
+}
+
+// T8: raise the already-open same-machine window + app to the foreground.
+fn focus_existing_window(cx: &mut App) {
+    if let Some(handle) = cx.active_window() { // T8: prefer the registry-resolved handle
+        let _ = handle.update(cx, |_root: AnyView, window: &mut Window, _cx| {
+            window.activate_window();
+        });
+    }
+    cx.activate(true);
+}
+```
+
+### 7.5 Spike findings / corrections
+
+**(a) The compile proof caught a real defect.** First build failed with
+`E0599: no method named child found for struct Dialog` — body text via
+`.child(...)` requires `use gpui::ParentElement;` in scope. A prose-only snippet
+would have shipped that bug into T6. Fixed by adding `ParentElement as _` to the
+imports; rebuild clean. (This is precisely the class of private-visibility /
+missing-trait problem the external-consumer example exists to surface.)
+
+**(b) Trait name correction.** The dispatching trait is **`WindowExt`**
+(`gpui_component::WindowExt`, `root.rs:27`/`:45`), not `ContextModal` as the task
+brief's "verified facts" guessed. `open_dialog`/`close_dialog` live on it.
+
+**(c) Closure-param/return-type corrections vs the target-shape guess.**
+`handle.update`'s first closure param is `AnyView` (not a typed root view) and
+the call returns `Result<R>` (needs `let _ =`/`?`). The `open_dialog` build
+closure is `Fn(Dialog, &mut Window, &mut App) -> Dialog` (returns the Dialog,
+fluent), and `on_ok`/`on_cancel` are `Fn(&ClickEvent, &mut Window, &mut App) ->
+bool` (true = close).
+
+**(d) Runtime click owed to UAT.** Headless build cannot fire `on_ok`/`on_cancel`
+on a real click; that behavioural confirmation is deferred to manual UAT, same
+as §6(a)'s colour check.
+
+### 7.6 DECISION GATE
+
+**CHOSEN: PRIMARY PATH — real gpui-component `Dialog` from the `&mut App` action
+context.** Decisive evidence: the external-consumer example
+`cargo build -p dat0-app --example p7b_spike` **compiled and linked** using only
+public APIs — `cx.active_window()` (gpui `app.rs:936`) → `handle.update(cx, |_:
+AnyView, window: &mut Window, cx| …)` (gpui `window.rs:4818`,
+`impl AppContext for App` at `app.rs:2106`) reaches a `&mut Window`, on which
+`WindowExt::open_dialog` (gpui-component `root.rs:45`) opens a `Dialog` with
+`.title`/`.confirm`/`.button_props`/`.child`/`.on_ok`/`.on_cancel`
+(`dialog.rs:138/168/184/279/203/214`). Per-window raise
+`Window::activate_window()` (gpui `window.rs:4112`) is likewise reachable.
+
+Therefore:
+
+- **T6** `open_conflict_dialog` / `open_same_machine_dialog` use the real
+  `Dialog` via the §7.4 pattern. Remember `use gpui::ParentElement;` for body
+  text. Note: the plan's T6 Step 2 scaffold imports `gpui_component::ContextModal as _` — that trait name is wrong (see §7.5(b)); use `gpui_component::WindowExt as _` instead.
+- **T8** uses `Window::activate_window()` on the **registry-resolved** window
+  handle (§7.3 limitation) plus `cx.activate(true)`.
+
+**FALLBACK PATH (NOT taken):** an in-shell modal overlay — a
+`WorkspaceShell`-rendered blocking layer keyed on a `pending_conflict:
+Option<…>` field. This would only have been needed if `open_dialog` were
+unreachable from the action context. Since the PRIMARY path compiles+links,
+downstream T6/T7 do **not** need the in-shell overlay. Record kept only so a
+future gpui-component bump that breaks the PRIMARY path has a documented Plan B.
+
+**Owed to manual UAT (cannot be verified headless):** that clicking OK actually
+fires `on_ok` (→ proceeds) and Cancel fires `on_cancel` (→ aborts), and that
+`activate_window()` visibly raises the right window on macOS.
