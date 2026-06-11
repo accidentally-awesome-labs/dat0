@@ -38,7 +38,7 @@ async fn force_quit_then_relaunch_finds_orphan_and_tab_state() {
             extra: Default::default(),
         })
         .unwrap();
-        s.scratch_dir.clone()
+        s.home.root_dir().to_path_buf()
         // s drops — engine closes; session.json persists; "force quit" simulated.
     };
 

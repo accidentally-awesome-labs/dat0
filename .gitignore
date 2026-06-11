@@ -64,3 +64,6 @@ notarization-output.json
 
 # Superpowers brainstorm transient state (visual companion mockups)
 .superpowers/
+
+# stray rustc snippet-spike output
+rust_out

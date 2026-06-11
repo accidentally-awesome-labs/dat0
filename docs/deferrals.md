@@ -56,6 +56,9 @@ that's modifying it; merge conflicts are signals worth investigating.
 | D-014 | Memory Budget Settings section | open | P3b | P3c / P9c |
 | D-015 | AccessKit / screen-reader selection-tree exposure | open | P4b | P10 |
 | D-018 | Workspace lineage DAG — node-edge graph with auto-layout (left→right topological), pan/zoom, whole-workspace view | open | P6b | — |
+| D-019 | Workspace concurrency/sync-drive: cross-machine lock, sync-drive detection, rich in-use modal, Settings → Workspace, force-unlock | open | P7a | P7b |
+| D-020 | Live-data refresh: file-watcher on Tab.source_path → re-import on change (re-CTAS + replay transforms, debounced) + finish recovery_panel Sheet UI | open | P7a | P7c |
+| D-021 | Banner action buttons: `error_ux::render_banner` renders title+body only; `.with_primary` action ids stored but not displayed | open | P7a | — |
 
 ## At-a-glance — Plan defects
 
@@ -561,6 +564,84 @@ that's modifying it; merge conflicts are signals worth investigating.
 - **Originating doc:** `docs/plans/2026-06-06-dat0-p6b-design.md` (P6b design —
   lineage split).
 - **Last touched:** 2026-06-06.
+
+---
+
+### D-019 — Workspace concurrency + sync-drive safety
+
+- **Status:** open
+- **Deferred from:** P7a (workspace core; design non-goals)
+- **Target phase:** P7b
+- **What it is:** The full cross-machine concurrency and sync-drive safety story:
+  (a) A **heartbeat/lease `lock.json`** alongside the `fs4` flock — `fs4` exclusive locks
+  are process-scoped and self-heal on exit, but don't cross machines (e.g. NFS, a
+  sync-drive folder). A `lock.json` with a heartbeat timestamp and holder identity
+  (hostname, pid, display-name) lets any opener detect a stale vs. live cross-machine
+  lock and show the full holder context to the user.
+  (b) **Sync-drive heuristic** — detect whether the workspace folder sits under a
+  Dropbox / iCloud Drive / OneDrive / Google Drive path and warn the user that
+  concurrent writes from sync are unsafe while dat0 has the workspace open.  A
+  "Treat as networked storage" Settings override lets users suppress the warning for
+  intentional shared drives.
+  (c) A **rich `WorkspaceInUseModal`** that replaces P7a's minimal "in use" warning
+  banner with a sheet showing the holder's identity, whether it appears to be on
+  the same machine, and a "Force unlock (data may be lost)" button.
+  (d) A **Settings → Workspace section** for the sync-drive override and any future
+  workspace-level preferences.
+  (e) A **force-unlock path** (v1.x hardening) for recovery after a crashed holder
+  on a remote/sync mount leaves a stale cross-machine lock.
+- **Why deferred:** P7a's `fs4` flock is sufficient for the primary single-machine
+  use-case (workspaces on a local SSD). Cross-machine and sync-drive scenarios require
+  additional ambient context (hostname, sync-daemon path inspection) and a richer UI
+  surface that is disproportionate to the P7a scope. The flock already provides stale-lock
+  self-healing for the common crash case (lock released on process exit).
+- **Originating doc:** `docs/plans/2026-06-10-dat0-p7a-design.md` §"Non-goals / deferred to P7b".
+- **Last touched:** 2026-06-10.
+
+### D-020 — Live-data refresh (file-watcher on Tab.source_path)
+
+- **Status:** open
+- **Deferred from:** P7a (workspace core; design non-goals)
+- **Target phase:** P7c
+- **What it is:** A `notify`-crate file-watcher on each `Tab.source_path` (the
+  original source file for imported tables) that re-imports the table when the
+  source file changes: re-runs CTAS (same sniffing path as the original import),
+  then replays the tab's transform stack on the new base. The re-import is
+  debounced (e.g. 500 ms quiet window) to coalesce rapid editor saves.  If the
+  tab has user edits (cell overlays from `compile_view_sql`), the user is warned
+  that re-import will discard those base-table edits.  Also covers finishing the
+  `recovery_panel` Sheet UI (the current recovery panel is a logic stub with a
+  placeholder render).
+- **Why deferred:** dat0 tables are MATERIALIZED at import time (CTAS, not views
+  over the source file — see PD-017 resolution) so a file change does NOT
+  automatically reflect in the open tab.  Wiring the watcher requires a persistent
+  mapping from table name → original source path (already present in
+  `TableOrigin::File(path)`) and a re-import pipeline that preserves the transform
+  stack — non-trivial scope that belongs in a focused live-data phase once the
+  workspace persistence substrate (P7a) is solid.
+- **Originating doc:** `docs/plans/2026-06-10-dat0-p7a-design.md` §"Non-goals / deferred to P7c".
+- **Last touched:** 2026-06-10.
+
+### D-021 — Banner action buttons not rendered
+
+- **Status:** open
+- **Deferred from:** P7a (workspace core; found during workspace prompt wiring)
+- **Target phase:** — (general UI follow-up; not phase-gated)
+- **What it is:** `error_ux::render_banner` (the per-banner chip painted by
+  `WorkspaceShell::render`) renders the banner's `title` and `body` text only.
+  The `Banner::with_primary(label, action_id)` method stores the action label and
+  id on the `Banner` struct, but `render_banner` does not yet display a button
+  for it.  As a result, P7a's workspace prompt (`workspace.prompt.title` /
+  `workspace.prompt.save`) appears as a text-only nudge — the "Save Workspace"
+  call-to-action label is stored but not rendered as a clickable button.
+- **Why deferred:** The banner chip layout was introduced in P6a (PD-021 closure)
+  as a minimal title+body strip. Adding a styled action button requires a
+  `gpui-component` button primitive inside the chip and a dispatch path through
+  `MainThreadDispatcher` to fire the stored `action_id`.  The workspace prompt is
+  still useful as a text nudge; the full button UX is a polish item.
+- **Originating doc:** P7a T12; `crates/dat0-app/src/error_ux/banner.rs`
+  (`render_banner`, `Banner::with_primary`).
+- **Last touched:** 2026-06-10.
 
 ---
 

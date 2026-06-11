@@ -10,6 +10,9 @@ use std::io::Write as _;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
+use crate::workspace::Home;
+use crate::workspace::lock::WorkspaceLock;
+
 use anyhow::{Context, Result, bail};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
@@ -174,8 +177,10 @@ impl Default for SessionState {
 pub struct Session {
     /// Unique ID for this window session (parsed from the scratch directory name).
     pub window_id: Uuid,
-    /// Absolute path to the scratch directory: `state_root/scratch/{window_id}/`.
-    pub scratch_dir: PathBuf,
+    /// Where this session persists (scratch dir or `.dat0/` workspace home).
+    pub home: Home,
+    /// Advisory flock guard, held only when `home` is a workspace.
+    lock: Option<WorkspaceLock>,
     /// Live DuckDB engine bound to the scratch directory.
     pub engine: Arc<DuckDBEngine>,
     tabs: Vec<Tab>,
@@ -201,20 +206,22 @@ impl Session {
     /// session.
     pub async fn new(state_root: &Path, engine_budget_bytes: u64) -> Result<Self> {
         let window_id = Uuid::now_v7();
-        let scratch_dir = state_root.join("scratch").join(window_id.to_string());
+        let dir = state_root.join("scratch").join(window_id.to_string());
 
-        std::fs::create_dir_all(&scratch_dir).with_context(|| {
+        std::fs::create_dir_all(&dir).with_context(|| {
             format!(
                 "session::new: could not create scratch dir {}",
-                scratch_dir.display()
+                dir.display()
             )
         })?;
 
-        let engine = build_engine(&scratch_dir, engine_budget_bytes).await?;
+        let home = Home::Scratch { dir };
+        let engine = build_engine(&home, engine_budget_bytes).await?;
 
         let sess = Self {
             window_id,
-            scratch_dir,
+            home,
+            lock: None,
             engine: Arc::new(engine),
             tabs: Vec::new(),
             active_tab: None,
@@ -252,7 +259,8 @@ impl Session {
             format!("session::recover: directory name is not a valid UUID: {dir_name}")
         })?;
 
-        let json_path = scratch_dir.join("session.json");
+        let home = Home::Scratch { dir: scratch_dir };
+        let json_path = home.session_json();
         let state: SessionState = match migrate::load(&json_path) {
             Ok(state) => state,
             Err(SessionLoadError::Io(e)) if e.kind() == std::io::ErrorKind::NotFound => {
@@ -285,11 +293,12 @@ impl Session {
             }
         };
 
-        let engine = build_engine(&scratch_dir, engine_budget_bytes).await?;
+        let engine = build_engine(&home, engine_budget_bytes).await?;
 
         let sess = Self {
             window_id,
-            scratch_dir,
+            home,
+            lock: None,
             engine: Arc::new(engine),
             tabs: state.tabs,
             active_tab: state.active_tab,
@@ -312,6 +321,150 @@ impl Session {
 
         tracing::debug!(window_id = %sess.window_id, tab_count = sess.tabs.len(), "session recovered");
         Ok(sess)
+    }
+
+    /// Recover a session from a `.dat0/` workspace under `root`. Acquires the
+    /// advisory flock (held for the session lifetime) and reads the same
+    /// `session.json` shape as scratch (schema v8). Errors with a contention
+    /// message if the lock is already held by a live holder.
+    pub async fn recover_workspace(root: PathBuf, engine_budget_bytes: u64) -> Result<Self> {
+        let dat0 = Home::dat0_dir_for(&root);
+        let home = Home::Workspace {
+            root,
+            dat0: dat0.clone(),
+        };
+
+        let lock = WorkspaceLock::try_acquire(&dat0.join("lock"))
+            .context("recover_workspace: open lock")?
+            .ok_or_else(|| anyhow::anyhow!("workspace is locked by another dat0 window"))?;
+
+        let manifest = crate::workspace::manifest::read(&dat0.join("manifest.json"))
+            .context("recover_workspace: read manifest")?;
+        let window_id = manifest.workspace_id;
+
+        let json_path = home.session_json();
+        let state: SessionState = match migrate::load(&json_path) {
+            Ok(state) => state,
+            Err(SessionLoadError::Io(e)) if e.kind() == std::io::ErrorKind::NotFound => {
+                tracing::warn!(
+                    window_id = %window_id,
+                    path = %json_path.display(),
+                    "workspace session.json missing; using empty default state"
+                );
+                SessionState::default()
+            }
+            Err(e) if e.is_forward_incompat() => {
+                crate::error_ux::push(forward_incompat_banner(&e));
+                return Err(anyhow::Error::from(e))
+                    .context("recover_workspace: session.json is from a newer dat0 version");
+            }
+            Err(e) => {
+                return Err(anyhow::Error::from(e))
+                    .context("recover_workspace: session.json migration failed");
+            }
+        };
+
+        let engine = build_engine(&home, engine_budget_bytes).await?;
+
+        let sess = Self {
+            window_id,
+            home,
+            lock: Some(lock),
+            engine: Arc::new(engine),
+            tabs: state.tabs,
+            active_tab: state.active_tab,
+            sql_tabs: state.sql_tabs,
+            active_sql_tab: state.active_sql_tab,
+            query_history: state.query_history,
+            saved_queries: state.saved_queries,
+            attachments: state.attachments,
+            ui: state.ui,
+        };
+
+        sess.persist()
+            .context("recover_workspace: post-recover persist failed")?;
+
+        tracing::debug!(window_id = %sess.window_id, "workspace recovered");
+        Ok(sess)
+    }
+
+    /// `true` if this session is workspace-backed.
+    pub fn is_workspace(&self) -> bool {
+        self.home.is_workspace()
+    }
+
+    /// Adopt a newly promoted workspace: re-open the engine against the moved
+    /// DB, switch `home` to `Workspace`, hold the flock, and persist.
+    ///
+    /// HAZARD INVESTIGATION (P7a T6): `promote_files` moves `scratch.duckdb`
+    /// to `.dat0/workspace.duckdb` while `self.engine` is still alive (only
+    /// `close()`-flagged, not dropped). The old DuckDB connection followed the
+    /// inode and still holds the connection on `workspace.duckdb`. EMPIRICAL
+    /// FINDING (macOS, duckdb 1.4): opening a SECOND connection while the old
+    /// Arc is alive does NOT error — it silently returns an EMPTY database (the
+    /// old connection's committed data sits in its WAL/buffer, invisible to a
+    /// new connection until the old one DROPS). So the swap-and-drop is required
+    /// for DATA INTEGRITY, not merely to dodge a lock error. The fix: swap in a
+    /// throwaway engine first, which drops the old Arc (flushing its WAL into the
+    /// moved file), THEN open the real workspace engine.
+    ///
+    /// We empirically verified this via the integration test in
+    /// `tests/workspace_promote.rs` — see the T6 report for findings.
+    ///
+    /// On error after the swap, this Session is left holding the throwaway
+    /// engine and a stale `home`; it is indeterminate and must not be reused
+    /// (the caller surfaces a banner and tears the window down). The workspace
+    /// data on disk is intact and can be reopened via `recover_workspace`.
+    pub async fn adopt_workspace(
+        &mut self,
+        root: PathBuf,
+        lock: crate::workspace::lock::WorkspaceLock,
+        budget_bytes: u64,
+    ) -> Result<()> {
+        self.engine.close().await.ok();
+        let dat0 = Home::dat0_dir_for(&root);
+        let home = Home::Workspace {
+            root,
+            dat0: dat0.clone(),
+        };
+        // Drop the old engine (release the moved DB's lock) BEFORE opening the
+        // new connection. We swap in a throwaway engine so `self.engine` is
+        // never empty. (T0 finding: close() only flags; the lock releases on
+        // DROP of the last Arc strong-ref.)
+        let throwaway_dir = std::env::temp_dir().join(format!("dat0-promote-{}", Uuid::now_v7()));
+        std::fs::create_dir_all(&throwaway_dir).ok();
+        let throwaway = build_engine(
+            &Home::Scratch {
+                dir: throwaway_dir.clone(),
+            },
+            budget_bytes,
+        )
+        .await?;
+        let old = std::mem::replace(&mut self.engine, Arc::new(throwaway));
+        drop(old); // releases workspace.duckdb's file lock
+        // Open the real engine. On failure, clean the temp dir before returning;
+        // the workspace data on disk is intact (the caller reopens from disk),
+        // but this Session is left holding the throwaway engine — see the doc
+        // note above: on error the Session is indeterminate and must not be reused.
+        let engine = match build_engine(&home, budget_bytes).await {
+            Ok(e) => e,
+            Err(e) => {
+                let _ = std::fs::remove_dir_all(&throwaway_dir);
+                return Err(e);
+            }
+        };
+        self.home = home;
+        self.engine = Arc::new(engine); // throwaway dropped here
+        let _ = std::fs::remove_dir_all(&throwaway_dir);
+        self.lock = Some(lock);
+        self.persist()?;
+        Ok(())
+    }
+
+    /// Total active transforms across all tabs (sum of each tab's `undo_cursor`,
+    /// i.e. its applied slice). Used by the promotion prompt.
+    pub fn transform_count(&self) -> usize {
+        self.tabs.iter().map(|t| t.undo_cursor).sum()
     }
 
     // -----------------------------------------------------------------------
@@ -445,8 +598,12 @@ impl Session {
         let bytes =
             serde_json::to_vec_pretty(&state).context("session::persist: serialisation failed")?;
 
-        let json_path = self.scratch_dir.join("session.json");
-        let tmp_path = self.scratch_dir.join("session.json.tmp");
+        // Both land in the same dir (`home.root_dir()`), so the rename below is
+        // an atomic same-filesystem swap; derive them symmetrically to keep that
+        // invariant self-evident.
+        let dir = self.home.root_dir();
+        let json_path = dir.join("session.json");
+        let tmp_path = dir.join("session.json.tmp");
 
         {
             let f = std::fs::File::create(&tmp_path).with_context(|| {
@@ -476,10 +633,10 @@ impl Session {
         // fsync the parent directory so the rename metadata hits disk.
         // PD-002 sibling concern: without this, a power-loss between the rename
         // and any future OS-triggered directory sync could lose the new file.
-        let parent_dir = std::fs::File::open(&self.scratch_dir).with_context(|| {
+        let parent_dir = std::fs::File::open(self.home.root_dir()).with_context(|| {
             format!(
                 "session::persist: open parent dir {} failed",
-                self.scratch_dir.display()
+                self.home.root_dir().display()
             )
         })?;
         parent_dir
@@ -494,12 +651,13 @@ impl Session {
 // Engine construction helper
 // ---------------------------------------------------------------------------
 
-/// Build and initialise a `DuckDBEngine` bound to `scratch_dir`.
+/// Build and initialise a `DuckDBEngine` bound to `home`.
 ///
-/// The DB file is `scratch_dir/scratch.duckdb` (per spec §3 scratch layout).
-/// Only `init()` is async; `DuckDBEngine::new` is synchronous.
-async fn build_engine(scratch_dir: &Path, budget_bytes: u64) -> Result<DuckDBEngine> {
-    let db_path = scratch_dir.join("scratch.duckdb");
+/// The DB file path comes from `home.db_path()` (per spec §3 scratch layout /
+/// §workspace layout). Only `init()` is async; `DuckDBEngine::new` is
+/// synchronous.
+async fn build_engine(home: &Home, budget_bytes: u64) -> Result<DuckDBEngine> {
+    let db_path = home.db_path();
     let budget = MemoryBudget {
         bytes: budget_bytes,
     };
@@ -638,10 +796,10 @@ mod tests {
             .expect("Session::new");
 
         // Directory must exist.
-        assert!(sess.scratch_dir.exists(), "scratch dir should exist");
+        assert!(sess.home.root_dir().exists(), "scratch dir should exist");
 
         // session.json must exist.
-        let json_path = sess.scratch_dir.join("session.json");
+        let json_path = sess.home.root_dir().join("session.json");
         assert!(json_path.exists(), "session.json should exist");
 
         // Tabs must be empty; no active tab.
@@ -666,7 +824,7 @@ mod tests {
         sess.add_tab(tab).expect("add_tab");
 
         // Read back raw JSON and verify contents.
-        let json_path = sess.scratch_dir.join("session.json");
+        let json_path = sess.home.root_dir().join("session.json");
         let raw = std::fs::read_to_string(&json_path).expect("read session.json");
         let state: SessionState = serde_json::from_str(&raw).expect("parse session.json");
 
@@ -694,7 +852,7 @@ mod tests {
             };
             sess.add_tab(tab).expect("add_tab");
 
-            sess.scratch_dir.clone()
+            sess.home.root_dir().to_path_buf()
             // sess drops here, releasing the engine + DB lock
         };
 
@@ -743,7 +901,7 @@ mod tests {
             }])
             .expect("set_saved_queries");
 
-            sess.scratch_dir.clone()
+            sess.home.root_dir().to_path_buf()
             // sess drops here, releasing the engine + DB lock
         };
 
@@ -782,7 +940,7 @@ mod tests {
             })
             .expect("set_ui");
 
-            sess.scratch_dir.clone()
+            sess.home.root_dir().to_path_buf()
             // sess drops here, releasing the engine + DB lock
         };
 
@@ -820,7 +978,7 @@ mod tests {
         sess.add_tab(tab).expect("add_tab");
 
         // After add_tab (which calls persist), the .tmp file must not exist.
-        let tmp_path = sess.scratch_dir.join("session.json.tmp");
+        let tmp_path = sess.home.root_dir().join("session.json.tmp");
         assert!(
             !tmp_path.exists(),
             "session.json.tmp should not exist after successful persist"

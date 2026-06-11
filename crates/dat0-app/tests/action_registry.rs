@@ -9,11 +9,12 @@
 //! P5a T11 adds five SQL Console entry points (console.toggle / sql.run /
 //! sql.cancel / sql.new_tab / sql.close_tab) → twenty-four. P5b T12 adds five
 //! SQL Console reuse/promotion descriptors (sql.save_query / sql.load_query /
-//! sql.history / sql.save_as_table / view.save_as_table) → twenty-nine. Banner action_ids
-//! (T2) reference these stable strings. Downstream tasks (T5 recovery panel,
-//! T7 empty-state hero, T10 import cancel, T11 file dialog, T12 theme toggle)
-//! will replace stub dispatch bodies with real wiring — registry shape itself
-//! is frozen here.
+//! sql.history / sql.save_as_table / view.save_as_table) → twenty-nine. P7a T7
+//! adds two workspace actions (workspace.open / workspace.save) → thirty-one.
+//! Banner action_ids (T2) reference these stable strings. Downstream tasks
+//! (T5 recovery panel, T7 empty-state hero, T10 import cancel, T11 file dialog,
+//! T12 theme toggle) will replace stub dispatch bodies with real wiring —
+//! registry shape itself is frozen here.
 
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -75,14 +76,15 @@ fn lookup_returns_descriptor() {
 }
 
 #[test]
-fn builtins_register_twenty_nine() {
+fn builtins_register_thirty_one() {
     let reg = ActionRegistry::new();
     dat0_app::actions::builtin::register_all(&reg).unwrap();
     // Ten from P3b/P4a + seven from P4b T9 (copy/cut/paste/fill_down/set_null/set_value/delete_rows)
     // + one from P4c T8 (delete_column) + one from P4c T11 (view.export)
     // + five from P5a T11 (console.toggle/sql.run/sql.cancel/sql.new_tab/sql.close_tab) = 24.
     // + five from P5b T12 (sql.save_query/sql.load_query/sql.history/sql.save_as_table/view.save_as_table) = 29.
-    assert_eq!(reg.count(), 29);
+    // + two from P7a T7 (workspace.open/workspace.save) = 31.
+    assert_eq!(reg.count(), 31);
     let titles: Vec<String> = reg.iter().map(|d| d.title).collect();
     assert!(titles.contains(&"New Window".to_string()));
     assert!(titles.contains(&"Open Settings".to_string()));
@@ -117,6 +119,10 @@ fn builtins_register_twenty_nine() {
         "sql.save_as_table",
         "view.save_as_table",
     ] {
+        assert!(reg.contains(id), "missing {id}");
+    }
+    // P7a T7 additions (workspace open/save).
+    for id in ["workspace.open", "workspace.save"] {
         assert!(reg.contains(id), "missing {id}");
     }
 }

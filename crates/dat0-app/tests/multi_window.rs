@@ -12,7 +12,7 @@ async fn two_sessions_isolated_scratch_and_engine() {
     let mut a = Session::new(tmp.path(), BUDGET).await.unwrap();
     let mut b = Session::new(tmp.path(), BUDGET).await.unwrap();
     assert_ne!(a.window_id, b.window_id);
-    assert_ne!(a.scratch_dir, b.scratch_dir);
+    assert_ne!(a.home.root_dir(), b.home.root_dir());
 
     let csv_a = tmp.path().join("a.csv");
     std::fs::write(&csv_a, "x\n1\n").unwrap();
