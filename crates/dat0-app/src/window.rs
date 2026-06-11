@@ -95,6 +95,35 @@ pub(crate) fn open_workspace_flow(cx: &mut App) {
     .detach();
 }
 
+/// Load the workspace settings for the networked-path decision. On a genuine
+/// settings error (config dir unavailable, or `settings.toml` fails to
+/// parse/read — a *missing* file is fine, `load_or_default` handles it), err
+/// toward networked-safe: design D2 says over-detection is free but
+/// under-detection risks silent cross-machine corruption. Always logs the error.
+fn load_workspace_settings() -> crate::settings::Workspace {
+    let networked_safe = || crate::settings::Workspace {
+        treat_all_as_networked: true,
+        ..Default::default()
+    };
+    let Ok(dir) = crate::platform::config_dir() else {
+        tracing::warn!(
+            "config_dir unavailable; treating workspaces as networked (D2 safe default)"
+        );
+        return networked_safe();
+    };
+    let store = crate::settings::store::SettingsStore::with_path(dir.join("settings.toml"));
+    match store.load_or_default() {
+        Ok(s) => s.workspace,
+        Err(e) => {
+            tracing::warn!(
+                ?e,
+                "settings load failed; treating workspaces as networked (D2 safe default)"
+            );
+            networked_safe()
+        }
+    }
+}
+
 /// Validate `folder` is a `.dat0/` workspace and open a window for it.
 ///
 /// Called by [`open_workspace_flow`] after the user picks a folder. Also
@@ -118,20 +147,88 @@ pub(crate) fn open_workspace_at(cx: &mut App, folder: PathBuf) {
         ));
         return;
     }
-    if let Some(reg) = crate::window_registry::window_registry() {
-        if reg.lock().find_by_workspace(&folder).is_some() {
-            tracing::info!(path = %folder.display(), "workspace already open — focusing (P7b)");
-            return;
+    // Same-machine, in-process? (the common "two windows" case)
+    let in_process = crate::window_registry::window_registry()
+        .map(|reg| reg.lock().find_by_workspace(&folder).is_some())
+        .unwrap_or(false);
+
+    // Is this workspace on a sync drive?
+    let settings = load_workspace_settings();
+    let networked = crate::workspace::networked::is_networked(&folder, &settings);
+
+    // Read the cross-machine record (networked only).
+    let outcome = if networked {
+        let lock_json = dat0.join("lock.json");
+        crate::workspace::lock_manifest::acquire(
+            &lock_json,
+            &crate::workspace::identity::hostname(),
+        )
+        .unwrap_or(crate::workspace::lock_manifest::AcquireOutcome::Available)
+    } else {
+        crate::workspace::lock_manifest::AcquireOutcome::Available
+    };
+
+    use crate::workspace_in_use_modal::{ModalDecision, decide};
+    match decide(&outcome, in_process) {
+        ModalDecision::Proceed => open_workspace_proceed(cx, folder, networked),
+        ModalDecision::SameMachineInUse => focus_existing_workspace(cx, &folder),
+        ModalDecision::BlockSameMachine => {
+            crate::error_ux::push(crate::error_ux::Banner::warning(dat0_i18n::t(
+                "workspace.in_use.same_machine.title",
+            )));
+        }
+        ModalDecision::ConflictForeign(holder) => {
+            let folder2 = folder.clone();
+            crate::workspace_in_use_modal::open_conflict_dialog(cx, holder, move |cx| {
+                open_workspace_proceed(cx, folder2.clone(), true /* networked: claim ours */);
+            });
         }
     }
-    spawn_workspace_window(cx, folder);
 }
+
+/// Open + (if networked) claim the manifest, then spawn the window.
+fn open_workspace_proceed(cx: &mut App, folder: PathBuf, networked: bool) {
+    let guard = if networked {
+        let lock_json = Home::dat0_dir_for(&folder).join("lock.json");
+        match crate::workspace::lock_manifest::claim(&lock_json, now_epoch_secs()) {
+            Ok(g) => Some(g),
+            Err(e) => {
+                // Read-only drive etc. — open anyway, degraded to flock-only.
+                tracing::warn!(?e, "lock.json claim failed; opening flock-only");
+                crate::error_ux::push(crate::error_ux::Banner::warning(dat0_i18n::t(
+                    "workspace.in_use.claim_failed.title",
+                )));
+                None
+            }
+        }
+    } else {
+        None
+    };
+    spawn_workspace_window(cx, folder, guard);
+}
+
+/// Same-machine in-process: offer to focus the existing window. The actual
+/// window activation is wired in T8 (`bring_workspace_to_front`); for now that
+/// helper is a stub, so Focus-existing is a no-op until T8.
+fn focus_existing_workspace(cx: &mut App, folder: &std::path::Path) {
+    let folder = folder.to_path_buf();
+    crate::workspace_in_use_modal::open_same_machine_dialog(cx, move |cx| {
+        bring_workspace_to_front(cx, &folder);
+    });
+}
+
+/// Bring the existing window backing `folder` to the foreground (T8 fills this in).
+pub(crate) fn bring_workspace_to_front(_cx: &mut App, _folder: &std::path::Path) {}
 
 /// Open a new window backed by a `.dat0/` workspace at `folder`.
 ///
 /// Recovers the session (acquire flock, reopen DB) then calls
 /// [`open_window_view`] to create the GPUI window.
-pub(crate) fn spawn_workspace_window(cx: &mut App, folder: PathBuf) {
+pub(crate) fn spawn_workspace_window(
+    cx: &mut App,
+    folder: PathBuf,
+    manifest_guard: Option<crate::workspace::lock_manifest::LockManifestGuard>,
+) {
     let registry = match crate::window_registry::window_registry() {
         Some(r) => r,
         None => {
@@ -160,6 +257,9 @@ pub(crate) fn spawn_workspace_window(cx: &mut App, folder: PathBuf) {
             return;
         }
     };
+    if let Some(g) = manifest_guard {
+        session.lock().set_manifest_lock(g);
+    }
     let window_id = session.lock().window_id;
     recents_push_workspace(&folder);
     // Refresh File → Open Recent so the just-opened workspace appears (the save
@@ -243,6 +343,18 @@ fn promote_focused_into(cx: &mut App, target: PathBuf) {
         });
         match result {
             Ok(root) => {
+                // If the destination is a sync drive, claim the cross-machine record.
+                let settings = load_workspace_settings();
+                if crate::workspace::networked::is_networked(&root, &settings) {
+                    let lock_json = Home::dat0_dir_for(&root).join("lock.json");
+                    match crate::workspace::lock_manifest::claim(&lock_json, now_epoch_secs()) {
+                        Ok(g) => guard.set_manifest_lock(g),
+                        Err(e) => tracing::warn!(
+                            ?e,
+                            "lock.json claim failed after save; workspace is flock-only"
+                        ),
+                    }
+                }
                 recents_push_workspace(&root);
                 crate::menu_macos::rebuild_menus_with_recents();
                 let mut b =

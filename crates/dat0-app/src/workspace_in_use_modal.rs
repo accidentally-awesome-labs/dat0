@@ -103,6 +103,40 @@ where
     }
 }
 
+/// Same-machine "already open" dialog: offers Focus-existing (runs `on_focus`)
+/// or Cancel. Mirrors `open_conflict_dialog` but title-only (no age/host body).
+pub fn open_same_machine_dialog<F>(cx: &mut App, on_focus: F)
+where
+    F: Fn(&mut App) + 'static,
+{
+    let title = dat0_i18n::t("workspace.in_use.same_machine.title");
+    let ok = dat0_i18n::t("workspace.in_use.focus_existing");
+    let cancel = dat0_i18n::t("common.cancel");
+    let cb = Rc::new(on_focus);
+    if let Some(handle) = cx.active_window() {
+        let _ = handle.update(cx, move |_root: AnyView, window: &mut Window, cx| {
+            window.open_dialog(cx, move |dialog: Dialog, _w, _cx| {
+                let cb = Rc::clone(&cb);
+                dialog
+                    .title(title.clone())
+                    .confirm()
+                    .button_props(
+                        DialogButtonProps::default()
+                            .ok_text(ok.clone())
+                            .cancel_text(cancel.clone()),
+                    )
+                    .on_ok(move |_ev, _window, cx| {
+                        (cb)(cx);
+                        true
+                    })
+                    .on_cancel(move |_ev, _window, _cx| true)
+            });
+        });
+    } else {
+        tracing::warn!("open_same_machine_dialog: no active window; cannot show modal");
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

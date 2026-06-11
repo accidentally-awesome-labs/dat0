@@ -12,6 +12,7 @@ use std::sync::Arc;
 
 use crate::workspace::Home;
 use crate::workspace::lock::WorkspaceLock;
+use crate::workspace::lock_manifest::LockManifestGuard;
 
 use anyhow::{Context, Result, bail};
 use serde::{Deserialize, Serialize};
@@ -181,6 +182,9 @@ pub struct Session {
     pub home: Home,
     /// Advisory flock guard, held only when `home` is a workspace.
     lock: Option<WorkspaceLock>,
+    /// Cross-machine lock-manifest guard (networked workspaces only). Held for
+    /// the session lifetime; tombstones `.dat0/lock.json` on drop (P7b).
+    manifest_lock: Option<LockManifestGuard>,
     /// Live DuckDB engine bound to the scratch directory.
     pub engine: Arc<DuckDBEngine>,
     tabs: Vec<Tab>,
@@ -222,6 +226,7 @@ impl Session {
             window_id,
             home,
             lock: None,
+            manifest_lock: None,
             engine: Arc::new(engine),
             tabs: Vec::new(),
             active_tab: None,
@@ -299,6 +304,7 @@ impl Session {
             window_id,
             home,
             lock: None,
+            manifest_lock: None,
             engine: Arc::new(engine),
             tabs: state.tabs,
             active_tab: state.active_tab,
@@ -370,6 +376,7 @@ impl Session {
             window_id,
             home,
             lock: Some(lock),
+            manifest_lock: None,
             engine: Arc::new(engine),
             tabs: state.tabs,
             active_tab: state.active_tab,
@@ -391,6 +398,11 @@ impl Session {
     /// `true` if this session is workspace-backed.
     pub fn is_workspace(&self) -> bool {
         self.home.is_workspace()
+    }
+
+    /// Attach the cross-machine lock-manifest guard after a networked open/save.
+    pub fn set_manifest_lock(&mut self, guard: LockManifestGuard) {
+        self.manifest_lock = Some(guard);
     }
 
     /// Adopt a newly promoted workspace: re-open the engine against the moved
@@ -753,6 +765,18 @@ mod tests {
     use serial_test::serial;
 
     const TEST_BUDGET: u64 = 256 * 1024 * 1024;
+
+    #[test]
+    fn manifest_guard_tombstones_on_drop() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let lock_json = tmp.path().join("lock.json");
+        let guard = crate::workspace::lock_manifest::claim(&lock_json, "t".into()).unwrap();
+        // The guard's Drop tombstones the record; the Session field merely holds it.
+        drop(guard);
+        let rec: crate::workspace::lock_manifest::LockManifest =
+            serde_json::from_str(&std::fs::read_to_string(&lock_json).unwrap()).unwrap();
+        assert!(rec.tombstoned);
+    }
 
     #[test]
     fn v6_session_loads_as_v7_with_empty_attachments() {
