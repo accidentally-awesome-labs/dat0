@@ -32,5 +32,6 @@ pub fn all_sections() -> Vec<Box<dyn SettingsSection>> {
     vec![
         Box::new(profile::ProfileSection),
         Box::new(theme::ThemeSection),
+        Box::new(workspace::WorkspaceSection),
     ]
 }

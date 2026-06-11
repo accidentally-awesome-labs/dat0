@@ -2,11 +2,13 @@
 //! v1 surface: a "treat all workspaces as networked" toggle + a read-only view
 //! of the force-on path list. Per-path add/remove UI is v1.x.
 //!
-//! This task (T4) lands only the store-only persistence handler + its unit
-//! test. The `impl SettingsSection` (render) and registration into
-//! `all_sections()` arrive in T5.
+//! T4 landed the store-only persistence handler + its unit test.
+//! The `impl SettingsSection` (render) and `all_sections()` registration
+//! land here in T5.
 
+use super::SettingsSection;
 use crate::settings::store::SettingsStore;
+use gpui::{IntoElement, ParentElement, div};
 
 pub struct WorkspaceSection;
 
@@ -17,6 +19,26 @@ pub fn set_treat_all_as_networked(store: &SettingsStore, value: bool) -> anyhow:
     let mut settings = store.load_or_default()?;
     settings.workspace.treat_all_as_networked = value;
     store.save(&settings)
+}
+
+impl SettingsSection for WorkspaceSection {
+    fn name_key(&self) -> &'static str {
+        "settings.workspace"
+    }
+
+    fn id(&self) -> &'static str {
+        "workspace"
+    }
+
+    fn render(&self, _window: &mut gpui::Window, _cx: &mut gpui::App) -> gpui::AnyElement {
+        // Mirrors ThemeSection's placeholder render. The real
+        // gpui_component::Switch binding to `set_treat_all_as_networked`
+        // mounts when the settings window is fully wired (same seam as
+        // theme's Select; see gpui-component-api-notes §3.6).
+        div()
+            .child(dat0_i18n::t("settings.workspace.placeholder"))
+            .into_any_element()
+    }
 }
 
 #[cfg(test)]
