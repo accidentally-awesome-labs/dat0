@@ -91,6 +91,15 @@ fn theme_change_closure_round_trips_each_option() {
 }
 
 #[test]
+fn workspace_section_is_registered() {
+    let sections = dat0_app::settings_ui::sections::all_sections();
+    assert!(
+        sections.iter().any(|s| s.id() == "workspace"),
+        "Workspace section must be registered (P7b)"
+    );
+}
+
+#[test]
 fn settings_store_set_rejects_unknown_key() {
     let store = SettingsStore::open_in_memory();
     let err = store

@@ -68,6 +68,8 @@
   "settings.profile.placeholder": "Your name and email — used as the author of .dat0 packages you create.",
   "settings.theme": "Theme",
   "settings.theme.placeholder": "Choose a theme. Drop additional Zed-format JSON theme files into ~/Library/Application Support/dat0/themes/.",
+  "settings.workspace": "Networked Workspaces",
+  "settings.workspace.placeholder": "Workspaces on sync drives (Dropbox, iCloud, OneDrive, Google Drive, Syncthing) are protected against being edited on two machines at once. Turn on 'treat all as networked' if your workspaces live on a drive we don't auto-detect.",
   "boot.sqlite_scanner_install_failed.title": "SQLite support unavailable",
   "boot.sqlite_scanner_install_failed.body": "dat0 couldn't install the SQLite reader extension. Reading .sqlite/.db files will fail until this is resolved. If you're behind a corporate proxy, set HTTP_PROXY/HTTPS_PROXY env vars and restart. See CONTRIBUTING for details.",
   "connections.title": "Connections",
@@ -114,5 +116,12 @@
   "workspace.open.failed.title": "Could not open workspace",
   "workspace.save.already": "Already saved — this session is already a workspace.",
   "workspace.save.done.title": "Workspace saved",
-  "workspace.save.failed.title": "Save Workspace failed"
+  "workspace.save.failed.title": "Save Workspace failed",
+  "workspace.in_use.conflict.title": "Workspace may be open elsewhere",
+  "workspace.in_use.conflict.body": "Open on {host}, started {age}. Editing on two machines at once can corrupt this workspace.",
+  "workspace.in_use.open_anyway": "Open anyway",
+  "workspace.in_use.same_machine.title": "This workspace is already open",
+  "workspace.in_use.focus_existing": "Focus existing window",
+  "workspace.in_use.claim_failed.title": "Couldn't record the workspace lock (opened anyway)",
+  "common.cancel": "Cancel"
 }

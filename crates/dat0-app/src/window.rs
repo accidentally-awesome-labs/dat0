@@ -95,6 +95,35 @@ pub(crate) fn open_workspace_flow(cx: &mut App) {
     .detach();
 }
 
+/// Load the workspace settings for the networked-path decision. On a genuine
+/// settings error (config dir unavailable, or `settings.toml` fails to
+/// parse/read — a *missing* file is fine, `load_or_default` handles it), err
+/// toward networked-safe: design D2 says over-detection is free but
+/// under-detection risks silent cross-machine corruption. Always logs the error.
+fn load_workspace_settings() -> crate::settings::Workspace {
+    let networked_safe = || crate::settings::Workspace {
+        treat_all_as_networked: true,
+        ..Default::default()
+    };
+    let Ok(dir) = crate::platform::config_dir() else {
+        tracing::warn!(
+            "config_dir unavailable; treating workspaces as networked (D2 safe default)"
+        );
+        return networked_safe();
+    };
+    let store = crate::settings::store::SettingsStore::with_path(dir.join("settings.toml"));
+    match store.load_or_default() {
+        Ok(s) => s.workspace,
+        Err(e) => {
+            tracing::warn!(
+                ?e,
+                "settings load failed; treating workspaces as networked (D2 safe default)"
+            );
+            networked_safe()
+        }
+    }
+}
+
 /// Validate `folder` is a `.dat0/` workspace and open a window for it.
 ///
 /// Called by [`open_workspace_flow`] after the user picks a folder. Also
@@ -118,20 +147,101 @@ pub(crate) fn open_workspace_at(cx: &mut App, folder: PathBuf) {
         ));
         return;
     }
-    if let Some(reg) = crate::window_registry::window_registry() {
-        if reg.lock().find_by_workspace(&folder).is_some() {
-            tracing::info!(path = %folder.display(), "workspace already open — focusing (P7b)");
-            return;
+    // Same-machine, in-process? (the common "two windows" case)
+    let in_process = crate::window_registry::window_registry()
+        .map(|reg| reg.lock().find_by_workspace(&folder).is_some())
+        .unwrap_or(false);
+
+    // Is this workspace on a sync drive?
+    let settings = load_workspace_settings();
+    let networked = crate::workspace::networked::is_networked(&folder, &settings);
+
+    // Read the cross-machine record (networked only).
+    let outcome = if networked {
+        let lock_json = dat0.join("lock.json");
+        crate::workspace::lock_manifest::acquire(
+            &lock_json,
+            &crate::workspace::identity::hostname(),
+        )
+        .unwrap_or(crate::workspace::lock_manifest::AcquireOutcome::Available)
+    } else {
+        crate::workspace::lock_manifest::AcquireOutcome::Available
+    };
+
+    use crate::workspace_in_use_modal::{ModalDecision, decide};
+    match decide(&outcome, in_process) {
+        ModalDecision::Proceed => open_workspace_proceed(cx, folder, networked),
+        ModalDecision::SameMachineInUse => focus_existing_workspace(cx, &folder),
+        ModalDecision::BlockSameMachine => {
+            crate::error_ux::push(crate::error_ux::Banner::warning(dat0_i18n::t(
+                "workspace.in_use.same_machine.title",
+            )));
+        }
+        ModalDecision::ConflictForeign(holder) => {
+            let folder2 = folder.clone();
+            crate::workspace_in_use_modal::open_conflict_dialog(cx, holder, move |cx| {
+                open_workspace_proceed(cx, folder2.clone(), true /* networked: claim ours */);
+            });
         }
     }
-    spawn_workspace_window(cx, folder);
+}
+
+/// Open + (if networked) claim the manifest, then spawn the window.
+fn open_workspace_proceed(cx: &mut App, folder: PathBuf, networked: bool) {
+    let guard = if networked {
+        let lock_json = Home::dat0_dir_for(&folder).join("lock.json");
+        match crate::workspace::lock_manifest::claim(&lock_json, now_epoch_secs()) {
+            Ok(g) => Some(g),
+            Err(e) => {
+                // Read-only drive etc. — open anyway, degraded to flock-only.
+                tracing::warn!(?e, "lock.json claim failed; opening flock-only");
+                crate::error_ux::push(crate::error_ux::Banner::warning(dat0_i18n::t(
+                    "workspace.in_use.claim_failed.title",
+                )));
+                None
+            }
+        }
+    } else {
+        None
+    };
+    spawn_workspace_window(cx, folder, guard);
+}
+
+/// Same-machine in-process: offer to focus the existing window. On confirm,
+/// `bring_workspace_to_front` raises the registry-resolved window (P7b T8).
+fn focus_existing_workspace(cx: &mut App, folder: &std::path::Path) {
+    let folder = folder.to_path_buf();
+    crate::workspace_in_use_modal::open_same_machine_dialog(cx, move |cx| {
+        bring_workspace_to_front(cx, &folder);
+    });
+}
+
+/// Bring the existing window backing `folder` to the foreground (P7b T8).
+/// Resolves the target handle from the registry (NOT `active_window()`, which
+/// is whatever is platform-focused) and raises it; also brings the app forward.
+pub(crate) fn bring_workspace_to_front(cx: &mut App, folder: &std::path::Path) {
+    cx.activate(true); // app to foreground (macOS) — already used at boot
+    let Some(reg) = crate::window_registry::window_registry() else {
+        return;
+    };
+    let handle = reg.lock().gpui_handle_by_workspace(folder);
+    if let Some(handle) = handle {
+        // T0 §7.3 confirmed: raise a specific window via its handle.
+        let _ = handle.update(cx, |_root, window, _cx| {
+            window.activate_window();
+        });
+    }
 }
 
 /// Open a new window backed by a `.dat0/` workspace at `folder`.
 ///
 /// Recovers the session (acquire flock, reopen DB) then calls
 /// [`open_window_view`] to create the GPUI window.
-pub(crate) fn spawn_workspace_window(cx: &mut App, folder: PathBuf) {
+pub(crate) fn spawn_workspace_window(
+    cx: &mut App,
+    folder: PathBuf,
+    manifest_guard: Option<crate::workspace::lock_manifest::LockManifestGuard>,
+) {
     let registry = match crate::window_registry::window_registry() {
         Some(r) => r,
         None => {
@@ -160,6 +270,9 @@ pub(crate) fn spawn_workspace_window(cx: &mut App, folder: PathBuf) {
             return;
         }
     };
+    if let Some(g) = manifest_guard {
+        session.lock().set_manifest_lock(g);
+    }
     let window_id = session.lock().window_id;
     recents_push_workspace(&folder);
     // Refresh File → Open Recent so the just-opened workspace appears (the save
@@ -243,6 +356,18 @@ fn promote_focused_into(cx: &mut App, target: PathBuf) {
         });
         match result {
             Ok(root) => {
+                // If the destination is a sync drive, claim the cross-machine record.
+                let settings = load_workspace_settings();
+                if crate::workspace::networked::is_networked(&root, &settings) {
+                    let lock_json = Home::dat0_dir_for(&root).join("lock.json");
+                    match crate::workspace::lock_manifest::claim(&lock_json, now_epoch_secs()) {
+                        Ok(g) => guard.set_manifest_lock(g),
+                        Err(e) => tracing::warn!(
+                            ?e,
+                            "lock.json claim failed after save; workspace is flock-only"
+                        ),
+                    }
+                }
                 recents_push_workspace(&root);
                 crate::menu_macos::rebuild_menus_with_recents();
                 let mut b =
@@ -320,30 +445,32 @@ fn open_window_view(
     registry: Arc<Mutex<WindowRegistry>>,
 ) {
     let bounds = Bounds::centered(None, size(px(1200.), px(800.)), cx);
-    cx.open_window(
-        WindowOptions {
-            window_bounds: Some(WindowBounds::Windowed(bounds)),
-            titlebar: Some(TitlebarOptions {
-                title: Some(t("app.name").into()),
+    let gpui_window = cx
+        .open_window(
+            WindowOptions {
+                window_bounds: Some(WindowBounds::Windowed(bounds)),
+                titlebar: Some(TitlebarOptions {
+                    title: Some(t("app.name").into()),
+                    ..Default::default()
+                }),
                 ..Default::default()
-            }),
-            ..Default::default()
-        },
-        move |window, cx| {
-            let view = cx.new(|cx| {
-                let mut shell = WorkspaceShell::new(Arc::clone(&session), cx);
-                shell.reconnect_persisted_md(cx);
-                shell
-            });
-            crate::window_registry::install_focused_workspace(view.downgrade().into());
-            cx.new(|cx| Root::new(view, window, cx))
-        },
-    )
-    .expect("open window");
+            },
+            move |window, cx| {
+                let view = cx.new(|cx| {
+                    let mut shell = WorkspaceShell::new(Arc::clone(&session), cx);
+                    shell.reconnect_persisted_md(cx);
+                    shell
+                });
+                crate::window_registry::install_focused_workspace(view.downgrade().into());
+                cx.new(|cx| Root::new(view, window, cx))
+            },
+        )
+        .expect("open window");
 
     registry.lock().register(WindowHandle {
         window_id,
         workspace_path,
+        gpui_handle: Some(gpui_window.into()), // WindowHandle<Root> -> AnyWindowHandle
     });
     tracing::debug!(%window_id, "open_window_view: window registered");
 }
@@ -803,6 +930,7 @@ pub fn run_app(lock: AppLock, initial_paths: Vec<PathBuf>, main_loop: MainLoop) 
         registry_for_run.lock().register(WindowHandle {
             window_id: first_window_id,
             workspace_path: None,
+            gpui_handle: Some(first_window.into()),
         });
         tracing::debug!(%first_window_id, "run_app: first window registered in WindowRegistry");
 

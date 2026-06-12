@@ -56,7 +56,7 @@ that's modifying it; merge conflicts are signals worth investigating.
 | D-014 | Memory Budget Settings section | open | P3b | P3c / P9c |
 | D-015 | AccessKit / screen-reader selection-tree exposure | open | P4b | P10 |
 | D-018 | Workspace lineage DAG — node-edge graph with auto-layout (left→right topological), pan/zoom, whole-workspace view | open | P6b | — |
-| D-019 | Workspace concurrency/sync-drive: cross-machine lock, sync-drive detection, rich in-use modal, Settings → Workspace, force-unlock | open | P7a | P7b |
+| D-019 | Workspace concurrency/sync-drive: cross-machine lock, sync-drive detection, rich in-use modal, Settings → Workspace, force-unlock | closed | P7a | P7b |
 | D-020 | Live-data refresh: file-watcher on Tab.source_path → re-import on change (re-CTAS + replay transforms, debounced) + finish recovery_panel Sheet UI | open | P7a | P7c |
 | D-021 | Banner action buttons: `error_ux::render_banner` renders title+body only; `.with_primary` action ids stored but not displayed | open | P7a | — |
 
@@ -569,10 +569,24 @@ that's modifying it; merge conflicts are signals worth investigating.
 
 ### D-019 — Workspace concurrency + sync-drive safety
 
-- **Status:** open
+- **Status:** closed — resolved by P7b (2026-06-11).
+- **Resolved by:** P7b (`docs/plans/2026-06-11-dat0-p7b-design.md` + `…-p7b-plan.md`).
+  Delivered: the cross-machine `.dat0/lock.json` holder record (acquire/tombstone
+  state machine), the sync-drive heuristic + **Settings → Networked Workspaces**
+  global toggle, the blocking `WorkspaceInUseModal` (gpui-component `Dialog`), and
+  same-machine focus-existing (real per-window activation).
+  **Design change from the original sketch:** P7b uses **NO heartbeat / no TTL**
+  (design D1) — sync-drive lag makes TTL staleness a corruption risk — replacing
+  the "heartbeat/lease" idea in (a) with a tombstone-on-clean-release model.
+  **Force-unlock (e) was NOT implemented** and remains a v1.x item: dat0 warns on
+  a live foreign holder and lets the user "Open anyway", but never auto-resolves;
+  the rich-modal "Force unlock" button (c) is likewise v1.x.
+- **Note:** D-021 (banner action buttons) remains **open** and is unrelated — the
+  P7b modal uses a gpui-component `Dialog`, not the banner host.
+- **Last touched:** 2026-06-11.
 - **Deferred from:** P7a (workspace core; design non-goals)
 - **Target phase:** P7b
-- **What it is:** The full cross-machine concurrency and sync-drive safety story:
+- **What it is (historical):** The full cross-machine concurrency and sync-drive safety story:
   (a) A **heartbeat/lease `lock.json`** alongside the `fs4` flock — `fs4` exclusive locks
   are process-scoped and self-heal on exit, but don't cross machines (e.g. NFS, a
   sync-drive folder). A `lock.json` with a heartbeat timestamp and holder identity
@@ -596,7 +610,6 @@ that's modifying it; merge conflicts are signals worth investigating.
   surface that is disproportionate to the P7a scope. The flock already provides stale-lock
   self-healing for the common crash case (lock released on process exit).
 - **Originating doc:** `docs/plans/2026-06-10-dat0-p7a-design.md` §"Non-goals / deferred to P7b".
-- **Last touched:** 2026-06-10.
 
 ### D-020 — Live-data refresh (file-watcher on Tab.source_path)
 

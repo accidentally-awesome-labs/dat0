@@ -145,12 +145,31 @@ pub fn recents() -> Option<Arc<std::sync::Mutex<crate::recents::Recents>>> {
     RECENTS.get().cloned()
 }
 
-#[derive(Debug, Clone)]
+/// Tracks a live GPUI window in the process-wide registry.
+// NOTE: `gpui::AnyWindowHandle` does not implement `Debug`, so we implement
+// `Debug` manually to keep the struct debuggable without the derive. (P7b T8)
+#[derive(Clone)]
 pub struct WindowHandle {
     pub window_id: Uuid,
     /// Set when the window is backed by a `.dat0/` workspace folder.
     /// `None` for scratch windows.
     pub workspace_path: Option<PathBuf>,
+    /// The GPUI window handle, used to bring the window to front (P7b T8).
+    /// `Option` so unit tests can register without a real handle.
+    pub gpui_handle: Option<gpui::AnyWindowHandle>,
+}
+
+impl std::fmt::Debug for WindowHandle {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("WindowHandle")
+            .field("window_id", &self.window_id)
+            .field("workspace_path", &self.workspace_path)
+            .field(
+                "gpui_handle",
+                &self.gpui_handle.as_ref().map(|_| "<AnyWindowHandle>"),
+            )
+            .finish()
+    }
 }
 
 pub struct WindowRegistry {
@@ -197,6 +216,16 @@ impl WindowRegistry {
             .map(|w| w.window_id)
     }
 
+    /// The GPUI handle of the window backing `path`, if any (P7b T8).
+    pub fn gpui_handle_by_workspace(
+        &self,
+        path: &std::path::Path,
+    ) -> Option<gpui::AnyWindowHandle> {
+        self.live_windows()
+            .find(|w| w.workspace_path.as_deref() == Some(path))
+            .and_then(|w| w.gpui_handle)
+    }
+
     /// P4 SCAFFOLD — returns a per-workspace-path mutex. Same path returns
     /// the same `Arc<TokioMutex<()>>`; concurrent workspace opens serialize
     /// on it. P3a does not call this; tests prove correctness in advance.
@@ -225,6 +254,7 @@ mod tests {
         let h = WindowHandle {
             window_id: Uuid::now_v7(),
             workspace_path: None,
+            gpui_handle: None,
         };
         let id = h.window_id;
         reg.register(h);
@@ -240,6 +270,7 @@ mod tests {
         reg.register(WindowHandle {
             window_id: id,
             workspace_path: Some("/u/proj".into()),
+            gpui_handle: None,
         });
         assert_eq!(
             reg.find_by_workspace(std::path::Path::new("/u/proj")),
@@ -266,5 +297,23 @@ mod tests {
         let a = reg.workspace_mutex(std::path::Path::new("/tmp/dat0/ws-a"));
         let b = reg.workspace_mutex(std::path::Path::new("/tmp/dat0/ws-b"));
         assert!(!Arc::ptr_eq(&a, &b));
+    }
+
+    #[test]
+    fn gpui_handle_lookup_returns_none_without_handle() {
+        let mut reg = WindowRegistry::new();
+        reg.register(WindowHandle {
+            window_id: uuid::Uuid::now_v7(),
+            workspace_path: Some("/u/proj".into()),
+            gpui_handle: None,
+        });
+        assert!(
+            reg.gpui_handle_by_workspace(std::path::Path::new("/u/proj"))
+                .is_none()
+        );
+        assert!(
+            reg.gpui_handle_by_workspace(std::path::Path::new("/u/x"))
+                .is_none()
+        );
     }
 }

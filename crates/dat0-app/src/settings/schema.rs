@@ -51,5 +51,8 @@ pub struct Telemetry {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(default)]
 pub struct Workspace {
+    /// Paths always treated as networked; matched by prefix (design D2).
     pub treat_paths_as_networked: Vec<std::path::PathBuf>,
+    /// Global override: treat every workspace as networked (design D2).
+    pub treat_all_as_networked: bool,
 }

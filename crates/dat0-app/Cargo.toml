@@ -41,6 +41,8 @@ duckdb = { workspace = true }
 dat0-i18n = { workspace = true }
 dat0-keychain = { workspace = true }
 fs4 = { workspace = true }
+gethostname = { workspace = true }
+libc = { workspace = true }
 interprocess = { workspace = true }
 uuid = { workspace = true }
 lru = { workspace = true }

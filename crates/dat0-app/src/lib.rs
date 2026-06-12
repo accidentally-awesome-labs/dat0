@@ -31,5 +31,6 @@ pub mod view;
 pub mod window;
 pub mod window_registry;
 pub mod workspace;
+pub mod workspace_in_use_modal;
 
 pub use window::run_app;
