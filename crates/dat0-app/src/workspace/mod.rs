@@ -5,6 +5,7 @@ pub mod lock_manifest;
 pub mod manifest;
 pub mod networked;
 pub mod promote;
+pub mod source_watcher;
 
 use std::path::{Path, PathBuf};
 
