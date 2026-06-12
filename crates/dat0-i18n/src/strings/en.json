@@ -125,5 +125,10 @@
   "workspace.in_use.claim_failed.title": "Couldn't record the workspace lock (opened anyway)",
   "livedata.changed.title": "{file} changed on disk",
   "livedata.changed.refresh": "Refresh",
+  "livedata.refresh.confirm.title": "Refresh will discard edits",
+  "livedata.refresh.confirm.body": "Re-importing discards {edits} cell edit(s) and {deletes} row deletion(s). Filters, sorts, and column changes will be kept. Continue?",
+  "livedata.refresh.confirm.continue": "Refresh anyway",
+  "livedata.reimport.failed.title": "Couldn't re-import file",
+  "livedata.replay.schema_drift": "Refreshed, but some transforms couldn't replay — the file's columns changed.",
   "common.cancel": "Cancel"
 }

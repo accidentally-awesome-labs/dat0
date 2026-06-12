@@ -14,6 +14,7 @@ pub mod grid;
 pub mod import_progress;
 pub mod import_wizard;
 pub mod inspector;
+pub mod live_refresh_dialog;
 pub mod main_bridge;
 pub mod menu_macos;
 pub mod platform;
