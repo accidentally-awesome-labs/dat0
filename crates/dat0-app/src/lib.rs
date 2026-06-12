@@ -21,6 +21,7 @@ pub mod platform;
 pub mod query;
 pub mod recents;
 pub mod recovery_panel;
+pub mod recovery_scan;
 pub mod sample_data;
 pub mod session;
 pub mod settings;

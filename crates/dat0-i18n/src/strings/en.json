@@ -130,5 +130,8 @@
   "livedata.refresh.confirm.continue": "Refresh anyway",
   "livedata.reimport.failed.title": "Couldn't re-import file",
   "livedata.replay.schema_drift": "Refreshed, but some transforms couldn't replay — the file's columns changed.",
+  "recovery.banner.title": "{count} item(s) to recover from a previous session",
+  "recovery.banner.body": "Restore them or discard them.",
+  "recovery.banner.review": "Review",
   "common.cancel": "Cancel"
 }

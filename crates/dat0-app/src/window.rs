@@ -604,14 +604,7 @@ pub(crate) fn spawn_window(
 /// they contain a `session.json`) — the test harness uses
 /// `session-{i:02}` names to keep `tempdir` paths readable.
 pub fn orphan_scan_emit(scratch_root: &std::path::Path) -> Vec<crate::error_ux::Banner> {
-    let mut count = 0usize;
-    if let Ok(entries) = std::fs::read_dir(scratch_root) {
-        for e in entries.flatten() {
-            if e.path().join("session.json").is_file() {
-                count += 1;
-            }
-        }
-    }
+    let count = count_orphan_scratch(scratch_root);
     let mut banners = vec![];
     if count > 0 {
         banners.push(
@@ -629,6 +622,62 @@ pub fn orphan_scan_emit(scratch_root: &std::path::Path) -> Vec<crate::error_ux::
         crate::error_ux::push(b.clone());
     }
     banners
+}
+
+/// Boot-time recovery scan (P7c T7): consolidate BOTH recovery sources into a
+/// single warning Banner with a `"Review"` primary action wired to
+/// [`crate::actions::builtin::ids::RECOVERY_REVIEW`]:
+///
+/// 1. **Orphan scratch** — scratch subdirs containing a `session.json` (a
+///    session that didn't exit cleanly), counted the same way as
+///    [`orphan_scan_emit`].
+/// 2. **Incomplete workspaces** — recent workspace folders whose `.dat0/` is a
+///    half-finished promotion (missing `manifest.json` / `workspace.duckdb`),
+///    found by [`crate::recovery_scan::scan_incomplete_workspaces`] over the
+///    user's `Recents` (no full-filesystem scan).
+///
+/// The banner's count is `orphans + incompletes`. When there is nothing to
+/// recover, no banner is emitted (returns `None`). Pushes the banner onto the
+/// global pending queue (so first-render picks it up) and also returns it so
+/// callers/tests can inspect without draining the queue.
+///
+/// This *replaces* `orphan_scan_emit` at the boot call site — kept as a sibling
+/// (rather than widening `orphan_scan_emit`'s signature) so the existing
+/// orphan-only tests keep working; both still build the same banner shape.
+pub fn recovery_scan_emit(
+    scratch_root: &std::path::Path,
+    recent_roots: &[PathBuf],
+) -> Option<crate::error_ux::Banner> {
+    let count = count_orphan_scratch(scratch_root)
+        + crate::recovery_scan::scan_incomplete_workspaces(recent_roots).len();
+
+    if count == 0 {
+        return None;
+    }
+    let title = dat0_i18n::t("recovery.banner.title").replace("{count}", &count.to_string());
+    let banner =
+        crate::error_ux::Banner::warning_with_body(title, dat0_i18n::t("recovery.banner.body"))
+            .with_primary(
+                dat0_i18n::t("recovery.banner.review"),
+                crate::actions::builtin::ids::RECOVERY_REVIEW,
+            );
+    crate::error_ux::push(banner.clone());
+    Some(banner)
+}
+
+/// Count orphan scratch dirs: scratch subdirs containing a `session.json` (a
+/// session that didn't exit cleanly). Shared by [`orphan_scan_emit`] and
+/// [`recovery_scan_emit`] so the two cannot drift on the orphan definition.
+fn count_orphan_scratch(scratch_root: &std::path::Path) -> usize {
+    let mut count = 0usize;
+    if let Ok(entries) = std::fs::read_dir(scratch_root) {
+        for e in entries.flatten() {
+            if e.path().join("session.json").is_file() {
+                count += 1;
+            }
+        }
+    }
+    count
 }
 
 /// Launch the dat0 desktop application.
@@ -1008,14 +1057,29 @@ pub fn run_app(lock: AppLock, initial_paths: Vec<PathBuf>, main_loop: MainLoop) 
         });
         tracing::debug!(%first_window_id, "run_app: first window registered in WindowRegistry");
 
-        // Scan `$state_root/scratch/*` for orphaned dirs (sessions that
-        // didn't exit cleanly) and emit a single count-based Banner with
-        // a "Review" primary action wired to `recovery.review` (T5).
-        // Per spec §11 exit criterion #4. The per-orphan loop introduced
-        // in T2 is replaced by [`orphan_scan_emit`] which consolidates
-        // N orphans into one banner.
+        // Boot recovery scan (P7c T7): emit ONE consolidated "Review" banner
+        // (wired to `recovery.review`) covering BOTH recovery sources —
+        // orphan scratch dirs under `$state_root/scratch/*` AND interrupted
+        // workspace promotions among the user's recent workspace folders. The
+        // recents come from the canonical singleton installed in main.rs (the
+        // same `AppContext.recents` the rest of the app shares); workspace
+        // entries only — a `Package` recent is not a `.dat0/` promotion.
+        // Per spec §11 exit criterion #4 (extended for P7c workspace recovery).
         let scratch_root = state_root_for_action.join("scratch");
-        let _emitted = orphan_scan_emit(&scratch_root);
+        let recent_roots: Vec<PathBuf> = crate::window_registry::recents()
+            .and_then(|r| {
+                r.lock().ok().map(|g| {
+                    g.list()
+                        .iter()
+                        .filter_map(|e| match e {
+                            crate::recents::RecentEntry::Workspace { path } => Some(path.clone()),
+                            crate::recents::RecentEntry::Package { .. } => None,
+                        })
+                        .collect()
+                })
+            })
+            .unwrap_or_default();
+        let _emitted = recovery_scan_emit(&scratch_root, &recent_roots);
 
         // If CLI paths were supplied on cold start, register them against the
         // first window's session. The WorkspaceShell owns the session, so we
