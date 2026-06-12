@@ -57,8 +57,11 @@ that's modifying it; merge conflicts are signals worth investigating.
 | D-015 | AccessKit / screen-reader selection-tree exposure | open | P4b | P10 |
 | D-018 | Workspace lineage DAG — node-edge graph with auto-layout (left→right topological), pan/zoom, whole-workspace view | open | P6b | — |
 | D-019 | Workspace concurrency/sync-drive: cross-machine lock, sync-drive detection, rich in-use modal, Settings → Workspace, force-unlock | closed | P7a | P7b |
-| D-020 | Live-data refresh: file-watcher on Tab.source_path → re-import on change (re-CTAS + replay transforms, debounced) + finish recovery_panel Sheet UI | open | P7a | P7c |
-| D-021 | Banner action buttons: `error_ux::render_banner` renders title+body only; `.with_primary` action ids stored but not displayed | open | P7a | — |
+| D-020 | Live-data refresh: file-watcher on Tab.source_path → re-import on change (re-CTAS + replay transforms, debounced) + finish recovery_panel Sheet UI | closed | P7a | P7c |
+| D-021 | Banner action buttons: `error_ux::render_banner` renders title+body only; `.with_primary` action ids stored but not displayed | closed | P7a | P7c |
+| D-022 | Live-view import mode — `read_csv` VIEW that auto-reflects source-file changes with no re-import | open | P7c | — |
+| D-023 | Cross-table refresh cascade — re-materialize the P6b dependency closure in topological order on a base-table refresh | open | P7c | — |
+| D-024 | Per-table / global auto-refresh toggle (+ multi-table simultaneous watching) | open | P7c | — |
 
 ## At-a-glance — Plan defects
 
@@ -613,10 +616,30 @@ that's modifying it; merge conflicts are signals worth investigating.
 
 ### D-020 — Live-data refresh (file-watcher on Tab.source_path)
 
-- **Status:** open
-- **Deferred from:** P7a (workspace core; design non-goals)
-- **Target phase:** P7c
-- **What it is:** A `notify`-crate file-watcher on each `Tab.source_path` (the
+- **Status:** closed — resolved by P7c (2026-06-12).
+- **Resolved by:** P7c — a per-window `SourceWatcher` on the active table's
+  source file (debounced single-path `notify` watcher, re-targeted on table
+  switch); on a detected change a "<file> changed on disk — [Refresh]" banner
+  appears, and Refresh re-imports the file via `register_file_as_table` and
+  replays the tab's transforms. The replay is **structural-only**:
+  `dat0_engine::transform::split_replayable` keeps the column-keyed ops
+  (filters / sorts / reorder / rename / hide) and drops the rowid-keyed ops
+  (cell edits + row deletions, which reference `__dat0_rowid` surrogates a
+  re-CTAS regenerates); if any are present the user gets a confirm dialog first.
+  Replay is force-rebound onto the fresh base via
+  `ViewModel::reset_to_replayed`. **Schema drift** (a surviving filter/sort
+  references a now-missing column) lands the tab on the bare re-imported base
+  with a warning banner (`livedata.replay.schema_drift`) — never silent
+  corruption. The `recovery_panel` Sheet UI is finished too (orphaned sessions +
+  interrupted workspaces, Open / Resume / Discard).
+- **Originating doc:** `docs/plans/2026-06-10-dat0-p7a-design.md` §"Non-goals /
+  deferred to P7c"; closed by `docs/plans/2026-06-12-dat0-p7c-plan.md` (T1–T9).
+- **User-facing doc:** `docs/live-data-recovery.md`.
+- **Follow-ups opened by P7c:** D-022 (live-view import mode), D-023
+  (cross-table refresh cascade), D-024 (auto-refresh toggle + multi-table
+  watching).
+- **Last touched:** 2026-06-12.
+- **What it is (historical):** A `notify`-crate file-watcher on each `Tab.source_path` (the
   original source file for imported tables) that re-imports the table when the
   source file changes: re-runs CTAS (same sniffing path as the original import),
   then replays the tab's transform stack on the new base. The re-import is
@@ -637,10 +660,18 @@ that's modifying it; merge conflicts are signals worth investigating.
 
 ### D-021 — Banner action buttons not rendered
 
-- **Status:** open
-- **Deferred from:** P7a (workspace core; found during workspace prompt wiring)
-- **Target phase:** — (general UI follow-up; not phase-gated)
-- **What it is:** `error_ux::render_banner` (the per-banner chip painted by
+- **Status:** closed — resolved by P7c (2026-06-12).
+- **Resolved by:** P7c (T3) — `error_ux::render_banner` now renders a banner's
+  `primary` / `secondary` actions as `gpui_component::button::Button`s (primary
+  styled prominent, secondary ghost). Clicking a button dispatches the stored
+  `action_id` through the global `actions::registry::ActionRegistry`. This is
+  what makes the live-data "Refresh" banner and the recovery "Review" banner
+  clickable; the P7a workspace "Save Workspace" prompt is now a real button too.
+- **Originating doc:** P7a T12; `crates/dat0-app/src/error_ux/banner.rs`
+  (`render_banner`, `Banner::with_primary` / `with_secondary`); closed by
+  `docs/plans/2026-06-12-dat0-p7c-plan.md` T3.
+- **Last touched:** 2026-06-12.
+- **What it is (historical):** `error_ux::render_banner` (the per-banner chip painted by
   `WorkspaceShell::render`) renders the banner's `title` and `body` text only.
   The `Banner::with_primary(label, action_id)` method stores the action label and
   id on the `Banner` struct, but `render_banner` does not yet display a button
@@ -655,6 +686,73 @@ that's modifying it; merge conflicts are signals worth investigating.
 - **Originating doc:** P7a T12; `crates/dat0-app/src/error_ux/banner.rs`
   (`render_banner`, `Banner::with_primary`).
 - **Last touched:** 2026-06-10.
+
+### D-022 — Live-view import mode (auto-reflecting source files)
+
+- **Status:** open
+- **Deferred from:** P7c (design decision D1)
+- **Target phase:** —
+- **What it is:** An opt-in import mode that registers a CSV/Parquet source as a
+  `read_csv` / `read_parquet` **VIEW** over the file on disk (instead of the
+  materialized base table P7c re-imports), so the open tab auto-reflects external
+  file changes with **no re-import and no manual Refresh**. Effectively a live
+  query against the file rather than a snapshot.
+- **Why deferred:** P7c (design D1) deliberately chose the **re-import** model —
+  re-CTAS into a rowid-bearing base table + replay the transform stack — because
+  dat0's edit/delete overlays, the `__dat0_rowid` surrogate, and profiling all
+  assume a materialized base (see PD-017). A live `read_csv` VIEW has no
+  `__dat0_rowid`, so edits/deletes don't apply and every scroll re-reads the file;
+  it's a fundamentally different data model that trades editability + stable
+  profiling for zero-latency reflection. Worth offering as an explicit per-table
+  mode, but out of P7c's "make the existing materialized tables refresh safely"
+  scope.
+- **Originating doc:** `docs/plans/2026-06-12-dat0-p7c-design.md` (decision D1).
+- **Last touched:** 2026-06-12.
+
+### D-023 — Cross-table refresh cascade
+
+- **Status:** open
+- **Deferred from:** P7c (design decision D5)
+- **Target phase:** —
+- **What it is:** When a base table is refreshed (re-imported from a changed
+  source), automatically re-materialize the tables **derived from it** — the P6b
+  lineage dependency closure (`inspector::lineage::LineageGraph` /
+  `engine::referenced_tables`) — in **topological order**, so downstream derived
+  tables and saved-as-table results pick up the new source data in one pass.
+- **Why deferred:** P7c refreshes only the **single watched table** the user is
+  looking at. Cascading through the dependency closure means re-running each
+  derived table's defining SQL in dependency order, handling partial-failure
+  rollback, and deciding the UX for a multi-table refresh (which tabs update,
+  what the user sees mid-cascade). The lineage substrate exists (P6b) but the
+  cascade execution + UX is its own slice.
+- **Originating doc:** `docs/plans/2026-06-12-dat0-p7c-design.md` (decision D5).
+- **Last touched:** 2026-06-12.
+
+### D-024 — Per-table / global auto-refresh toggle (+ multi-table watching)
+
+- **Status:** open
+- **Deferred from:** P7c (design decision D6)
+- **Target phase:** —
+- **What it is:** A setting — per-table and/or a global default — to **auto-apply**
+  a detected source-file change (skip the "<file> changed on disk — [Refresh]"
+  prompt and re-import immediately on the debounced change), for users who want a
+  source file to flow straight into the open tab. Confirm-on-discard would still
+  fire when rowid-keyed edits/deletions are present.
+- **Also covers — multi-table simultaneous watching:** P7c's `SourceWatcher`
+  tracks only the **active** `view_model`'s source path and re-targets the watch
+  whenever the user switches tables, so only the foreground table is watched at a
+  time. Watching every open table's source concurrently (so a background table's
+  refresh banner appears the moment its file changes, without first switching to
+  it) is part of this deferral — it needs a multi-path watcher (or per-tab
+  watchers) plus a per-table change-pending indicator.
+- **Why deferred:** P7c (design D6) chose the **prompt-on-change, single active
+  watcher** model as the safe default — the user always sees what will be
+  discarded before a refresh runs, and one watcher keeps the `notify` wiring
+  simple. Auto-apply + concurrent multi-table watching are an opt-in convenience
+  layer on top.
+- **Originating doc:** `docs/plans/2026-06-12-dat0-p7c-design.md` (decision D6);
+  `crates/dat0-app/src/window.rs` (`SourceWatcher` retarget-on-table-switch).
+- **Last touched:** 2026-06-12.
 
 ---
 
