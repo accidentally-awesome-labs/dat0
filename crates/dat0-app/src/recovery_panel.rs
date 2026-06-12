@@ -78,6 +78,16 @@ pub fn discard(orphan_dir: &Path) -> Result<()> {
     fs::remove_dir_all(orphan_dir).with_context(|| format!("remove {}", orphan_dir.display()))
 }
 
+/// Remove only the `.dat0/` subdir of an interrupted workspace — never the
+/// user's folder or their source files. Used by the "Discard" action on an
+/// [`RecoveryRow::Incomplete`] row, so the user's project folder (and any
+/// data files alongside it) survive while the half-written promotion is
+/// cleared.
+pub fn discard_incomplete(root: &Path) -> Result<()> {
+    let dat0 = crate::workspace::Home::dat0_dir_for(root);
+    fs::remove_dir_all(&dat0).with_context(|| format!("remove {}", dat0.display()))
+}
+
 /// A single recoverable item surfaced in the Recovery Sheet.
 ///
 /// Two kinds, mirroring the two boot-scan sources consolidated by
@@ -129,23 +139,48 @@ pub fn collect_rows(scratch_root: &Path, recent_roots: &[PathBuf]) -> Vec<Recove
 /// table names + offer Open/Discard; incomplete rows label the workspace root
 /// (+ a "(promote didn't finish)" suffix) + offer Resume/Discard.
 ///
-/// **T8 renders only** — every button carries a placeholder no-op `on_click`
-/// so the Sheet draws. T9 replaces the no-ops with the real Open / Resume /
-/// Discard handlers. `i` disambiguates per-row `ElementId`s (a `String` is
-/// NOT `Into<ElementId>`; `SharedString` is — see the T3 ElementId gotcha).
+/// **Behaviour (T9).** Each handler closes the Sheet first
+/// (`window.close_sheet(cx)`), then delegates to an EXISTING flow:
+/// - **Open** (orphan) → [`crate::window::spawn_recovered_scratch`], which
+///   reuses `Session::recover` + the shared `open_window_view` spawn path to
+///   bring the orphan's restored tabs back live.
+/// - **Resume** (incomplete) → [`crate::window::spawn_workspace_window`] over
+///   the known root, reusing P7a's `recover_workspace` adopt path; on hard
+///   failure it already pushes the `workspace.open.failed.title` banner and
+///   leaves this row available for retry / discard.
+/// - **Discard** → [`discard`] (orphan) / [`discard_incomplete`] (incomplete),
+///   then re-opens the Sheet via [`open`] so the freshly re-scanned row set no
+///   longer shows the removed entry.
+///
+/// The `on_click` closures are `Fn`, so each captures its own CLONE of the
+/// row's `dir` / `root` (mirroring `workspace_in_use_modal.rs`). `i`
+/// disambiguates per-row `ElementId`s (a `String` is NOT `Into<ElementId>`;
+/// `SharedString` is — see the T3 ElementId gotcha).
 fn render_row(i: usize, row: &RecoveryRow) -> impl gpui::IntoElement {
     use gpui::{ParentElement as _, SharedString, Styled as _, div};
+    use gpui_component::WindowExt as _;
     use gpui_component::button::Button;
 
     let mut buttons = gpui_component::h_flex().gap_2();
     let label: String = match row {
-        RecoveryRow::Orphan { tables, .. } => {
+        RecoveryRow::Orphan { dir, tables } => {
+            let open_dir = dir.clone();
             let primary = Button::new(SharedString::from(format!("recovery-open-{i}")))
                 .label(dat0_i18n::t("recovery.row.open"))
-                .on_click(|_ev, _w, _cx| { /* T9: open the orphan session */ });
+                .on_click(move |_ev, window, cx| {
+                    window.close_sheet(cx);
+                    crate::window::spawn_recovered_scratch(cx, open_dir.clone());
+                });
+            let discard_dir = dir.clone();
             let discard = Button::new(SharedString::from(format!("recovery-discard-{i}")))
                 .label(dat0_i18n::t("recovery.row.discard"))
-                .on_click(|_ev, _w, _cx| { /* T9: discard the orphan dir */ });
+                .on_click(move |_ev, window, cx| {
+                    window.close_sheet(cx);
+                    if let Err(e) = discard(&discard_dir) {
+                        tracing::warn!(?e, dir = %discard_dir.display(), "discard orphan failed");
+                    }
+                    open(cx); // re-scan: the removed row is gone
+                });
             buttons = buttons.child(primary).child(discard);
             if tables.is_empty() {
                 String::new()
@@ -154,12 +189,26 @@ fn render_row(i: usize, row: &RecoveryRow) -> impl gpui::IntoElement {
             }
         }
         RecoveryRow::Incomplete { root } => {
+            let resume_root = root.clone();
             let primary = Button::new(SharedString::from(format!("recovery-resume-{i}")))
                 .label(dat0_i18n::t("recovery.row.resume"))
-                .on_click(|_ev, _w, _cx| { /* T9: resume the interrupted promotion */ });
+                .on_click(move |_ev, window, cx| {
+                    window.close_sheet(cx);
+                    // Best-effort adopt of the partial `.dat0/` via P7a's
+                    // recover_workspace path; on hard failure spawn_workspace_window
+                    // pushes the open-failed banner and the row stays for retry.
+                    crate::window::spawn_workspace_window(cx, resume_root.clone(), None);
+                });
+            let discard_root = root.clone();
             let discard = Button::new(SharedString::from(format!("recovery-discard-{i}")))
                 .label(dat0_i18n::t("recovery.row.discard"))
-                .on_click(|_ev, _w, _cx| { /* T9: discard the half-written .dat0/ */ });
+                .on_click(move |_ev, window, cx| {
+                    window.close_sheet(cx);
+                    if let Err(e) = discard_incomplete(&discard_root) {
+                        tracing::warn!(?e, root = %discard_root.display(), "discard incomplete failed");
+                    }
+                    open(cx); // re-scan: the removed row is gone
+                });
             buttons = buttons.child(primary).child(discard);
             format!(
                 "{} {}",
@@ -219,29 +268,27 @@ pub fn open(app: &mut gpui::App) {
         window.open_sheet_at(Placement::Top, cx, move |sheet, _w, _cx| {
             let mut list = div().flex().flex_col().gap_2().p_3();
 
-            // Group rows under their two section headers (orphan sessions /
-            // interrupted workspaces). Each header is omitted when its group is
-            // empty so the Sheet never shows a heading with nothing under it.
-            // `i` is a process-stable per-row id seed over the FULL row list.
-            let orphans = rows
-                .iter()
-                .enumerate()
-                .filter(|(_, r)| matches!(r, RecoveryRow::Orphan { .. }));
-            let incompletes = rows
-                .iter()
-                .enumerate()
-                .filter(|(_, r)| matches!(r, RecoveryRow::Incomplete { .. }));
+            // Partition rows ONCE into the two section groups, keeping each
+            // row's original index `i` (a process-stable per-row `ElementId`
+            // seed over the FULL row list). Each header is emitted only when
+            // its group is non-empty so the Sheet never shows a heading with
+            // nothing under it.
+            let mut orphans = Vec::new();
+            let mut incompletes = Vec::new();
+            for (i, row) in rows.iter().enumerate() {
+                match row {
+                    RecoveryRow::Orphan { .. } => orphans.push((i, row)),
+                    RecoveryRow::Incomplete { .. } => incompletes.push((i, row)),
+                }
+            }
 
-            if rows.iter().any(|r| matches!(r, RecoveryRow::Orphan { .. })) {
+            if !orphans.is_empty() {
                 list = list.child(section_header(dat0_i18n::t("recovery.sheet.orphans")));
                 for (i, row) in orphans {
                     list = list.child(render_row(i, row));
                 }
             }
-            if rows
-                .iter()
-                .any(|r| matches!(r, RecoveryRow::Incomplete { .. }))
-            {
+            if !incompletes.is_empty() {
                 list = list.child(section_header(dat0_i18n::t("recovery.sheet.incomplete")));
                 for (i, row) in incompletes {
                     list = list.child(render_row(i, row));
@@ -256,7 +303,7 @@ pub fn open(app: &mut gpui::App) {
     });
 }
 
-/// A muted section heading inside the Recovery Sheet (e.g. "Orphaned sessions").
+/// A small section heading inside the Recovery Sheet (e.g. "Orphaned sessions").
 fn section_header(text: String) -> impl gpui::IntoElement {
     use gpui::{ParentElement as _, Styled as _, div};
     div().pt_2().text_sm().child(text)

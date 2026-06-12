@@ -590,6 +590,45 @@ pub(crate) fn spawn_window(
     tracing::debug!(%window_id, "spawn_window: window registered in WindowRegistry");
 }
 
+/// Open a new scratch window by RECOVERING an orphan scratch dir (P7c T9).
+///
+/// Used by the Recovery Sheet's "Open" row action. Mirrors [`spawn_window`]
+/// but reuses [`Session::recover`] (which reads the orphan's `session.json`
+/// and rebuilds its engine over the existing `scratch.duckdb`) instead of
+/// `Session::new`, so the restored tabs come back live rather than empty.
+/// On recovery failure pushes the standard open-failed banner and returns,
+/// leaving the orphan row available for retry / discard.
+pub(crate) fn spawn_recovered_scratch(cx: &mut App, scratch_dir: PathBuf) {
+    let registry = match crate::window_registry::window_registry() {
+        Some(r) => r,
+        None => {
+            tracing::warn!("spawn_recovered_scratch: window_registry singleton not installed");
+            return;
+        }
+    };
+    let budget = 1024 * 1024 * 1024;
+    let rt = match tokio::runtime::Handle::try_current() {
+        Ok(h) => h,
+        Err(_) => {
+            tracing::warn!("spawn_recovered_scratch: no tokio runtime on calling thread");
+            return;
+        }
+    };
+    let session = match rt.block_on(Session::recover(scratch_dir, budget)) {
+        Ok(s) => Arc::new(Mutex::new(s)),
+        Err(e) => {
+            crate::error_ux::push(crate::error_ux::Banner::warning_with_body(
+                dat0_i18n::t("workspace.open.failed.title"),
+                format!("{e}"),
+            ));
+            return;
+        }
+    };
+    let window_id = session.lock().window_id;
+    open_window_view(cx, session, window_id, None, registry);
+    tracing::debug!(%window_id, "spawn_recovered_scratch: orphan recovered into window");
+}
+
 /// Scan `scratch_root` for orphan session directories (subdirs containing
 /// a `session.json`) and emit at most ONE consolidated warning Banner
 /// summarising the count, with a `"Review"` primary action wired to
