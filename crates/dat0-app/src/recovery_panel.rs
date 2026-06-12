@@ -31,8 +31,8 @@
 //! because `WorkspaceShell::render` mounts `Root::render_sheet_layer`
 //! (added in this task — gpui-component's `Root::render` does NOT
 //! auto-mount overlay layers). The rows are built by the pure,
-//! unit-tested [`collect_rows`]; the per-row buttons (Open / Resume /
-//! Discard) are placeholder no-ops here — wiring their behaviour is T9.
+//! unit-tested [`collect_rows`]; the per-row buttons dispatch the real
+//! Open / Resume / Discard flows.
 
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -232,8 +232,7 @@ fn render_row(i: usize, row: &RecoveryRow) -> impl gpui::IntoElement {
 ///
 /// Opens a top-anchored gpui-component `Sheet` listing every recoverable item
 /// (orphan scratch sessions + interrupted workspaces). The rows come from the
-/// pure [`collect_rows`]; the per-row buttons are placeholder no-ops in T8 —
-/// T9 wires Open / Resume / Discard.
+/// pure [`collect_rows`]; the per-row buttons dispatch Open / Resume / Discard.
 ///
 /// Reaches a `&mut Window` from the `&mut App` action context via the proven
 /// active-window hop (T0 §8.2): `cx.active_window()` → `handle.update` →
