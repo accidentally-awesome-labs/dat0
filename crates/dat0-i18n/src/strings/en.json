@@ -123,5 +123,7 @@
   "workspace.in_use.same_machine.title": "This workspace is already open",
   "workspace.in_use.focus_existing": "Focus existing window",
   "workspace.in_use.claim_failed.title": "Couldn't record the workspace lock (opened anyway)",
+  "livedata.changed.title": "{file} changed on disk",
+  "livedata.changed.refresh": "Refresh",
   "common.cancel": "Cancel"
 }

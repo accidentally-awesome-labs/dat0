@@ -385,6 +385,41 @@ fn promote_focused_into(cx: &mut App, target: PathBuf) {
     });
 }
 
+// ─── Live-data refresh (P7c) ──────────────────────────────────────────────
+
+/// Reduce a `ViewModel::base_table()` name to its bare (unquoted, unqualified)
+/// form for catalog matching (P7c). `base_table()` is quoted and may be
+/// schema-qualified (`"main"."orders"`); the catalog keys on the bare name
+/// (`orders`). Mirrors the reduction in [`WorkspaceShell::inspector_projection`].
+fn bare_table_name(base: &str) -> String {
+    base.rsplit('.')
+        .next()
+        .unwrap_or(base)
+        .trim_matches('"')
+        .to_string()
+}
+
+/// `live.refresh` action handler (P7c). Resolves the focused workspace and runs
+/// its refresh flow.
+///
+/// **T5:** resolves the focused shell (same precedent as `dispatch_undo` /
+/// `promote_focused_into`) and calls the [`WorkspaceShell::run_refresh`] stub.
+/// **T6** replaces `run_refresh`'s body with the real split → confirm →
+/// re-CTAS → replay flow; this resolver does not change.
+pub fn dispatch_live_refresh(app: &mut gpui::App) {
+    let Some(weak) = crate::window_registry::focused_workspace_weak() else {
+        tracing::debug!("live.refresh: no focused workspace");
+        return;
+    };
+    let Some(any_entity) = weak.upgrade() else {
+        return;
+    };
+    let Ok(shell) = any_entity.downcast::<WorkspaceShell>() else {
+        return;
+    };
+    shell.update(app, |shell, cx| shell.run_refresh(cx));
+}
+
 /// Open the Nth recent workspace (P7a T10).
 ///
 /// `idx` is a 0-based index into the filtered list of `RecentEntry::Workspace`
@@ -1222,6 +1257,11 @@ pub struct WorkspaceShell {
     /// Whether the "Save as workspace?" prompt has been shown this session
     /// (in-memory only — never persisted; shows at most once per launch).
     workspace_prompt_shown: bool,
+    /// Live watcher over the active table's source file (P7c). Re-created
+    /// whenever the active table changes (see [`Self::retarget_source_watch`]);
+    /// `None` when the active table has no `File` origin. Dropping the field
+    /// stops the watch.
+    pub(crate) source_watcher: Option<crate::workspace::source_watcher::SourceWatcher>,
 }
 
 impl WorkspaceShell {
@@ -1272,6 +1312,7 @@ impl WorkspaceShell {
             md_token_prompt: None,
             md_token_prompt_sub: None,
             workspace_prompt_shown: false,
+            source_watcher: None,
         }
     }
 
@@ -1908,6 +1949,12 @@ impl WorkspaceShell {
                                 // P6a T9: point the Inspector at the freshly-opened
                                 // table and (lazily) load its profile.
                                 ws.set_inspector_target(name.clone(), cx);
+                                // P7c: re-target the live-data watch onto the
+                                // newly-active table's source file. The catalog
+                                // is already populated for an already-imported
+                                // table being re-opened, so this resolves now;
+                                // `refresh_catalog` retargets again as a backstop.
+                                ws.retarget_source_watch(cx);
                                 cx.notify();
                             });
                         });
@@ -1967,6 +2014,11 @@ impl WorkspaceShell {
                         ws.catalog_tables = tables;
                         ws.sql_parents = sql_parents;
                         ws.recompute_lineage();
+                        // P7c: now that `catalog_tables` is current, (re)target the
+                        // live-data watch onto the active table's source file. This
+                        // is the authoritative retarget point after a fresh import
+                        // (the file-drop mount has stale catalog at mount time).
+                        ws.retarget_source_watch(cx);
                         cx.notify();
                     });
                 });
@@ -2020,6 +2072,96 @@ impl WorkspaceShell {
         if self.inspector.target_table.as_deref() == Some(table) {
             self.load_inspector_profile(cx); // re-SUMMARIZE the now-invalidated table
         }
+        cx.notify();
+    }
+
+    /// The on-disk source path of the currently-mounted table, if it was
+    /// imported from a file (P7c). Matches the active `view_model`'s base table
+    /// against `catalog_tables` on the bare (unquoted) name — the catalog/lineage
+    /// keying used elsewhere (see [`Self::inspector_projection`]). Returns `None`
+    /// when no table is mounted, the table has no `File` origin, or the catalog
+    /// has not yet been refreshed for it.
+    pub(crate) fn active_source_path(&self) -> Option<std::path::PathBuf> {
+        let base = self.view_model.as_ref()?.base_table();
+        let bare = bare_table_name(base);
+        self.catalog_tables.iter().find_map(|t| match &t.origin {
+            dat0_engine::TableOrigin::File(p) if t.name == bare => Some(p.clone()),
+            _ => None,
+        })
+    }
+
+    /// (Re)create the source watcher for the active table (P7c). Drops any
+    /// previous watch first (so switching tables retargets, not stacks). No-op
+    /// (clears the watch) when the active table has no `File` source or the
+    /// source file no longer exists on disk.
+    pub(crate) fn retarget_source_watch(&mut self, cx: &mut Context<Self>) {
+        let Some(path) = self.active_source_path() else {
+            self.source_watcher = None;
+            return;
+        };
+        if !path.exists() {
+            self.source_watcher = None; // file gone → nothing to watch
+            return;
+        }
+        let ws = cx.entity().downgrade();
+        let watcher = crate::workspace::source_watcher::SourceWatcher::start(
+            path.clone(),
+            std::time::Duration::from_millis(500),
+            move |changed| {
+                // Runs on the `dat0-source-debounce` bg thread — must NOT touch
+                // GPUI directly. Hop to the main thread via the dispatcher, then
+                // upgrade the weak shell handle and raise the banner.
+                if let Some(d) = crate::window_registry::dispatcher() {
+                    let ws = ws.clone();
+                    let _ = d.dispatch(move |app| {
+                        if let Some(h) = ws.upgrade() {
+                            h.update(app, |shell, cx| shell.on_source_changed(changed, cx));
+                        }
+                    });
+                }
+            },
+        );
+        match watcher {
+            Ok(w) => self.source_watcher = Some(w),
+            Err(e) => tracing::warn!(error = %e, "failed to start source watcher"),
+        }
+    }
+
+    /// Raise a one-click Refresh banner for an externally-changed source file
+    /// (P7c). De-dups: if a refresh banner for this file's title is already
+    /// present, do nothing (a burst of saves coalesces to a single banner —
+    /// the watcher already debounces, this guards re-raise across drains).
+    pub(crate) fn on_source_changed(&mut self, path: std::path::PathBuf, cx: &mut Context<Self>) {
+        let file = path
+            .file_name()
+            .map(|s| s.to_string_lossy().to_string())
+            .unwrap_or_else(|| path.display().to_string());
+        let title = dat0_i18n::t("livedata.changed.title").replace("{file}", &file);
+        let already = self.banners.iter().any(|b| b.title == title);
+        if already {
+            return;
+        }
+        self.banners.push(
+            crate::error_ux::banner::Banner::warning(title).with_primary(
+                dat0_i18n::t("livedata.changed.refresh"),
+                crate::actions::builtin::ids::LIVE_REFRESH,
+            ),
+        );
+        cx.notify();
+    }
+
+    /// Re-import the active table's source and replay its structural transforms
+    /// (P7c). **T5 STUB:** logs + dismisses any refresh banner so the click has a
+    /// visible effect. T6 replaces this whole body with the real
+    /// split → confirm → re-CTAS → replay flow.
+    pub(crate) fn run_refresh(&mut self, cx: &mut Context<Self>) {
+        tracing::info!("live refresh requested (T6 will implement re-import + replay)");
+        // Clear any refresh banner this table raised so the click resolves
+        // visibly. (T6 owns the real re-import; this body is fully replaced.)
+        self.banners.retain(|b| {
+            b.primary.as_ref().map(|a| a.action_id.as_str())
+                != Some(crate::actions::builtin::ids::LIVE_REFRESH)
+        });
         cx.notify();
     }
 
@@ -3965,5 +4107,23 @@ impl Render for WorkspaceShell {
             .children(name_prompt_overlay)
             .children(saved_picker_overlay)
             .children(md_token_prompt_overlay)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::bare_table_name;
+
+    #[test]
+    fn bare_table_name_strips_quotes_and_schema() {
+        // ViewModel::base_table() is quoted + may be schema-qualified.
+        assert_eq!(bare_table_name("\"main\".\"orders\""), "orders");
+        // Bare quoted name (no schema qualifier).
+        assert_eq!(bare_table_name("\"orders\""), "orders");
+        // Already bare/unquoted — identity.
+        assert_eq!(bare_table_name("orders"), "orders");
+        // Embedded dots only appear as the schema separator in this layer, so
+        // the last segment is the table; quotes are trimmed from both ends.
+        assert_eq!(bare_table_name("\"my_db\".\"main\".\"sales\""), "sales");
     }
 }
