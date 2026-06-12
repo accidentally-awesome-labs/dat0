@@ -102,18 +102,57 @@ instance, dat0 detects the open window and declines to open a duplicate.
 releases the flock when the process terminates. The next time you open the
 workspace the lock is free.
 
-> **P7b note:** Cross-machine locking (e.g. a workspace folder on a sync drive
-> shared between two machines) is not yet enforced. See D-019 for the planned
-> heartbeat/lease approach and sync-drive detection coming in P7b.
+> **P7b note:** Cross-machine locking for sync-drive workspaces shipped in P7b.
+> See "Networked / sync-drive workspaces" below for details.
+
+## Networked / sync-drive workspaces
+
+dat0's single-window lock (above) is a per-machine `flock` — it cannot see a
+*second machine* opening the same workspace folder over a sync drive (Dropbox,
+iCloud Drive, OneDrive, Google Drive, Syncthing). Editing one workspace from two
+machines at once can corrupt it, because each machine's DuckDB writes race
+through the sync daemon. P7b adds a **cross-machine lock** to detect this.
+
+**When it applies.** Only workspaces dat0 considers *networked* get the extra
+lock. A folder is networked if its path sits under a known sync-provider
+directory, or if you turn on **Settings → Networked Workspaces → "treat all as
+networked"** (use this when your sync drive isn't auto-detected). Local
+workspaces (e.g. on an internal SSD) are unaffected — they rely on the flock
+alone. Detection only ever errs toward "networked": over-protecting a local
+folder is harmless, under-protecting a synced one is not.
+
+**How it works.** A networked workspace carries a small `.dat0/lock.json` holder
+record (this machine's hostname + pid, written when you open it, tombstoned when
+you close it). On open, dat0 reads any existing record and decides:
+
+- **No record / tombstoned / your own machine's dead pid** → opens normally and
+  claims it.
+- **Already open in another window on _this_ machine** → offers to focus the
+  existing window instead of opening a duplicate.
+- **A live record from _another_ machine** → a blocking dialog warns the
+  workspace may be open elsewhere (showing the other host and roughly how long
+  ago it was opened). You can **Cancel** or **Open anyway** (which takes the
+  lock).
+
+A workspace you *save into* a sync drive is claimed the same way at save time.
+
+**No heartbeat (by design).** The record has no time-to-live or heartbeat.
+Sync-drive propagation lag would make a TTL "is it stale?" check itself a
+corruption risk, so dat0 never auto-expires a foreign lock — it only *warns*,
+and you decide. There is no automatic force-unlock yet; recovering from a truly
+stale foreign lock (a machine that crashed mid-session) is a manual **Open
+anyway**. A dedicated force-unlock UI is planned for a later release.
+
+**Limitation.** dat0 does not *synchronize* across machines — propagating the
+lock record is the sync provider's job. dat0 reads whatever record has already
+arrived locally and warns on a conflict; it cannot prevent a true simultaneous
+open if the providers haven't synced the record yet.
 
 ## What's deferred
 
-- **Sync drives (Dropbox, iCloud, OneDrive, Google Drive):** dat0 does not yet
-  detect or warn when a workspace folder sits on a sync-drive path. Concurrent
-  writes from the sync daemon while dat0 has the workspace open can corrupt the
-  DuckDB file. Until D-019 lands (P7b), keep workspace folders on a local,
-  non-synced volume.
-- **Cross-machine lock and force-unlock UI:** coming in D-019 / P7b.
+- **Force-unlock UI:** there is no dedicated "Force unlock" button yet. A stale
+  foreign lock (from a machine that crashed mid-session) is resolved by **Open
+  anyway**. A richer force-unlock UI is planned for a later release.
 - **Live-source refresh:** if you modify the original CSV/Parquet/JSON file that
   you imported, the open table does not update automatically — dat0's tables are
   materialized at import time. File-watcher re-import (debounced re-CTAS + transform
