@@ -76,7 +76,7 @@ fn lookup_returns_descriptor() {
 }
 
 #[test]
-fn builtins_register_thirty_one() {
+fn builtins_register_thirty_two() {
     let reg = ActionRegistry::new();
     dat0_app::actions::builtin::register_all(&reg).unwrap();
     // Ten from P3b/P4a + seven from P4b T9 (copy/cut/paste/fill_down/set_null/set_value/delete_rows)
@@ -84,7 +84,8 @@ fn builtins_register_thirty_one() {
     // + five from P5a T11 (console.toggle/sql.run/sql.cancel/sql.new_tab/sql.close_tab) = 24.
     // + five from P5b T12 (sql.save_query/sql.load_query/sql.history/sql.save_as_table/view.save_as_table) = 29.
     // + two from P7a T7 (workspace.open/workspace.save) = 31.
-    assert_eq!(reg.count(), 31);
+    // + one from P7c T5 (live.refresh — the live-data Refresh banner button) = 32.
+    assert_eq!(reg.count(), 32);
     let titles: Vec<String> = reg.iter().map(|d| d.title).collect();
     assert!(titles.contains(&"New Window".to_string()));
     assert!(titles.contains(&"Open Settings".to_string()));
@@ -125,6 +126,9 @@ fn builtins_register_thirty_one() {
     for id in ["workspace.open", "workspace.save"] {
         assert!(reg.contains(id), "missing {id}");
     }
+    // P7c T5 addition (live-data Refresh banner button).
+    assert!(reg.contains("live.refresh"), "missing live.refresh");
+    assert!(titles.contains(&"Refresh from source".to_string()));
 }
 
 #[test]

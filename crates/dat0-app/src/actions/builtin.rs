@@ -58,6 +58,8 @@ pub mod ids {
     // P7a: Workspace open/save flows.
     pub const WORKSPACE_OPEN: &str = "workspace.open";
     pub const WORKSPACE_SAVE: &str = "workspace.save";
+    // P7c T5: one-click re-import of an externally-changed source file.
+    pub const LIVE_REFRESH: &str = "live.refresh";
 }
 
 /// Register every built-in action onto `reg`. Returns an error if any id
@@ -191,6 +193,17 @@ pub fn register_all(reg: &ActionRegistry) -> Result<(), RegisterError> {
         group: ActionGroup::File,
         keybinding: None,
         dispatch: Arc::new(crate::window::save_workspace_flow),
+    })?;
+
+    reg.register(ActionDescriptor {
+        id: ActionId::from(ids::LIVE_REFRESH),
+        title: "Refresh from source".into(),
+        group: ActionGroup::File,
+        keybinding: None,
+        // P7c: the live-data "Refresh" banner button fires this. T5 resolves
+        // the focused workspace + calls the `run_refresh` stub; T6 fills in the
+        // real re-import + replay flow.
+        dispatch: Arc::new(crate::window::dispatch_live_refresh),
     })?;
 
     super::view_actions::register(reg)?;

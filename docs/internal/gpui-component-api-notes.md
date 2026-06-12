@@ -847,3 +847,198 @@ future gpui-component bump that breaks the PRIMARY path has a documented Plan B.
 **Owed to manual UAT (cannot be verified headless):** that clicking OK actually
 fires `on_ok` (→ proceeds) and Cancel fires `on_cancel` (→ aborts), and that
 `activate_window()` visibly raises the right window on macOS.
+
+---
+
+## §8 — P7c spikes (2026-06-12)
+
+Doc-only T0 GATE spike for P7c (live-data refresh watcher + Recovery Sheet +
+D-021 banner buttons). Every API below was verified by **reading live source**
+(dat0 `crates/dat0-app/src/…` and the pinned gpui-component checkout at
+`~/.cargo/git/checkouts/gpui-component-95ce574d8a0da8b8/0f0ab35`, rev
+`0f0ab35` = gpui-component v0.5.1), not assumed. No scratch code was compiled —
+the existing `SettingsWatcher` precedent + the exact `MainThreadDispatcher`
+signature fully prove the bridge.
+
+### §8.1 — notify→main-thread bridge (the GATE)
+
+**`GATE: notify-bridge WORKABLE.`**
+
+The plan's guesses were essentially correct, with two name confirmations:
+
+- Accessor: **`crate::window_registry::dispatcher() -> Option<&'static crate::main_bridge::MainThreadDispatcher>`** (plan guessed `dispatcher()` — correct; it lives in `window_registry.rs:79`).
+- Schedule method: **`MainThreadDispatcher::dispatch<F>(&self, f: F) -> Result<(), DispatchError>` where `F: FnOnce(&mut gpui::App) + Send + 'static`** (`main_bridge.rs:65`). Plan guessed `.dispatch(move |app| …)` — correct. NB it is **`FnOnce`** (not `Fn`) and returns a `Result` (must `let _ =` / handle the `Err(Closed)`).
+- The closure receives **`&mut gpui::App`** (aliased `AppProxy`). It does **NOT** receive `&mut Window` — see §8.2/§8.3 for how to reach a `Window` from inside it when needed (banner refresh just needs `&mut App` to push a banner / re-target; the sheet needs the active-window hop).
+- `notify` is a **workspace dependency** already pulled into `dat0-app` (`crates/dat0-app/Cargo.toml:23` `notify = { workspace = true }`). No new dep for the watcher.
+
+**Proven precedent (mirror this):** `crates/dat0-app/src/settings/watcher.rs`
+(`SettingsWatcher`) already bridges a `notify::recommended_watcher` callback to
+the app. Its callback runs on the notify background thread and must NOT touch
+`App`/`Window`; it captures only `Send` state (a `SettingsStore` + the
+`on_change: Fn(Settings) + Send + 'static` callback). P7c's watcher does the
+same, but the `on_change` closure dispatches onto the main thread instead of
+calling a plain `Fn`.
+
+**Exact bridge call to write in T5's `retarget_source_watch`** (the watcher's
+notify callback, running on the notify bg thread — captures only the owned
+`PathBuf`/table id, never `App`/`Window`):
+
+```rust
+// Inside notify::recommended_watcher(move |res: notify::Result<notify::Event>| { … }):
+if let Ok(event) = res {
+    if matches!(event.kind, EventKind::Modify(_) | EventKind::Create(_)) {
+        let changed = source_path.clone();      // owned, Send
+        let table   = table_name.clone();        // owned, Send
+        if let Some(d) = crate::window_registry::dispatcher() {
+            // `dispatch` takes FnOnce(&mut gpui::App) + Send + 'static and
+            // returns Result; the closure runs on the GPUI main thread.
+            let _ = d.dispatch(move |app: &mut gpui::App| {
+                // SAFE on main thread: emit the SourceChanged banner / re-import.
+                // e.g. push a refresh banner, or look up the focused workspace
+                // via window_registry::focused_workspace_weak() and update it.
+                crate::error_ux::banner::push(/* SourceChanged refresh banner for `table`/`changed` */);
+            });
+        }
+    }
+}
+```
+
+Watcher struct mirrors `SettingsWatcher`: hold the `RecommendedWatcher` in a
+field (`_watcher: RecommendedWatcher`) so dropping the struct stops the watch;
+`watcher.watch(&path, RecursiveMode::NonRecursive)`.
+
+**Important nuance for T4/T5:** banner pushes already have their own
+process-global queue + main-render drain (`error_ux::banner::push` →
+`merge_pending` in `WorkspaceShell::render`, see `banner.rs:155-185`). So the
+dispatched closure can be as thin as `banner::push(...)` and the next render
+surfaces it — you do not strictly need to reach a specific `Window` just to
+raise the refresh banner. Reaching the concrete `WorkspaceShell` (to trigger
+re-import + replay on click) goes through
+`window_registry::focused_workspace_weak()` (returns `AnyWeakEntity`; upgrade +
+downcast to `Entity<WorkspaceShell>`) inside that same `&mut App` closure.
+
+→ **GATE PASSED. Proceed to T4/T5 with the dispatch bridge; the mtime-poll
+fallback (Approach 3) is NOT needed.**
+
+### §8.2 — `open_sheet_at` hop + render-layer wiring (T8/T11-Recovery-Sheet)
+
+**Symbols verified in `crates/ui/src/root.rs` (rev `0f0ab35`):**
+
+- `gpui_component::WindowExt` (trait, `root.rs:26`) exposes
+  **`open_sheet_at<F>(&mut self, placement: Placement, cx: &mut App, build: F)` where `F: Fn(Sheet, &mut Window, &mut App) -> Sheet + 'static`** (`root.rs:34`/impl `:84`). Also `open_sheet` (defaults to `Placement::Right`, size 350px), `has_active_sheet`, `close_sheet`.
+- `Placement` re-exported at crate root (`use crate::{… Placement …}` in root.rs); import as `gpui_component::Placement`.
+- The plan's `cx.active_window()?.update(cx, |_root: AnyView, window, cx| window.open_sheet_at(Placement::Top, cx, |sheet,_w,_cx| sheet.title("x").child("y")))` shape is **correct** and matches the **proven P7b `open_dialog` hop** in `crates/dat0-app/src/workspace_in_use_modal.rs:81-100` (`cx.active_window()` → `handle.update(cx, move |_root: AnyView, window: &mut Window, cx| window.open_dialog(cx, …))`). Required imports: **`use gpui_component::WindowExt as _;`** and **`use gpui::ParentElement as _;`** (the latter for the `.child("…")` body — without it: `E0599: no method named child`; see §7.5(a)/§2.4).
+- `cx.active_window()` returns `Option<AnyWindowHandle>`; `handle.update(cx, …)` returns a `Result` (`let _ =` it). The build closure's first arg is `Sheet`, second `&mut Window`, third `&mut App` — name the ones you don't use `_w`/`_cx`.
+
+**T8 MUST add `Root::render_sheet_layer` — CRITICAL.**
+`rg -n "render_sheet_layer|render_dialog_layer|Root::new" crates/dat0-app/src/window.rs`
+finds **only `Root::new`** (lines 465, 923) — **no layer mounts**. A
+repo-wide `git ls-files` grep confirms **ZERO** occurrences of
+`render_sheet_layer` / `render_dialog_layer` / `render_notification_layer`
+anywhere in dat0's tracked source.
+
+This matters because gpui-component's `impl Render for Root` (`root.rs:396-414`)
+renders **only `self.view`** — it does **NOT** auto-mount the sheet/dialog/
+notification layers. The canonical pattern (gpui-component's own
+`crates/story/src/lib.rs:268-282`) is for the **consumer's** render to mount
+them:
+
+```rust
+let sheet_layer        = Root::render_sheet_layer(window, cx);
+let dialog_layer       = Root::render_dialog_layer(window, cx);
+let notification_layer = Root::render_notification_layer(window, cx);
+// … then at the end of the element tree:
+.children(sheet_layer)
+.children(dialog_layer)
+.children(notification_layer)
+```
+
+So **T8 must add `.children(Root::render_sheet_layer(window, cx))` to
+`WorkspaceShell::render`** (the render fn ends at `window.rs:3968`, after the
+existing `.children(*_overlay)` chain) or the Recovery Sheet's `open_sheet_at`
+will **silently do nothing** (sets `root.active_sheet` but nothing paints it).
+This was already foretold by §2.3 + §3#3 (P3b/P7b notes) but the mount was
+**never actually added**. Use `Root` (the type) — `use gpui_component::Root;`.
+
+**⚠️ Concern carried to T8 (and a latent P7b bug):** because the **dialog**
+layer is *also* unmounted, the P7b `open_conflict_dialog` /
+`open_same_machine_dialog` (`workspace_in_use_modal.rs`) almost certainly **do
+not render today** — they call `open_dialog` (which only sets
+`root.active_dialogs`) but nothing mounts `render_dialog_layer`. This is
+consistent with P7b's "manual UAT owed — headless can't click GUI dialog
+buttons" (the dialogs were never visually verified). **Recommendation:** while
+T8 is adding `render_sheet_layer`, it should add
+`.children(Root::render_dialog_layer(window, cx))` in the same edit (one-line
+cost) — this simultaneously closes the latent P7b dialog-not-shown gap. Flag in
+the T8 plan so the reviewer expects both `.children(...)` lines.
+
+### §8.3 — banner action button (D-021, T2/T-banner)
+
+Confirmed shapes for the click→dispatch wiring:
+
+- **`ActionId::from(s: impl Into<String>)`** — a free associated fn (NOT the
+  `From` trait) at `actions/registry.rs:31`. `ActionId::from(aid.as_str())`
+  compiles (`&str: Into<String>`). `ActionId::as_str() -> &str` at `:34`.
+- **`crate::window_registry::action_registry() -> Option<&'static ActionRegistry>`** (`window_registry.rs:90`).
+- **`ActionRegistry::get(&self, id: &ActionId) -> Option<ActionDescriptor>`** (`registry.rs:110`, returns an **owned clone**, not a ref).
+- **`ActionDescriptor.dispatch: DispatchFn`** where `DispatchFn = Arc<dyn Fn(&mut gpui::App) + Send + Sync + 'static>` (`registry.rs:62,70`). Plan wrote `Arc<dyn Fn(&mut App)>` — accurate (it's additionally `+ Send + Sync`). Invoke as **`(d.dispatch)(cx)`**.
+- In a `div().on_click(move |_ev, _w, cx| …)` handler the third arg `cx` is **`&mut gpui::App`** — exactly the type `dispatch` wants. So `(d.dispatch)(cx)` type-checks directly inside the click closure (no extra hop). The plan's full snippet compiles as written:
+
+```rust
+.on_click(move |_ev, _w, cx| {
+    if let Some(r) = crate::window_registry::action_registry() {
+        if let Some(d) = r.get(&crate::actions::registry::ActionId::from(aid.as_str())) {
+            (d.dispatch)(cx);
+        }
+    }
+})
+```
+
+**Styling choice: use `gpui_component::button::Button` (NOT a styled `div`).**
+Reason: (a) it's the established dat0 convention for actionable controls —
+`view/export_dialog.rs:167+` builds `Button::new("export-run").label(…).primary().on_click(move |_ev,_w,cx| …)`; (b) it gives consistent theme-aware
+primary/ghost variants + hover/press states for free, matching the
+Export/Cancel buttons users already see, instead of re-deriving button visuals
+on a bare `div`. The banner host (`error_ux/banner.rs:163` `render_banner`)
+currently emits title + optional body only (no action row — that's the D-021
+gap); the D-021 task adds an action row of `Button`s built from the banner's
+action descriptors, each wired with the `on_click → (d.dispatch)(cx)` snippet
+above. `render_banner` will need its signature widened to carry the action
+ids/labels (currently takes `&Banner`); the `Button` import is
+`gpui_component::button::Button`.
+
+### §8.4 — session schema version
+
+**`SESSION_SCHEMA_VERSION = 8`** (`crates/dat0-app/src/session/mod.rs:55`,
+`pub const SESSION_SCHEMA_VERSION: u32 = 8;`). P7c adds **no persisted state**
+— the file watcher is per-window runtime-only, the Recovery Sheet reads
+existing recovery state, and banner action buttons carry no new persisted
+field. **No session bump; stays v8.** No migration needed.
+
+### §8.5 — downstream summary (for T2/T4/T5/T8 implementers)
+
+- **T4/T5 (watcher):** bridge is `window_registry::dispatcher()` →
+  `.dispatch(move |app: &mut gpui::App| …)` (returns `Result`, `let _ =` it;
+  closure is `FnOnce + Send`). Mirror `SettingsWatcher`; hold the
+  `RecommendedWatcher` in a field; the notify-thread closure captures only
+  owned `Send` data and never touches `App`/`Window`. Refresh banner can be a
+  thin `error_ux::banner::push(...)` (auto-drains on next render). GATE PASSED.
+- **T8 (Recovery Sheet):** `window.open_sheet_at(Placement::Top, cx, |sheet,_w,_cx| sheet.title(..).child(..))` via the `cx.active_window().update` hop;
+  imports `gpui_component::{WindowExt as _, Placement, Root}` + `gpui::ParentElement as _`.
+  **MUST add `.children(Root::render_sheet_layer(window, cx))` (and recommended
+  `.children(Root::render_dialog_layer(window, cx))`) to `WorkspaceShell::render`**
+  — currently UNMOUNTED, so without this the Sheet (and the existing P7b
+  dialogs) paint nothing.
+- **T2/D-021 (banner buttons):** use `gpui_component::button::Button`; click
+  closure `cx` is `&mut App`, so `(d.dispatch)(cx)` after
+  `action_registry().get(&ActionId::from(aid.as_str()))` works directly.
+  Widen `render_banner` to carry action descriptors.
+- **Session:** v8, no bump, no migration.
+
+**Owed to manual UAT (cannot be verified headless):** that the notify watcher
+actually fires on a real external file write and the dispatched banner appears;
+that the Recovery Sheet visibly slides in from the top once
+`render_sheet_layer` is mounted; that clicking a banner action `Button`
+dispatches the right action; and (regression) that mounting
+`render_dialog_layer` makes the P7b conflict/same-machine dialogs visible at
+last.

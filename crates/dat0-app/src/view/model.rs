@@ -264,6 +264,28 @@ impl ViewModel {
         }
     }
 
+    /// Replace the active stack with `ops` and force a full grid rebind, used by
+    /// live re-import refresh (P7c). Unlike `apply`/`jump_to`, this ALWAYS emits
+    /// a data-rebinding [`ViewChange`] (never the display-only fast path) because
+    /// the underlying base-table data changed even when the compiled SQL is
+    /// identical — so [`Self::regenerate_view`]'s SQL-equality short-circuit must
+    /// not skip the engine round-trip.
+    ///
+    /// Clears undo/redo history: the re-imported base is a new data epoch, so the
+    /// pre-refresh history (which may reference dropped `__dat0_rowid` edits) is
+    /// no longer meaningful.
+    pub fn reset_to_replayed(&mut self, ops: Vec<Transformation>) -> ViewChange {
+        self.past.clear();
+        self.future.clear();
+        self.present = ops;
+        // Force `regenerate_view` off its display-only fast path: the cached SQL
+        // may be byte-identical to the new base's SQL, but the DATA changed, so
+        // the grid must re-read. Clearing the cached SQL makes the equality guard
+        // (`active_view_sql == Some(body_sql)`) fail → a fresh view name + Some(sql).
+        self.active_view_sql = None;
+        self.regenerate_view()
+    }
+
     // --- Sort query helpers ---
 
     /// Return the current Sort op (if any) as an [`ActiveSort`] for the header
@@ -392,4 +414,53 @@ fn sanitize_for_view_name(id: &str) -> String {
     id.chars()
         .filter(|c| c.is_ascii_alphanumeric() || *c == '_')
         .collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use dat0_engine::{FilterOp, FilterValue, Scalar};
+
+    /// A `qty > 0` filter, the canonical structural op used across these tests.
+    fn qty_gt_zero() -> Transformation {
+        Transformation::Filter {
+            column: "qty".into(),
+            op: FilterOp::Gt,
+            value: FilterValue::Scalar {
+                value: Scalar::Float(0.0),
+            },
+        }
+    }
+
+    #[test]
+    fn reset_to_replayed_forces_rebind_even_when_sql_matches() {
+        let mut vm = ViewModel::new("orders".into(), "\"main\".\"orders\"".into());
+        // Apply a filter so there's an active view + cached SQL.
+        let f = qty_gt_zero();
+        let _ = vm.apply(f.clone());
+        assert!(vm.active_view().is_some(), "filter produced a view");
+
+        // Re-import refreshed the base under the SAME filter stack. Replay must
+        // emit a NON-display-only change (sql Some + a fresh view name) so the
+        // grid re-reads the new data even though the compiled SQL is identical.
+        let change = vm.reset_to_replayed(vec![f]);
+        assert!(
+            change.sql.is_some(),
+            "must force a real rebind, not display-only"
+        );
+        assert!(!change.is_display_only());
+        assert_eq!(vm.stack().len(), 1);
+    }
+
+    #[test]
+    fn reset_to_replayed_empty_binds_base() {
+        let mut vm = ViewModel::new("orders".into(), "\"main\".\"orders\"".into());
+        let _ = vm.apply(qty_gt_zero());
+        let change = vm.reset_to_replayed(vec![]);
+        assert_eq!(vm.stack().len(), 0);
+        assert!(
+            change.new_active_view.is_none(),
+            "empty stack rebinds to base"
+        );
+    }
 }

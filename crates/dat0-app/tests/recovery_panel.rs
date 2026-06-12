@@ -76,3 +76,19 @@ fn open_loads_session_json_and_returns_paths() {
         std::path::PathBuf::from("/tmp/sales.csv")
     );
 }
+
+#[test]
+fn discard_incomplete_removes_dat0() {
+    let tmp = tempfile::tempdir().unwrap();
+    let root = tmp.path().join("proj");
+    let dat0 = root.join(".dat0");
+    std::fs::create_dir_all(&dat0).unwrap();
+    std::fs::write(dat0.join("workspace.duckdb"), b"db").unwrap();
+
+    dat0_app::recovery_panel::discard_incomplete(&root).unwrap();
+    assert!(!dat0.exists(), ".dat0/ should be removed");
+    assert!(
+        root.exists(),
+        "the user's folder itself must NOT be deleted"
+    );
+}

@@ -385,6 +385,80 @@ fn promote_focused_into(cx: &mut App, target: PathBuf) {
     });
 }
 
+// ─── Live-data refresh (P7c) ──────────────────────────────────────────────
+
+/// Reduce a `ViewModel::base_table()` name to its bare (unquoted, unqualified)
+/// form for catalog matching (P7c). `base_table()` is quoted and may be
+/// schema-qualified (`"main"."orders"`); the catalog keys on the bare name
+/// (`orders`). Mirrors the reduction in [`WorkspaceShell::inspector_projection`].
+fn bare_table_name(base: &str) -> String {
+    base.rsplit('.')
+        .next()
+        .unwrap_or(base)
+        .trim_matches('"')
+        .to_string()
+}
+
+/// Schema-drift pre-validate for live re-import replay (P7c D3).
+///
+/// The `replayable` ops are column-keyed. Only `Filter` and `Sort` reference
+/// columns in the *executed* SQL (the projection ops `Reorder`/`Rename`/
+/// `DeleteColumn` are display-only — they never reach `compile_view_sql`, so they
+/// can't cause an engine error). If any executed-SQL op references a column that
+/// the re-imported file no longer has, the replayed `SELECT` would fail at engine
+/// execute time. `compile_view_sql` is a pure string renderer with no schema
+/// knowledge, so it cannot detect this — we check column references against the
+/// fresh column set here instead.
+///
+/// Returns `(ops, drifted)`: on drift, `ops` is empty (land on the bare base) and
+/// `drifted` is `true` (caller raises the schema-drift banner). All-or-nothing —
+/// a partial replay that silently dropped one filter would be more surprising
+/// than landing cleanly on the bare base.
+fn partition_replay_on_drift(
+    replayable: Vec<dat0_engine::transform::Transformation>,
+    columns: &[String],
+) -> (Vec<dat0_engine::transform::Transformation>, bool) {
+    use dat0_engine::transform::Transformation;
+    let has = |c: &str| columns.iter().any(|known| known == c);
+    let drifted = replayable.iter().any(|op| match op {
+        Transformation::Filter { column, .. } => !has(column),
+        Transformation::Sort { keys } => keys.iter().any(|k| !has(&k.column)),
+        // Display-only projection ops never reach the executed SQL, so a stale
+        // column reference in them is harmless (the grid `ColumnView` fold simply
+        // ignores an unknown source). Don't treat them as drift.
+        Transformation::Reorder { .. }
+        | Transformation::Rename { .. }
+        | Transformation::DeleteColumn { .. } => false,
+        // Edit/RowDelete are never in `replayable` (split_replayable drops them).
+        Transformation::Edit { .. } | Transformation::RowDelete { .. } => false,
+    });
+    if drifted {
+        (Vec::new(), true)
+    } else {
+        (replayable, false)
+    }
+}
+
+/// `live.refresh` action handler (P7c). Resolves the focused workspace and runs
+/// its refresh flow.
+///
+/// Resolves the focused shell (same precedent as `dispatch_undo` /
+/// `promote_focused_into`) and calls [`WorkspaceShell::run_refresh`], which runs
+/// the real split → confirm → re-CTAS → replay flow (P7c T6).
+pub fn dispatch_live_refresh(app: &mut gpui::App) {
+    let Some(weak) = crate::window_registry::focused_workspace_weak() else {
+        tracing::debug!("live.refresh: no focused workspace");
+        return;
+    };
+    let Some(any_entity) = weak.upgrade() else {
+        return;
+    };
+    let Ok(shell) = any_entity.downcast::<WorkspaceShell>() else {
+        return;
+    };
+    shell.update(app, |shell, cx| shell.run_refresh(cx));
+}
+
 /// Open the Nth recent workspace (P7a T10).
 ///
 /// `idx` is a 0-based index into the filtered list of `RecentEntry::Workspace`
@@ -516,6 +590,45 @@ pub(crate) fn spawn_window(
     tracing::debug!(%window_id, "spawn_window: window registered in WindowRegistry");
 }
 
+/// Open a new scratch window by RECOVERING an orphan scratch dir (P7c T9).
+///
+/// Used by the Recovery Sheet's "Open" row action. Mirrors [`spawn_window`]
+/// but reuses [`Session::recover`] (which reads the orphan's `session.json`
+/// and rebuilds its engine over the existing `scratch.duckdb`) instead of
+/// `Session::new`, so the restored tabs come back live rather than empty.
+/// On recovery failure pushes the standard open-failed banner and returns,
+/// leaving the orphan row available for retry / discard.
+pub(crate) fn spawn_recovered_scratch(cx: &mut App, scratch_dir: PathBuf) {
+    let registry = match crate::window_registry::window_registry() {
+        Some(r) => r,
+        None => {
+            tracing::warn!("spawn_recovered_scratch: window_registry singleton not installed");
+            return;
+        }
+    };
+    let budget = 1024 * 1024 * 1024;
+    let rt = match tokio::runtime::Handle::try_current() {
+        Ok(h) => h,
+        Err(_) => {
+            tracing::warn!("spawn_recovered_scratch: no tokio runtime on calling thread");
+            return;
+        }
+    };
+    let session = match rt.block_on(Session::recover(scratch_dir, budget)) {
+        Ok(s) => Arc::new(Mutex::new(s)),
+        Err(e) => {
+            crate::error_ux::push(crate::error_ux::Banner::warning_with_body(
+                dat0_i18n::t("workspace.open.failed.title"),
+                format!("{e}"),
+            ));
+            return;
+        }
+    };
+    let window_id = session.lock().window_id;
+    open_window_view(cx, session, window_id, None, registry);
+    tracing::debug!(%window_id, "spawn_recovered_scratch: orphan recovered into window");
+}
+
 /// Scan `scratch_root` for orphan session directories (subdirs containing
 /// a `session.json`) and emit at most ONE consolidated warning Banner
 /// summarising the count, with a `"Review"` primary action wired to
@@ -530,14 +643,7 @@ pub(crate) fn spawn_window(
 /// they contain a `session.json`) — the test harness uses
 /// `session-{i:02}` names to keep `tempdir` paths readable.
 pub fn orphan_scan_emit(scratch_root: &std::path::Path) -> Vec<crate::error_ux::Banner> {
-    let mut count = 0usize;
-    if let Ok(entries) = std::fs::read_dir(scratch_root) {
-        for e in entries.flatten() {
-            if e.path().join("session.json").is_file() {
-                count += 1;
-            }
-        }
-    }
+    let count = count_orphan_scratch(scratch_root);
     let mut banners = vec![];
     if count > 0 {
         banners.push(
@@ -555,6 +661,62 @@ pub fn orphan_scan_emit(scratch_root: &std::path::Path) -> Vec<crate::error_ux::
         crate::error_ux::push(b.clone());
     }
     banners
+}
+
+/// Boot-time recovery scan (P7c T7): consolidate BOTH recovery sources into a
+/// single warning Banner with a `"Review"` primary action wired to
+/// [`crate::actions::builtin::ids::RECOVERY_REVIEW`]:
+///
+/// 1. **Orphan scratch** — scratch subdirs containing a `session.json` (a
+///    session that didn't exit cleanly), counted the same way as
+///    [`orphan_scan_emit`].
+/// 2. **Incomplete workspaces** — recent workspace folders whose `.dat0/` is a
+///    half-finished promotion (missing `manifest.json` / `workspace.duckdb`),
+///    found by [`crate::recovery_scan::scan_incomplete_workspaces`] over the
+///    user's `Recents` (no full-filesystem scan).
+///
+/// The banner's count is `orphans + incompletes`. When there is nothing to
+/// recover, no banner is emitted (returns `None`). Pushes the banner onto the
+/// global pending queue (so first-render picks it up) and also returns it so
+/// callers/tests can inspect without draining the queue.
+///
+/// This *replaces* `orphan_scan_emit` at the boot call site — kept as a sibling
+/// (rather than widening `orphan_scan_emit`'s signature) so the existing
+/// orphan-only tests keep working; both still build the same banner shape.
+pub fn recovery_scan_emit(
+    scratch_root: &std::path::Path,
+    recent_roots: &[PathBuf],
+) -> Option<crate::error_ux::Banner> {
+    let count = count_orphan_scratch(scratch_root)
+        + crate::recovery_scan::scan_incomplete_workspaces(recent_roots).len();
+
+    if count == 0 {
+        return None;
+    }
+    let title = dat0_i18n::t("recovery.banner.title").replace("{count}", &count.to_string());
+    let banner =
+        crate::error_ux::Banner::warning_with_body(title, dat0_i18n::t("recovery.banner.body"))
+            .with_primary(
+                dat0_i18n::t("recovery.banner.review"),
+                crate::actions::builtin::ids::RECOVERY_REVIEW,
+            );
+    crate::error_ux::push(banner.clone());
+    Some(banner)
+}
+
+/// Count orphan scratch dirs: scratch subdirs containing a `session.json` (a
+/// session that didn't exit cleanly). Shared by [`orphan_scan_emit`] and
+/// [`recovery_scan_emit`] so the two cannot drift on the orphan definition.
+fn count_orphan_scratch(scratch_root: &std::path::Path) -> usize {
+    let mut count = 0usize;
+    if let Ok(entries) = std::fs::read_dir(scratch_root) {
+        for e in entries.flatten() {
+            if e.path().join("session.json").is_file() {
+                count += 1;
+            }
+        }
+    }
+    count
 }
 
 /// Launch the dat0 desktop application.
@@ -934,14 +1096,29 @@ pub fn run_app(lock: AppLock, initial_paths: Vec<PathBuf>, main_loop: MainLoop) 
         });
         tracing::debug!(%first_window_id, "run_app: first window registered in WindowRegistry");
 
-        // Scan `$state_root/scratch/*` for orphaned dirs (sessions that
-        // didn't exit cleanly) and emit a single count-based Banner with
-        // a "Review" primary action wired to `recovery.review` (T5).
-        // Per spec §11 exit criterion #4. The per-orphan loop introduced
-        // in T2 is replaced by [`orphan_scan_emit`] which consolidates
-        // N orphans into one banner.
+        // Boot recovery scan (P7c T7): emit ONE consolidated "Review" banner
+        // (wired to `recovery.review`) covering BOTH recovery sources —
+        // orphan scratch dirs under `$state_root/scratch/*` AND interrupted
+        // workspace promotions among the user's recent workspace folders. The
+        // recents come from the canonical singleton installed in main.rs (the
+        // same `AppContext.recents` the rest of the app shares); workspace
+        // entries only — a `Package` recent is not a `.dat0/` promotion.
+        // Per spec §11 exit criterion #4 (extended for P7c workspace recovery).
         let scratch_root = state_root_for_action.join("scratch");
-        let _emitted = orphan_scan_emit(&scratch_root);
+        let recent_roots: Vec<PathBuf> = crate::window_registry::recents()
+            .and_then(|r| {
+                r.lock().ok().map(|g| {
+                    g.list()
+                        .iter()
+                        .filter_map(|e| match e {
+                            crate::recents::RecentEntry::Workspace { path } => Some(path.clone()),
+                            crate::recents::RecentEntry::Package { .. } => None,
+                        })
+                        .collect()
+                })
+            })
+            .unwrap_or_default();
+        let _emitted = recovery_scan_emit(&scratch_root, &recent_roots);
 
         // If CLI paths were supplied on cold start, register them against the
         // first window's session. The WorkspaceShell owns the session, so we
@@ -1222,6 +1399,11 @@ pub struct WorkspaceShell {
     /// Whether the "Save as workspace?" prompt has been shown this session
     /// (in-memory only — never persisted; shows at most once per launch).
     workspace_prompt_shown: bool,
+    /// Live watcher over the active table's source file (P7c). Re-created
+    /// whenever the active table changes (see [`Self::retarget_source_watch`]);
+    /// `None` when the active table has no `File` origin. Dropping the field
+    /// stops the watch.
+    pub(crate) source_watcher: Option<crate::workspace::source_watcher::SourceWatcher>,
 }
 
 impl WorkspaceShell {
@@ -1272,6 +1454,7 @@ impl WorkspaceShell {
             md_token_prompt: None,
             md_token_prompt_sub: None,
             workspace_prompt_shown: false,
+            source_watcher: None,
         }
     }
 
@@ -1908,6 +2091,12 @@ impl WorkspaceShell {
                                 // P6a T9: point the Inspector at the freshly-opened
                                 // table and (lazily) load its profile.
                                 ws.set_inspector_target(name.clone(), cx);
+                                // P7c: re-target the live-data watch onto the
+                                // newly-active table's source file. The catalog
+                                // is already populated for an already-imported
+                                // table being re-opened, so this resolves now;
+                                // `refresh_catalog` retargets again as a backstop.
+                                ws.retarget_source_watch(cx);
                                 cx.notify();
                             });
                         });
@@ -1967,6 +2156,11 @@ impl WorkspaceShell {
                         ws.catalog_tables = tables;
                         ws.sql_parents = sql_parents;
                         ws.recompute_lineage();
+                        // P7c: now that `catalog_tables` is current, (re)target the
+                        // live-data watch onto the active table's source file. This
+                        // is the authoritative retarget point after a fresh import
+                        // (the file-drop mount has stale catalog at mount time).
+                        ws.retarget_source_watch(cx);
                         cx.notify();
                     });
                 });
@@ -2020,6 +2214,226 @@ impl WorkspaceShell {
         if self.inspector.target_table.as_deref() == Some(table) {
             self.load_inspector_profile(cx); // re-SUMMARIZE the now-invalidated table
         }
+        cx.notify();
+    }
+
+    /// The on-disk source path of the currently-mounted table, if it was
+    /// imported from a file (P7c). Matches the active `view_model`'s base table
+    /// against `catalog_tables` on the bare (unquoted) name — the catalog/lineage
+    /// keying used elsewhere (see [`Self::inspector_projection`]). Returns `None`
+    /// when no table is mounted, the table has no `File` origin, or the catalog
+    /// has not yet been refreshed for it.
+    pub(crate) fn active_source_path(&self) -> Option<std::path::PathBuf> {
+        let base = self.view_model.as_ref()?.base_table();
+        let bare = bare_table_name(base);
+        self.catalog_tables.iter().find_map(|t| match &t.origin {
+            dat0_engine::TableOrigin::File(p) if t.name == bare => Some(p.clone()),
+            _ => None,
+        })
+    }
+
+    /// (Re)create the source watcher for the active table (P7c). Drops any
+    /// previous watch first (so switching tables retargets, not stacks). No-op
+    /// (clears the watch) when the active table has no `File` source or the
+    /// source file no longer exists on disk.
+    pub(crate) fn retarget_source_watch(&mut self, cx: &mut Context<Self>) {
+        let Some(path) = self.active_source_path() else {
+            self.source_watcher = None;
+            return;
+        };
+        if !path.exists() {
+            self.source_watcher = None; // file gone → nothing to watch
+            return;
+        }
+        let ws = cx.entity().downgrade();
+        let watcher = crate::workspace::source_watcher::SourceWatcher::start(
+            path.clone(),
+            std::time::Duration::from_millis(500),
+            move |changed| {
+                // Runs on the `dat0-source-debounce` bg thread — must NOT touch
+                // GPUI directly. Hop to the main thread via the dispatcher, then
+                // upgrade the weak shell handle and raise the banner.
+                if let Some(d) = crate::window_registry::dispatcher() {
+                    let ws = ws.clone();
+                    let _ = d.dispatch(move |app| {
+                        if let Some(h) = ws.upgrade() {
+                            h.update(app, |shell, cx| shell.on_source_changed(changed, cx));
+                        }
+                    });
+                }
+            },
+        );
+        match watcher {
+            Ok(w) => self.source_watcher = Some(w),
+            Err(e) => tracing::warn!(error = %e, "failed to start source watcher"),
+        }
+    }
+
+    /// Raise a one-click Refresh banner for an externally-changed source file
+    /// (P7c). De-dups: if a refresh banner for this file's title is already
+    /// present, do nothing (a burst of saves coalesces to a single banner —
+    /// the watcher already debounces, this guards re-raise across drains).
+    pub(crate) fn on_source_changed(&mut self, path: std::path::PathBuf, cx: &mut Context<Self>) {
+        let file = path
+            .file_name()
+            .map(|s| s.to_string_lossy().to_string())
+            .unwrap_or_else(|| path.display().to_string());
+        let title = dat0_i18n::t("livedata.changed.title").replace("{file}", &file);
+        let already = self.banners.iter().any(|b| b.title == title);
+        if already {
+            return;
+        }
+        self.banners.push(
+            crate::error_ux::banner::Banner::warning(title).with_primary(
+                dat0_i18n::t("livedata.changed.refresh"),
+                crate::actions::builtin::ids::LIVE_REFRESH,
+            ),
+        );
+        cx.notify();
+    }
+
+    /// Re-import the active table's source file and replay its structural
+    /// transforms (P7c D3). If the active stack carries rowid-keyed edits
+    /// (`Edit`/`RowDelete`), confirm-discard first via a blocking Dialog — those
+    /// ops can't survive a re-CTAS (the `__dat0_rowid` surrogate regenerates).
+    /// A pure (filter/sort/projection)-only stack proceeds without a prompt.
+    ///
+    /// On success the refresh banner for this file is cleared and the watch is
+    /// re-targeted (an atomic save may have replaced the inode).
+    pub(crate) fn run_refresh(&mut self, cx: &mut Context<Self>) {
+        use dat0_engine::transform::split_replayable;
+        // Resolve the active table's source up front so a no-source tab (e.g. a
+        // SQL-derived table) is a clean no-op rather than half-running.
+        if self.active_source_path().is_none() {
+            return;
+        }
+        let Some(vm) = self.view_model.as_ref() else {
+            return;
+        };
+        let split = split_replayable(vm.stack());
+        if split.has_dropped() {
+            let body = dat0_i18n::t("livedata.refresh.confirm.body")
+                .replace("{edits}", &split.dropped_edits.to_string())
+                .replace("{deletes}", &split.dropped_deletes.to_string());
+            let ws = cx.entity().downgrade();
+            crate::live_refresh_dialog::confirm_discard(cx, body, move |app| {
+                if let Some(h) = ws.upgrade() {
+                    h.update(app, |shell, cx| shell.perform_reimport(cx));
+                }
+            });
+        } else {
+            self.perform_reimport(cx);
+        }
+    }
+
+    /// Off-thread re-CTAS of the active table's source file, then on-main replay
+    /// of the structural stack (P7c). The re-import is idempotent — DuckDB
+    /// `CREATE OR REPLACE TABLE` under the same derived name (see
+    /// [`dat0_engine::QueryEngine::register_file_as_table`]) — so it overwrites
+    /// the base in place and re-injects `__dat0_rowid`. Mirrors the file-drop
+    /// import path's spawn discipline (`tokio::spawn` + `window_registry`
+    /// dispatcher + upgraded weak shell handle).
+    pub(crate) fn perform_reimport(&mut self, cx: &mut Context<Self>) {
+        use dat0_engine::transform::split_replayable;
+        let Some(path) = self.active_source_path() else {
+            return;
+        };
+        let Some(vm) = self.view_model.as_ref() else {
+            return;
+        };
+        let replayable = split_replayable(vm.stack()).replayable;
+        let engine = self.engine();
+        let ws = cx.entity().downgrade();
+        let file = path.file_name().map(|s| s.to_string_lossy().to_string());
+
+        tokio::spawn(async move {
+            use dat0_engine::QueryEngine as _;
+            let opts = dat0_engine::RegisterOpts::default();
+            let result = engine.register_file_as_table(&path, opts).await;
+            if let Some(d) = crate::window_registry::dispatcher() {
+                let _ = d.dispatch(move |app| {
+                    let Some(h) = ws.upgrade() else {
+                        return;
+                    };
+                    h.update(app, |shell, cx| match result {
+                        Ok(info) => {
+                            let columns: Vec<String> =
+                                info.columns.iter().map(|c| c.name.clone()).collect();
+                            shell.apply_refresh_replay(replayable, columns, file, cx);
+                        }
+                        Err(e) => {
+                            tracing::warn!(error = %e, "live re-import failed");
+                            shell.banners.push(crate::error_ux::Banner::error(
+                                dat0_i18n::t("livedata.reimport.failed.title"),
+                                format!("{e}"),
+                            ));
+                            cx.notify();
+                        }
+                    });
+                });
+            } else {
+                tracing::warn!(
+                    "perform_reimport: no MainThreadDispatcher installed; re-import result dropped"
+                );
+            }
+        });
+    }
+
+    /// On the main thread: replay the structural ops onto the freshly re-imported
+    /// base via the force-rebind primitive ([`ViewModel::reset_to_replayed`]),
+    /// drive the engine round-trip, and clear the refresh banner (P7c).
+    ///
+    /// **Schema-drift guard (D3):** the replayable ops are column-keyed. If a
+    /// `Filter`/`Sort` op references a column that the re-imported file no longer
+    /// has (a rename or drop upstream), the replayed `SELECT` would fail at engine
+    /// execute time — `spawn_view_change` only logs that failure, leaving the grid
+    /// silently un-rebound. So we pre-validate every column reference against the
+    /// fresh column set BEFORE `reset_to_replayed`; on any miss we land on the
+    /// bare base (no transforms) plus a schema-drift warning banner. (Note:
+    /// `compile_view_sql` is a pure string renderer and does NOT know the schema,
+    /// so it can't be the guard — the column-set check is the real validation.)
+    pub(crate) fn apply_refresh_replay(
+        &mut self,
+        replayable: Vec<dat0_engine::transform::Transformation>,
+        columns: Vec<String>,
+        file: Option<String>,
+        cx: &mut Context<Self>,
+    ) {
+        let (replayable, drifted) = partition_replay_on_drift(replayable, &columns);
+        if drifted {
+            tracing::warn!("live replay schema drift; landing on bare base");
+            self.banners
+                .push(crate::error_ux::Banner::warning(dat0_i18n::t(
+                    "livedata.replay.schema_drift",
+                )));
+        }
+
+        let Some(vm) = self.view_model.as_mut() else {
+            return;
+        };
+        let change = vm.reset_to_replayed(replayable);
+        let base = vm.base_table().to_string();
+        let engine = self.engine();
+        let ws = cx.entity().downgrade();
+        crate::view::spawn_view_change(
+            engine,
+            base,
+            change,
+            std::sync::Arc::new(move |new_ds, app_cx| {
+                if let Some(h) = ws.upgrade() {
+                    h.update(app_cx, |shell, cx| shell.apply_view_change(new_ds, cx));
+                }
+            }),
+        );
+
+        // Drop the refresh banner(s) this file raised — the click is resolved.
+        if let Some(file) = file {
+            let title = dat0_i18n::t("livedata.changed.title").replace("{file}", &file);
+            self.banners.retain(|b| b.title != title);
+        }
+        // An atomic save (write-temp + rename) replaces the watched inode, so the
+        // old watch is now dead — re-target it at the live path.
+        self.retarget_source_watch(cx);
         cx.notify();
     }
 
@@ -3965,5 +4379,131 @@ impl Render for WorkspaceShell {
             .children(name_prompt_overlay)
             .children(saved_picker_overlay)
             .children(md_token_prompt_overlay)
+            // Mount gpui-component's overlay layers (P7c T8). `Root::render`
+            // paints ONLY `self.view`; it does NOT auto-mount the sheet/dialog
+            // layers, so without these two lines `open_sheet_at` (the Recovery
+            // Sheet) and `open_dialog` (the P7b conflict / same-machine modals +
+            // the T6 live-refresh confirm) set their `active_*` state but paint
+            // NOTHING. Pattern mirrors gpui-component's own `story/src/lib.rs`.
+            // Both return `Option<impl IntoElement>` → `.children(...)`.
+            .children(Root::render_sheet_layer(window, cx))
+            .children(Root::render_dialog_layer(window, cx))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::bare_table_name;
+
+    #[test]
+    fn bare_table_name_strips_quotes_and_schema() {
+        // ViewModel::base_table() is quoted + may be schema-qualified.
+        assert_eq!(bare_table_name("\"main\".\"orders\""), "orders");
+        // Bare quoted name (no schema qualifier).
+        assert_eq!(bare_table_name("\"orders\""), "orders");
+        // Already bare/unquoted — identity.
+        assert_eq!(bare_table_name("orders"), "orders");
+        // Embedded dots only appear as the schema separator in this layer, so
+        // the last segment is the table; quotes are trimmed from both ends.
+        assert_eq!(bare_table_name("\"my_db\".\"main\".\"sales\""), "sales");
+    }
+}
+
+#[cfg(test)]
+mod live_refresh_tests {
+    //! Pure decision tests for the live re-import flow (P7c T6). The clickable
+    //! Dialog (`confirm_discard`) and the engine round-trip are UAT — these cover
+    //! the two pure gates: (1) whether `split_replayable().has_dropped()` drives
+    //! the confirm prompt, and (2) the schema-drift column-existence guard.
+    use super::partition_replay_on_drift;
+    use dat0_engine::transform::{
+        CellEdit, RowKey, Scalar, SortDirection, SortKey, Transformation, split_replayable,
+    };
+
+    fn one_cell_edit() -> Transformation {
+        Transformation::Edit {
+            cells: vec![CellEdit {
+                row: RowKey::Surrogate { id: 7 },
+                column: "amount".into(),
+                value: Scalar::Int(42),
+            }],
+        }
+    }
+
+    fn sort_on(col: &str) -> Transformation {
+        Transformation::Sort {
+            keys: vec![SortKey {
+                column: col.into(),
+                direction: SortDirection::Asc,
+            }],
+        }
+    }
+
+    /// The confirm dialog must fire iff the stack carries rowid-keyed ops
+    /// (`Edit`/`RowDelete`) — those can't survive a re-CTAS. A column-keyed-only
+    /// stack (e.g. a lone Sort) refreshes silently.
+    #[test]
+    fn refresh_needs_confirm_only_when_rowid_ops_present() {
+        // One real cell edit + a sort → has dropped (Edit), confirm required.
+        let mixed = vec![one_cell_edit(), sort_on("amount")];
+        let split = split_replayable(&mixed);
+        assert!(
+            split.has_dropped(),
+            "an Edit in the stack must require confirm"
+        );
+        assert_eq!(split.dropped_edits, 1);
+        assert_eq!(split.dropped_deletes, 0);
+        // The Sort survives into the replayable set.
+        assert_eq!(split.replayable, vec![sort_on("amount")]);
+
+        // Sort-only stack → nothing dropped, no confirm.
+        let pure = vec![sort_on("amount")];
+        let split = split_replayable(&pure);
+        assert!(
+            !split.has_dropped(),
+            "a column-keyed-only stack refreshes without a prompt"
+        );
+    }
+
+    /// The schema-drift guard: a Filter/Sort referencing a column the re-imported
+    /// file no longer has → drop to bare base (empty ops) + drift flag. Present
+    /// columns replay unchanged.
+    #[test]
+    fn schema_drift_lands_on_bare_base_when_column_missing() {
+        let columns = vec!["id".to_string(), "amount".to_string()];
+
+        // Sort on a present column → kept, no drift.
+        let (ops, drifted) = partition_replay_on_drift(vec![sort_on("amount")], &columns);
+        assert!(!drifted);
+        assert_eq!(ops, vec![sort_on("amount")]);
+
+        // Filter on a now-missing column → drift, land on bare base.
+        let filter_missing = Transformation::Filter {
+            column: "removed_col".into(),
+            op: dat0_engine::transform::FilterOp::IsNotEmpty,
+            value: dat0_engine::transform::FilterValue::None,
+        };
+        let (ops, drifted) = partition_replay_on_drift(vec![filter_missing], &columns);
+        assert!(drifted, "a filter on a dropped column is schema drift");
+        assert!(ops.is_empty(), "drift lands on the bare base (no ops)");
+
+        // Sort key on a missing column → drift too.
+        let (ops, drifted) = partition_replay_on_drift(vec![sort_on("gone")], &columns);
+        assert!(drifted);
+        assert!(ops.is_empty());
+    }
+
+    /// Display-only projection ops never reach the executed SQL, so a stale
+    /// column reference in them is NOT drift (the grid fold ignores unknowns).
+    #[test]
+    fn projection_ops_referencing_missing_columns_are_not_drift() {
+        let columns = vec!["id".to_string()];
+        let rename_stale = Transformation::Rename {
+            column: "old_name".into(), // not in `columns`
+            to: "shiny".into(),
+        };
+        let (ops, drifted) = partition_replay_on_drift(vec![rename_stale.clone()], &columns);
+        assert!(!drifted, "display-only ops can't cause an engine error");
+        assert_eq!(ops, vec![rename_stale]);
     }
 }

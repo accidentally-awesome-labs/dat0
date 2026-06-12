@@ -158,6 +158,39 @@ pub fn merge_pending(live: &mut Vec<Banner>) {
 }
 
 use gpui::{IntoElement, ParentElement, Styled, div, px};
+use gpui_component::button::{Button, ButtonVariants as _};
+
+/// Build a clickable button for a stored [`BannerAction`], dispatching its
+/// `action_id` through the global [`crate::actions::registry::ActionRegistry`]
+/// on click (D-021). `primary` styles the button as the prominent variant; a
+/// secondary action renders ghost.
+///
+/// The third `on_click` arg is `&mut gpui::App`, which is exactly what an
+/// [`ActionDescriptor::dispatch`](crate::actions::registry::ActionDescriptor)
+/// closure consumes — so `(desc.dispatch)(cx)` type-checks with no extra hop.
+fn action_button(act: &BannerAction, primary: bool) -> Button {
+    let aid = act.action_id.clone();
+    let id = if primary {
+        "banner-act-primary"
+    } else {
+        "banner-act-secondary"
+    };
+    let btn = Button::new(id)
+        .label(act.label.clone())
+        .on_click(move |_ev, _window, cx| {
+            if let Some(reg) = crate::window_registry::action_registry() {
+                if let Some(desc) = reg.get(&crate::actions::registry::ActionId::from(aid.as_str()))
+                {
+                    (desc.dispatch)(cx);
+                } else {
+                    tracing::warn!(action_id = %aid, "banner action not registered");
+                }
+            } else {
+                tracing::warn!(action_id = %aid, "no action registry installed");
+            }
+        });
+    if primary { btn.primary() } else { btn.ghost() }
+}
 
 /// Render one banner as an inline notice. Kind drives the accent color.
 pub fn render_banner(b: &Banner) -> impl IntoElement {
@@ -166,6 +199,26 @@ pub fn render_banner(b: &Banner) -> impl IntoElement {
         BannerKind::Warning => gpui::rgb(0xd97706),
         BannerKind::Error => gpui::rgb(0xdc2626),
     };
+
+    // Action button row (D-021): rendered only when at least one action is set,
+    // so title-only banners keep their prior layout exactly.
+    let buttons = (b.primary.is_some() || b.secondary.is_some()).then(|| {
+        div()
+            .flex()
+            .gap_2()
+            .pt_1()
+            .children(
+                b.primary
+                    .as_ref()
+                    .map(|a| action_button(a, true).into_any_element()),
+            )
+            .children(
+                b.secondary
+                    .as_ref()
+                    .map(|a| action_button(a, false).into_any_element()),
+            )
+    });
+
     div()
         .flex()
         .flex_col()
@@ -182,6 +235,7 @@ pub fn render_banner(b: &Banner) -> impl IntoElement {
                 .child(b.title.clone()),
         )
         .children((!b.body.is_empty()).then(|| div().text_size(px(12.0)).child(b.body.clone())))
+        .children(buttons)
 }
 
 #[cfg(test)]
@@ -217,5 +271,32 @@ mod tests {
         merge_pending(&mut live);
         assert_eq!(live.len(), 2, "both pending banners moved into live vec");
         assert!(drain_pending().is_empty(), "PENDING drained after merge");
+    }
+
+    /// D-021 (T3): a banner's stored `primary` action id must resolve back to a
+    /// registered [`ActionDescriptor`] so the rendered button can dispatch it.
+    /// This is the headless-safe half of the contract — the actual click→render
+    /// is a UAT item (no GPUI `App` is fabricated here).
+    #[test]
+    fn banner_primary_action_id_resolves_in_registry() {
+        use crate::actions::registry::{ActionDescriptor, ActionGroup, ActionId, ActionRegistry};
+        use std::sync::Arc;
+
+        let reg = ActionRegistry::new();
+        reg.register(ActionDescriptor {
+            id: ActionId::from("test.banner_action"),
+            title: "T".into(),
+            group: ActionGroup::Recovery,
+            keybinding: None,
+            dispatch: Arc::new(|_app| {}),
+        })
+        .unwrap();
+
+        let b = Banner::warning("changed").with_primary("Refresh", "test.banner_action");
+        let aid = b.primary.as_ref().unwrap().action_id.clone();
+        let desc = reg
+            .get(&ActionId::from(aid.as_str()))
+            .expect("primary action id resolves to a registered descriptor");
+        assert_eq!(desc.title, "T");
     }
 }
