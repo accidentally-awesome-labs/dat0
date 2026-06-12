@@ -4340,6 +4340,15 @@ impl Render for WorkspaceShell {
             .children(name_prompt_overlay)
             .children(saved_picker_overlay)
             .children(md_token_prompt_overlay)
+            // Mount gpui-component's overlay layers (P7c T8). `Root::render`
+            // paints ONLY `self.view`; it does NOT auto-mount the sheet/dialog
+            // layers, so without these two lines `open_sheet_at` (the Recovery
+            // Sheet) and `open_dialog` (the P7b conflict / same-machine modals +
+            // the T6 live-refresh confirm) set their `active_*` state but paint
+            // NOTHING. Pattern mirrors gpui-component's own `story/src/lib.rs`.
+            // Both return `Option<impl IntoElement>` → `.children(...)`.
+            .children(Root::render_sheet_layer(window, cx))
+            .children(Root::render_dialog_layer(window, cx))
     }
 }
 

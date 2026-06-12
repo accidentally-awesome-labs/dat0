@@ -133,5 +133,12 @@
   "recovery.banner.title": "{count} item(s) to recover from a previous session",
   "recovery.banner.body": "Restore them or discard them.",
   "recovery.banner.review": "Review",
+  "recovery.sheet.title": "Recover unfinished work",
+  "recovery.sheet.orphans": "Orphaned sessions",
+  "recovery.sheet.incomplete": "Interrupted workspaces",
+  "recovery.row.open": "Open",
+  "recovery.row.resume": "Resume",
+  "recovery.row.discard": "Discard",
+  "recovery.row.incomplete_suffix": "(promote didn't finish)",
   "common.cancel": "Cancel"
 }

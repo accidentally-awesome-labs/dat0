@@ -145,6 +145,32 @@ pub fn recents() -> Option<Arc<std::sync::Mutex<crate::recents::Recents>>> {
     RECENTS.get().cloned()
 }
 
+/// Snapshot the recent **workspace** roots (one `PathBuf` per
+/// [`RecentEntry::Workspace`](crate::recents::RecentEntry::Workspace), in
+/// recents order). `Package` recents are excluded — only `.dat0/` workspace
+/// folders can be an interrupted promotion. Returns an empty `Vec` if the
+/// recents store isn't installed yet or its lock is poisoned.
+///
+/// Mirrors the boot-scan extraction in
+/// [`crate::window::run_app`](crate::window) so the Recovery Sheet
+/// (`recovery_panel::collect_rows`) sees exactly the same candidate set as
+/// the boot banner.
+pub fn recents_snapshot() -> Vec<PathBuf> {
+    recents()
+        .and_then(|r| {
+            r.lock().ok().map(|g| {
+                g.list()
+                    .iter()
+                    .filter_map(|e| match e {
+                        crate::recents::RecentEntry::Workspace { path } => Some(path.clone()),
+                        crate::recents::RecentEntry::Package { .. } => None,
+                    })
+                    .collect()
+            })
+        })
+        .unwrap_or_default()
+}
+
 /// Tracks a live GPUI window in the process-wide registry.
 // NOTE: `gpui::AnyWindowHandle` does not implement `Debug`, so we implement
 // `Debug` manually to keep the struct debuggable without the derive. (P7b T8)
