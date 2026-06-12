@@ -28,8 +28,8 @@ pub use profile::{ColumnProfile, LengthStats, NumericStats, TableProfile};
 pub use render::{RenderError, compile_view_sql, render_export_select};
 pub use trait_def::QueryEngine;
 pub use transform::{
-    CellEdit, FilterOp, FilterValue, ProjectionColumn, ROWID_COL, RowKey, Scalar, SortDirection,
-    SortKey, Transformation,
+    CellEdit, FilterOp, FilterValue, ProjectionColumn, ROWID_COL, ReplaySplit, RowKey, Scalar,
+    SortDirection, SortKey, Transformation, split_replayable,
 };
 pub use types::{
     ArrowRecordBatchStream, AttachOpts, ColumnInfo, DerivedOrigin, EngineStatus, ExportFormat,

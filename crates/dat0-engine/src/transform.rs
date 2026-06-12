@@ -95,6 +95,58 @@ pub enum Transformation {
     },
 }
 
+/// Partition of a transform stack for live re-import replay (P7c D3).
+///
+/// Column-keyed ops (`Filter`/`Sort`/`Reorder`/`Rename`/`DeleteColumn`) reference
+/// column names and replay cleanly onto a re-imported base. Rowid-keyed ops
+/// (`Edit`/`RowDelete`) reference `__dat0_rowid` surrogates ([`ROWID_COL`]) that a
+/// re-CTAS regenerates, so they cannot be safely carried over and are dropped.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ReplaySplit {
+    pub replayable: Vec<Transformation>,
+    pub dropped_edits: usize,
+    pub dropped_deletes: usize,
+}
+
+impl ReplaySplit {
+    pub fn has_dropped(&self) -> bool {
+        self.dropped_edits > 0 || self.dropped_deletes > 0
+    }
+}
+
+/// Split a transform stack into the column-keyed ops that survive a re-import
+/// and counts of the rowid-keyed ops that must be discarded.
+///
+/// The match is intentionally EXHAUSTIVE (one arm per `Transformation` variant,
+/// no catch-all) so that adding a new variant forces a compile error here until
+/// it is explicitly classified. This is a correctness guard: a rowid-keyed op
+/// that silently leaked into `replayable` would re-bind stale `__dat0_rowid`
+/// surrogates against a regenerated base and corrupt data.
+pub fn split_replayable(ops: &[Transformation]) -> ReplaySplit {
+    let mut replayable = Vec::new();
+    let mut dropped_edits = 0;
+    let mut dropped_deletes = 0;
+    for op in ops {
+        match op {
+            // Rowid-keyed: reference `__dat0_rowid` surrogates (regenerated on
+            // re-CTAS) → cannot survive, dropped.
+            Transformation::Edit { .. } => dropped_edits += 1,
+            Transformation::RowDelete { .. } => dropped_deletes += 1,
+            // Column-keyed / structural: reference column names, replay cleanly.
+            Transformation::Filter { .. }
+            | Transformation::Sort { .. }
+            | Transformation::Reorder { .. }
+            | Transformation::Rename { .. }
+            | Transformation::DeleteColumn { .. } => replayable.push(op.clone()),
+        }
+    }
+    ReplaySplit {
+        replayable,
+        dropped_edits,
+        dropped_deletes,
+    }
+}
+
 /// A visible column for projection rendering: its stable `source` identity and
 /// its current `display` label. Used by export (`render_export_select`) and by
 /// the app's grid `ColumnView` fold.
@@ -259,4 +311,57 @@ pub struct SortKey {
 pub enum SortDirection {
     Asc,
     Desc,
+}
+
+#[cfg(test)]
+mod replay_split_tests {
+    use super::*;
+
+    fn edit() -> Transformation {
+        Transformation::Edit {
+            cells: vec![CellEdit {
+                row: RowKey::Surrogate { id: 1 },
+                column: "a".into(),
+                value: Scalar::Null,
+            }],
+        }
+    }
+    fn filter() -> Transformation {
+        Transformation::Filter {
+            column: "a".into(),
+            op: FilterOp::Eq,
+            value: FilterValue::Scalar {
+                value: Scalar::Str("x".into()),
+            },
+        }
+    }
+    fn delete() -> Transformation {
+        Transformation::RowDelete {
+            rows: vec![RowKey::Surrogate { id: 7 }],
+        }
+    }
+
+    #[test]
+    fn keeps_column_keyed_drops_rowid_keyed() {
+        let stack = vec![
+            filter(),
+            edit(),
+            delete(),
+            Transformation::Sort { keys: vec![] },
+        ];
+        let split = split_replayable(&stack);
+        assert_eq!(split.replayable.len(), 2, "filter + sort survive");
+        assert!(matches!(split.replayable[0], Transformation::Filter { .. }));
+        assert!(matches!(split.replayable[1], Transformation::Sort { .. }));
+        assert_eq!(split.dropped_edits, 1);
+        assert_eq!(split.dropped_deletes, 1);
+        assert!(split.has_dropped());
+    }
+
+    #[test]
+    fn empty_when_nothing_to_drop() {
+        let split = split_replayable(&[filter()]);
+        assert!(!split.has_dropped());
+        assert_eq!(split.replayable.len(), 1);
+    }
 }
