@@ -207,9 +207,8 @@ fn open_workspace_proceed(cx: &mut App, folder: PathBuf, networked: bool) {
     spawn_workspace_window(cx, folder, guard);
 }
 
-/// Same-machine in-process: offer to focus the existing window. The actual
-/// window activation is wired in T8 (`bring_workspace_to_front`); for now that
-/// helper is a stub, so Focus-existing is a no-op until T8.
+/// Same-machine in-process: offer to focus the existing window. On confirm,
+/// `bring_workspace_to_front` raises the registry-resolved window (P7b T8).
 fn focus_existing_workspace(cx: &mut App, folder: &std::path::Path) {
     let folder = folder.to_path_buf();
     crate::workspace_in_use_modal::open_same_machine_dialog(cx, move |cx| {
@@ -217,8 +216,22 @@ fn focus_existing_workspace(cx: &mut App, folder: &std::path::Path) {
     });
 }
 
-/// Bring the existing window backing `folder` to the foreground (T8 fills this in).
-pub(crate) fn bring_workspace_to_front(_cx: &mut App, _folder: &std::path::Path) {}
+/// Bring the existing window backing `folder` to the foreground (P7b T8).
+/// Resolves the target handle from the registry (NOT `active_window()`, which
+/// is whatever is platform-focused) and raises it; also brings the app forward.
+pub(crate) fn bring_workspace_to_front(cx: &mut App, folder: &std::path::Path) {
+    cx.activate(true); // app to foreground (macOS) — already used at boot
+    let Some(reg) = crate::window_registry::window_registry() else {
+        return;
+    };
+    let handle = reg.lock().gpui_handle_by_workspace(folder);
+    if let Some(handle) = handle {
+        // T0 §7.3 confirmed: raise a specific window via its handle.
+        let _ = handle.update(cx, |_root, window, _cx| {
+            window.activate_window();
+        });
+    }
+}
 
 /// Open a new window backed by a `.dat0/` workspace at `folder`.
 ///
@@ -432,30 +445,32 @@ fn open_window_view(
     registry: Arc<Mutex<WindowRegistry>>,
 ) {
     let bounds = Bounds::centered(None, size(px(1200.), px(800.)), cx);
-    cx.open_window(
-        WindowOptions {
-            window_bounds: Some(WindowBounds::Windowed(bounds)),
-            titlebar: Some(TitlebarOptions {
-                title: Some(t("app.name").into()),
+    let gpui_window = cx
+        .open_window(
+            WindowOptions {
+                window_bounds: Some(WindowBounds::Windowed(bounds)),
+                titlebar: Some(TitlebarOptions {
+                    title: Some(t("app.name").into()),
+                    ..Default::default()
+                }),
                 ..Default::default()
-            }),
-            ..Default::default()
-        },
-        move |window, cx| {
-            let view = cx.new(|cx| {
-                let mut shell = WorkspaceShell::new(Arc::clone(&session), cx);
-                shell.reconnect_persisted_md(cx);
-                shell
-            });
-            crate::window_registry::install_focused_workspace(view.downgrade().into());
-            cx.new(|cx| Root::new(view, window, cx))
-        },
-    )
-    .expect("open window");
+            },
+            move |window, cx| {
+                let view = cx.new(|cx| {
+                    let mut shell = WorkspaceShell::new(Arc::clone(&session), cx);
+                    shell.reconnect_persisted_md(cx);
+                    shell
+                });
+                crate::window_registry::install_focused_workspace(view.downgrade().into());
+                cx.new(|cx| Root::new(view, window, cx))
+            },
+        )
+        .expect("open window");
 
     registry.lock().register(WindowHandle {
         window_id,
         workspace_path,
+        gpui_handle: Some(gpui_window.into()), // WindowHandle<Root> -> AnyWindowHandle
     });
     tracing::debug!(%window_id, "open_window_view: window registered");
 }
@@ -915,6 +930,7 @@ pub fn run_app(lock: AppLock, initial_paths: Vec<PathBuf>, main_loop: MainLoop) 
         registry_for_run.lock().register(WindowHandle {
             window_id: first_window_id,
             workspace_path: None,
+            gpui_handle: Some(first_window.into()),
         });
         tracing::debug!(%first_window_id, "run_app: first window registered in WindowRegistry");
 
