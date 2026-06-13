@@ -131,7 +131,5 @@ pub struct ParsedPackage {
     pub sources: Sources,
     pub views: Views,
     pub queries: Queries,
-    // Read by the reader's lazy data-extraction path (lands in a later P8 task).
-    #[allow(dead_code)]
     pub(crate) zip_path: std::path::PathBuf, // for lazy data extraction
 }
