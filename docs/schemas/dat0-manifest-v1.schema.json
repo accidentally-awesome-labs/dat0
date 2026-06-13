@@ -1,0 +1,58 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://dat0.dev/format/v1/dat0-manifest-v1.schema.json",
+  "title": "dat0 package manifest (format v1)",
+  "description": "Ratified schema for the `manifest.json` entry of a `.dat0` package. See docs/dat0-format-v1.md §3.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "format_version",
+    "kind",
+    "dat0_version",
+    "package_id",
+    "workspace_id",
+    "created_at",
+    "table_count",
+    "checksums"
+  ],
+  "properties": {
+    "format_version": {
+      "description": "Package format major version. MUST be 1 for this schema.",
+      "const": 1
+    },
+    "kind": {
+      "description": "Container discriminator. MUST be \"package\".",
+      "const": "package"
+    },
+    "dat0_version": {
+      "description": "Version of the dat0 build that produced this package.",
+      "type": "string"
+    },
+    "package_id": {
+      "description": "UUID (v7) identifying this package.",
+      "type": "string",
+      "format": "uuid"
+    },
+    "workspace_id": {
+      "description": "UUID of the origin workspace (provenance).",
+      "type": "string",
+      "format": "uuid"
+    },
+    "created_at": {
+      "description": "Package creation timestamp (RFC 3339).",
+      "type": "string"
+    },
+    "table_count": {
+      "description": "Number of tables in the recipe.",
+      "type": "integer",
+      "minimum": 0
+    },
+    "checksums": {
+      "description": "Map of in-archive entry path -> \"sha256:<hex>\". MUST cover every data/*.parquet entry and recipe.json.",
+      "type": "object",
+      "additionalProperties": {
+        "type": "string"
+      }
+    }
+  }
+}

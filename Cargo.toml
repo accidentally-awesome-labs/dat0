@@ -79,6 +79,16 @@ reqwest = { version = "0.12", default-features = false, features = ["rustls-tls"
 # samples cache.
 sha2 = "0.10"
 
+# P8 T1: `.dat0` package container. Pin proven by the P8 T0 spike
+# (docs/internal/2026-06-13-p8-spike-notes.md §S2): default-features off drops
+# the heavy zstd/lzma/xz/bzip2 codecs we don't need; `deflate-flate2-zlib-rs`
+# selects the pure-Rust zlib backend (the bare `deflate-flate2` feature fails to
+# compile — "No compression backend selected"). Stored Parquet + Deflated JSON.
+zip = { version = "8.6.0", default-features = false, features = ["deflate-flate2-zlib-rs"] }
+
+# P8 T1: validate a serialized manifest against the published JSON Schema (dev/test only).
+jsonschema = "0.36"
+
 # P3b T8: dev-only HTTP mock server for sample_data_fetch tests.
 mockito = "1"
 
