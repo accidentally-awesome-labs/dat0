@@ -7,6 +7,7 @@
 //! the test weight.
 use gpui::{IntoElement, ParentElement, Styled, div, px};
 
+pub mod data;
 pub mod query;
 pub mod spec;
 
