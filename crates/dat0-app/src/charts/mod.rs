@@ -7,6 +7,8 @@
 //! the test weight.
 use gpui::{IntoElement, ParentElement, Styled, div, px};
 
+pub mod spec;
+
 #[derive(Debug, Clone, PartialEq)]
 pub struct Bin {
     pub lo: f64,
