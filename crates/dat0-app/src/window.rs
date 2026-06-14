@@ -493,7 +493,7 @@ pub(crate) fn open_recent_n(cx: &mut App, idx: usize) {
 /// integer seconds string is acceptable for P7a (the manifest timestamp is
 /// informational, not load-bearing). T12 can upgrade to RFC3339 once a time
 /// dep is added.
-fn now_epoch_secs() -> String {
+pub(crate) fn now_epoch_secs() -> String {
     use std::time::{SystemTime, UNIX_EPOCH};
     format!(
         "{}",

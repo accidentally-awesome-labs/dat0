@@ -121,6 +121,7 @@ rusqlite = { version = "0.31", features = ["bundled"] }
 
 # Internal crates
 dat0-engine = { path = "crates/dat0-engine" }
+dat0-format = { path = "crates/dat0-format" }
 dat0-i18n = { path = "crates/dat0-i18n" }
 dat0-keychain = { path = "crates/dat0-keychain" }
 

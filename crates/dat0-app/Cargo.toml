@@ -37,9 +37,12 @@ gpui-component = { workspace = true }
 lsp-types = "=0.97.0"
 ropey = "=2.0.0-beta.1"
 dat0-engine = { workspace = true }
+dat0-format = { workspace = true }
 duckdb = { workspace = true }
 dat0-i18n = { workspace = true }
 dat0-keychain = { workspace = true }
+# P8 T4: headless CLI front-door (export/unpack/inspect/replay/diff) parsing.
+clap = { workspace = true }
 fs4 = { workspace = true }
 gethostname = { workspace = true }
 libc = { workspace = true }

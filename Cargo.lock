@@ -1739,8 +1739,10 @@ name = "dat0-app"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "clap",
  "criterion",
  "dat0-engine",
+ "dat0-format",
  "dat0-i18n",
  "dat0-keychain",
  "dirs 5.0.1",
