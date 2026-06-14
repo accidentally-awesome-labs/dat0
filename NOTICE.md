@@ -309,6 +309,7 @@ Used by:
 - core-graphics2 0.4.1 — https://github.com/rust-media/apple-media-rs
 - core-graphics 0.23.2 — https://github.com/servo/core-foundation-rs
 - core-graphics 0.24.0 — https://github.com/servo/core-foundation-rs
+- core-text 20.1.0 — https://github.com/servo/core-foundation-rs
 - core-text 21.0.0 — https://github.com/servo/core-foundation-rs
 - core-video 0.4.3 — https://github.com/rust-media/apple-media-rs
 - crossbeam-channel 0.5.15 — https://github.com/crossbeam-rs/crossbeam
@@ -331,6 +332,7 @@ Used by:
 - filetime 0.2.27 — https://github.com/alexcrichton/filetime
 - flate2 1.1.9 — https://github.com/rust-lang/flate2-rs
 - fnv 1.0.7 — https://github.com/servo/rust-fnv
+- font-kit 0.14.3 — https://github.com/servo/font-kit
 - form_urlencoded 1.2.2 — https://github.com/servo/rust-url
 - fs4 0.9.1 — https://github.com/al8n/fs4-rs
 - futf 0.1.5 — https://github.com/servo/futf
@@ -354,6 +356,7 @@ Used by:
 - itertools 0.11.0 — https://github.com/rust-itertools/itertools
 - itertools 0.13.0 — https://github.com/rust-itertools/itertools
 - itertools 0.14.0 — https://github.com/rust-itertools/itertools
+- jpeg-decoder 0.3.2 — https://github.com/image-rs/jpeg-decoder
 - lazy_static 1.5.0 — https://github.com/rust-lang-nursery/lazy-static.rs
 - linux-raw-sys 0.12.1 — https://github.com/sunfishcode/linux-raw-sys
 - linux-raw-sys 0.4.15 — https://github.com/sunfishcode/linux-raw-sys
@@ -602,8 +605,10 @@ Used by:
 - async-trait 0.1.89 — https://github.com/dtolnay/async-trait
 - dirs-sys 0.3.7 — https://github.com/dirs-dev/dirs-sys-rs
 - dirs-sys 0.4.1 — https://github.com/dirs-dev/dirs-sys-rs
+- dirs-sys 0.5.0 — https://github.com/dirs-dev/dirs-sys-rs
 - dirs 4.0.0 — https://github.com/soc/dirs-rs
 - dirs 5.0.1 — https://github.com/soc/dirs-rs
+- dirs 6.0.0 — https://github.com/soc/dirs-rs
 - dtor-proc-macro 0.0.5 — https://github.com/mmastrac/rust-ctor
 - dtor 0.0.6 — https://github.com/mmastrac/rust-ctor
 - dunce 1.0.5 — https://gitlab.com/kornelski/dunce
@@ -616,6 +621,7 @@ Used by:
 - gpu-alloc 0.6.0 — https://github.com/zakarumych/gpu-alloc
 - half 2.7.1 — https://github.com/VoidStarKat/half-rs
 - image-webp 0.2.4 — https://github.com/image-rs/image-webp
+- image 0.24.9 — https://github.com/image-rs/image
 - image 0.25.10 — https://github.com/image-rs/image
 - interprocess 2.4.2 — https://github.com/kotauskas/interprocess
 - inventory 0.3.24 — https://github.com/dtolnay/inventory
@@ -1201,6 +1207,10 @@ Used by:
 - objc2-encode 4.1.0 — https://github.com/madsmtm/objc2
 - objc2-foundation 0.3.2 — https://github.com/madsmtm/objc2
 - objc2 0.6.4 — https://github.com/madsmtm/objc2
+- plotters-backend 0.3.7 — https://github.com/plotters-rs/plotters
+- plotters-bitmap 0.3.7 — https://github.com/plotters-rs/plotters
+- plotters-svg 0.3.7 — https://github.com/plotters-rs/plotters.git
+- plotters 0.3.7 — https://github.com/plotters-rs/plotters
 - rust-i18n-macro 3.1.5 — https://github.com/longbridge/rust-i18n
 - rust-i18n-support 3.1.5 — https://github.com/longbridge/rust-i18n
 - seahash 4.1.0 — https://gitlab.redox-os.org/redox-os/seahash

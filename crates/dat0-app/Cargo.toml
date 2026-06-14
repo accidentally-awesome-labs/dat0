@@ -65,6 +65,14 @@ tree-sitter-sequel = "0.3.8"
 # P9a Charts: render the 7 chart types to a bitmap buffer (BGRA→GPUI img) +
 # PNG/SVG export. See workspace Cargo.toml for the feature rationale.
 plotters = { workspace = true }
+# P9a T7 wiring: build a gpui `RenderImage` from the chart's BGRA buffer.
+# `RenderImage::new` takes `SmallVec<[image::Frame; 1]>`, and `Frame::new`
+# wraps an `image::ImageBuffer`. These are gpui 0.2.2's exact transitive deps
+# (gpui declares `image = "0.25.1"`, `smallvec = "1.6"`); pin to compatible
+# ranges so Cargo resolves a SINGLE copy shared with gpui (verified: both
+# resolve to image 0.25.10 + smallvec 1.15.1) — no second image/smallvec copy.
+image = { version = "0.25", default-features = false }
+smallvec = "1"
 
 [dev-dependencies]
 tempfile = { workspace = true }

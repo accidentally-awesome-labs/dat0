@@ -43,6 +43,8 @@ pub mod ids {
     pub const VIEW_DELETE_COLUMN: &str = "view.delete_column";
     // P4c T11: File → Export… dialog.
     pub const VIEW_EXPORT: &str = "view.export";
+    // P9a T7: Charts → Visualize (toggle the right-dock chart panel).
+    pub const CHART_VISUALIZE: &str = "chart.visualize";
     // P5a T11: SQL Console entry points (toggle / run / cancel / tab lifecycle).
     pub const CONSOLE_TOGGLE: &str = "console.toggle";
     pub const SQL_RUN: &str = "sql.run";
