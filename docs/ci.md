@@ -153,7 +153,7 @@ on:
 If self-hosted Linux Test step OOMs during dev-profile link, three knobs
 in order of preference:
 
-1. **Workspace `Cargo.toml`** — `[profile.dev] debug = "line-tables-only"`. Cuts dev-profile link RAM ~40-60% workspace-wide. Tradeoff: panic backtraces without inlined frames. Acceptable for CI.
+1. **Workspace `Cargo.toml`** — `[profile.dev] debug = "line-tables-only"`. **APPLIED in P8** after the hosted ubuntu Test step hit `No space left on device` (full-DWARF test binaries × ~9 new P8 test bins exhausted the ~14 GB disk; macOS has more disk and passed). Cuts dev-profile link RAM ~40-60% AND test-binary disk ~60% workspace-wide. Tradeoff: panic backtraces without inlined frames. Acceptable for CI.
 2. **Per-job cargo concurrency** — set `CARGO_BUILD_JOBS: '2'` (or `'1'` on very low RAM) on the linux-x86_64 matrix entry's env block. Caps concurrent rustc/link processes.
 3. **Host swap** — add 8-16 GB swap (`/swapfile` + `swapon`). Won't make CI fast but stops OOM cascade. Recommend regardless of (1)/(2).
 

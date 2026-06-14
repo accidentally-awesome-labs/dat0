@@ -125,6 +125,15 @@ dat0-format = { path = "crates/dat0-format" }
 dat0-i18n = { path = "crates/dat0-i18n" }
 dat0-keychain = { path = "crates/dat0-keychain" }
 
+# CI disk/RAM mitigation (docs/ci.md "OOM mitigations" knob #1): trim dev/test
+# debuginfo to line tables only. The dev-profile link of dat0's test-binary set
+# (duckdb + arrow + gpui + sentry) carries full DWARF that exhausted the hosted
+# ubuntu runner's ~14 GB disk once P8 added ~9 more test binaries. `test`
+# inherits `dev`'s debug, so this shrinks every test binary ~60%. Tradeoff:
+# panic backtraces keep line numbers but lose inlined frames — acceptable.
+[profile.dev]
+debug = "line-tables-only"
+
 [profile.release]
 lto = "thin"
 codegen-units = 1
