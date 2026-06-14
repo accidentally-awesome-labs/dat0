@@ -1,8 +1,10 @@
 //! dat0 `.dat0` package format: model, writer, reader, diff, replay.
+pub mod diff;
 pub mod error;
 pub mod model;
 pub mod reader;
 pub mod writer;
+pub use diff::{PackageDiff, compute, diff};
 pub use error::{FormatError, Result};
 pub use model::*;
 pub use reader::Reader;

@@ -156,7 +156,10 @@ async fn export_then_unpack_is_state_equivalent() {
     // The saved query must round-trip (PackageQuery -> SavedQuery).
     assert_eq!(reopened.saved_queries().len(), 1);
     assert_eq!(reopened.saved_queries()[0].name, "top");
-    assert_eq!(reopened.saved_queries()[0].sql, "SELECT * FROM sales LIMIT 5");
+    assert_eq!(
+        reopened.saved_queries()[0].sql,
+        "SELECT * FROM sales LIMIT 5"
+    );
 
     reopened.engine.close().await.unwrap();
 }

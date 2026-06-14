@@ -311,25 +311,63 @@ async fn materialize_tables(
                 .join(", ")
         };
 
-        let create_sql = format!(
-            "CREATE TABLE {tbl} AS SELECT {proj} FROM read_parquet('{path}')",
-            tbl = quote_ident(&t.name),
+        // The data is ALWAYS loaded from the cached parquet (a fast, exact
+        // re-materialize — no re-running of derivation SQL). The difference is
+        // only WHICH provenance the engine records:
+        //
+        // - DERIVED tables (`derivation: Some(..)`) MUST round-trip as Derived:
+        //   a raw `CREATE TABLE AS …` records NO tracked origin (the engine's
+        //   `table_origins` map stays empty → `get_tables()` reports
+        //   `Derived(Sql(""))`, which `session_to_contents` classifies as Base).
+        //   So we go through `engine.create_table`, which HONORS its `origin`
+        //   param (P5b engine fix) — the rows still come from the parquet SELECT,
+        //   but the recorded origin is the ORIGINAL derivation. This is what makes
+        //   the export→unpack→re-export round-trip loss-free at the recipe level.
+        //   `create_table` also injects `__dat0_rowid` internally, so no separate
+        //   `ensure_rowid` is needed on this branch.
+        //
+        // - BASE tables (`derivation: None`) keep the raw CTAS path (no tracked
+        //   origin → re-export as Base, matching the original Base classification;
+        //   the diff does not compare `source_ref`, so the dropped File source is
+        //   not a difference) + a `ensure_rowid` surrogate injection.
+        let select_sql = format!(
+            "SELECT {proj} FROM read_parquet('{path}')",
             proj = projection,
             // read_parquet takes a single-quoted string literal; escape any
             // embedded single quote (rare in temp paths, but be safe).
             path = parquet_str.replace('\'', "''"),
         );
-        engine
-            .execute(&create_sql)
-            .await
-            .with_context(|| format!("materialize {}: CREATE TABLE AS read_parquet", t.name))?;
 
-        // Inject a fresh, clean surrogate so the post-unpack edit-overlay path
-        // works (mirrors register_file_as_table). Idempotent.
-        engine
-            .ensure_rowid(&t.name)
-            .await
-            .with_context(|| format!("materialize {}: ensure_rowid", t.name))?;
+        match &t.derivation {
+            Some(derivation) => {
+                let origin = derivation_to_origin(derivation);
+                // `create_table` quotes `name` internally — pass the PLAIN name.
+                engine
+                    .create_table(&t.name, &select_sql, origin)
+                    .await
+                    .with_context(|| {
+                        format!(
+                            "materialize {}: create_table (derived, origin-tracked)",
+                            t.name
+                        )
+                    })?;
+            }
+            None => {
+                let create_sql = format!(
+                    "CREATE TABLE {tbl} AS {select_sql}",
+                    tbl = quote_ident(&t.name),
+                );
+                engine.execute(&create_sql).await.with_context(|| {
+                    format!("materialize {}: CREATE TABLE AS read_parquet", t.name)
+                })?;
+                // Inject a fresh, clean surrogate so the post-unpack edit-overlay
+                // path works (mirrors register_file_as_table). Idempotent.
+                engine
+                    .ensure_rowid(&t.name)
+                    .await
+                    .with_context(|| format!("materialize {}: ensure_rowid", t.name))?;
+            }
+        }
     }
 
     // CRITICAL: close THEN drop so the moved WAL is flushed and a reopen sees
@@ -341,6 +379,20 @@ async fn materialize_tables(
         .context("contents_to_workspace: close throwaway engine")?;
     drop(engine);
     Ok(())
+}
+
+/// Map a portable [`Derivation`] (the package's recorded provenance) to the
+/// engine's [`DerivedOrigin`] so `create_table` re-records it. This is what lets
+/// a derived table survive unpack as `Derived` (re-export reproduces it),
+/// instead of degrading to an untracked Base table.
+fn derivation_to_origin(derivation: &Derivation) -> DerivedOrigin {
+    match derivation {
+        Derivation::Sql { sql, .. } => DerivedOrigin::Sql(sql.clone()),
+        Derivation::Transform { parent, ops } => DerivedOrigin::Transform {
+            parent: parent.clone(),
+            ops: ops.clone(),
+        },
+    }
 }
 
 /// Build + write `<dat0>/session.json` (schema v8) from the package's portable

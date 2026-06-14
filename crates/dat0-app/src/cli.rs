@@ -218,10 +218,21 @@ pub async fn run_async(cmd: PackageCmd) -> i32 {
                 2
             }
         },
-        PackageCmd::Diff { .. } => {
-            eprintln!("dat0 diff: not yet implemented (lands in T5)");
-            2
-        }
+        PackageCmd::Diff { a, b, json } => match diff_async(&a, &b, json).await {
+            // `diff(1)`-style exit semantics: 0 = no differences, 1 = differences
+            // found, 2 = error.
+            Ok(empty) => {
+                if empty {
+                    0
+                } else {
+                    1
+                }
+            }
+            Err(e) => {
+                eprintln!("dat0 diff: {e:#}");
+                2
+            }
+        },
         PackageCmd::Inspect { .. } | PackageCmd::Replay { .. } => {
             eprintln!("dat0 inspect/replay: not yet implemented (lands in T7)");
             2
@@ -255,6 +266,26 @@ pub async fn unpack_async(pkg: &std::path::Path, dir: &std::path::Path) -> Resul
         .await
         .with_context(|| format!("unpack into {}", dir.display()))?;
     Ok(())
+}
+
+/// DIFF core: open both packages, compute the pure-JSON recipe diff, print it
+/// (text or `--json`), and return whether the diff is EMPTY (so the caller maps
+/// `true`→exit 0, `false`→exit 1). No engine, no parquet read — the diff is
+/// metadata-only (`dat0_format::diff`).
+pub async fn diff_async(a: &std::path::Path, b: &std::path::Path, json: bool) -> Result<bool> {
+    let pa =
+        dat0_format::Reader::open(a).with_context(|| format!("open package {}", a.display()))?;
+    let pb =
+        dat0_format::Reader::open(b).with_context(|| format!("open package {}", b.display()))?;
+    let d = dat0_format::diff::diff(&pa, &pb);
+    if json {
+        let rendered =
+            serde_json::to_string_pretty(&d.render_json()).context("serialize diff JSON")?;
+        println!("{rendered}");
+    } else {
+        print!("{}", d.render_text());
+    }
+    Ok(d.is_empty())
 }
 
 #[cfg(test)]
