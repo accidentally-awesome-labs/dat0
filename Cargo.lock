@@ -1815,8 +1815,8 @@ dependencies = [
 name = "dat0-format"
 version = "0.1.0"
 dependencies = [
- "anyhow",
  "dat0-engine",
+ "duckdb",
  "jsonschema",
  "serde",
  "serde_json",

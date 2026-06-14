@@ -3,6 +3,7 @@ pub mod diff;
 pub mod error;
 pub mod model;
 pub mod reader;
+pub mod replay;
 pub mod writer;
 pub use diff::{PackageDiff, compute, diff};
 pub use error::{FormatError, Result};
