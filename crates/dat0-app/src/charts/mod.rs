@@ -1,3 +1,9 @@
+//! P9a charts: a PURE kernel (`spec`/`query`/`data`/`render`/`export`) + a thin
+//! GPUI shell (`panel` + the WorkspaceShell wiring in `window.rs`). The kernel is
+//! headless-unit-tested; the shell (image display, toolbar, export buttons) is
+//! UAT-gated. The inline inspector histogram/top-N below (P6a) is unrelated and
+//! unchanged.
+//!
 //! Inline inspector charts (P6a T10): pure binning + GPUI-quad render. No chart lib.
 //!
 //! The *binning* (`histogram_bins`, `bar_fraction`) is pure and unit-tested — it

@@ -93,5 +93,9 @@ harness = false
 name = "grid_scroll"
 harness = false
 
+[[bench]]
+name = "chart_render"
+harness = false
+
 [lib]
 path = "src/lib.rs"
