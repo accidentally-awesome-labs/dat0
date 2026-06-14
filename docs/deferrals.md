@@ -60,8 +60,11 @@ that's modifying it; merge conflicts are signals worth investigating.
 | D-020 | Live-data refresh: file-watcher on Tab.source_path → re-import on change (re-CTAS + replay transforms, debounced) + finish recovery_panel Sheet UI | closed | P7a | P7c |
 | D-021 | Banner action buttons: `error_ux::render_banner` renders title+body only; `.with_primary` action ids stored but not displayed | closed | P7a | P7c |
 | D-022 | Live-view import mode — `read_csv` VIEW that auto-reflects source-file changes with no re-import | open | P7c | — |
-| D-023 | Cross-table refresh cascade — re-materialize the P6b dependency closure in topological order on a base-table refresh | open | P7c | — |
+| D-023 | Cross-table refresh cascade — re-materialize the P6b dependency closure in topological order on a base-table refresh (P8b `ReplayEngine` provides the machinery; in-app wiring remains) | open | P7c | — |
 | D-024 | Per-table / global auto-refresh toggle (+ multi-table simultaneous watching) | open | P7c | — |
+| D-025 | Derived-table provenance not persisted across workspace reopen (cold CLI export flattens derived → base) | open | P8 | — |
+| D-026 | Python (non-Rust) `.dat0` reader — format is reader-ready (Parquet + tagged JSON) | open | P8 | — |
+| D-027 | In-app Inspect polish (read-only badge, scratch GC, multi-source GUI replay, Unpack button) | open | P8 | — |
 
 ## At-a-glance — Plan defects
 
@@ -725,8 +728,18 @@ that's modifying it; merge conflicts are signals worth investigating.
   rollback, and deciding the UX for a multi-table refresh (which tabs update,
   what the user sees mid-cascade). The lineage substrate exists (P6b) but the
   cascade execution + UX is its own slice.
+- **P8b note (2026-06-13) — the cascade *machinery* now exists.** P8b's
+  `dat0_format::replay::ReplayEngine` already re-executes a recipe's derived
+  tables in **topological order** against a (possibly refreshed) set of sources
+  — exactly the "re-run each derivation in dependency order" engine this cascade
+  needs. The remaining follow-up is purely the **in-app wiring**: on a watched
+  base-table refresh, drive the P6b lineage closure through the same
+  topological-re-exec algorithm (live engine, in place of `ReplayEngine`'s
+  throwaway engine), plus the multi-table refresh UX. The hard part (correct
+  topological re-execution of a derivation graph) is solved; track the in-app
+  wiring as the remaining work here if still wanted.
 - **Originating doc:** `docs/plans/2026-06-12-dat0-p7c-design.md` (decision D5).
-- **Last touched:** 2026-06-12.
+- **Last touched:** 2026-06-13 (P8b — ReplayEngine provides the cascade machinery).
 
 ### D-024 — Per-table / global auto-refresh toggle (+ multi-table watching)
 
@@ -753,6 +766,93 @@ that's modifying it; merge conflicts are signals worth investigating.
 - **Originating doc:** `docs/plans/2026-06-12-dat0-p7c-design.md` (decision D6);
   `crates/dat0-app/src/window.rs` (`SourceWatcher` retarget-on-table-switch).
 - **Last touched:** 2026-06-12.
+
+### D-025 — Derived-table provenance not persisted across workspace reopen
+
+- **Status:** open
+- **Deferred from:** P8 (T5 finding; empirically validated)
+- **Target phase:** —
+- **What it is:** Derived-table provenance — the SQL/transform that produces a
+  table and the link to its parents — lives **only in memory** while a workspace
+  is open. The engine's `table_origins` is an in-memory `HashMap` on
+  `DuckDBEngine`; `TableOrigin` is **not** `Serialize`; and
+  `Session::recover_workspace` opens a **fresh** engine with an **empty** origin
+  map. Nothing on disk records which tables are derived.
+- **Consequence:** `dat0 export <cold-workspace-dir>` (the CLI export path)
+  reopens the workspace via `recover_workspace` before exporting, so the live
+  origin map is gone and `get_tables()` classifies **every** table as `Base`.
+  The exported package is therefore **data-only** — the derived recipe /
+  replayable lineage is lost (`inspect` shows no lineage edges; `replay` has no
+  derivations to re-run). The **in-app "Export Package"** (live session, via
+  `session_to_contents` before any reopen) and the headless
+  `Writer`-from-live-`session_to_contents` path DO preserve lineage — they
+  export straight from the running session's populated origin map.
+- **Why it's a deferral, not a bug:** within P8's scope the in-app/live export
+  path is correct and lossless, and the cold-CLI round-trip is genuinely
+  *self-consistent* (a table classifies identically — as `Base` — in both the
+  exported and re-exported packages, so the round-trip diff is empty). Closing
+  the gap requires persisting origins across reopen, a larger storage change.
+- **Fix:** persist `table_origins` (e.g. into `session.json` or a `.dat0/`
+  sidecar) and restore it on `recover_workspace`. `TableOrigin` would need a
+  `Serialize`/`Deserialize` derive (or a portable on-disk shape).
+- **Discovered + validated in:** P8 T5 — see the `FINDING (T5)` doc comment on
+  `export_unpack_reexport_diff_is_empty` in
+  `crates/dat0-app/tests/cli_roundtrip.rs`, and the live-session-vs-cold-export
+  contrast in `crates/dat0-app/tests/package_e2e.rs`.
+- **Originating doc:** `docs/plans/2026-06-13-dat0-p8-plan.md` (T5);
+  `crates/dat0-app/src/package/mod.rs` (`classify`),
+  `crates/dat0-engine/src/duckdb_engine.rs` (`table_origins`).
+- **User-facing doc:** `docs/dat0-packages.md` § "Known limitation".
+- **Last touched:** 2026-06-13.
+
+### D-026 — Python (non-Rust) `.dat0` reader
+
+- **Status:** open
+- **Deferred from:** P8 (explicit non-goal)
+- **Target phase:** —
+- **What it is:** A non-Rust reader for `.dat0` packages — e.g. a Python library
+  that opens a package, reads its Parquet data, and routes its metadata. The
+  format is already **reader-ready** for this: data is plain Apache Parquet, and
+  the metadata is self-describing tagged JSON where every polymorphic node
+  carries an explicit `kind`/`tag` discriminator (`manifest.kind == "package"`,
+  `derivation.kind ∈ {sql, transform}`, each `Transformation` op tagged on
+  `kind`) — so a non-Rust reader can route purely on those discriminators with
+  no Rust-side type knowledge. See [`docs/dat0-format-v1.md`](dat0-format-v1.md)
+  §11.
+- **Why deferred:** out of scope for P8, which delivers the format + the Rust
+  reader/writer/replay/diff + the CLI. A second-language reader is future work
+  once there's demand (a Python notebook integration, a data-pipeline consumer,
+  etc.).
+- **Originating doc:** `docs/dat0-format-v1.md` §11; P8 non-goals.
+- **Last touched:** 2026-06-13.
+
+### D-027 — In-app Inspect polish (P8 follow-ups)
+
+- **Status:** open
+- **Deferred from:** P8 (T9 — non-blocking GUI follow-ups)
+- **Target phase:** —
+- **What it is:** A cluster of non-blocking polish items on the read-only Inspect
+  window shipped in P8 T9:
+  - **No "read-only" badge** in the Inspect window chrome — the window refuses
+    edits, but nothing in the title/header visibly signals that it's a read-only
+    package view (the user discovers it only when an edit is refused).
+  - **Inspect scratch dir not GC'd on close** — the Inspect window materializes
+    the package under `<state>/inspect/<uuid>/` and keeps it for the window's
+    lifetime, but the directory is **not** pruned when the window closes
+    (candidate: prune on launch like the orphan-scratch scan does for sessions).
+  - **GUI Replay binds the first source only** — the in-app Replay flow binds the
+    picked file to the package's **first** source; multi-source replay stays on
+    the `dat0 replay --source logical=path` CLI (which accepts repeated
+    `--source`).
+  - **No "Unpack to edit" button** in the read-only shell header — unpacking is
+    reachable via **File → Unpack**, but there's no in-context shortcut in the
+    Inspect window itself.
+- **Why deferred:** P8 T9 delivered the functional read-only Inspect shell
+  (browse + refuse edits); these are cosmetic/convenience refinements that don't
+  block the verb. Each is small and independent.
+- **Originating doc:** P8 T9; `crates/dat0-app/src/package/inspect.rs`.
+- **User-facing doc:** `docs/dat0-packages.md` § "In the app".
+- **Last touched:** 2026-06-13.
 
 ---
 
