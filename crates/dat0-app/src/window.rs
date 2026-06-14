@@ -1404,6 +1404,16 @@ pub struct WorkspaceShell {
     /// `None` when the active table has no `File` origin. Dropping the field
     /// stops the watch.
     pub(crate) source_watcher: Option<crate::workspace::source_watcher::SourceWatcher>,
+    /// When `true` this shell is open in Inspect mode (read-only package).
+    /// Every data-mutation entry point (`commit_cell_edit`, `cut_selection`,
+    /// `paste_clipboard`, `fill_down`, `set_null_selection`,
+    /// `set_value_selection`, `delete_selected_rows`, `delete_column`,
+    /// `commit_column_rename`, `save_view_as_table`, and the SQL-console DDL/DML
+    /// path) checks this flag via [`crate::grid::edit_ops::mutation_blocked`]
+    /// and returns early without executing when it is set. T9 sets this to `true`
+    /// immediately after constructing the shell for an Inspect open; the default
+    /// is `false` (normal edit-enabled workspace).
+    pub(crate) read_only: bool,
 }
 
 impl WorkspaceShell {
@@ -1455,6 +1465,7 @@ impl WorkspaceShell {
             md_token_prompt_sub: None,
             workspace_prompt_shown: false,
             source_watcher: None,
+            read_only: false,
         }
     }
 
@@ -2792,6 +2803,14 @@ impl WorkspaceShell {
         }
         let kind = classify(&stmt);
 
+        // Read-only guard (P8 T8): in Inspect mode only result-producing
+        // statements (SELECT / WITH / PRAGMA / DESCRIBE / SUMMARIZE / …) are
+        // allowed; DDL/DML (ResultKind::Exec) is silently blocked here because
+        // the Parquet-backed VIEWs would reject it at the engine level anyway.
+        if crate::grid::edit_ops::mutation_blocked(self.read_only) && kind == ResultKind::Exec {
+            return;
+        }
+
         let engine = self.engine();
         let win_disc = self.window_disc();
         let tab_ix = console.read(cx).active;
@@ -3203,6 +3222,9 @@ impl WorkspaceShell {
     /// GPUI entity is touched ONLY inside the dispatcher closure after
     /// `.upgrade()`.
     pub(crate) fn save_view_as_table(&mut self, name: String, cx: &mut Context<Self>) {
+        if crate::grid::edit_ops::mutation_blocked(self.read_only) {
+            return;
+        }
         let Some(vm) = self.view_model.as_ref() else {
             return;
         };

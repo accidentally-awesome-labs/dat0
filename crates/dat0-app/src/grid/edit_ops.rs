@@ -30,6 +30,33 @@ use gpui::{Context, Window, prelude::*};
 
 use crate::window::{WorkspaceShell, bounding_rect};
 
+// ── Read-only gate predicate (P8 T8) ─────────────────────────────────────────
+
+/// Returns `true` when a mutation should be refused because the shell is in
+/// Inspect (read-only) mode.
+///
+/// Every data-mutation entry point in this module calls this predicate as its
+/// **first** statement so the gate logic lives in exactly one place. `window.rs`
+/// also calls it for `save_view_as_table` and the SQL-console DDL/DML path.
+pub fn mutation_blocked(read_only: bool) -> bool {
+    read_only
+}
+
+#[cfg(test)]
+mod gate_tests {
+    use super::mutation_blocked;
+
+    #[test]
+    fn blocked_when_read_only() {
+        assert!(mutation_blocked(true));
+    }
+
+    #[test]
+    fn not_blocked_when_editable() {
+        assert!(!mutation_blocked(false));
+    }
+}
+
 // ── Inline cell editor: mount + commit (T6) ──────────────────────────────────
 
 /// Direction the active cell advances after an Enter commit (P4c T14).
@@ -71,6 +98,9 @@ impl WorkspaceShell {
     /// (Enter / focus-out). T11 wires the Enter/F2 keystroke that mounts the
     /// editor over the active cell.
     pub fn commit_cell_edit(&mut self, value: dat0_engine::Scalar, cx: &mut Context<Self>) {
+        if mutation_blocked(self.read_only) {
+            return;
+        }
         let (Some(ds), Some(_vm)) = (self.data_source.as_ref(), self.view_model.as_ref()) else {
             return;
         };
@@ -284,6 +314,9 @@ impl WorkspaceShell {
     /// `ViewModel`, refreshes the `ColumnView`, and routes the change (display-only
     /// → `cx.notify()`; the underlying data is untouched).
     pub fn commit_column_rename(&mut self, col_ix: usize, to: String, cx: &mut Context<Self>) {
+        if mutation_blocked(self.read_only) {
+            return;
+        }
         let to = to.trim().to_string();
         let Some(source) = self.column_name(col_ix) else {
             // No column at this screen index — dismiss editor cleanly.
@@ -384,6 +417,9 @@ impl WorkspaceShell {
     ///
     /// No-op when no data source / view model / selection is mounted.
     pub fn cut_selection(&mut self, cx: &mut Context<Self>) {
+        if mutation_blocked(self.read_only) {
+            return;
+        }
         // Copy first (sets the clipboard + marching-ants range).
         self.copy_selection(cx);
 
@@ -434,6 +470,9 @@ impl WorkspaceShell {
     /// No-op when no data source / view model / selection is mounted, or when
     /// the clipboard holds no string (e.g. an image).
     pub fn paste_clipboard(&mut self, cx: &mut Context<Self>) {
+        if mutation_blocked(self.read_only) {
+            return;
+        }
         let Some(text) = cx.read_from_clipboard().and_then(|item| item.text()) else {
             return;
         };
@@ -558,6 +597,9 @@ impl WorkspaceShell {
     /// ONE undo step. No-op when no data source / view model / selection is
     /// mounted, or when the resolved set is empty.
     pub fn fill_down(&mut self, cx: &mut Context<Self>) {
+        if mutation_blocked(self.read_only) {
+            return;
+        }
         let (Some(ds), Some(_vm)) = (self.data_source.as_ref(), self.view_model.as_ref()) else {
             return;
         };
@@ -641,6 +683,9 @@ impl WorkspaceShell {
     /// skipped gracefully. No-op when no data source / view model / selection
     /// is mounted or the selection resolves to nothing.
     pub fn set_null_selection(&mut self, cx: &mut Context<Self>) {
+        if mutation_blocked(self.read_only) {
+            return;
+        }
         let (Some(ds), Some(_vm)) = (self.data_source.as_ref(), self.view_model.as_ref()) else {
             return;
         };
@@ -682,6 +727,9 @@ impl WorkspaceShell {
     /// skipped gracefully. No-op when no data source / view model / selection
     /// is mounted or the selection resolves to nothing.
     pub fn set_value_selection(&mut self, value: dat0_engine::Scalar, cx: &mut Context<Self>) {
+        if mutation_blocked(self.read_only) {
+            return;
+        }
         let (Some(ds), Some(_vm)) = (self.data_source.as_ref(), self.view_model.as_ref()) else {
             return;
         };
@@ -725,6 +773,9 @@ impl WorkspaceShell {
     /// `None`) are skipped. No-op when no data source / view model / selection
     /// is mounted or the selection resolves to nothing.
     pub fn delete_selected_rows(&mut self, cx: &mut Context<Self>) {
+        if mutation_blocked(self.read_only) {
+            return;
+        }
         let (Some(ds), Some(_vm)) = (self.data_source.as_ref(), self.view_model.as_ref()) else {
             return;
         };
@@ -766,6 +817,9 @@ impl WorkspaceShell {
     /// fallback when no column selection is active). If a column selection is
     /// active, all distinct selected columns are deleted instead.
     pub fn delete_column(&mut self, col_ix: usize, cx: &mut Context<Self>) {
+        if mutation_blocked(self.read_only) {
+            return;
+        }
         let mut columns: Vec<String> = Vec::new();
         if let Some(sel) = self.selection.as_ref() {
             use std::collections::BTreeSet;
