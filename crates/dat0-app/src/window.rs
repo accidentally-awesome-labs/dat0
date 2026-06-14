@@ -278,7 +278,7 @@ pub(crate) fn spawn_workspace_window(
     // Refresh File → Open Recent so the just-opened workspace appears (the save
     // flow does the same after a promote — keep open/save symmetric).
     crate::menu_macos::rebuild_menus_with_recents();
-    open_window_view(cx, session, window_id, Some(folder), registry);
+    open_window_view(cx, session, window_id, Some(folder), registry, false);
 }
 
 // ─── Workspace save flow (T9) ─────────────────────────────────────────────
@@ -383,6 +383,369 @@ fn promote_focused_into(cx: &mut App, target: PathBuf) {
             }
         }
     });
+}
+
+// ─── .dat0 package flows (P8 T9) ──────────────────────────────────────────
+
+/// Default engine memory budget for package GUI ops (1 GiB, matching the
+/// workspace open/save flows).
+const PACKAGE_BUDGET: u64 = 1024 * 1024 * 1024;
+
+/// `ExportPackage` handler: save the FOCUSED live workspace to a `.dat0` package.
+///
+/// Opens the native save panel (`*.dat0`), then off the GPUI main thread maps the
+/// LIVE `Session` → `PackageContents` (preserving derived lineage) and writes the
+/// package. Result surfaces through the `error_ux` banner queue.
+pub(crate) fn export_package_flow(cx: &mut App) {
+    // Resolve the focused workspace's live session Arc (the same precedent as
+    // `promote_focused_into` / `dispatch_undo`).
+    let session = match focused_session_arc(cx) {
+        Some(s) => s,
+        None => {
+            crate::error_ux::push(crate::error_ux::Banner::warning(dat0_i18n::t(
+                "package.export.no_workspace.title",
+            )));
+            return;
+        }
+    };
+    let path_rx = cx.prompt_for_new_path(std::path::Path::new(""), Some("workspace.dat0"));
+    cx.spawn(async move |_cx: &mut gpui::AsyncApp| {
+        let out = match path_rx.await {
+            Ok(Ok(Some(p))) => p,
+            _ => return,
+        };
+        // Engine work off the GPUI main thread (tokio runtime is entered for the
+        // whole Application::run closure — same as run_export). Snapshot the
+        // session (engine Arc + portable views/queries + id) under a BRIEF lock,
+        // then drop the guard BEFORE the async engine I/O — never hold the
+        // parking_lot guard across an `.await` on the single-threaded foreground
+        // executor (render also locks the session there).
+        let (engine, window_id, views, queries) = {
+            let guard = session.lock();
+            let engine = Arc::clone(&guard.engine);
+            let window_id = guard.window_id;
+            let views = dat0_format::Views {
+                views: guard
+                    .tabs()
+                    .iter()
+                    .map(|tab| dat0_format::PackageView {
+                        table_name: tab.table_name.clone(),
+                        transform_stack: tab.transform_stack.clone(),
+                        undo_cursor: tab.undo_cursor,
+                    })
+                    .collect(),
+            };
+            let queries = dat0_format::Queries {
+                queries: guard
+                    .saved_queries()
+                    .iter()
+                    .map(|q| dat0_format::PackageQuery {
+                        id: q.id,
+                        name: q.name.clone(),
+                        sql: q.sql.clone(),
+                        saved_at: q.saved_at,
+                    })
+                    .collect(),
+            };
+            (engine, window_id, views, queries)
+        };
+        let result: anyhow::Result<()> = async {
+            let contents =
+                crate::package::contents_from_engine(engine.as_ref(), window_id, views, queries)
+                    .await?;
+            dat0_format::Writer::write(&contents, engine.as_ref(), &out).await?;
+            Ok(())
+        }
+        .await;
+        match result {
+            Ok(()) => {
+                let mut b =
+                    crate::error_ux::Banner::info(dat0_i18n::t("package.export.done.title"));
+                b.body = out.display().to_string();
+                crate::error_ux::push(b);
+            }
+            Err(e) => {
+                crate::error_ux::push(crate::error_ux::Banner::warning_with_body(
+                    dat0_i18n::t("package.export.failed.title"),
+                    format!("{e}"),
+                ));
+            }
+        }
+    })
+    .detach();
+}
+
+/// `OpenPackage` handler: open a `.dat0` package read-only (Inspect mode).
+///
+/// Picks a `*.dat0` file, parses it, then opens an inspect engine
+/// (`package::inspect::open_readonly` → `read_parquet` views) into a NEW window
+/// whose shell has `read_only = true`. The inspect scratch dir lives under the
+/// app state dir and is intentionally NOT cleaned — its parquet backs the views
+/// for the window's lifetime.
+pub(crate) fn open_package_flow(cx: &mut App) {
+    let rx = cx.prompt_for_paths(gpui::PathPromptOptions {
+        files: true,
+        directories: false,
+        multiple: false,
+        prompt: None,
+    });
+    cx.spawn(async move |cx: &mut gpui::AsyncApp| {
+        let pkg = match rx.await {
+            Ok(Ok(Some(mut v))) if !v.is_empty() => v.remove(0),
+            _ => return,
+        };
+        let _ = cx.update(|cx| open_package_at(cx, pkg));
+    })
+    .detach();
+}
+
+/// Parse `pkg` and mount a read-only Inspect window for it. Engine I/O runs via
+/// `block_on` on the tokio runtime (mirrors `spawn_workspace_window`).
+pub(crate) fn open_package_at(cx: &mut App, pkg: PathBuf) {
+    let registry = match crate::window_registry::window_registry() {
+        Some(r) => r,
+        None => {
+            tracing::warn!("open_package_at: window_registry singleton not installed");
+            return;
+        }
+    };
+    let rt = match tokio::runtime::Handle::try_current() {
+        Ok(h) => h,
+        Err(_) => {
+            tracing::warn!("open_package_at: no tokio runtime on calling thread");
+            return;
+        }
+    };
+
+    // A unique, persistent scratch dir for this inspect window's extracted
+    // parquet + view-backing DB (under the app state dir, NOT a TempDir — the
+    // views read the parquet for the whole window lifetime).
+    let base = crate::window_registry::state_root()
+        .map(|p| p.to_path_buf())
+        .unwrap_or_else(std::env::temp_dir);
+    let scratch_dir = base.join("inspect").join(uuid::Uuid::now_v7().to_string());
+
+    let result: anyhow::Result<(Arc<Mutex<Session>>, uuid::Uuid)> = rt.block_on(async {
+        let parsed = dat0_format::Reader::open(&pkg)?;
+        std::fs::create_dir_all(&scratch_dir)?;
+        let (engine, _views) =
+            crate::package::inspect::open_readonly(&parsed, &scratch_dir, PACKAGE_BUDGET).await?;
+        // Reconstruct the tabs + saved queries from the package's portable views.
+        let tabs: Vec<crate::session::Tab> = parsed
+            .views
+            .views
+            .iter()
+            .map(|v| crate::session::Tab {
+                table_name: v.table_name.clone(),
+                source_path: None,
+                transform_stack: v.transform_stack.clone(),
+                undo_cursor: v.undo_cursor,
+                extra: Default::default(),
+            })
+            .collect();
+        let saved_queries = parsed
+            .queries
+            .queries
+            .iter()
+            .map(|q| crate::session::queries::SavedQuery {
+                id: q.id,
+                name: q.name.clone(),
+                sql: q.sql.clone(),
+                saved_at: q.saved_at,
+            })
+            .collect();
+        let sess = Session::from_parts(scratch_dir.clone(), Arc::new(engine), tabs, saved_queries);
+        let window_id = sess.window_id;
+        Ok((Arc::new(Mutex::new(sess)), window_id))
+    });
+
+    match result {
+        Ok((session, window_id)) => {
+            // workspace_path: None — an Inspect window is not a workspace home
+            // (no flock / no Open-Recent entry). read_only: true.
+            open_window_view(cx, session, window_id, None, registry, true);
+            tracing::debug!(%window_id, "open_package_at: inspect window opened");
+        }
+        Err(e) => {
+            // Best-effort cleanup of the half-built scratch dir on failure.
+            let _ = std::fs::remove_dir_all(&scratch_dir);
+            crate::error_ux::push(crate::error_ux::Banner::warning_with_body(
+                dat0_i18n::t("package.open.failed.title"),
+                format!("{e}"),
+            ));
+        }
+    }
+}
+
+/// `UnpackPackage` handler: unpack a `.dat0` package into an EDITABLE workspace.
+///
+/// Picks a `*.dat0` file, then a target directory, materializes a `.dat0/`
+/// workspace there via `package::contents_to_workspace`, and opens it as a
+/// normal (edit-enabled) workspace window.
+pub(crate) fn unpack_package_flow(cx: &mut App) {
+    // First pick the package file.
+    let pkg_rx = cx.prompt_for_paths(gpui::PathPromptOptions {
+        files: true,
+        directories: false,
+        multiple: false,
+        prompt: None,
+    });
+    cx.spawn(async move |cx: &mut gpui::AsyncApp| {
+        let pkg = match pkg_rx.await {
+            Ok(Ok(Some(mut v))) if !v.is_empty() => v.remove(0),
+            _ => return,
+        };
+        // Then pick the destination directory.
+        let dir_rx = cx.update(|cx| {
+            cx.prompt_for_paths(gpui::PathPromptOptions {
+                files: false,
+                directories: true,
+                multiple: false,
+                prompt: None,
+            })
+        });
+        let dir_rx = match dir_rx {
+            Ok(rx) => rx,
+            Err(_) => return,
+        };
+        let dir = match dir_rx.await {
+            Ok(Ok(Some(mut v))) if !v.is_empty() => v.remove(0),
+            _ => return,
+        };
+        let _ = cx.update(|cx| unpack_package_into(cx, pkg, dir));
+    })
+    .detach();
+}
+
+/// Unpack `pkg` into `dir` (materializing a `.dat0/` workspace) and open it as a
+/// normal editable workspace. Engine I/O via `block_on` (mirrors
+/// `spawn_workspace_window`).
+fn unpack_package_into(cx: &mut App, pkg: PathBuf, dir: PathBuf) {
+    let rt = match tokio::runtime::Handle::try_current() {
+        Ok(h) => h,
+        Err(_) => {
+            tracing::warn!("unpack_package_into: no tokio runtime on calling thread");
+            return;
+        }
+    };
+    let result: anyhow::Result<()> = rt.block_on(async {
+        let parsed = dat0_format::Reader::open(&pkg)?;
+        crate::package::contents_to_workspace(&parsed, &dir, PACKAGE_BUDGET).await?;
+        Ok(())
+    });
+    match result {
+        Ok(()) => {
+            let mut b = crate::error_ux::Banner::info(dat0_i18n::t("package.unpack.done.title"));
+            b.body = dir.display().to_string();
+            crate::error_ux::push(b);
+            // Open the freshly-materialized workspace as a normal editable window.
+            open_workspace_at(cx, dir);
+        }
+        Err(e) => {
+            crate::error_ux::push(crate::error_ux::Banner::warning_with_body(
+                dat0_i18n::t("package.unpack.failed.title"),
+                format!("{e}"),
+            ));
+        }
+    }
+}
+
+/// `ReplayPackage` handler: re-run a `.dat0` recipe against fresh source files.
+///
+/// Picks the package, then ONE replacement source file, then the output `*.dat0`
+/// path, then runs `cli::replay_async`. The source is bound to the package's
+/// FIRST source's `logical_name` (a single-source convenience; multi-source
+/// replay remains available through the `dat0 replay --source` CLI). Result
+/// surfaces through the banner queue.
+pub(crate) fn replay_package_flow(cx: &mut App) {
+    let pkg_rx = cx.prompt_for_paths(gpui::PathPromptOptions {
+        files: true,
+        directories: false,
+        multiple: false,
+        prompt: None,
+    });
+    cx.spawn(async move |cx: &mut gpui::AsyncApp| {
+        let pkg = match pkg_rx.await {
+            Ok(Ok(Some(mut v))) if !v.is_empty() => v.remove(0),
+            _ => return,
+        };
+        // Resolve the package's first source logical name (so the picked file is
+        // bound to a real source key). If the package has no sources, abort with
+        // a banner — there is nothing to rebind.
+        let logical = match dat0_format::Reader::open(&pkg) {
+            Ok(p) => p.sources.sources.first().map(|s| s.logical_name.clone()),
+            Err(e) => {
+                crate::error_ux::push(crate::error_ux::Banner::warning_with_body(
+                    dat0_i18n::t("package.replay.failed.title"),
+                    format!("{e}"),
+                ));
+                return;
+            }
+        };
+        let Some(logical) = logical else {
+            crate::error_ux::push(crate::error_ux::Banner::warning(dat0_i18n::t(
+                "package.replay.failed.title",
+            )));
+            return;
+        };
+
+        // Pick the replacement source file.
+        let src_rx = match cx.update(|cx| {
+            cx.prompt_for_paths(gpui::PathPromptOptions {
+                files: true,
+                directories: false,
+                multiple: false,
+                prompt: None,
+            })
+        }) {
+            Ok(rx) => rx,
+            Err(_) => return,
+        };
+        let new_source = match src_rx.await {
+            Ok(Ok(Some(mut v))) if !v.is_empty() => v.remove(0),
+            _ => return,
+        };
+
+        // Pick the output package path.
+        let out_rx = match cx
+            .update(|cx| cx.prompt_for_new_path(std::path::Path::new(""), Some("replayed.dat0")))
+        {
+            Ok(rx) => rx,
+            Err(_) => return,
+        };
+        let out = match out_rx.await {
+            Ok(Ok(Some(p))) => p,
+            _ => return,
+        };
+
+        // The replay spec for the CLI core: "logical=path".
+        let spec = format!("{}={}", logical, new_source.display());
+        match crate::cli::replay_async(&pkg, &[spec], Some(out.clone())).await {
+            Ok(out_path) => {
+                let mut b =
+                    crate::error_ux::Banner::info(dat0_i18n::t("package.replay.done.title"));
+                b.body = out_path.display().to_string();
+                crate::error_ux::push(b);
+            }
+            Err(e) => {
+                crate::error_ux::push(crate::error_ux::Banner::warning_with_body(
+                    dat0_i18n::t("package.replay.failed.title"),
+                    format!("{e}"),
+                ));
+            }
+        }
+    })
+    .detach();
+}
+
+/// Resolve the `Arc<Mutex<Session>>` backing the currently-focused workspace
+/// shell, if any (P8 T9 export). Mirrors the focused-shell resolution in
+/// `promote_focused_into`.
+fn focused_session_arc(cx: &App) -> Option<Arc<Mutex<Session>>> {
+    let weak = crate::window_registry::focused_workspace_weak()?;
+    let any_entity = weak.upgrade()?;
+    let shell = any_entity.downcast::<WorkspaceShell>().ok()?;
+    Some(shell.read(cx).session_arc())
 }
 
 // ─── Live-data refresh (P7c) ──────────────────────────────────────────────
@@ -511,12 +874,15 @@ pub(crate) fn now_epoch_secs() -> String {
 /// both the scratch path and the workspace path can share the same logic.
 ///
 /// `workspace_path`: `Some(folder)` for workspace windows, `None` for scratch.
+/// `read_only`: `true` for an Inspect (read-only package) window — sets the
+/// shell's mutation gate so every edit/DDL entry point refuses (P8 T9).
 fn open_window_view(
     cx: &mut App,
     session: Arc<Mutex<Session>>,
     window_id: uuid::Uuid,
     workspace_path: Option<PathBuf>,
     registry: Arc<Mutex<WindowRegistry>>,
+    read_only: bool,
 ) {
     let bounds = Bounds::centered(None, size(px(1200.), px(800.)), cx);
     let gpui_window = cx
@@ -532,6 +898,7 @@ fn open_window_view(
             move |window, cx| {
                 let view = cx.new(|cx| {
                     let mut shell = WorkspaceShell::new(Arc::clone(&session), cx);
+                    shell.read_only = read_only;
                     shell.reconnect_persisted_md(cx);
                     shell
                 });
@@ -586,7 +953,7 @@ pub(crate) fn spawn_window(
     };
 
     let window_id = session.lock().window_id;
-    open_window_view(cx, session, window_id, None, registry);
+    open_window_view(cx, session, window_id, None, registry, false);
     tracing::debug!(%window_id, "spawn_window: window registered in WindowRegistry");
 }
 
@@ -625,7 +992,7 @@ pub(crate) fn spawn_recovered_scratch(cx: &mut App, scratch_dir: PathBuf) {
         }
     };
     let window_id = session.lock().window_id;
-    open_window_view(cx, session, window_id, None, registry);
+    open_window_view(cx, session, window_id, None, registry, false);
     tracing::debug!(%window_id, "spawn_recovered_scratch: orphan recovered into window");
 }
 
@@ -986,6 +1353,21 @@ pub fn run_app(lock: AppLock, initial_paths: Vec<PathBuf>, main_loop: MainLoop) 
         });
         cx.on_action(|_action: &crate::menu_macos::SaveWorkspace, cx: &mut App| {
             save_workspace_flow(cx);
+        });
+
+        // Wire the .dat0 package actions (P8 T9). All declared unconditionally in
+        // menu_macos.rs so the handlers resolve on Linux too (no visible menu).
+        cx.on_action(|_action: &crate::menu_macos::ExportPackage, cx: &mut App| {
+            export_package_flow(cx);
+        });
+        cx.on_action(|_action: &crate::menu_macos::OpenPackage, cx: &mut App| {
+            open_package_flow(cx);
+        });
+        cx.on_action(|_action: &crate::menu_macos::UnpackPackage, cx: &mut App| {
+            unpack_package_flow(cx);
+        });
+        cx.on_action(|_action: &crate::menu_macos::ReplayPackage, cx: &mut App| {
+            replay_package_flow(cx);
         });
 
         // Wire File → Open Recent fan-out (P7a T10).
@@ -1520,6 +1902,12 @@ impl WorkspaceShell {
     /// (P7a T11). In-memory only — `workspace_prompt_shown` is never persisted.
     pub fn maybe_prompt_save_workspace(&mut self) {
         if self.workspace_prompt_shown {
+            return;
+        }
+        // Never nudge "save as workspace" on a read-only Inspect window (P8 T9):
+        // its `Home::Scratch` is the throwaway inspect-parquet dir, not a real
+        // scratch session the user is building up.
+        if self.read_only {
             return;
         }
         let (is_scratch, transforms, saved) = {

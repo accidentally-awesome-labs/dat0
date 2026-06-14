@@ -12,6 +12,8 @@
 //! of the portable schema fingerprint, and are stripped on re-materialize so a
 //! fresh, clean surrogate is injected by [`QueryEngine::ensure_rowid`] post-unpack.
 
+pub mod inspect;
+
 use std::path::Path;
 
 use anyhow::{Context, Result};
@@ -112,7 +114,47 @@ fn make_source(
 /// `SELECT *` parquet export), so this function only produces the metadata
 /// recipe + the portable session state.
 pub async fn session_to_contents(sess: &Session) -> Result<PackageContents> {
-    let engine = sess.engine.as_ref();
+    // Snapshot the portable session state (tabs → views, saved queries) up front
+    // so the engine-walking work can run without borrowing the Session — this is
+    // what lets the GUI export flow (P8 T9) release its session lock BEFORE the
+    // async engine I/O begins (no parking_lot guard held across `.await`).
+    let views = Views {
+        views: sess
+            .tabs()
+            .iter()
+            .map(|tab| PackageView {
+                table_name: tab.table_name.clone(),
+                transform_stack: tab.transform_stack.clone(),
+                undo_cursor: tab.undo_cursor,
+            })
+            .collect(),
+    };
+    let queries = Queries {
+        queries: sess
+            .saved_queries()
+            .iter()
+            .map(|q| PackageQuery {
+                id: q.id,
+                name: q.name.clone(),
+                sql: q.sql.clone(),
+                saved_at: q.saved_at,
+            })
+            .collect(),
+    };
+    contents_from_engine(sess.engine.as_ref(), sess.window_id, views, queries).await
+}
+
+/// EXPORT core, decoupled from a live [`Session`]: walk `engine`'s catalog into a
+/// recipe + sources, and assemble [`PackageContents`] with the caller-supplied
+/// portable `views` / `queries` and `workspace_id`. Lets the GUI export flow
+/// snapshot the session (drop its lock) and then run the async engine work
+/// without holding the lock across an `.await`.
+pub async fn contents_from_engine(
+    engine: &dyn QueryEngine,
+    workspace_id: uuid::Uuid,
+    views: Views,
+    queries: Queries,
+) -> Result<PackageContents> {
     let tables = engine
         .get_tables()
         .await
@@ -148,36 +190,15 @@ pub async fn session_to_contents(sess: &Session) -> Result<PackageContents> {
         });
     }
 
-    let views = sess
-        .tabs()
-        .iter()
-        .map(|tab| PackageView {
-            table_name: tab.table_name.clone(),
-            transform_stack: tab.transform_stack.clone(),
-            undo_cursor: tab.undo_cursor,
-        })
-        .collect();
-
-    let queries = sess
-        .saved_queries()
-        .iter()
-        .map(|q| PackageQuery {
-            id: q.id,
-            name: q.name.clone(),
-            sql: q.sql.clone(),
-            saved_at: q.saved_at,
-        })
-        .collect();
-
     Ok(PackageContents {
-        workspace_id: sess.window_id,
+        workspace_id,
         created_at: crate::window::now_epoch_secs(),
         recipe: Recipe {
             tables: recipe_tables,
         },
         sources: Sources { sources },
-        views: Views { views },
-        queries: Queries { queries },
+        views,
+        queries,
     })
 }
 

@@ -395,6 +395,46 @@ impl Session {
         Ok(sess)
     }
 
+    /// Wrap an ALREADY-BUILT engine into a session for read-only Inspect mode
+    /// (P8 T9). Unlike [`Session::new`] / [`Session::recover`], this does NOT
+    /// build or init an engine — it adopts the caller's `engine` (e.g. the one
+    /// `package::inspect::open_readonly` returns, whose tables are non-mutable
+    /// `read_parquet` views).
+    ///
+    /// `scratch_dir` is the directory the inspect engine + its extracted parquet
+    /// live in; it becomes a `Home::Scratch` so `persist()` writes `session.json`
+    /// there (the dir MUST outlive the session — its parquet backs the views).
+    /// A fresh `window_id` is minted. No flock / manifest is held (Inspect is an
+    /// ephemeral read-only view, not an editable workspace home), and the engine
+    /// is NOT rebound to `home.db_path()` — the adopted engine is used as-is.
+    ///
+    /// Intended for `read_only = true` shells; the shell's mutation gate, not
+    /// this session, is what enforces read-only at the app layer (and the views
+    /// enforce it at the engine layer).
+    pub fn from_parts(
+        scratch_dir: PathBuf,
+        engine: Arc<DuckDBEngine>,
+        tabs: Vec<Tab>,
+        saved_queries: Vec<SavedQuery>,
+    ) -> Self {
+        let active_tab = if tabs.is_empty() { None } else { Some(0) };
+        Self {
+            window_id: Uuid::now_v7(),
+            home: Home::Scratch { dir: scratch_dir },
+            lock: None,
+            manifest_lock: None,
+            engine,
+            tabs,
+            active_tab,
+            sql_tabs: Vec::new(),
+            active_sql_tab: None,
+            query_history: Vec::new(),
+            saved_queries,
+            attachments: Vec::new(),
+            ui: SessionUiState::default(),
+        }
+    }
+
     /// `true` if this session is workspace-backed.
     pub fn is_workspace(&self) -> bool {
         self.home.is_workspace()
