@@ -31,7 +31,25 @@ emitter by hand.
 
 | # | Decision | Over | Why |
 |---|----------|------|-----|
-| D1 | **`plotters` → RGBA→BGRA buffer → GPUI `img(RenderImage)`** | ECharts/Plotly-in-webview; hand-rolled GPUI quads | Pure-Rust, no JS runtime/webview. One backend-generic draw routine serves screen + PNG + SVG. `plotters 0.3.7` **already in the tree** (dev-dep via `criterion`). Integration proven by gpui's own code. |
+| D1 | **`plotters` BitMapBackend → RGB→BGRA → GPUI `img(RenderImage)`** (screen + PNG); `SVGBackend` for SVG export | ECharts/Plotly-in-webview; hand-rolled GPUI quads | Pure-Rust, no JS runtime/webview. One backend-generic `draw<DB>` routine serves all outputs. `plotters` core+svg **already in the tree** (dev-dep via `criterion`); `plotters-bitmap` is a small new dep. |
+
+> **Plan-time fact-finding — two mechanism facts that shaped the tasks:**
+> 1. **Screen path stays BitMapBackend (text-safe).** Considered `gpui::Image::from_bytes(ImageFormat::Svg, bytes)` → `img(ImageSource::Image(..))` (gpui `platform.rs:1680-1702`,
+>    render `elements/img.rs:530`), which makes gpui rasterize SVG itself. **Rejected as the
+>    primary screen path:** gpui's SVG rasterizer renders icon *paths*; its font DB may be
+>    empty, so plotters' axis-label `<text>` could vanish on screen. plotters `BitMapBackend`
+>    + the `ttf` feature **bakes glyphs into pixels** → labels guaranteed. Kept SVG-via-gpui
+>    as a documented fallback the **T0 spike** may adopt only if it proves text renders.
+> 2. **Deterministic RGB→BGRA + crispness without `scale_factor`.** `BitMapBackend::with_buffer(&mut rgb, (w,h))` uses documented RGB (3 bytes/px). gpui `RenderImage` wants BGRA
+>    (`elements/img.rs:660-707`); `RenderImage.scale_factor` is `pub(crate)` (`assets.rs:46`)
+>    so app code can't set it. Therefore: render the buffer at **physical px** (`logical ×
+>    window.scale_factor()`), copy RGB→BGRA (`B=rgb[2],G=rgb[1],R=rgb[0],A=255`; opaque so
+>    premultiply is a no-op), build `RenderImage::new` (scale_factor defaults 1.0), and size
+>    the `img` element at **logical px** (`.w()/.h()`) so gpui downsamples the hi-res image →
+>    crisp on retina. No `pub(crate)` access needed. SVG export uses `SVGBackend::with_string`
+>    (text via `<text>`, fine for external viewers); PNG export uses `BitMapBackend::new(path)`
+>    (`bitmap_encoder`, text baked). `plotters-bitmap` is a *new* dep (criterion pulled only
+>    `svg_backend`) — used for screen + PNG. |
 | D2 | **Unified "Visualize" on any active grid** | SQL-Console-results-only; dedicated chart tab | Most fluid for exploration. Source is always an engine table/view name (`GridDataSource`), so no per-surface special-casing. |
 | D3 | **All 7 chart types in P9a-1** | core-5-then-defer | bar / line / area / scatter / histogram / box plot / heatmap. plotters renders all; box + heatmap add only data-prep + axis-config branches. |
 | D4 | **Push-down plot query per type** | plot raw grid rows | Axis picks build a plot SQL via the engine (bar/box → `GROUP BY` + agg, histogram → binning, scatter → sample-to-N, line/area → `ORDER BY`). Fast + correct on million-row tables. |
