@@ -62,6 +62,9 @@ sha2 = { workspace = true }
 # bundle is off and never compiled. The "0.3.8" pin matches gpui-component's
 # own declaration (harmless caret); Cargo resolves both to a single 0.3.x copy.
 tree-sitter-sequel = "0.3.8"
+# P9a Charts: render the 7 chart types to a bitmap buffer (BGRA→GPUI img) +
+# PNG/SVG export. See workspace Cargo.toml for the feature rationale.
+plotters = { workspace = true }
 
 [dev-dependencies]
 tempfile = { workspace = true }
