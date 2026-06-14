@@ -8,3 +8,23 @@ authors.workspace = true
 rust-version.workspace = true
 [lib]
 path = "src/lib.rs"
+
+[dependencies]
+serde = { workspace = true }
+serde_json = { workspace = true }
+zip = { workspace = true }
+sha2 = { workspace = true }        # used by the Writer (T2) / Reader (T3) for sha256 checksums
+# `serde` feature required: model types derive Serialize/Deserialize over uuid::Uuid.
+# Additive over the workspace pin's `v7` feature (uuid features are additive).
+uuid = { workspace = true, features = ["serde"] }
+thiserror = { workspace = true }
+dat0-engine = { workspace = true }
+tempfile = { workspace = true }    # Writer (T2) stages per-table parquet exports in a tempdir before zipping
+# Replay (T6) downcasts the engine's QueryResult arrow batches for an exact
+# count(*). Consumed via `duckdb::arrow` re-exports (NO standalone arrow/parquet
+# dep — see the workspace Cargo.toml note). Same `=1.4.4` pin as the engine.
+duckdb = { workspace = true }
+
+[dev-dependencies]
+jsonschema = { workspace = true }
+tokio = { workspace = true }       # used by engine-backed async integration tests (T2+)

@@ -13,6 +13,17 @@ fn main() -> Result<()> {
     dat0_app::window_registry::install_recents(std::sync::Arc::clone(&ctx.recents));
     let state_dir = dat0_app::platform::data_dir()?;
     let cli_paths: Vec<std::path::PathBuf> = std::env::args().skip(1).map(Into::into).collect();
+
+    // P8 T4: headless package front-door. If argv names a package subcommand
+    // (export/unpack/inspect/replay/diff), run it WITHOUT GPUI or AppLock and
+    // exit with its process code. A bare launch or a dropped file path returns
+    // None and falls through to the GUI below. `std::process::exit` returns `!`,
+    // so this short-circuit type-checks inside `main`'s `Result`.
+    let raw: Vec<String> = std::env::args().collect();
+    if let Some(cmd) = dat0_app::cli::parse(&raw) {
+        std::process::exit(dat0_app::cli::run(cmd));
+    }
+
     let lock = match AppLock::try_acquire(&state_dir)? {
         Some(l) => l,
         None => {

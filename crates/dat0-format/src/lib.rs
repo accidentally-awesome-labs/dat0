@@ -1,1 +1,14 @@
-//! dat0 .dat0 package format reader/writer (stub; real API lands in P8b).
+//! dat0 `.dat0` package format: model, writer, reader, diff, replay.
+pub mod diff;
+pub mod error;
+pub mod model;
+pub mod reader;
+pub mod replay;
+pub mod writer;
+pub use diff::{PackageDiff, compute, diff};
+pub use error::{FormatError, Result};
+pub use model::*;
+pub use reader::Reader;
+pub use writer::Writer;
+/// Package format major version. dat0 1.x reads format 1.x (design D8).
+pub const FORMAT_VERSION: u32 = 1;

@@ -79,6 +79,16 @@ reqwest = { version = "0.12", default-features = false, features = ["rustls-tls"
 # samples cache.
 sha2 = "0.10"
 
+# P8 T1: `.dat0` package container. Pin proven by the P8 T0 spike
+# (docs/internal/2026-06-13-p8-spike-notes.md §S2): default-features off drops
+# the heavy zstd/lzma/xz/bzip2 codecs we don't need; `deflate-flate2-zlib-rs`
+# selects the pure-Rust zlib backend (the bare `deflate-flate2` feature fails to
+# compile — "No compression backend selected"). Stored Parquet + Deflated JSON.
+zip = { version = "8.6.0", default-features = false, features = ["deflate-flate2-zlib-rs"] }
+
+# P8 T1: validate a serialized manifest against the published JSON Schema (dev/test only).
+jsonschema = "0.36"
+
 # P3b T8: dev-only HTTP mock server for sample_data_fetch tests.
 mockito = "1"
 
@@ -111,8 +121,18 @@ rusqlite = { version = "0.31", features = ["bundled"] }
 
 # Internal crates
 dat0-engine = { path = "crates/dat0-engine" }
+dat0-format = { path = "crates/dat0-format" }
 dat0-i18n = { path = "crates/dat0-i18n" }
 dat0-keychain = { path = "crates/dat0-keychain" }
+
+# CI disk/RAM mitigation (docs/ci.md "OOM mitigations" knob #1): trim dev/test
+# debuginfo to line tables only. The dev-profile link of dat0's test-binary set
+# (duckdb + arrow + gpui + sentry) carries full DWARF that exhausted the hosted
+# ubuntu runner's ~14 GB disk once P8 added ~9 more test binaries. `test`
+# inherits `dev`'s debug, so this shrinks every test binary ~60%. Tradeoff:
+# panic backtraces keep line numbers but lose inlined frames — acceptable.
+[profile.dev]
+debug = "line-tables-only"
 
 [profile.release]
 lto = "thin"

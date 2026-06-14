@@ -681,6 +681,7 @@ Used by:
 - thiserror 2.0.18 — https://github.com/dtolnay/thiserror
 - time-core 0.1.8 — https://github.com/time-rs/time
 - time 0.3.47 — https://github.com/time-rs/time
+- typed-path 0.12.3 — https://github.com/chipsenkbeil/typed-path
 - typeid 1.0.3 — https://github.com/dtolnay/typeid
 - unicode-ident 1.0.24 — https://github.com/dtolnay/unicode-ident
 - usvg 0.45.1 — https://github.com/linebender/resvg
@@ -1284,6 +1285,11 @@ Used by:
 ## MIT License (SPDX: MIT)
 
 Used by:
+- zip 8.6.0 — https://github.com/zip-rs/zip2
+
+## MIT License (SPDX: MIT)
+
+Used by:
 - freetype-sys 0.20.1 — https://github.com/PistonDevelopers/freetype-sys.git
 
 ## MIT License (SPDX: MIT)
@@ -1439,6 +1445,11 @@ Used by:
 - zerotrie 0.2.4 — https://github.com/unicode-org/icu4x
 - zerovec-derive 0.11.3 — https://github.com/unicode-org/icu4x
 - zerovec 0.11.6 — https://github.com/unicode-org/icu4x
+
+## zlib License (SPDX: Zlib)
+
+Used by:
+- zlib-rs 0.6.3 — https://github.com/trifectatechfoundation/zlib-rs
 
 ## zlib License (SPDX: Zlib)
 
