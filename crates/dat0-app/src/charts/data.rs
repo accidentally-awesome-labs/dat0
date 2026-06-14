@@ -4,8 +4,8 @@
 
 use dat0_engine::types::QueryResult;
 use duckdb::arrow::array::{
-    Array, Decimal128Array, Float32Array, Float64Array, Int16Array, Int32Array, Int64Array,
-    Int8Array, StringArray, UInt16Array, UInt32Array, UInt64Array, UInt8Array,
+    Array, Decimal128Array, Float32Array, Float64Array, Int8Array, Int16Array, Int32Array,
+    Int64Array, StringArray, UInt8Array, UInt16Array, UInt32Array, UInt64Array,
 };
 
 #[derive(Clone)]
@@ -72,7 +72,11 @@ fn col_str(col: &dyn Array, row: usize) -> String {
     // Defensive numeric-as-label fallback; unreachable in normal use because
     // `is_numeric_array` gates kind-detection and routes numeric columns through col_f64.
     let f = col_f64(col, row);
-    if f.is_nan() { String::new() } else { f.to_string() }
+    if f.is_nan() {
+        String::new()
+    } else {
+        f.to_string()
+    }
 }
 
 fn is_numeric_array(col: &dyn Array) -> bool {
@@ -97,7 +101,11 @@ impl PlotTable {
         let mut columns: Vec<PlotColumn> = qr
             .columns
             .iter()
-            .map(|c| PlotColumn { name: c.name.clone(), num: None, text: None })
+            .map(|c| PlotColumn {
+                name: c.name.clone(),
+                num: None,
+                text: None,
+            })
             .collect();
 
         for (ci, pcol) in columns.iter_mut().enumerate().take(ncols) {
@@ -132,10 +140,16 @@ impl PlotTable {
     }
 
     pub fn num(&self, name: &str) -> Option<&[f64]> {
-        self.columns.iter().find(|c| c.name == name).and_then(|c| c.num.as_deref())
+        self.columns
+            .iter()
+            .find(|c| c.name == name)
+            .and_then(|c| c.num.as_deref())
     }
     pub fn text(&self, name: &str) -> Option<&[String]> {
-        self.columns.iter().find(|c| c.name == name).and_then(|c| c.text.as_deref())
+        self.columns
+            .iter()
+            .find(|c| c.name == name)
+            .and_then(|c| c.text.as_deref())
     }
     /// Positional accessors — render.rs reads by the per-type column CONTRACT
     /// (see charts/query.rs), which is independent of user column names.
@@ -153,7 +167,9 @@ mod tests {
     use dat0_engine::{DerivedOrigin, DuckDBEngine, MemoryBudget, QueryEngine};
 
     fn budget() -> MemoryBudget {
-        MemoryBudget { bytes: 256 * 1024 * 1024 }
+        MemoryBudget {
+            bytes: 256 * 1024 * 1024,
+        }
     }
 
     #[tokio::test]
@@ -175,7 +191,10 @@ mod tests {
             .unwrap();
         let pt = PlotTable::from_query_result(&qr);
         assert_eq!(pt.rows, 2);
-        assert_eq!(pt.text("k").unwrap(), &["East".to_string(), "West".to_string()]);
+        assert_eq!(
+            pt.text("k").unwrap(),
+            &["East".to_string(), "West".to_string()]
+        );
         assert_eq!(pt.num("v").unwrap(), &[20.0, 15.0]);
         engine.close().await.unwrap();
     }
@@ -234,7 +253,10 @@ mod tests {
             )
             .await
             .unwrap();
-        let qr = engine.execute("SELECT x, y FROM ints ORDER BY x").await.unwrap();
+        let qr = engine
+            .execute("SELECT x, y FROM ints ORDER BY x")
+            .await
+            .unwrap();
         let pt = PlotTable::from_query_result(&qr);
         // INTEGER (Int32) column maps to real f64 values, NOT NaN.
         assert_eq!(pt.num("x").unwrap(), &[1.0, 2.0, 3.0]);

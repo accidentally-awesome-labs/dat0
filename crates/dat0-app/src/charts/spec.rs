@@ -90,11 +90,32 @@ pub fn is_numeric(data_type: &str) -> bool {
         .to_ascii_uppercase();
     matches!(
         base.as_str(),
-        "TINYINT" | "SMALLINT" | "INTEGER" | "BIGINT" | "HUGEINT" | "UHUGEINT"
-            | "UTINYINT" | "USMALLINT" | "UINTEGER" | "UBIGINT"
-            | "FLOAT" | "DOUBLE" | "DECIMAL" | "NUMERIC" | "REAL"
-            | "INT" | "INT1" | "INT2" | "INT4" | "INT8" | "INT16" | "INT32" | "INT64" | "INT128"
-            | "FLOAT4" | "FLOAT8"
+        "TINYINT"
+            | "SMALLINT"
+            | "INTEGER"
+            | "BIGINT"
+            | "HUGEINT"
+            | "UHUGEINT"
+            | "UTINYINT"
+            | "USMALLINT"
+            | "UINTEGER"
+            | "UBIGINT"
+            | "FLOAT"
+            | "DOUBLE"
+            | "DECIMAL"
+            | "NUMERIC"
+            | "REAL"
+            | "INT"
+            | "INT1"
+            | "INT2"
+            | "INT4"
+            | "INT8"
+            | "INT16"
+            | "INT32"
+            | "INT64"
+            | "INT128"
+            | "FLOAT4"
+            | "FLOAT8"
     )
 }
 
@@ -132,8 +153,14 @@ mod tests {
     fn visible_axes_per_type() {
         assert_eq!(ChartType::Histogram.axes(), &[AxisRole::X]);
         assert_eq!(ChartType::Bar.axes(), &[AxisRole::X, AxisRole::Y]);
-        assert_eq!(ChartType::Scatter.axes(), &[AxisRole::X, AxisRole::Y, AxisRole::Color]);
-        assert_eq!(ChartType::Heatmap.axes(), &[AxisRole::X, AxisRole::Y, AxisRole::Value]);
+        assert_eq!(
+            ChartType::Scatter.axes(),
+            &[AxisRole::X, AxisRole::Y, AxisRole::Color]
+        );
+        assert_eq!(
+            ChartType::Heatmap.axes(),
+            &[AxisRole::X, AxisRole::Y, AxisRole::Value]
+        );
         assert_eq!(ChartType::BoxPlot.axes(), &[AxisRole::X, AxisRole::Value]);
     }
 

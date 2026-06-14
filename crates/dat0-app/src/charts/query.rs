@@ -15,7 +15,8 @@ fn q(ident: &str) -> String {
 }
 
 fn need<'a>(v: &'a Option<String>, role: &str) -> Result<&'a str, String> {
-    v.as_deref().ok_or_else(|| format!("chart needs a {role} column"))
+    v.as_deref()
+        .ok_or_else(|| format!("chart needs a {role} column"))
 }
 
 /// Build the engine SQL that returns plot-ready rows for `spec`.
@@ -139,7 +140,8 @@ mod tests {
     #[test]
     fn boxplot_selects_cat_and_value() {
         // BoxPlot: x = category, value carried in `y`.
-        let sql = build_plot_sql(&spec(ChartType::BoxPlot, Some("region"), Some("amount"))).unwrap();
+        let sql =
+            build_plot_sql(&spec(ChartType::BoxPlot, Some("region"), Some("amount"))).unwrap();
         assert!(sql.contains("\"region\""), "{sql}");
         assert!(sql.contains("\"amount\""), "{sql}");
     }
@@ -157,7 +159,8 @@ mod tests {
 
     #[test]
     fn boxplot_guards_null_category() {
-        let sql = build_plot_sql(&spec(ChartType::BoxPlot, Some("region"), Some("amount"))).unwrap();
+        let sql =
+            build_plot_sql(&spec(ChartType::BoxPlot, Some("region"), Some("amount"))).unwrap();
         let up = sql.to_uppercase();
         assert!(up.contains("\"REGION\" IS NOT NULL"), "{sql}");
         assert!(up.contains("\"AMOUNT\" IS NOT NULL"), "{sql}");
