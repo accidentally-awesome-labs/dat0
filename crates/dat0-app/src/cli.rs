@@ -10,11 +10,13 @@
 //! with `#[tokio::test]` (calling `run` from inside a `#[tokio::test]` would
 //! panic on the nested runtime).
 
+use std::collections::HashMap;
 use std::path::PathBuf;
 
-use anyhow::{Context, Result};
+use anyhow::{Context, Result, anyhow, bail};
 use clap::{Arg, ArgAction, Command};
-use dat0_engine::QueryEngine;
+use dat0_engine::{DuckDBEngine, MemoryBudget, QueryEngine};
+use serde::Serialize;
 
 use crate::package;
 use crate::session::Session;
@@ -233,10 +235,30 @@ pub async fn run_async(cmd: PackageCmd) -> i32 {
                 2
             }
         },
-        PackageCmd::Inspect { .. } | PackageCmd::Replay { .. } => {
-            eprintln!("dat0 inspect/replay: not yet implemented (lands in T7)");
-            2
-        }
+        PackageCmd::Inspect { package, json } => match inspect_async(&package, json).await {
+            Ok(output) => {
+                println!("{output}");
+                0
+            }
+            Err(e) => {
+                eprintln!("dat0 inspect: {e:#}");
+                2
+            }
+        },
+        PackageCmd::Replay {
+            package,
+            source,
+            out,
+        } => match replay_async(&package, &source, out).await {
+            Ok(out_path) => {
+                println!("replayed -> {}", out_path.display());
+                0
+            }
+            Err(e) => {
+                eprintln!("dat0 replay: {e:#}");
+                2
+            }
+        },
     }
 }
 
@@ -267,6 +289,223 @@ pub async fn unpack_async(pkg: &std::path::Path, dir: &std::path::Path) -> Resul
         .with_context(|| format!("unpack into {}", dir.display()))?;
     Ok(())
 }
+
+// ---------------------------------------------------------------------------
+// REPLAY
+// ---------------------------------------------------------------------------
+
+/// REPLAY core: rebind sources to new files and re-run derived tables.
+///
+/// Each `source` string must have the form `logical_name=path` (split on the
+/// FIRST `=` so paths containing `=` are handled correctly). A malformed entry
+/// returns a clear error. The replayed package is written to `out` if provided,
+/// or a default `<package_stem>-replayed.dat0` next to the original package.
+/// Returns the output path.
+pub async fn replay_async(
+    package: &std::path::Path,
+    source: &[String],
+    out: Option<PathBuf>,
+) -> Result<PathBuf> {
+    // Parse "logical=path" specs.
+    let mut new_sources: HashMap<String, PathBuf> = HashMap::new();
+    for spec in source {
+        let (logical, path_str) = spec.split_once('=').ok_or_else(|| {
+            anyhow!(
+                "malformed --source spec {:?}: expected 'logical_name=path' (no '=' found)",
+                spec
+            )
+        })?;
+        if logical.is_empty() {
+            bail!("malformed --source spec {:?}: logical name is empty", spec);
+        }
+        if path_str.is_empty() {
+            bail!("malformed --source spec {:?}: path is empty", spec);
+        }
+        new_sources.insert(logical.to_string(), PathBuf::from(path_str));
+    }
+
+    let parsed = dat0_format::Reader::open(package)
+        .with_context(|| format!("open package {}", package.display()))?;
+
+    // Scratch engine — throwaway, closed + dropped before we return (P7a T6 lesson).
+    let scratch_dir = tempfile::tempdir().context("create replay scratch dir")?;
+    let engine = DuckDBEngine::new(
+        scratch_dir.path().join("replay.duckdb"),
+        MemoryBudget {
+            bytes: DEFAULT_BUDGET,
+        },
+    )
+    .context("create replay engine")?;
+    engine.init().await.context("init replay engine")?;
+
+    let new_contents = dat0_format::replay::ReplayEngine::replay(&parsed, &new_sources, &engine)
+        .await
+        .context("replay recipe")?;
+
+    // Determine output path.
+    let out_path = match out {
+        Some(p) => p,
+        None => {
+            // Default: "<package_stem>-replayed.dat0" next to the original.
+            let stem = package
+                .file_stem()
+                .and_then(|s| s.to_str())
+                .unwrap_or("package");
+            let parent = package.parent().unwrap_or(std::path::Path::new("."));
+            parent.join(format!("{stem}-replayed.dat0"))
+        }
+    };
+
+    dat0_format::Writer::write(&new_contents, &engine, &out_path)
+        .await
+        .with_context(|| format!("write replayed package {}", out_path.display()))?;
+
+    // Hygiene: close before the scratch_dir drops (mirrors export_async).
+    engine.close().await.ok();
+
+    Ok(out_path)
+}
+
+// ---------------------------------------------------------------------------
+// INSPECT
+// ---------------------------------------------------------------------------
+
+/// A single row in the inspect tables list.
+#[derive(Debug, Serialize)]
+pub struct InspectTable {
+    pub name: String,
+    pub kind: String, // "base" or "derived"
+    pub rows: u64,
+    pub cols: usize,
+}
+
+/// A directed lineage edge derived from a [`Derivation`].
+#[derive(Debug, Serialize)]
+pub struct LineageEdge {
+    pub table: String,  // the derived table
+    pub parent: String, // one of its parent tables
+}
+
+/// A saved query entry in the inspect report.
+#[derive(Debug, Serialize)]
+pub struct InspectQuery {
+    pub name: String,
+    pub sql: String,
+}
+
+/// The full inspect report (returned as JSON or rendered as text).
+#[derive(Debug, Serialize)]
+pub struct InspectReport {
+    pub tables: Vec<InspectTable>,
+    pub lineage: Vec<LineageEdge>,
+    pub queries: Vec<InspectQuery>,
+}
+
+/// INSPECT core: open the package and produce a summary report string.
+///
+/// With `json = true` returns pretty-printed JSON; otherwise a human-readable
+/// text tree. No engine required — reads recipe metadata only.
+pub async fn inspect_async(package: &std::path::Path, json: bool) -> Result<String> {
+    let parsed = dat0_format::Reader::open(package)
+        .with_context(|| format!("open package {}", package.display()))?;
+
+    // Build the tables list.
+    let tables: Vec<InspectTable> = parsed
+        .recipe
+        .tables
+        .iter()
+        .map(|t| InspectTable {
+            name: t.name.clone(),
+            kind: match t.kind {
+                dat0_format::TableKind::Base => "base".to_string(),
+                dat0_format::TableKind::Derived => "derived".to_string(),
+            },
+            rows: t.row_count,
+            cols: t.schema.len(),
+        })
+        .collect();
+
+    // Build lineage edges from each derived table's Derivation.
+    let mut lineage: Vec<LineageEdge> = Vec::new();
+    for t in &parsed.recipe.tables {
+        match &t.derivation {
+            Some(dat0_format::Derivation::Sql { parents, .. }) => {
+                for parent in parents {
+                    lineage.push(LineageEdge {
+                        table: t.name.clone(),
+                        parent: parent.clone(),
+                    });
+                }
+            }
+            Some(dat0_format::Derivation::Transform { parent, .. }) => {
+                lineage.push(LineageEdge {
+                    table: t.name.clone(),
+                    parent: parent.clone(),
+                });
+            }
+            None => {}
+        }
+    }
+
+    // Saved queries.
+    let queries: Vec<InspectQuery> = parsed
+        .queries
+        .queries
+        .iter()
+        .map(|q| InspectQuery {
+            name: q.name.clone(),
+            sql: q.sql.clone(),
+        })
+        .collect();
+
+    let report = InspectReport {
+        tables,
+        lineage,
+        queries,
+    };
+
+    if json {
+        serde_json::to_string_pretty(&report).context("serialize inspect report")
+    } else {
+        Ok(render_inspect_text(&report))
+    }
+}
+
+/// Render an [`InspectReport`] as a human-readable text tree.
+fn render_inspect_text(report: &InspectReport) -> String {
+    let mut out = String::new();
+
+    out.push_str("Tables:\n");
+    for t in &report.tables {
+        out.push_str(&format!(
+            "  {} ({}, {} rows, {} cols)\n",
+            t.name, t.kind, t.rows, t.cols
+        ));
+    }
+
+    if !report.lineage.is_empty() {
+        out.push_str("\nLineage:\n");
+        for edge in &report.lineage {
+            out.push_str(&format!("  {} <- {}\n", edge.table, edge.parent));
+        }
+    }
+
+    if !report.queries.is_empty() {
+        out.push_str("\nSaved queries:\n");
+        for q in &report.queries {
+            // Truncate very long SQL for readability.
+            let sql_preview: String = q.sql.chars().take(80).collect();
+            let ellipsis = if q.sql.len() > 80 { "…" } else { "" };
+            out.push_str(&format!("  {}: {}{}\n", q.name, sql_preview, ellipsis));
+        }
+    }
+
+    out
+}
+
+// ---------------------------------------------------------------------------
+// DIFF
+// ---------------------------------------------------------------------------
 
 /// DIFF core: open both packages, compute the pure-JSON recipe diff, print it
 /// (text or `--json`), and return whether the diff is EMPTY (so the caller maps
