@@ -39,7 +39,7 @@
       "format": "uuid"
     },
     "created_at": {
-      "description": "Package creation timestamp (RFC 3339).",
+      "description": "Package creation timestamp. Opaque string — producers SHOULD use RFC 3339; readers MUST treat it as opaque (the dat0 app writes epoch-seconds).",
       "type": "string"
     },
     "table_count": {

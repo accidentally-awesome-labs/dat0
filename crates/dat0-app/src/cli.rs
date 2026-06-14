@@ -24,23 +24,23 @@ use crate::session::Session;
 /// Default engine memory budget for headless package ops (256 MiB).
 const DEFAULT_BUDGET: u64 = 256 * 1024 * 1024;
 
-/// A parsed package subcommand. `Inspect`/`Replay` are parsed now (so the enum
-/// is stable) but their `run` arms are stubbed until T7; `Diff` until T5.
+/// A parsed package subcommand. All arms are implemented and dispatched by
+/// [`run`]; the front-door [`parse`] turns raw argv into one of these.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum PackageCmd {
     /// `dat0 export <workspace> -o <out.dat0>`
     Export { workspace: PathBuf, out: PathBuf },
     /// `dat0 unpack <package.dat0> <dir>`
     Unpack { package: PathBuf, dir: PathBuf },
-    /// `dat0 inspect <package.dat0> [--json]` (T7)
+    /// `dat0 inspect <package.dat0> [--json]`
     Inspect { package: PathBuf, json: bool },
-    /// `dat0 replay <package.dat0> [--source k=v]... [-o <out.dat0>]` (T7)
+    /// `dat0 replay <package.dat0> [--source k=v]... [-o <out.dat0>]`
     Replay {
         package: PathBuf,
         source: Vec<String>,
         out: Option<PathBuf>,
     },
-    /// `dat0 diff <a.dat0> <b.dat0> [--json]` (T5)
+    /// `dat0 diff <a.dat0> <b.dat0> [--json]`
     Diff { a: PathBuf, b: PathBuf, json: bool },
 }
 
@@ -135,7 +135,7 @@ fn cli_command() -> Command {
         )
         .subcommand(
             Command::new("inspect")
-                .about("Print a .dat0 package's recipe summary (T7)")
+                .about("Print a .dat0 package's recipe summary")
                 .arg(
                     Arg::new("package")
                         .required(true)
@@ -145,7 +145,7 @@ fn cli_command() -> Command {
         )
         .subcommand(
             Command::new("replay")
-                .about("Replay a .dat0 recipe against fresh sources (T7)")
+                .about("Replay a .dat0 recipe against fresh sources")
                 .arg(
                     Arg::new("package")
                         .required(true)
@@ -166,7 +166,7 @@ fn cli_command() -> Command {
         )
         .subcommand(
             Command::new("diff")
-                .about("Diff two .dat0 packages (T5)")
+                .about("Diff two .dat0 packages")
                 .arg(
                     Arg::new("a")
                         .required(true)

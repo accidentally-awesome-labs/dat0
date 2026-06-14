@@ -74,7 +74,7 @@ shape).
 | `dat0_version`   | string           | The producing dat0 build version.                                     |
 | `package_id`     | string (uuid)    | UUID v7 (time-ordered) identifying this package.                      |
 | `workspace_id`   | string (uuid)    | UUID of the origin workspace (provenance only).                       |
-| `created_at`     | string (RFC3339) | Package creation timestamp.                                           |
+| `created_at`     | string           | Creation timestamp; opaque. Producers SHOULD use RFC 3339, readers MUST treat it as opaque (dat0 writes epoch-seconds). |
 | `table_count`    | integer          | Number of tables in the recipe.                                       |
 | `checksums`      | object           | Map of in-archive entry path → `"sha256:<hex>"`.                      |
 

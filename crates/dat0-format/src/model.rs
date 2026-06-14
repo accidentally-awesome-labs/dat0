@@ -18,7 +18,7 @@ pub struct PackageManifest {
     pub dat0_version: String,
     pub package_id: uuid::Uuid,   // now_v7
     pub workspace_id: uuid::Uuid, // origin workspace, provenance
-    pub created_at: String,       // RFC3339
+    pub created_at: String,       // opaque creation timestamp (dat0 writes epoch-seconds)
     pub table_count: u32,
     pub checksums: std::collections::BTreeMap<String, String>, // "data/sales.parquet" -> "sha256:…"
 }
