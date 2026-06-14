@@ -9,6 +9,7 @@ use gpui::{IntoElement, ParentElement, Styled, div, px};
 
 pub mod data;
 pub mod export;
+pub mod panel;
 pub mod query;
 pub mod render;
 pub mod spec;
