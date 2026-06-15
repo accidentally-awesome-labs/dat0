@@ -11,9 +11,10 @@ pub struct CatalogNode {
 
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct CatalogTree {
-    pub sources: Vec<CatalogNode>, // File + Attached
+    pub sources: Vec<CatalogNode>, // File + non-md Attached (SQLite/file)
     pub tables: Vec<CatalogNode>,  // local base (Derived::Sql with empty/origin-less) — see note
     pub derived: Vec<CatalogNode>, // Derived::Transform / non-empty Sql
+    pub cloud: Vec<CatalogNode>,   // MotherDuck-attached (source starts "md:")
 }
 
 impl CatalogTree {
@@ -27,6 +28,12 @@ impl CatalogTree {
             };
             match &ti.origin {
                 TableOrigin::File(_) => tree.sources.push(node),
+                // MotherDuck attaches record `source = "md:"`
+                // (duckdb_engine.rs:721-730); SQLite/file attaches record the
+                // file path. Cloud ⇔ md: prefix (covers a future `md:dbname`).
+                TableOrigin::Attached { source, .. } if source.starts_with("md:") => {
+                    tree.cloud.push(node)
+                }
                 TableOrigin::Attached { .. } => tree.sources.push(node),
                 TableOrigin::Derived(d) => match d {
                     dat0_engine::DerivedOrigin::Transform { .. } => tree.derived.push(node),
@@ -52,6 +59,7 @@ impl CatalogTree {
         self.sources.retain(&keep);
         self.tables.retain(&keep);
         self.derived.retain(&keep);
+        self.cloud.retain(&keep);
         self
     }
 }
@@ -96,9 +104,67 @@ mod tests {
             ),
         ];
         let tree = CatalogTree::build(&tables);
-        assert_eq!(tree.sources.len(), 2, "file + attached are sources");
+        // File stays under Sources; the md: attach now lands under Cloud.
+        assert_eq!(
+            tree.sources.len(),
+            1,
+            "only the file source remains in Sources"
+        );
+        assert!(tree.sources.iter().any(|n| n.name == "sales"));
         assert!(tree.tables.iter().any(|n| n.name == "orders"));
         assert!(tree.derived.iter().any(|n| n.name == "orders_open"));
+        assert!(tree.cloud.iter().any(|n| n.name == "md_events"));
+    }
+
+    #[test]
+    fn motherduck_attaches_group_under_cloud_sqlite_stays_sources() {
+        let tables = vec![
+            t("sales", TableOrigin::File(PathBuf::from("/s.csv"))),
+            t(
+                "md_events",
+                TableOrigin::Attached {
+                    alias: "sample_data".into(),
+                    source: "md:".into(),
+                },
+            ),
+            t(
+                "local_sqlite",
+                TableOrigin::Attached {
+                    alias: "sq".into(),
+                    source: "/tmp/x.db".into(),
+                },
+            ),
+        ];
+        let tree = CatalogTree::build(&tables);
+        assert_eq!(tree.cloud.len(), 1, "only the md: attach is Cloud");
+        assert_eq!(tree.cloud[0].name, "md_events");
+        // file + sqlite attach stay under Sources; md does NOT.
+        assert!(tree.sources.iter().any(|n| n.name == "sales"));
+        assert!(tree.sources.iter().any(|n| n.name == "local_sqlite"));
+        assert!(!tree.sources.iter().any(|n| n.name == "md_events"));
+    }
+
+    #[test]
+    fn cloud_group_respects_token_and_search() {
+        let tables = vec![
+            t(
+                "md_orders",
+                TableOrigin::Attached {
+                    alias: "db".into(),
+                    source: "md:".into(),
+                },
+            ),
+            t(
+                "md_events",
+                TableOrigin::Attached {
+                    alias: "db".into(),
+                    source: "md:".into(),
+                },
+            ),
+        ];
+        let tree = CatalogTree::build(&tables).filter("ord");
+        assert_eq!(tree.cloud.len(), 1);
+        assert_eq!(tree.cloud[0].name, "md_orders");
     }
 
     #[test]
