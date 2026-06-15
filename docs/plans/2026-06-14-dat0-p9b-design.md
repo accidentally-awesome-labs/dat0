@@ -1,7 +1,11 @@
 # dat0 P9b — MotherDuck transparent ATTACH (design STUB)
 
-**Status:** STUB — not yet brainstormed. Created alongside the P9a design so the P9
-split is recorded. Do a full brainstorm before planning.
+**Status:** SUPERSEDED — fully brainstormed 2026-06-15. See
+`docs/plans/2026-06-15-dat0-p9b-design.md` for the locked design (D1 Connections-panel
+canonical, D2 distinct catalog "Cloud" group). This stub is kept as historical record.
+
+**Original status:** STUB — not yet brainstormed. Created alongside the P9a design so
+the P9 split is recorded. Do a full brainstorm before planning.
 **Master-spec anchor:** §21.2 P9b (`docs/specs/2026-04-26-dat0-design.md:1126`).
 **Sibling docs:** P9a `2026-06-14-dat0-p9a-design.md` (charts, active); P9c
 `2026-06-14-dat0-p9c-design.md` (AI, stub).
