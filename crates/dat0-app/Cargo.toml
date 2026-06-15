@@ -74,6 +74,19 @@ plotters = { workspace = true }
 image = { version = "0.25", default-features = false }
 smallvec = "1"
 
+# P9a Charts (Linux build fix): plotters' `ttf` feature pulls `font-kit`, which on
+# Linux compiles its `sources/fontconfig.rs` against `yeslogic-fontconfig-sys` v6.
+# v6 exposes the `Fc*` symbols ONLY through its dlopen `statics::LIB` handle, so
+# font-kit's non-dlopen path (`use ffi::*` + free-function dispatch) fails with
+# `error[E0425]: cannot find function FcInitLoadConfigAndFonts`. Enabling font-kit's
+# `source-fontconfig-dlopen` feature switches it to the dlopen path (and turns on
+# `yeslogic-fontconfig-sys/dlopen`), resolving the symbols at runtime via
+# libfontconfig.so.1 (present on Linux). plotters doesn't enable this feature itself.
+# macOS (Core Text) and Windows (DirectWrite) never compile the fontconfig module,
+# so this dep is Linux-only. font-kit is already in the tree via plotters 0.3.7.
+[target.'cfg(target_os = "linux")'.dependencies]
+font-kit = { version = "0.14.3", default-features = false, features = ["source-fontconfig-dlopen"] }
+
 [dev-dependencies]
 tempfile = { workspace = true }
 criterion = { workspace = true }

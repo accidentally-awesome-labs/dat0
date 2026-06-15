@@ -1759,6 +1759,7 @@ dependencies = [
  "dat0-keychain",
  "dirs 5.0.1",
  "duckdb",
+ "font-kit",
  "fs4",
  "futures",
  "gethostname",
