@@ -427,6 +427,7 @@ impl Session {
         engine: Arc<DuckDBEngine>,
         tabs: Vec<Tab>,
         saved_queries: Vec<SavedQuery>,
+        charts: Vec<crate::session::charts::SavedChart>,
     ) -> Self {
         let active_tab = if tabs.is_empty() { None } else { Some(0) };
         Self {
@@ -441,7 +442,7 @@ impl Session {
             active_sql_tab: None,
             query_history: Vec::new(),
             saved_queries,
-            charts: Vec::new(),
+            charts,
             attachments: Vec::new(),
             ui: SessionUiState::default(),
         }

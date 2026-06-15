@@ -105,6 +105,12 @@ impl Writer {
             &serde_json::to_vec_pretty(&contents.queries)?,
             deflated,
         )?;
+        write_json(
+            &mut zip,
+            "charts.json",
+            &serde_json::to_vec_pretty(&contents.charts)?,
+            deflated,
+        )?;
 
         // 3. Manifest LAST, so checksums for all prior entries are populated.
         let manifest = PackageManifest {

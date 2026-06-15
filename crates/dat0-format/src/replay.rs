@@ -22,7 +22,7 @@ use dat0_engine::{ColumnInfo, DerivedOrigin, QueryEngine, RegisterOpts, compile_
 
 use crate::error::{FormatError, Result};
 use crate::model::{
-    Charts, ColumnFingerprint, Derivation, PackageContents, ParsedPackage, RecipeTable, TableKind,
+    ColumnFingerprint, Derivation, PackageContents, ParsedPackage, RecipeTable, TableKind,
 };
 
 /// `true` if `name` is an internal dat0 surrogate (e.g. `__dat0_rowid`) that
@@ -270,8 +270,10 @@ impl ReplayEngine {
             sources,
             views: parsed.views.clone(),
             queries: parsed.queries.clone(),
-            // T2 stub: T3 owns chart replay (pass-through of parsed.charts).
-            charts: Charts { charts: Vec::new() },
+            // Charts carry no replayable data dimension (they reference
+            // tables/columns by name), so replay preserves them verbatim — the
+            // refreshed recipe re-runs the same tables the chart specs name.
+            charts: parsed.charts.clone(),
         })
     }
 }

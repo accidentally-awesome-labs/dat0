@@ -24,8 +24,9 @@ use dat0_engine::{
     quote_ident,
 };
 use dat0_format::{
-    Charts, ColumnFingerprint, Derivation, PackageContents, PackageQuery, PackageSource,
-    PackageView, ParsedPackage, Queries, Recipe, RecipeTable, Sources, TableKind, Views,
+    Charts, ColumnFingerprint, Derivation, PackageChart, PackageContents, PackageQuery,
+    PackageSource, PackageView, ParsedPackage, Queries, Recipe, RecipeTable, Sources, TableKind,
+    Views,
 };
 
 use crate::session::Session;
@@ -141,7 +142,19 @@ pub async fn session_to_contents(sess: &Session) -> Result<PackageContents> {
             })
             .collect(),
     };
-    contents_from_engine(sess.engine.as_ref(), sess.window_id, views, queries).await
+    let charts = Charts {
+        charts: sess
+            .charts()
+            .iter()
+            .map(|c| PackageChart {
+                id: c.id,
+                name: c.name.clone(),
+                spec: c.spec.clone(),
+                saved_at: c.saved_at,
+            })
+            .collect(),
+    };
+    contents_from_engine(sess.engine.as_ref(), sess.window_id, views, queries, charts).await
 }
 
 /// EXPORT core, decoupled from a live [`Session`]: walk `engine`'s catalog into a
@@ -154,6 +167,7 @@ pub async fn contents_from_engine(
     workspace_id: uuid::Uuid,
     views: Views,
     queries: Queries,
+    charts: Charts,
 ) -> Result<PackageContents> {
     let tables = engine
         .get_tables()
@@ -199,8 +213,7 @@ pub async fn contents_from_engine(
         sources: Sources { sources },
         views,
         queries,
-        // T2 stub: T3 owns the real chart mapping (Session charts -> PackageChart).
-        charts: Charts { charts: vec![] },
+        charts,
     })
 }
 

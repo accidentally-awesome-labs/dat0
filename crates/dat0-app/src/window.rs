@@ -420,7 +420,7 @@ pub(crate) fn export_package_flow(cx: &mut App) {
         // then drop the guard BEFORE the async engine I/O — never hold the
         // parking_lot guard across an `.await` on the single-threaded foreground
         // executor (render also locks the session there).
-        let (engine, window_id, views, queries) = {
+        let (engine, window_id, views, queries, charts) = {
             let guard = session.lock();
             let engine = Arc::clone(&guard.engine);
             let window_id = guard.window_id;
@@ -447,12 +447,29 @@ pub(crate) fn export_package_flow(cx: &mut App) {
                     })
                     .collect(),
             };
-            (engine, window_id, views, queries)
+            let charts = dat0_format::Charts {
+                charts: guard
+                    .charts()
+                    .iter()
+                    .map(|c| dat0_format::PackageChart {
+                        id: c.id,
+                        name: c.name.clone(),
+                        spec: c.spec.clone(),
+                        saved_at: c.saved_at,
+                    })
+                    .collect(),
+            };
+            (engine, window_id, views, queries, charts)
         };
         let result: anyhow::Result<()> = async {
-            let contents =
-                crate::package::contents_from_engine(engine.as_ref(), window_id, views, queries)
-                    .await?;
+            let contents = crate::package::contents_from_engine(
+                engine.as_ref(),
+                window_id,
+                views,
+                queries,
+                charts,
+            )
+            .await?;
             dat0_format::Writer::write(&contents, engine.as_ref(), &out).await?;
             Ok(())
         }
@@ -554,7 +571,24 @@ pub(crate) fn open_package_at(cx: &mut App, pkg: PathBuf) {
                 saved_at: q.saved_at,
             })
             .collect();
-        let sess = Session::from_parts(scratch_dir.clone(), Arc::new(engine), tabs, saved_queries);
+        let charts = parsed
+            .charts
+            .charts
+            .iter()
+            .map(|c| crate::session::charts::SavedChart {
+                id: c.id,
+                name: c.name.clone(),
+                spec: c.spec.clone(),
+                saved_at: c.saved_at,
+            })
+            .collect();
+        let sess = Session::from_parts(
+            scratch_dir.clone(),
+            Arc::new(engine),
+            tabs,
+            saved_queries,
+            charts,
+        );
         let window_id = sess.window_id;
         Ok((Arc::new(Mutex::new(sess)), window_id))
     });

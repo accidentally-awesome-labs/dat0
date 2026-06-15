@@ -52,6 +52,15 @@ impl Reader {
         let sources: Sources = read_json(&mut zip, "sources.json")?;
         let views: Views = read_json(&mut zip, "views.json")?;
         let queries: Queries = read_json(&mut zip, "queries.json")?;
+        // `charts.json` was added in P9a-2; older packages omit it. Treat a
+        // missing entry as an empty chart set rather than erroring (forward-compat).
+        let charts: Charts = match read_json::<Charts>(&mut zip, "charts.json") {
+            Ok(c) => c,
+            Err(FormatError::Zip(zip::result::ZipError::FileNotFound)) => {
+                Charts { charts: Vec::new() }
+            }
+            Err(e) => return Err(e),
+        };
 
         // 3. Verify all checksums recorded in the manifest.
         for (entry, expected) in &manifest.checksums {
@@ -75,8 +84,7 @@ impl Reader {
             sources,
             views,
             queries,
-            // T2 stub: T3 owns reading charts.json from the package.
-            charts: Charts { charts: Vec::new() },
+            charts,
             zip_path: path.to_path_buf(),
         })
     }
