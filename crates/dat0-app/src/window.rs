@@ -2737,9 +2737,23 @@ impl WorkspaceShell {
     /// the caller is responsible for `cx.notify()` afterward.
     pub(crate) fn recompute_lineage(&mut self) {
         if let Some(target) = self.inspector.target_table.clone() {
+            // P9a-2: saved charts join the lineage as descendants of their source
+            // table. Each chart's `spec.source` is a quoted (possibly qualified)
+            // identifier; reduce it to the bare catalog key the lineage matches on.
+            let chart_nodes: Vec<crate::inspector::lineage::ChartNode> = {
+                let sess = self.session.lock();
+                sess.charts()
+                    .iter()
+                    .map(|c| crate::inspector::lineage::ChartNode {
+                        name: c.name.clone(),
+                        source_table: bare_table_name(&c.spec.source),
+                    })
+                    .collect()
+            };
             let graph = crate::inspector::lineage::LineageGraph::build(
                 &self.catalog_tables,
                 &self.sql_parents,
+                &chart_nodes,
             );
             self.inspector.set_lineage(graph.closure(&target));
         }
@@ -3964,6 +3978,88 @@ impl WorkspaceShell {
         )));
         self.refresh_catalog(cx); // so the new chart appears in lineage
         self.maybe_prompt_save_workspace();
+    }
+
+    /// Reopen a saved chart by name (P9a-2): look it up in the session, bind the
+    /// chart panel to its stored spec, and render. Mirrors the "Visualize" open
+    /// path (`toggle_chart_panel`) but seeds the panel from a persisted
+    /// [`ChartSpec`] instead of building a fresh one from the active grid.
+    /// Invoked from the Inspector lineage chain when a `NodeKind::Chart` row is
+    /// clicked. No-op (silently) when the named chart is gone from the session.
+    pub(crate) fn open_saved_chart(
+        &mut self,
+        name: String,
+        window: &mut gpui::Window,
+        cx: &mut Context<Self>,
+    ) {
+        let spec = {
+            let sess = self.session.lock();
+            sess.charts()
+                .iter()
+                .find(|c| c.name == name)
+                .map(|c| c.spec.clone())
+        };
+        let Some(spec) = spec else { return };
+        self.show_chart_with_spec(spec, window, cx);
+    }
+
+    /// Show the Charts dock seeded from a persisted [`ChartSpec`] (P9a-2). Unlike
+    /// [`toggle_chart_panel`](Self::toggle_chart_panel) — which binds a *fresh*
+    /// chart from the active grid and so resets all axis picks — this preserves
+    /// the saved spec verbatim (chart type + axis picks + title) and only fetches
+    /// the source's columns off-thread to repopulate the toolbar's axis-cycle
+    /// options. The render is then driven by the SAME `run_plot_query` path the
+    /// Visualize flow uses, so the data flow is identical.
+    ///
+    /// `spec.source` is a single quoted identifier (saved from a live spec);
+    /// `describe_table` needs the bare name, so we reduce it via
+    /// [`bare_table_name`].
+    pub(crate) fn show_chart_with_spec(
+        &mut self,
+        spec: crate::charts::spec::ChartSpec,
+        _window: &mut gpui::Window,
+        cx: &mut Context<Self>,
+    ) {
+        // Seed the panel from the saved spec, preserving axis picks. Columns are
+        // filled in once `describe_table` returns (below); the plot renders then.
+        self.chart_panel_visible = true;
+        self.chart_panel.source = Some(spec.source.clone());
+        self.chart_panel.spec = spec.clone();
+        self.chart_panel.columns = Vec::new();
+        self.chart_panel.data = None;
+        self.chart_panel.error = None;
+
+        let bare = bare_table_name(&spec.source);
+        let engine = self.engine();
+        let ws_weak = cx.entity().downgrade();
+        tokio::spawn(async move {
+            use dat0_engine::QueryEngine as _;
+            let cols = engine
+                .describe_table(&bare, None)
+                .await
+                .map(|cs| {
+                    cs.into_iter()
+                        .map(|c| (c.name, c.data_type))
+                        .collect::<Vec<_>>()
+                })
+                .unwrap_or_default();
+            if let Some(dispatcher) = crate::window_registry::dispatcher() {
+                let _ = dispatcher.dispatch(move |app_cx: &mut gpui::App| {
+                    let Some(ws) = ws_weak.upgrade() else {
+                        return;
+                    };
+                    ws.update(app_cx, |ws, cx| {
+                        ws.chart_panel.columns = cols;
+                        ws.run_plot_query(cx);
+                    });
+                });
+            } else {
+                tracing::warn!(
+                    "show_chart_with_spec: no MainThreadDispatcher installed; chart bind dropped"
+                );
+            }
+        });
+        cx.notify();
     }
 
     /// Promote the statement under the cursor to a derived table (P5b T10).

@@ -213,6 +213,7 @@ fn edge_label(edge: &EdgeKind) -> String {
     match edge {
         EdgeKind::FileImport => dat0_i18n::t("inspector.edge.file"),
         EdgeKind::SqlRef => dat0_i18n::t("inspector.edge.sql"),
+        EdgeKind::Chart => dat0_i18n::t("inspector.edge.chart"),
         EdgeKind::Transform(n) => format!("{} ({n} ops)", dat0_i18n::t("inspector.edge.transform")),
     }
 }
@@ -226,6 +227,7 @@ fn chain_row(step: &ChainStep, cx: &mut Context<WorkspaceShell>) -> gpui::Statef
         NodeKind::File => "📄",
         NodeKind::External => "☁",
         NodeKind::Table => "▦",
+        NodeKind::Chart => "📊",
     };
     let indent = (step.depth.min(6) as f32) * 12.0;
     let text = format!("{glyph} {}  ·  {}", step.label, edge_label(&step.edge));
@@ -239,10 +241,14 @@ fn chain_row(step: &ChainStep, cx: &mut Context<WorkspaceShell>) -> gpui::Statef
         .child(SharedString::from(text));
 
     if let Some(name) = step.open_name.clone() {
+        // `NodeKind` is `Copy`; capture it so the click routes by kind — charts
+        // reopen via `open_saved_chart`, every other openable node opens a tab.
+        let kind = step.kind;
         row = row
             .cursor_pointer()
-            .on_click(cx.listener(move |ws, _ev, window, cx| {
-                ws.open_table_tab(name.clone(), window, cx);
+            .on_click(cx.listener(move |ws, _ev, window, cx| match kind {
+                NodeKind::Chart => ws.open_saved_chart(name.clone(), window, cx),
+                _ => ws.open_table_tab(name.clone(), window, cx),
             }));
     }
     row

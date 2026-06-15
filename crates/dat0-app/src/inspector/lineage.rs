@@ -10,6 +10,7 @@ pub enum NodeKey {
     Table(String),
     File(String),
     External(String),
+    Chart(String),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -17,6 +18,7 @@ pub enum NodeKind {
     Table,
     File,
     External,
+    Chart,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -24,6 +26,15 @@ pub enum EdgeKind {
     FileImport,
     Transform(usize), // op count (label rendered as "transform (N ops)")
     SqlRef,
+    Chart,
+}
+
+/// A saved chart to inject into the graph as a descendant of its (bare) source
+/// table. `source_table` is already reduced to a bare name by the caller.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ChartNode {
+    pub name: String,
+    pub source_table: String,
 }
 
 /// One rendered row in the chain (an ancestor or a descendant of the target).
@@ -49,7 +60,11 @@ pub struct LineageGraph {
 }
 
 impl LineageGraph {
-    pub fn build(tables: &[TableInfo], sql_parents: &HashMap<String, Vec<String>>) -> Self {
+    pub fn build(
+        tables: &[TableInfo],
+        sql_parents: &HashMap<String, Vec<String>>,
+        charts: &[ChartNode],
+    ) -> Self {
         let known: HashSet<&str> = tables.iter().map(|t| t.name.as_str()).collect();
         let mut g = LineageGraph {
             parents: HashMap::new(),
@@ -91,6 +106,17 @@ impl LineageGraph {
                 TableOrigin::Attached { .. } => {
                     g.kind.insert(node, NodeKind::External);
                 }
+            }
+        }
+
+        // Inject saved charts (P9a-2) as descendants of their source table — but
+        // only when that source is a known node. A chart whose source is absent
+        // (dropped table, attached-DB collision) is silently skipped.
+        for c in charts {
+            if known.contains(c.source_table.as_str()) {
+                let cn = NodeKey::Chart(c.name.clone());
+                g.kind.insert(cn.clone(), NodeKind::Chart);
+                g.add_edge(NodeKey::Table(c.source_table.clone()), cn, EdgeKind::Chart);
             }
         }
         g
@@ -166,15 +192,16 @@ impl LineageGraph {
 /// Display label for a node key given its kind.
 fn label_for(key: &NodeKey) -> String {
     match key {
-        NodeKey::Table(n) | NodeKey::External(n) => n.clone(),
+        NodeKey::Table(n) | NodeKey::External(n) | NodeKey::Chart(n) => n.clone(),
         NodeKey::File(p) => p.rsplit(['/', '\\']).next().unwrap_or(p).to_string(),
     }
 }
 
-/// `Some(name)` to open on click; File leaves are not openable.
+/// `Some(name)` to open on click; File leaves are not openable. Charts ARE
+/// openable — the panel routes a chart click to `open_saved_chart` by kind.
 fn open_name_for(key: &NodeKey) -> Option<String> {
     match key {
-        NodeKey::Table(n) | NodeKey::External(n) => Some(n.clone()),
+        NodeKey::Table(n) | NodeKey::External(n) | NodeKey::Chart(n) => Some(n.clone()),
         NodeKey::File(_) => None,
     }
 }
@@ -217,9 +244,50 @@ mod tests {
     }
 
     #[test]
+    fn chart_attaches_as_descendant_of_source() {
+        let tables = vec![tbl(
+            "sales",
+            TableOrigin::File(PathBuf::from("/d/sales.csv")),
+        )];
+        let charts = vec![ChartNode {
+            name: "Bar of sales".into(),
+            source_table: "sales".into(),
+        }];
+        let g = LineageGraph::build(&tables, &HashMap::new(), &charts);
+        let c = g.closure("sales");
+        assert_eq!(
+            c.descendants
+                .iter()
+                .map(|s| s.label.clone())
+                .collect::<Vec<_>>(),
+            vec!["Bar of sales".to_string()]
+        );
+        assert_eq!(c.descendants[0].kind, NodeKind::Chart);
+        assert_eq!(c.descendants[0].open_name, Some("Bar of sales".to_string()));
+        assert_eq!(c.descendants[0].edge, EdgeKind::Chart);
+    }
+
+    #[test]
+    fn chart_with_absent_source_is_skipped() {
+        // A chart whose source table is not a known node must not crash build and
+        // must produce no descendant edge.
+        let tables = vec![tbl(
+            "sales",
+            TableOrigin::File(PathBuf::from("/d/sales.csv")),
+        )];
+        let charts = vec![ChartNode {
+            name: "Orphan".into(),
+            source_table: "gone".into(),
+        }];
+        let g = LineageGraph::build(&tables, &HashMap::new(), &charts);
+        let c = g.closure("sales");
+        assert!(c.descendants.is_empty());
+    }
+
+    #[test]
     fn closure_walks_full_ancestry_and_descendants() {
         let (tables, sp) = sales_chain();
-        let g = LineageGraph::build(&tables, &sp);
+        let g = LineageGraph::build(&tables, &sp, &[]);
         let c = g.closure("sales_open");
 
         // ancestors: root file first → … (depth descending)
@@ -255,7 +323,7 @@ mod tests {
         let mut sp = HashMap::new();
         sp.insert("a".to_string(), vec!["b".to_string()]);
         sp.insert("b".to_string(), vec!["a".to_string()]);
-        let g = LineageGraph::build(&tables, &sp);
+        let g = LineageGraph::build(&tables, &sp, &[]);
         // Must terminate (visited-set guard), not loop forever.
         let c = g.closure("a");
         assert!(c.ancestors.len() <= 1 && c.descendants.len() <= 1);
@@ -267,7 +335,7 @@ mod tests {
             "lonely",
             TableOrigin::Derived(DerivedOrigin::Sql("…".into())),
         )];
-        let g = LineageGraph::build(&tables, &HashMap::new());
+        let g = LineageGraph::build(&tables, &HashMap::new(), &[]);
         let c = g.closure("lonely");
         assert!(c.ancestors.is_empty() && c.descendants.is_empty());
     }
@@ -298,7 +366,7 @@ mod tests {
         let mut sql_parents = HashMap::new();
         sql_parents.insert("revenue".to_string(), vec!["sales_open".to_string()]);
 
-        let g = LineageGraph::build(&tables, &sql_parents);
+        let g = LineageGraph::build(&tables, &sql_parents, &[]);
         // sales_open's parent is the File node for sales (via sales -> File edge chain)
         assert!(g.has_edge(
             &NodeKey::Table("sales".into()),
