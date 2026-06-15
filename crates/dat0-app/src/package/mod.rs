@@ -30,6 +30,7 @@ use dat0_format::{
 };
 
 use crate::session::Session;
+use crate::session::charts::SavedChart;
 use crate::session::queries::SavedQuery;
 use crate::session::{SESSION_SCHEMA_VERSION, SessionState, Tab};
 
@@ -306,7 +307,8 @@ pub async fn contents_to_workspace(parsed: &ParsedPackage, dir: &Path, budget: u
     crate::workspace::manifest::write(&dat0.join("manifest.json"), &manifest)
         .context("contents_to_workspace: write manifest")?;
 
-    // Reconstruct session.json (schema v8) from the package views + queries.
+    // Reconstruct session.json (current schema) from the package views, queries,
+    // and charts.
     write_session_json(parsed, &dat0).context("contents_to_workspace: write session.json")?;
 
     Ok(())
@@ -431,9 +433,9 @@ fn derivation_to_origin(derivation: &Derivation) -> DerivedOrigin {
     }
 }
 
-/// Build + write `<dat0>/session.json` (schema v8) from the package's portable
-/// views (→ tabs) and queries (→ saved queries), matching the on-disk shape
-/// [`Session::persist`] writes.
+/// Build + write `<dat0>/session.json` (current schema) from the package's
+/// portable views (→ tabs), queries (→ saved queries), and charts (→ saved
+/// charts), matching the on-disk shape [`Session::persist`] writes.
 fn write_session_json(parsed: &ParsedPackage, dat0: &Path) -> Result<()> {
     let tabs: Vec<Tab> = parsed
         .views
@@ -462,11 +464,26 @@ fn write_session_json(parsed: &ParsedPackage, dat0: &Path) -> Result<()> {
         })
         .collect();
 
+    // Saved charts (P9a-2): hydrate the unpacked workspace from the package's
+    // charts so they survive into the editable session (mirrors `saved_queries`).
+    let charts: Vec<SavedChart> = parsed
+        .charts
+        .charts
+        .iter()
+        .map(|c| SavedChart {
+            id: c.id,
+            name: c.name.clone(),
+            spec: c.spec.clone(),
+            saved_at: c.saved_at,
+        })
+        .collect();
+
     let state = SessionState {
         schema_version: SESSION_SCHEMA_VERSION,
         tabs,
         active_tab,
         saved_queries,
+        charts,
         ..Default::default()
     };
 

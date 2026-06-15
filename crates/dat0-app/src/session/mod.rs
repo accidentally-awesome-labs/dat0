@@ -341,7 +341,7 @@ impl Session {
 
     /// Recover a session from a `.dat0/` workspace under `root`. Acquires the
     /// advisory flock (held for the session lifetime) and reads the same
-    /// `session.json` shape as scratch (schema v8). Errors with a contention
+    /// `session.json` shape as scratch (current schema). Errors with a contention
     /// message if the lock is already held by a live holder.
     pub async fn recover_workspace(root: PathBuf, engine_budget_bytes: u64) -> Result<Self> {
         let dat0 = Home::dat0_dir_for(&root);
