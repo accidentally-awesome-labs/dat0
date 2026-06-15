@@ -156,6 +156,8 @@
   "chart.panel.title": "Chart",
   "chart.panel.empty": "Select columns to render a chart",
   "chart.save": "Save",
+  "chart.save.prompt": "Save chart as…",
+  "chart.save.done.title": "Chart saved",
   "chart.export.png": "PNG",
   "chart.export.svg": "SVG",
   "chart.axis.x": "X",

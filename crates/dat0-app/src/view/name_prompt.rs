@@ -18,10 +18,19 @@ pub struct NamePrompt {
 impl NamePrompt {
     pub fn new(
         title: impl Into<SharedString>,
+        initial: impl Into<SharedString>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
-        let input = cx.new(|cx| InputState::new(window, cx).placeholder("name"));
+        // `default_value` seeds the field eagerly at build time (no later
+        // `set_value` + `&mut Window` juggling). Empty seed → behaves exactly as
+        // before for the Save-query / Save-as-table flows.
+        let initial = initial.into();
+        let input = cx.new(|cx| {
+            InputState::new(window, cx)
+                .placeholder("name")
+                .default_value(initial)
+        });
         Self {
             title: title.into(),
             input,
