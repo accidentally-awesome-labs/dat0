@@ -393,12 +393,21 @@ pub struct InspectQuery {
     pub sql: String,
 }
 
+/// A saved chart entry in the inspect report.
+#[derive(Debug, Serialize)]
+pub struct InspectChart {
+    pub name: String,
+    pub chart_type: String,
+    pub source: String,
+}
+
 /// The full inspect report (returned as JSON or rendered as text).
 #[derive(Debug, Serialize)]
 pub struct InspectReport {
     pub tables: Vec<InspectTable>,
     pub lineage: Vec<LineageEdge>,
     pub queries: Vec<InspectQuery>,
+    pub charts: Vec<InspectChart>,
 }
 
 /// INSPECT core: open the package and produce a summary report string.
@@ -458,10 +467,23 @@ pub async fn inspect_async(package: &std::path::Path, json: bool) -> Result<Stri
         })
         .collect();
 
+    // Saved charts.
+    let charts: Vec<InspectChart> = parsed
+        .charts
+        .charts
+        .iter()
+        .map(|c| InspectChart {
+            name: c.name.clone(),
+            chart_type: format!("{:?}", c.spec.chart_type).to_lowercase(),
+            source: c.spec.source.clone(),
+        })
+        .collect();
+
     let report = InspectReport {
         tables,
         lineage,
         queries,
+        charts,
     };
 
     if json {
@@ -497,6 +519,13 @@ fn render_inspect_text(report: &InspectReport) -> String {
             let sql_preview: String = q.sql.chars().take(80).collect();
             let ellipsis = if q.sql.len() > 80 { "…" } else { "" };
             out.push_str(&format!("  {}: {}{}\n", q.name, sql_preview, ellipsis));
+        }
+    }
+
+    if !report.charts.is_empty() {
+        out.push_str("\nCharts:\n");
+        for c in &report.charts {
+            out.push_str(&format!("  {} ({}, {})\n", c.name, c.chart_type, c.source));
         }
     }
 

@@ -13,9 +13,11 @@
 
 use std::path::PathBuf;
 
+use dat0_app::charts::spec::{ChartSpec, ChartType};
 use dat0_app::cli::{inspect_async, replay_async};
 use dat0_app::package;
 use dat0_app::session::Session;
+use dat0_app::session::charts::SavedChart;
 use dat0_engine::{DerivedOrigin, QueryEngine, RegisterOpts};
 
 const BUDGET: u64 = 128 * 1024 * 1024;
@@ -33,7 +35,7 @@ async fn build_live_package(tmp: &std::path::Path) -> (PathBuf, PathBuf, PathBuf
 
     // Open a scratch session (headless, no workspace flock needed).
     let state_root = tmp.join("state");
-    let sess = Session::new(&state_root, BUDGET).await.unwrap();
+    let mut sess = Session::new(&state_root, BUDGET).await.unwrap();
 
     // Import `sales.csv` via register_file_as_table → File-origin base table
     // with a PackageSource so ReplayEngine can rebind it.
@@ -56,6 +58,24 @@ async fn build_live_package(tmp: &std::path::Path) -> (PathBuf, PathBuf, PathBuf
         )
         .await
         .unwrap();
+
+    // Save a chart over `monthly` so the package carries a `charts.json`
+    // (P9a-2 T5: `inspect` must list saved charts).
+    sess.set_charts(vec![SavedChart {
+        id: uuid::Uuid::now_v7(),
+        name: "Totals by bucket".into(),
+        spec: ChartSpec {
+            chart_type: ChartType::Bar,
+            source: "monthly".into(),
+            x: Some("bucket".into()),
+            y: Some("total".into()),
+            group: None,
+            color: None,
+            title: String::new(),
+        },
+        saved_at: 0,
+    }])
+    .unwrap();
 
     // Export the live session to a package.
     let contents = package::session_to_contents(&sess).await.unwrap();
@@ -220,6 +240,18 @@ async fn inspect_json_lists_tables_and_lineage() {
         has_edge,
         "inspect JSON lineage must contain monthly→sales edge; got: {lineage:?}"
     );
+
+    // Charts array must list the saved chart (name · lowercased type · source).
+    let charts = v["charts"].as_array().expect("charts array");
+    let has_chart = charts.iter().any(|c| {
+        c["name"].as_str() == Some("Totals by bucket")
+            && c["chart_type"].as_str() == Some("bar")
+            && c["source"].as_str() == Some("monthly")
+    });
+    assert!(
+        has_chart,
+        "inspect JSON charts must contain the saved chart; got: {charts:?}"
+    );
 }
 
 /// inspect text form is non-empty and mentions both table names.
@@ -242,5 +274,14 @@ async fn inspect_text_mentions_both_tables() {
     assert!(
         text.contains("monthly") && text.contains("sales"),
         "both table names present in text output"
+    );
+    // The Charts section must list the saved chart.
+    assert!(
+        text.contains("Charts:"),
+        "inspect text must contain a Charts section; got:\n{text}"
+    );
+    assert!(
+        text.contains("Totals by bucket"),
+        "inspect text must name the saved chart; got:\n{text}"
     );
 }

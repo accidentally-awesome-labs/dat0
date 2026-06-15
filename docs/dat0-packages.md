@@ -92,8 +92,8 @@ dat0 inspect <pkg.dat0> --json   # machine-readable JSON
 ```
 
 Lists the tables (name, kind, row/column counts), the lineage edges
-(`derived <- parent`), and the saved queries. No engine is started — this reads
-metadata only, so it's instant.
+(`derived <- parent`), the saved queries, and the saved charts (name, type,
+source). No engine is started — this reads metadata only, so it's instant.
 
 ### `dat0 unpack` — package → workspace
 
