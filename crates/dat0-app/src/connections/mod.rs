@@ -37,6 +37,10 @@ pub struct ConnectionManager {
     /// only, NO per-table origins (D-012 stays deferred). Cleared whenever the
     /// md status leaves `Connected` so a disconnect/error drops the stale list.
     md_databases: Vec<String>,
+    /// Transient result of the last "Test connection" probe (design §3.1).
+    /// A localized OK/error message — NEVER the token. Cleared by the next
+    /// connection action (`handle_connections_event`).
+    md_test_result: Option<String>,
 }
 
 impl ConnectionManager {
@@ -59,6 +63,16 @@ impl ConnectionManager {
     }
     pub fn set_md_databases(&mut self, dbs: Vec<String>) {
         self.md_databases = dbs;
+    }
+    /// Last Test-connection message, if one is pending display.
+    pub fn md_test_result(&self) -> Option<&str> {
+        self.md_test_result.as_deref()
+    }
+    pub fn set_md_test_result(&mut self, msg: String) {
+        self.md_test_result = Some(msg);
+    }
+    pub fn clear_md_test_result(&mut self) {
+        self.md_test_result = None;
     }
     pub fn sqlite(&self) -> &[Attachment] {
         &self.sqlite
@@ -107,6 +121,16 @@ mod state_tests {
         assert_eq!(m.sqlite().len(), 1);
         m.remove_attachment("data");
         assert!(m.sqlite().is_empty());
+    }
+
+    #[test]
+    fn md_test_result_round_trips_and_clears() {
+        let mut m = ConnectionManager::default();
+        assert_eq!(m.md_test_result(), None);
+        m.set_md_test_result("Connection OK".into());
+        assert_eq!(m.md_test_result(), Some("Connection OK"));
+        m.clear_md_test_result();
+        assert_eq!(m.md_test_result(), None);
     }
 
     #[test]
