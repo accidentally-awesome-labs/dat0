@@ -3,12 +3,14 @@
 //! The diff is computed entirely at the metadata level — NO engine, NO parquet
 //! read. Row counts are read straight from [`RecipeTable::row_count`]; schema
 //! deltas from the [`ColumnFingerprint`] lists; lineage from table presence and
-//! the [`Derivation`] enum; query deltas from the saved-query SQL. This keeps
-//! `dat0 diff` instant and dependency-light (it never opens DuckDB).
+//! the [`Derivation`] enum; query deltas from the saved-query SQL; chart deltas
+//! from the saved-chart [`ChartSpec`]. This keeps `dat0 diff` instant and
+//! dependency-light (it never opens DuckDB).
 //!
 //! Matching is by NAME on both axes (tables by `name`, columns by `name`, saved
-//! queries by `name`). Four orthogonal dimensions are reported; an empty diff
-//! (all four empty) means the two packages are recipe-equivalent.
+//! queries by `name`, saved charts by `name`). Five orthogonal dimensions are
+//! reported; an empty diff (all five empty) means the two packages are
+//! recipe-equivalent.
 //!
 //! Intentional non-comparisons: `source_ref` and the `sources` block are NOT
 //! diffed. A base table that lost its File-origin source on unpack (re-exporting
@@ -18,7 +20,7 @@
 use serde::Serialize;
 
 use crate::ParsedPackage;
-use crate::model::{Derivation, Queries, Recipe, RecipeTable};
+use crate::model::{Charts, Derivation, Queries, Recipe, RecipeTable};
 
 /// What changed about a single column within a same-named table.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -82,25 +84,59 @@ pub struct QueryDelta {
     pub change: QueryChange,
 }
 
-/// The full structured diff between two packages: four orthogonal dimensions.
+/// What changed about a saved chart (matched by `name`).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum ChartChange {
+    /// Chart name present in `b` only.
+    Added,
+    /// Chart name present in `a` only.
+    Removed,
+    /// Same name, different spec. Carries one-line summaries of each side.
+    SpecChanged { from: String, to: String },
+}
+
+/// A chart-dimension delta for a single saved chart (keyed by `name`).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct ChartDelta {
+    pub name: String,
+    pub change: ChartChange,
+}
+
+/// One-line spec summary used by `ChartChange::SpecChanged` (compact, readable).
+fn chart_summary(spec: &dat0_engine::chart_spec::ChartSpec) -> String {
+    let ty = format!("{:?}", spec.chart_type).to_lowercase();
+    let mut s = ty;
+    if let Some(x) = &spec.x {
+        s.push_str(&format!(" x={x}"));
+    }
+    if let Some(y) = &spec.y {
+        s.push_str(&format!(" y={y}"));
+    }
+    s
+}
+
+/// The full structured diff between two packages: five orthogonal dimensions.
 /// [`PackageDiff::is_empty`] is the "are these recipe-equivalent?" predicate.
 #[derive(Debug, Clone, Default, PartialEq, Serialize)]
 pub struct PackageDiff {
     pub schema: Vec<SchemaDelta>,
     pub lineage: Vec<LineageDelta>,
     pub queries: Vec<QueryDelta>,
+    pub charts: Vec<ChartDelta>,
     /// `(table_name, old_row_count, new_row_count)` for same-named tables whose
     /// row count differs.
     pub row_count_deltas: Vec<(String, u64, u64)>,
 }
 
 impl PackageDiff {
-    /// `true` iff all four dimensions are empty (the packages are recipe-equal).
+    /// `true` iff all five dimensions are empty (the packages are recipe-equal).
     pub fn is_empty(&self) -> bool {
         self.schema.is_empty()
             && self.lineage.is_empty()
             && self.queries.is_empty()
             && self.row_count_deltas.is_empty()
+            && self.charts.is_empty()
     }
 
     /// A human-readable text summary (one section per non-empty dimension).
@@ -168,10 +204,23 @@ impl PackageDiff {
             }
         }
 
+        if !self.charts.is_empty() {
+            out.push_str("Charts:\n");
+            for d in &self.charts {
+                match &d.change {
+                    ChartChange::Added => out.push_str(&format!("  + {}\n", d.name)),
+                    ChartChange::Removed => out.push_str(&format!("  - {}\n", d.name)),
+                    ChartChange::SpecChanged { .. } => {
+                        out.push_str(&format!("  ~ {} spec changed\n", d.name))
+                    }
+                }
+            }
+        }
+
         out
     }
 
-    /// A structured JSON rendering (the four dimensions as a flat object).
+    /// A structured JSON rendering (the five dimensions as a flat object).
     pub fn render_json(&self) -> serde_json::Value {
         // `PackageDiff` derives `Serialize`; serialize directly. (Falls back to
         // an empty object only on the practically-impossible serde failure.)
@@ -179,26 +228,32 @@ impl PackageDiff {
     }
 }
 
-/// Compute the diff between two recipes + their saved-query sets. Pure — no
-/// engine, no I/O. Tables/columns/queries are matched by name (see module docs).
+/// Compute the diff between two recipes + their saved-query and saved-chart sets.
+/// Pure — no engine, no I/O. Tables/columns/queries/charts are matched by name
+/// (see module docs).
 pub fn compute(
     a_recipe: &Recipe,
     a_queries: &Queries,
+    a_charts: &Charts,
     b_recipe: &Recipe,
     b_queries: &Queries,
+    b_charts: &Charts,
 ) -> PackageDiff {
     let mut diff = PackageDiff::default();
 
     diff_tables(a_recipe, b_recipe, &mut diff);
     diff_queries(a_queries, b_queries, &mut diff);
+    diff_charts(a_charts, b_charts, &mut diff);
 
     diff
 }
 
 /// `ParsedPackage`-level wrapper: diff two opened packages by their recipe +
-/// saved queries (ignores sources/views by design).
+/// saved queries + saved charts (ignores sources/views by design).
 pub fn diff(a: &ParsedPackage, b: &ParsedPackage) -> PackageDiff {
-    compute(&a.recipe, &a.queries, &b.recipe, &b.queries)
+    compute(
+        &a.recipe, &a.queries, &a.charts, &b.recipe, &b.queries, &b.charts,
+    )
 }
 
 /// Look up a table by name in a recipe (linear; recipes are small).
@@ -307,6 +362,34 @@ fn diff_queries(a: &Queries, b: &Queries, out: &mut PackageDiff) {
             out.queries.push(QueryDelta {
                 name: qb.name.clone(),
                 change: QueryChange::Added,
+            });
+        }
+    }
+}
+
+/// Diff the saved-chart dimension: matched by name, compare spec summaries.
+fn diff_charts(a: &Charts, b: &Charts, out: &mut PackageDiff) {
+    for ca in &a.charts {
+        match b.charts.iter().find(|c| c.name == ca.name) {
+            None => out.charts.push(ChartDelta {
+                name: ca.name.clone(),
+                change: ChartChange::Removed,
+            }),
+            Some(cb) if cb.spec != ca.spec => out.charts.push(ChartDelta {
+                name: ca.name.clone(),
+                change: ChartChange::SpecChanged {
+                    from: chart_summary(&ca.spec),
+                    to: chart_summary(&cb.spec),
+                },
+            }),
+            Some(_) => {} // unchanged
+        }
+    }
+    for cb in &b.charts {
+        if !a.charts.iter().any(|c| c.name == cb.name) {
+            out.charts.push(ChartDelta {
+                name: cb.name.clone(),
+                change: ChartChange::Added,
             });
         }
     }
