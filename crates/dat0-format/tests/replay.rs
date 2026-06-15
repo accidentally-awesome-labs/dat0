@@ -189,6 +189,7 @@ async fn replay_reexecutes_derived_against_new_larger_source() {
         },
         views: Views { views: vec![] },
         queries: Queries { queries: vec![] },
+        charts: Charts { charts: vec![] },
     };
 
     // --- 3. Write the package, close the engine. ---

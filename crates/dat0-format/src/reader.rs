@@ -11,7 +11,7 @@ use sha2::{Digest, Sha256};
 
 use crate::FORMAT_VERSION;
 use crate::error::{FormatError, Result};
-use crate::model::{PackageManifest, ParsedPackage, Queries, Recipe, Sources, Views};
+use crate::model::{Charts, PackageManifest, ParsedPackage, Queries, Recipe, Sources, Views};
 
 /// Reads and validates a `.dat0` package file.
 pub struct Reader;
@@ -75,6 +75,8 @@ impl Reader {
             sources,
             views,
             queries,
+            // T2 stub: T3 owns reading charts.json from the package.
+            charts: Charts { charts: Vec::new() },
             zip_path: path.to_path_buf(),
         })
     }

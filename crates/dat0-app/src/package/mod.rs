@@ -24,8 +24,8 @@ use dat0_engine::{
     quote_ident,
 };
 use dat0_format::{
-    ColumnFingerprint, Derivation, PackageContents, PackageQuery, PackageSource, PackageView,
-    ParsedPackage, Queries, Recipe, RecipeTable, Sources, TableKind, Views,
+    Charts, ColumnFingerprint, Derivation, PackageContents, PackageQuery, PackageSource,
+    PackageView, ParsedPackage, Queries, Recipe, RecipeTable, Sources, TableKind, Views,
 };
 
 use crate::session::Session;
@@ -199,6 +199,8 @@ pub async fn contents_from_engine(
         sources: Sources { sources },
         views,
         queries,
+        // T2 stub: T3 owns the real chart mapping (Session charts -> PackageChart).
+        charts: Charts { charts: vec![] },
     })
 }
 

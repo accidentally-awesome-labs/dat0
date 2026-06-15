@@ -39,6 +39,7 @@ fn make_contents() -> PackageContents {
         sources: Sources { sources: vec![] },
         views: Views { views: vec![] },
         queries: Queries { queries: vec![] },
+        charts: Charts { charts: vec![] },
     }
 }
 

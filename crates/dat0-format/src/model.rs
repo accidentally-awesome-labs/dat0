@@ -6,6 +6,7 @@
 //! the PD-014 self-describing convention so a non-Rust reader can route on the
 //! `kind` discriminator.
 
+use dat0_engine::chart_spec::ChartSpec;
 use dat0_engine::transform::Transformation;
 use serde::{Deserialize, Serialize};
 
@@ -111,6 +112,19 @@ pub struct Queries {
     pub queries: Vec<PackageQuery>,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct PackageChart {
+    pub id: uuid::Uuid,
+    pub name: String,
+    pub spec: ChartSpec,
+    pub saved_at: i64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct Charts {
+    pub charts: Vec<PackageChart>,
+}
+
 /// Writer input — the portable contents, assembled by the app from a Session.
 /// Data bytes are NOT here; the writer pulls them from `engine` per RecipeTable.name.
 #[derive(Debug, Clone)]
@@ -121,6 +135,7 @@ pub struct PackageContents {
     pub sources: Sources,
     pub views: Views,
     pub queries: Queries,
+    pub charts: Charts,
 }
 
 /// Reader output.
@@ -131,5 +146,6 @@ pub struct ParsedPackage {
     pub sources: Sources,
     pub views: Views,
     pub queries: Queries,
+    pub charts: Charts,
     pub(crate) zip_path: std::path::PathBuf, // for lazy data extraction
 }
