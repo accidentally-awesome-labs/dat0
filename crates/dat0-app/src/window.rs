@@ -762,6 +762,93 @@ fn bare_table_name(base: &str) -> String {
         .to_string()
 }
 
+// ── Chart toolbar axis-field plumbing (P9a T7) ──────────────────────────────
+//
+// Maps an `AxisRole` to the `ChartSpec` field that `build_plot_sql` reads for
+// it. The mapping is NOT 1:1 — for BoxPlot the `Value` axis is carried in
+// `spec.y`, and for Heatmap in `spec.color` (see charts/query.rs). The toolbar
+// only shows the `Value` role for those two types, so `Value` always resolves
+// to whichever field that type's SQL reads.
+
+/// Read the spec field bound to `role`.
+fn axis_field(
+    spec: &crate::charts::spec::ChartSpec,
+    role: crate::charts::spec::AxisRole,
+) -> Option<&str> {
+    use crate::charts::spec::{AxisRole, ChartType};
+    match role {
+        AxisRole::X => spec.x.as_deref(),
+        AxisRole::Y => spec.y.as_deref(),
+        AxisRole::Group => spec.group.as_deref(),
+        AxisRole::Color => spec.color.as_deref(),
+        // BoxPlot value → y; Heatmap value → color (per query.rs contract).
+        AxisRole::Value => match spec.chart_type {
+            ChartType::Heatmap => spec.color.as_deref(),
+            _ => spec.y.as_deref(),
+        },
+    }
+}
+
+/// Write `val` into the spec field bound to `role`.
+fn set_axis_field(
+    spec: &mut crate::charts::spec::ChartSpec,
+    role: crate::charts::spec::AxisRole,
+    val: Option<String>,
+) {
+    use crate::charts::spec::{AxisRole, ChartType};
+    match role {
+        AxisRole::X => spec.x = val,
+        AxisRole::Y => spec.y = val,
+        AxisRole::Group => spec.group = val,
+        AxisRole::Color => spec.color = val,
+        AxisRole::Value => match spec.chart_type {
+            ChartType::Heatmap => spec.color = val,
+            _ => spec.y = val,
+        },
+    }
+}
+
+/// i18n key for an axis role's short label.
+fn axis_role_key(role: crate::charts::spec::AxisRole) -> &'static str {
+    use crate::charts::spec::AxisRole;
+    match role {
+        AxisRole::X => "chart.axis.x",
+        AxisRole::Y => "chart.axis.y",
+        AxisRole::Group => "chart.axis.group",
+        AxisRole::Color => "chart.axis.color",
+        AxisRole::Value => "chart.axis.value",
+    }
+}
+
+/// Whether a role must always carry a column (X + the value axes) vs may be
+/// cleared (Group / Color are optional dims that default to COUNT/none).
+fn axis_required(role: crate::charts::spec::AxisRole) -> bool {
+    use crate::charts::spec::AxisRole;
+    matches!(role, AxisRole::X | AxisRole::Y | AxisRole::Value)
+}
+
+/// Advance an axis pick through `opts`. `required` axes cycle only over the
+/// options (wrapping); optional axes additionally pass through `None` so the
+/// user can clear a Group/Color dim. Picks not in `opts` (stale) reset to the
+/// first option (or `None` for optional).
+fn cycle_axis(current: Option<&str>, opts: &[String], required: bool) -> Option<String> {
+    if opts.is_empty() {
+        return None;
+    }
+    // Build the cycle order: [opt0, opt1, …] for required; [None, opt0, …] for
+    // optional (None is index "before" the first option).
+    let pos = current.and_then(|c| opts.iter().position(|o| o == c));
+    match (required, pos) {
+        // Required: just wrap over the options.
+        (true, Some(i)) => Some(opts[(i + 1) % opts.len()].clone()),
+        (true, None) => Some(opts[0].clone()),
+        // Optional: order is None → opt0 → … → optN → None → …
+        (false, None) => Some(opts[0].clone()),
+        (false, Some(i)) if i + 1 < opts.len() => Some(opts[i + 1].clone()),
+        (false, Some(_)) => None,
+    }
+}
+
 /// Schema-drift pre-validate for live re-import replay (P7c D3).
 ///
 /// The `replayable` ops are column-keyed. Only `Filter` and `Sort` reference
@@ -1762,6 +1849,20 @@ pub struct WorkspaceShell {
     /// Whether the right-dock Inspector panel is shown (P6a T9). Toggled by the
     /// `InspectorToggle` action; gates the inspector dock in `render`.
     pub(crate) inspector_panel_visible: bool,
+    /// Whether the right-dock Charts panel is shown (P9a T7). Toggled by the
+    /// `ChartVisualize` action; gates the chart dock in `render`.
+    pub(crate) chart_panel_visible: bool,
+    /// Live chart panel state (type + axis picks + last data/error). Bound to
+    /// the active grid's base table when the panel opens (P9a T7).
+    pub(crate) chart_panel: crate::charts::panel::ChartPanel,
+    /// Last rendered chart image (BGRA → gpui `RenderImage`), refreshed by
+    /// [`Self::run_plot_query`]. `None` until the first plot query returns.
+    pub(crate) chart_image: Option<std::sync::Arc<gpui::RenderImage>>,
+    /// Monotonic id incremented on every plot-query kickoff (P9a T7). A spawned
+    /// plot result writes its image only if it carries the latest id, so a fast
+    /// sequence of type/axis changes never lands a stale chart (mirrors the
+    /// inspector's load-supersede guard).
+    pub(crate) chart_load_id: u64,
     /// Inspector state: profile target + (table,epoch)-keyed profile cache +
     /// load supersede (P6a T8). Profiles are loaded off-thread by
     /// [`Self::load_inspector_profile`].
@@ -1842,6 +1943,10 @@ impl WorkspaceShell {
             sql_parents: Default::default(),
             inspector_panel_visible: ui.inspector_panel_visible,
             inspector: crate::inspector::InspectorModel::new(),
+            chart_panel_visible: false,
+            chart_panel: crate::charts::panel::ChartPanel::new(),
+            chart_image: None,
+            chart_load_id: 0,
             banners: Vec::new(),
             md_token_prompt: None,
             md_token_prompt_sub: None,
@@ -3024,6 +3129,254 @@ impl WorkspaceShell {
                 }
             });
         });
+    }
+
+    // ── Charts (P9a T7) ────────────────────────────────────────────────────
+
+    /// Show/hide the right-dock Charts panel. On open, bind the panel to the
+    /// active grid's base table (off-thread `describe_table`) and kick off the
+    /// first plot query. No-op (toggle still flips) when no file is registered.
+    ///
+    /// Uses the proven off-thread pattern from `load_inspector_profile`:
+    /// `tokio::spawn` the engine call, hop the UI write back via the registry
+    /// dispatcher. `base_table()` is QUOTED + may be schema-qualified
+    /// (`"main"."orders"`); `describe_table` wants the BARE name, while the
+    /// chart `source` must be a single quoted identifier — so we reduce to the
+    /// bare name then re-quote it with `quote_ident`.
+    pub(crate) fn toggle_chart_panel(&mut self, cx: &mut gpui::Context<Self>) {
+        self.chart_panel_visible = !self.chart_panel_visible;
+        if self.chart_panel_visible {
+            if let Some(base) = self.base_table() {
+                let bare = bare_table_name(&base);
+                let engine = self.engine();
+                let ws_weak = cx.entity().downgrade();
+                tokio::spawn(async move {
+                    use dat0_engine::QueryEngine as _;
+                    let cols = engine
+                        .describe_table(&bare, None)
+                        .await
+                        .map(|cs| {
+                            cs.into_iter()
+                                .map(|c| (c.name, c.data_type))
+                                .collect::<Vec<_>>()
+                        })
+                        .unwrap_or_default();
+                    // Single quoted identifier; an `a.b` qualified name would be
+                    // quoted whole (`"a.b"`) — accepted v1 limitation.
+                    let quoted = dat0_engine::quote_ident(&bare);
+                    if let Some(dispatcher) = crate::window_registry::dispatcher() {
+                        let _ = dispatcher.dispatch(move |app_cx: &mut gpui::App| {
+                            let Some(ws) = ws_weak.upgrade() else {
+                                return;
+                            };
+                            ws.update(app_cx, |ws, cx| {
+                                ws.chart_panel.bind(quoted, cols);
+                                ws.run_plot_query(cx);
+                            });
+                        });
+                    } else {
+                        tracing::warn!(
+                            "toggle_chart_panel: no MainThreadDispatcher installed; chart bind dropped"
+                        );
+                    }
+                });
+            }
+        }
+        cx.notify();
+    }
+
+    /// Build the plot SQL for the current spec, run it off-thread, render the
+    /// result to a BGRA `RenderImage`, and stash it on the shell. Bumps
+    /// `chart_load_id` so only the latest query's image survives (supersede
+    /// guard for fast type/axis changes). On a missing-axis spec error the
+    /// panel shows the error text in place of a chart and clears the image.
+    pub(crate) fn run_plot_query(&mut self, cx: &mut gpui::Context<Self>) {
+        let spec = self.chart_panel.spec.clone();
+        let engine = self.engine();
+        let sql = match crate::charts::query::build_plot_sql(&spec) {
+            Ok(s) => s,
+            Err(e) => {
+                self.chart_panel.error = Some(e);
+                self.chart_image = None;
+                cx.notify();
+                return;
+            }
+        };
+        self.chart_load_id = self.chart_load_id.wrapping_add(1);
+        let load_id = self.chart_load_id;
+        // Logical chart size (px) × the bitmap supersample factor.
+        let (lw, lh) = (520u32, 360u32);
+        let scale = 2.0_f32;
+        let (pw, ph) = ((lw as f32 * scale) as u32, (lh as f32 * scale) as u32);
+        let ws_weak = cx.entity().downgrade();
+        tokio::spawn(async move {
+            use dat0_engine::QueryEngine as _;
+            let qr = engine.execute(&sql).await;
+            if let Some(dispatcher) = crate::window_registry::dispatcher() {
+                let _ = dispatcher.dispatch(move |app_cx: &mut gpui::App| {
+                    let Some(ws) = ws_weak.upgrade() else {
+                        return;
+                    };
+                    ws.update(app_cx, |ws, cx| {
+                        // Supersede: a newer query already kicked off → drop this.
+                        if ws.chart_load_id != load_id {
+                            return;
+                        }
+                        match qr {
+                            Ok(qr) => {
+                                let pt = crate::charts::data::PlotTable::from_query_result(&qr);
+                                let (bgra, w, h) = crate::charts::render::render_bgra(
+                                    &ws.chart_panel.spec,
+                                    &pt,
+                                    (pw, ph),
+                                );
+                                match image::ImageBuffer::<image::Rgba<u8>, _>::from_raw(w, h, bgra)
+                                {
+                                    Some(buf) => {
+                                        let ri =
+                                            gpui::RenderImage::new(smallvec::SmallVec::from_elem(
+                                                image::Frame::new(buf),
+                                                1,
+                                            ));
+                                        ws.chart_panel.error = None;
+                                        ws.chart_panel.data = Some(pt);
+                                        ws.chart_image = Some(std::sync::Arc::new(ri));
+                                    }
+                                    None => {
+                                        ws.chart_panel.error =
+                                            Some("chart image buffer build failed".into());
+                                        ws.chart_image = None;
+                                    }
+                                }
+                            }
+                            Err(e) => {
+                                ws.chart_panel.error = Some(e.to_string());
+                                ws.chart_image = None;
+                            }
+                        }
+                        cx.notify();
+                    });
+                });
+            } else {
+                tracing::warn!("run_plot_query: no MainThreadDispatcher installed; chart dropped");
+            }
+        });
+        cx.notify();
+    }
+
+    /// Render the Charts dock toolbar (P9a T7): a chart-TYPE cycle button, one
+    /// cycle button per *visible* axis (per `visible_axes(type)`), and PNG / SVG
+    /// export buttons.
+    ///
+    /// Toolbar approach: **Button-cycle** (not gpui-component `Select`). Each
+    /// click advances the value and immediately re-runs the plot query, so the
+    /// data flow is identical to a Select-backed picker — type/axis change →
+    /// mutate `spec` → `run_plot_query` → re-render. A button cycle is
+    /// borrow-checker-trivial (no `Entity<SelectState>` to thread through the
+    /// shell) and re-renders reliably, which the escalation note prefers over a
+    /// half-working Select.
+    fn render_chart_toolbar(&mut self, cx: &mut gpui::Context<Self>) -> impl IntoElement {
+        use crate::charts::panel::{column_options, visible_axes};
+        use crate::charts::spec::ChartType;
+        use gpui_component::button::Button;
+
+        let cur_type = self.chart_panel.spec.chart_type;
+
+        // ── Chart-type cycle button ────────────────────────────────────────
+        let type_btn = Button::new("chart-type")
+            .label(format!(
+                "{}: {}",
+                dat0_i18n::t("chart.panel.title"),
+                dat0_i18n::t(cur_type.label_key())
+            ))
+            .on_click(cx.listener(|ws, _ev, _window, cx| {
+                let cur = ws.chart_panel.spec.chart_type;
+                let i = ChartType::ALL.iter().position(|t| *t == cur).unwrap_or(0);
+                let next = ChartType::ALL[(i + 1) % ChartType::ALL.len()];
+                ws.chart_panel.spec.chart_type = next;
+                // A new type may expose axes the old picks don't satisfy; leave
+                // the picks as-is (build_plot_sql errors → panel shows a "needs a
+                // <role> column" hint until the user picks one).
+                ws.run_plot_query(cx);
+            }));
+
+        // ── Per-visible-axis cycle buttons ─────────────────────────────────
+        let mut row = h_flex().gap_2().flex_wrap().p_2().child(type_btn);
+        for role in visible_axes(cur_type) {
+            let current = axis_field(&self.chart_panel.spec, role).map(str::to_string);
+            let label_role = dat0_i18n::t(axis_role_key(role));
+            let label_val = current.clone().unwrap_or_else(|| "—".to_string());
+            let id = format!("chart-axis-{}", axis_role_key(role));
+            let role_copy = role;
+            let btn = Button::new(gpui::SharedString::from(id))
+                .label(format!("{label_role}: {label_val}"))
+                .on_click(cx.listener(move |ws, _ev, _window, cx| {
+                    let opts = column_options(role_copy, &ws.chart_panel.columns);
+                    let next = cycle_axis(
+                        axis_field(&ws.chart_panel.spec, role_copy),
+                        &opts,
+                        // Required axes (X always, plus Y/Value) never cycle to
+                        // None; optional axes (Group/Color) include a None step.
+                        axis_required(role_copy),
+                    );
+                    set_axis_field(&mut ws.chart_panel.spec, role_copy, next);
+                    ws.run_plot_query(cx);
+                }));
+            row = row.child(btn);
+        }
+
+        // ── Export buttons (PNG / SVG) ─────────────────────────────────────
+        let png_btn = Button::new("chart-export-png")
+            .label(dat0_i18n::t("chart.export.png"))
+            .on_click(cx.listener(|ws, _ev, _window, cx| {
+                ws.export_chart(true, cx);
+            }));
+        let svg_btn = Button::new("chart-export-svg")
+            .label(dat0_i18n::t("chart.export.svg"))
+            .on_click(cx.listener(|ws, _ev, _window, cx| {
+                ws.export_chart(false, cx);
+            }));
+        // Clicking export with no rendered data is a silent no-op
+        // (`export_chart` guards on `chart_panel.data`).
+        row.child(png_btn).child(svg_btn)
+    }
+
+    /// Open the native save panel and export the current chart to PNG (`png =
+    /// true`) or SVG. No-op when there's no rendered data yet — the live
+    /// `chart_panel.spec` + `data` carry everything `export_*` needs (P9a T7).
+    fn export_chart(&mut self, png: bool, cx: &mut gpui::Context<Self>) {
+        let Some(data) = self.chart_panel.data.clone() else {
+            return;
+        };
+        let spec = self.chart_panel.spec.clone();
+        let ext = if png { "png" } else { "svg" };
+        let suggested = format!("chart.{ext}");
+        let path_rx = cx.prompt_for_new_path(std::path::Path::new(""), Some(&suggested));
+        cx.spawn(async move |_this: gpui::WeakEntity<Self>, _async_cx| {
+            let dest = match path_rx.await {
+                Ok(Ok(Some(dest))) => dest,
+                _ => return,
+            };
+            // Export the SAME logical size the dock renders at (the bitmap
+            // backend supersamples internally; here we write at logical px).
+            let size = (1040u32, 720u32);
+            let result: Result<(), String> = if png {
+                crate::charts::export::export_png(&spec, &data, size, &dest)
+                    .map_err(|e| e.to_string())
+            } else {
+                crate::charts::export::export_svg(&spec, &data, size, &dest)
+                    .map_err(|e| e.to_string())
+            };
+            match result {
+                Ok(()) => crate::error_ux::push(crate::error_ux::Banner::info(format!(
+                    "{} → {}",
+                    dat0_i18n::t("chart.save"),
+                    dest.display()
+                ))),
+                Err(e) => crate::error_ux::push(crate::error_ux::Banner::warning(e)),
+            }
+        })
+        .detach();
     }
 
     /// Flip the inspector between Whole-table and Current-view profiling and
@@ -4739,6 +5092,12 @@ impl Render for WorkspaceShell {
                     cx.notify();
                 },
             ))
+            // ── Charts panel toggle (P9a T7) ──────────────────────────────────
+            .on_action(cx.listener(
+                |ws: &mut Self, _: &crate::menu_macos::ChartVisualize, _window, cx| {
+                    ws.toggle_chart_panel(cx);
+                },
+            ))
             .on_key_down(key_handler)
             .on_click(click_to_focus)
             .drag_over::<ExternalPaths>(|style, _, _, _| style.bg(gpui::rgba(0x0088_ff22)))
@@ -4781,6 +5140,20 @@ impl Render for WorkspaceShell {
                                 self.inspector_projection(),
                                 cx,
                             ))
+                    }))
+                    // Charts right dock (P9a T7) → … | Inspector | Charts.
+                    .children(self.chart_panel_visible.then(|| {
+                        div()
+                            .w(gpui::px(560.0))
+                            .border_l_1()
+                            .flex()
+                            .flex_col()
+                            .child(self.render_chart_toolbar(cx))
+                            .child(crate::charts::panel::render_chart_body(
+                                &self.chart_panel,
+                                self.chart_image.clone(),
+                                (520.0, 360.0),
+                            ))
                     })),
             )
             .children(popover_overlay)
@@ -4816,6 +5189,69 @@ mod tests {
         // Embedded dots only appear as the schema separator in this layer, so
         // the last segment is the table; quotes are trimmed from both ends.
         assert_eq!(bare_table_name("\"my_db\".\"main\".\"sales\""), "sales");
+    }
+
+    use super::{axis_field, axis_required, cycle_axis, set_axis_field};
+    use crate::charts::spec::{AxisRole, ChartSpec, ChartType};
+
+    fn spec(t: ChartType) -> ChartSpec {
+        ChartSpec {
+            chart_type: t,
+            source: "\"t\"".into(),
+            x: None,
+            y: None,
+            group: None,
+            color: None,
+            title: String::new(),
+        }
+    }
+
+    #[test]
+    fn required_axis_cycles_over_options_only() {
+        let opts = vec!["a".to_string(), "b".to_string()];
+        // None → first; a → b; b → wrap to a. Required never returns None.
+        assert_eq!(cycle_axis(None, &opts, true), Some("a".into()));
+        assert_eq!(cycle_axis(Some("a"), &opts, true), Some("b".into()));
+        assert_eq!(cycle_axis(Some("b"), &opts, true), Some("a".into()));
+        // Stale pick (not in opts) resets to the first option.
+        assert_eq!(cycle_axis(Some("zzz"), &opts, true), Some("a".into()));
+        // No options → None even when required (nothing to pick).
+        assert_eq!(cycle_axis(None, &[], true), None);
+    }
+
+    #[test]
+    fn optional_axis_passes_through_none() {
+        let opts = vec!["a".to_string(), "b".to_string()];
+        // None → a → b → None → a (None is a real step for optional dims).
+        assert_eq!(cycle_axis(None, &opts, false), Some("a".into()));
+        assert_eq!(cycle_axis(Some("a"), &opts, false), Some("b".into()));
+        assert_eq!(cycle_axis(Some("b"), &opts, false), None);
+    }
+
+    #[test]
+    fn value_axis_maps_to_the_field_each_type_reads() {
+        // BoxPlot reads its value from spec.y; Heatmap from spec.color
+        // (matches charts/query.rs build_plot_sql).
+        let mut bx = spec(ChartType::BoxPlot);
+        set_axis_field(&mut bx, AxisRole::Value, Some("amt".into()));
+        assert_eq!(bx.y.as_deref(), Some("amt"));
+        assert_eq!(bx.color, None);
+        assert_eq!(axis_field(&bx, AxisRole::Value), Some("amt"));
+
+        let mut hm = spec(ChartType::Heatmap);
+        set_axis_field(&mut hm, AxisRole::Value, Some("cnt".into()));
+        assert_eq!(hm.color.as_deref(), Some("cnt"));
+        assert_eq!(hm.y, None);
+        assert_eq!(axis_field(&hm, AxisRole::Value), Some("cnt"));
+    }
+
+    #[test]
+    fn required_axes_classification() {
+        assert!(axis_required(AxisRole::X));
+        assert!(axis_required(AxisRole::Y));
+        assert!(axis_required(AxisRole::Value));
+        assert!(!axis_required(AxisRole::Group));
+        assert!(!axis_required(AxisRole::Color));
     }
 }
 

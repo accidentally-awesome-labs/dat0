@@ -62,6 +62,30 @@ sha2 = { workspace = true }
 # bundle is off and never compiled. The "0.3.8" pin matches gpui-component's
 # own declaration (harmless caret); Cargo resolves both to a single 0.3.x copy.
 tree-sitter-sequel = "0.3.8"
+# P9a Charts: render the 7 chart types to a bitmap buffer (BGRA→GPUI img) +
+# PNG/SVG export. See workspace Cargo.toml for the feature rationale.
+plotters = { workspace = true }
+# P9a T7 wiring: build a gpui `RenderImage` from the chart's BGRA buffer.
+# `RenderImage::new` takes `SmallVec<[image::Frame; 1]>`, and `Frame::new`
+# wraps an `image::ImageBuffer`. These are gpui 0.2.2's exact transitive deps
+# (gpui declares `image = "0.25.1"`, `smallvec = "1.6"`); pin to compatible
+# ranges so Cargo resolves a SINGLE copy shared with gpui (verified: both
+# resolve to image 0.25.10 + smallvec 1.15.1) — no second image/smallvec copy.
+image = { version = "0.25", default-features = false }
+smallvec = "1"
+
+# P9a Charts (Linux build fix): plotters' `ttf` feature pulls `font-kit`, which on
+# Linux compiles its `sources/fontconfig.rs` against `yeslogic-fontconfig-sys` v6.
+# v6 exposes the `Fc*` symbols ONLY through its dlopen `statics::LIB` handle, so
+# font-kit's non-dlopen path (`use ffi::*` + free-function dispatch) fails with
+# `error[E0425]: cannot find function FcInitLoadConfigAndFonts`. Enabling font-kit's
+# `source-fontconfig-dlopen` feature switches it to the dlopen path (and turns on
+# `yeslogic-fontconfig-sys/dlopen`), resolving the symbols at runtime via
+# libfontconfig.so.1 (present on Linux). plotters doesn't enable this feature itself.
+# macOS (Core Text) and Windows (DirectWrite) never compile the fontconfig module,
+# so this dep is Linux-only. font-kit is already in the tree via plotters 0.3.7.
+[target.'cfg(target_os = "linux")'.dependencies]
+font-kit = { version = "0.14.3", default-features = false, features = ["source-fontconfig-dlopen"] }
 
 [dev-dependencies]
 tempfile = { workspace = true }
@@ -80,6 +104,10 @@ harness = false
 
 [[bench]]
 name = "grid_scroll"
+harness = false
+
+[[bench]]
+name = "chart_render"
 harness = false
 
 [lib]

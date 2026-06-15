@@ -95,6 +95,20 @@ mockito = "1"
 # Bench
 criterion = { version = "0.5", features = ["html_reports", "async_tokio"] }
 
+# P9a Charts: plotters renders the 7 chart types to a bitmap buffer (BGRA→GPUI
+# img) + PNG/SVG export. plotters core+svg were transitive (via criterion);
+# plotters-bitmap (bitmap_backend/bitmap_encoder) is genuinely new here. Promoted
+# to a first-class dep by the P9a-1 T0 spike.
+# GOTCHA (T0 finding): plotters 0.3.7 declares `colormaps = []` (no feature dep)
+# yet `style/colors/colormaps.rs` unconditionally does `use super::full_palette::*`
+# — so `colormaps` WITHOUT `full_palette` is a compile error (E0432). The crate's
+# own `default` set always pairs them; we mirror that by enabling `full_palette`
+# (it is a pure-data feature, `full_palette = []`, no extra deps).
+plotters = { version = "0.3.7", default-features = false, features = [
+    "bitmap_backend", "bitmap_encoder", "svg_backend",
+    "all_series", "all_elements", "colormaps", "full_palette", "ttf",
+] }
+
 # Dev / test utilities
 tempfile = "3"
 serial_test = "3"

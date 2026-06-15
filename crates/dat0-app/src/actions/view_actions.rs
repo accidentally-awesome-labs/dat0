@@ -76,6 +76,20 @@ pub fn register(reg: &ActionRegistry) -> Result<(), RegisterError> {
         }),
     })?;
 
+    // P9a T7: Charts → Visualize. Like CONSOLE_TOGGLE, the toggle needs the
+    // focused workspace's `cx` (it spawns a describe_table + plot-query round
+    // trip), but unlike the console it works from `cx` alone — so the App-path
+    // dispatch CAN do the work via `focused_workspace` + `toggle_chart_panel`.
+    reg.register(ActionDescriptor {
+        id: ActionId::from(ids::CHART_VISUALIZE),
+        title: dat0_i18n::t("chart.visualize"),
+        group: ActionGroup::Navigation,
+        keybinding: None, // also reachable view-scoped via the Charts menu item
+        dispatch: Arc::new(|app| {
+            dispatch_visualize(app);
+        }),
+    })?;
+
     reg.register(ActionDescriptor {
         id: ActionId::from(ids::SQL_RUN),
         title: dat0_i18n::t("sql.run"),
@@ -161,6 +175,18 @@ fn dispatch_sql_close_tab(app: &mut gpui::App) {
             console.update(cx, |c, cx| c.close_tab(active, cx));
         }
     });
+}
+
+/// Dispatch body for `chart.visualize` (P9a T7). Toggles the focused
+/// workspace's right-dock chart panel; on open it binds to the active grid's
+/// base table and kicks off the first plot query. No-op when no workspace is
+/// focused (or no file is registered — `toggle_chart_panel` guards on that).
+pub fn dispatch_visualize(app: &mut gpui::App) {
+    let Some(workspace) = focused_workspace(app) else {
+        tracing::debug!("chart.visualize: no focused workspace");
+        return;
+    };
+    workspace.update(app, |ws, cx| ws.toggle_chart_panel(cx));
 }
 
 /// Retrieve the focused `WorkspaceShell` entity, if available.
