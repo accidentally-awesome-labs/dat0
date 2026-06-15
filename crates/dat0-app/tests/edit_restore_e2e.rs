@@ -160,6 +160,7 @@ async fn edit_delete_filter_round_trip_through_v3_session() {
         active_sql_tab: None,
         query_history: Vec::new(),
         saved_queries: Vec::new(),
+        charts: Vec::new(),
         attachments: Vec::new(),
         ui: Default::default(),
     };
@@ -168,10 +169,10 @@ async fn edit_delete_filter_round_trip_through_v3_session() {
     // The on-disk file must declare the current schema version.
     let raw = std::fs::read_to_string(&session_json).unwrap();
     assert!(
-        raw.contains("\"schema_version\": 8") || raw.contains("\"schema_version\":8"),
-        "session.json must declare schema_version 8"
+        raw.contains("\"schema_version\": 9") || raw.contains("\"schema_version\":9"),
+        "session.json must declare schema_version 9"
     );
-    assert_eq!(SESSION_SCHEMA_VERSION, 8, "current schema must be v8");
+    assert_eq!(SESSION_SCHEMA_VERSION, 9, "current schema must be v9");
 
     // --- Phase 4: simulate crash + reload via migrate::load ---
     drop(vm);

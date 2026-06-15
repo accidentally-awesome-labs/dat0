@@ -6,6 +6,7 @@
 
 pub(crate) mod attach;
 pub(crate) mod catalog;
+pub mod chart_spec;
 pub mod duckdb_engine;
 pub mod error;
 pub(crate) mod execute;

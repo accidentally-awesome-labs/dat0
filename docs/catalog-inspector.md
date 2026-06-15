@@ -92,13 +92,14 @@ immediate neighbours, so you can see everything a table ultimately came from and
 everything that ultimately depends on it.
 
 - **Edge labels** name *how* one node feeds another: file imports, transforms
-  (annotated with the op count), and SQL references — a table named in a derived
+  (annotated with the op count), SQL references — a table named in a derived
   table's `CREATE TABLE AS` SQL, resolved from the query AST via DuckDB's
-  `json_serialize_sql`.
+  `json_serialize_sql` — and charts (a saved chart built from the table).
 - **Node glyphs** distinguish the kinds: files (📄), external/attached database
-  tables (☁), and regular tables (▦).
+  tables (☁), regular tables (▦), and saved charts (📊).
 - **Click any table node** to open it in a grid tab and re-root the Inspector on
   it — this lets you walk the lineage hop by hop. File leaves are not clickable.
+  Clicking a saved-chart node (📊) reopens that chart in the panel.
 
 This chain replaces the P6a flat **Dependents** list, which only surfaced
 transform children; descendants now include SQL references as well.

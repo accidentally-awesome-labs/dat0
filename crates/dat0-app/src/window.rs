@@ -420,7 +420,7 @@ pub(crate) fn export_package_flow(cx: &mut App) {
         // then drop the guard BEFORE the async engine I/O — never hold the
         // parking_lot guard across an `.await` on the single-threaded foreground
         // executor (render also locks the session there).
-        let (engine, window_id, views, queries) = {
+        let (engine, window_id, views, queries, charts) = {
             let guard = session.lock();
             let engine = Arc::clone(&guard.engine);
             let window_id = guard.window_id;
@@ -447,12 +447,29 @@ pub(crate) fn export_package_flow(cx: &mut App) {
                     })
                     .collect(),
             };
-            (engine, window_id, views, queries)
+            let charts = dat0_format::Charts {
+                charts: guard
+                    .charts()
+                    .iter()
+                    .map(|c| dat0_format::PackageChart {
+                        id: c.id,
+                        name: c.name.clone(),
+                        spec: c.spec.clone(),
+                        saved_at: c.saved_at,
+                    })
+                    .collect(),
+            };
+            (engine, window_id, views, queries, charts)
         };
         let result: anyhow::Result<()> = async {
-            let contents =
-                crate::package::contents_from_engine(engine.as_ref(), window_id, views, queries)
-                    .await?;
+            let contents = crate::package::contents_from_engine(
+                engine.as_ref(),
+                window_id,
+                views,
+                queries,
+                charts,
+            )
+            .await?;
             dat0_format::Writer::write(&contents, engine.as_ref(), &out).await?;
             Ok(())
         }
@@ -554,7 +571,24 @@ pub(crate) fn open_package_at(cx: &mut App, pkg: PathBuf) {
                 saved_at: q.saved_at,
             })
             .collect();
-        let sess = Session::from_parts(scratch_dir.clone(), Arc::new(engine), tabs, saved_queries);
+        let charts = parsed
+            .charts
+            .charts
+            .iter()
+            .map(|c| crate::session::charts::SavedChart {
+                id: c.id,
+                name: c.name.clone(),
+                spec: c.spec.clone(),
+                saved_at: c.saved_at,
+            })
+            .collect();
+        let sess = Session::from_parts(
+            scratch_dir.clone(),
+            Arc::new(engine),
+            tabs,
+            saved_queries,
+            charts,
+        );
         let window_id = sess.window_id;
         Ok((Arc::new(Mutex::new(sess)), window_id))
     });
@@ -1632,7 +1666,7 @@ pub fn run_app(lock: AppLock, initial_paths: Vec<PathBuf>, main_loop: MainLoop) 
 /// new flow is a new variant + a new match arm — nothing else moves.
 ///
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-// All three variants are intentionally `Save*` — they name distinct "save this
+// All variants are intentionally `Save*` — they name distinct "save this
 // thing as…" flows routed by `on_name_prompt_event`. The shared prefix is
 // meaningful, not redundant, so the `enum_variant_names` lint is suppressed.
 #[allow(clippy::enum_variant_names)]
@@ -1646,6 +1680,11 @@ enum NamePromptIntent {
     /// (T11). The handler re-reads the `ViewModel` on confirm, so no per-intent
     /// state is captured up front.
     SaveViewAsTable,
+    /// Save the currently-rendered chart under a user name (P9a-2). The
+    /// generated default is seeded into the prompt by the opener
+    /// (`open_chart_save_prompt`), so the confirm handler just reads the edited
+    /// `name` — no per-intent state is captured here.
+    SaveChart,
 }
 
 /// Owns the session for this window and an optional data source (set once
@@ -2698,9 +2737,23 @@ impl WorkspaceShell {
     /// the caller is responsible for `cx.notify()` afterward.
     pub(crate) fn recompute_lineage(&mut self) {
         if let Some(target) = self.inspector.target_table.clone() {
+            // P9a-2: saved charts join the lineage as descendants of their source
+            // table. Each chart's `spec.source` is a quoted (possibly qualified)
+            // identifier; reduce it to the bare catalog key the lineage matches on.
+            let chart_nodes: Vec<crate::inspector::lineage::ChartNode> = {
+                let sess = self.session.lock();
+                sess.charts()
+                    .iter()
+                    .map(|c| crate::inspector::lineage::ChartNode {
+                        name: c.name.clone(),
+                        source_table: bare_table_name(&c.spec.source),
+                    })
+                    .collect()
+            };
             let graph = crate::inspector::lineage::LineageGraph::build(
                 &self.catalog_tables,
                 &self.sql_parents,
+                &chart_nodes,
             );
             self.inspector.set_lineage(graph.closure(&target));
         }
@@ -3279,6 +3332,8 @@ impl WorkspaceShell {
         use crate::charts::panel::{column_options, visible_axes};
         use crate::charts::spec::ChartType;
         use gpui_component::button::Button;
+        // `.disabled(..)` on `Button` comes from the `Disableable` trait.
+        use gpui_component::Disableable;
 
         let cur_type = self.chart_panel.spec.chart_type;
 
@@ -3336,9 +3391,47 @@ impl WorkspaceShell {
             .on_click(cx.listener(|ws, _ev, _window, cx| {
                 ws.export_chart(false, cx);
             }));
+        // ── Save button (P9a-2) ────────────────────────────────────────────
+        // Disabled until a chart is renderable (a source is bound AND at least
+        // one axis is picked), so an empty chart can never be saved. Mirrors the
+        // export guard's spirit but is enforced at the button (disabled) rather
+        // than as a silent no-op, so the affordance reads correctly.
+        let can_save = self.chart_panel.source.is_some()
+            && (self.chart_panel.spec.x.is_some() || self.chart_panel.spec.y.is_some());
+        let save_btn = Button::new("chart-save")
+            .label(dat0_i18n::t("chart.save"))
+            .disabled(!can_save)
+            .on_click(cx.listener(|ws, _ev, window, cx| {
+                ws.open_chart_save_prompt(window, cx);
+            }));
+
         // Clicking export with no rendered data is a silent no-op
         // (`export_chart` guards on `chart_panel.data`).
-        row.child(png_btn).child(svg_btn)
+        row.child(png_btn).child(svg_btn).child(save_btn)
+    }
+
+    /// Open the shared name-prompt overlay to save the currently-bound chart
+    /// under a user name (P9a-2). Seeds the prompt with the generated default
+    /// ([`default_chart_name`](crate::session::charts::default_chart_name)), then
+    /// routes a confirm to [`save_named_chart`](Self::save_named_chart) via the
+    /// [`SaveChart`](NamePromptIntent::SaveChart) intent. No-op when no source is
+    /// bound (the toolbar Save button is also disabled in that state).
+    pub(crate) fn open_chart_save_prompt(
+        &mut self,
+        window: &mut gpui::Window,
+        cx: &mut Context<Self>,
+    ) {
+        if self.chart_panel.source.is_none() {
+            return;
+        }
+        let prefill = crate::session::charts::default_chart_name(&self.chart_panel.spec);
+        self.open_name_prompt_with(
+            dat0_i18n::t("chart.save.prompt"),
+            prefill,
+            NamePromptIntent::SaveChart,
+            window,
+            cx,
+        );
     }
 
     /// Open the native save panel and export the current chart to PNG (`png =
@@ -3447,6 +3540,7 @@ impl WorkspaceShell {
             SaveAsTable => {
                 self.open_name_prompt_with(
                     "Save as table…",
+                    "",
                     NamePromptIntent::SaveConsoleAsTable,
                     window,
                     cx,
@@ -3850,6 +3944,124 @@ impl WorkspaceShell {
         self.maybe_prompt_save_workspace();
     }
 
+    /// Persist the currently-bound chart spec as a named saved chart (P9a-2).
+    /// Upserts by name (case-insensitive). No-op on empty name / no chart bound.
+    /// Mirrors [`save_named_query`](Self::save_named_query) — reaches the session
+    /// via `self.session.lock()`, upserts into the persisted list, then pushes an
+    /// info banner and refreshes the catalog so the new chart appears in lineage.
+    /// Called from [`on_name_prompt_event`](Self::on_name_prompt_event) on a
+    /// [`SaveChart`](NamePromptIntent::SaveChart) confirm.
+    pub(crate) fn save_named_chart(&mut self, name: String, cx: &mut Context<Self>) {
+        if name.trim().is_empty() {
+            return;
+        }
+        // `chart_panel` is a plain field on the shell (not an `Entity`), so the
+        // live spec is read directly — there is no chart to save unless a source
+        // is bound.
+        if self.chart_panel.source.is_none() {
+            return;
+        }
+        let spec = self.chart_panel.spec.clone();
+        let c = crate::session::charts::SavedChart {
+            id: uuid::Uuid::now_v7(),
+            name: name.trim().to_string(),
+            spec,
+            saved_at: now_unix_millis(),
+        };
+        let mut sess = self.session.lock();
+        let mut list = sess.charts().to_vec();
+        crate::session::charts::upsert_chart(&mut list, c);
+        let _ = sess.set_charts(list);
+        drop(sess);
+        crate::error_ux::push(crate::error_ux::Banner::info(dat0_i18n::t(
+            "chart.save.done.title",
+        )));
+        self.refresh_catalog(cx); // so the new chart appears in lineage
+        self.maybe_prompt_save_workspace();
+    }
+
+    /// Reopen a saved chart by name (P9a-2): look it up in the session, bind the
+    /// chart panel to its stored spec, and render. Mirrors the "Visualize" open
+    /// path (`toggle_chart_panel`) but seeds the panel from a persisted
+    /// [`ChartSpec`] instead of building a fresh one from the active grid.
+    /// Invoked from the Inspector lineage chain when a `NodeKind::Chart` row is
+    /// clicked. No-op (silently) when the named chart is gone from the session.
+    pub(crate) fn open_saved_chart(
+        &mut self,
+        name: String,
+        window: &mut gpui::Window,
+        cx: &mut Context<Self>,
+    ) {
+        let spec = {
+            let sess = self.session.lock();
+            sess.charts()
+                .iter()
+                .find(|c| c.name == name)
+                .map(|c| c.spec.clone())
+        };
+        let Some(spec) = spec else { return };
+        self.show_chart_with_spec(spec, window, cx);
+    }
+
+    /// Show the Charts dock seeded from a persisted [`ChartSpec`] (P9a-2). Unlike
+    /// [`toggle_chart_panel`](Self::toggle_chart_panel) — which binds a *fresh*
+    /// chart from the active grid and so resets all axis picks — this preserves
+    /// the saved spec verbatim (chart type + axis picks + title) and only fetches
+    /// the source's columns off-thread to repopulate the toolbar's axis-cycle
+    /// options. The render is then driven by the SAME `run_plot_query` path the
+    /// Visualize flow uses, so the data flow is identical.
+    ///
+    /// `spec.source` is a single quoted identifier (saved from a live spec);
+    /// `describe_table` needs the bare name, so we reduce it via
+    /// [`bare_table_name`].
+    pub(crate) fn show_chart_with_spec(
+        &mut self,
+        spec: crate::charts::spec::ChartSpec,
+        _window: &mut gpui::Window,
+        cx: &mut Context<Self>,
+    ) {
+        // Seed the panel from the saved spec, preserving axis picks. Columns are
+        // filled in once `describe_table` returns (below); the plot renders then.
+        self.chart_panel_visible = true;
+        self.chart_panel.source = Some(spec.source.clone());
+        self.chart_panel.spec = spec.clone();
+        self.chart_panel.columns = Vec::new();
+        self.chart_panel.data = None;
+        self.chart_panel.error = None;
+
+        let bare = bare_table_name(&spec.source);
+        let engine = self.engine();
+        let ws_weak = cx.entity().downgrade();
+        tokio::spawn(async move {
+            use dat0_engine::QueryEngine as _;
+            let cols = engine
+                .describe_table(&bare, None)
+                .await
+                .map(|cs| {
+                    cs.into_iter()
+                        .map(|c| (c.name, c.data_type))
+                        .collect::<Vec<_>>()
+                })
+                .unwrap_or_default();
+            if let Some(dispatcher) = crate::window_registry::dispatcher() {
+                let _ = dispatcher.dispatch(move |app_cx: &mut gpui::App| {
+                    let Some(ws) = ws_weak.upgrade() else {
+                        return;
+                    };
+                    ws.update(app_cx, |ws, cx| {
+                        ws.chart_panel.columns = cols;
+                        ws.run_plot_query(cx);
+                    });
+                });
+            } else {
+                tracing::warn!(
+                    "show_chart_with_spec: no MainThreadDispatcher installed; chart bind dropped"
+                );
+            }
+        });
+        cx.notify();
+    }
+
     /// Promote the statement under the cursor to a derived table (P5b T10).
     /// Called from [`on_name_prompt_event`](Self::on_name_prompt_event) on a
     /// confirm of the [`SaveConsoleAsTable`](NamePromptIntent::SaveConsoleAsTable)
@@ -3940,6 +4152,7 @@ impl WorkspaceShell {
         }
         self.open_name_prompt_with(
             "Save view as table…",
+            "",
             NamePromptIntent::SaveViewAsTable,
             window,
             cx,
@@ -4042,7 +4255,13 @@ impl WorkspaceShell {
         cx: &mut Context<Self>,
     ) {
         self.name_prompt_sql = Some(sql);
-        self.open_name_prompt_with("Save query as…", NamePromptIntent::SaveQuery, window, cx);
+        self.open_name_prompt_with(
+            "Save query as…",
+            "",
+            NamePromptIntent::SaveQuery,
+            window,
+            cx,
+        );
     }
 
     /// Mount the shared single-line name-prompt overlay for a given `intent`
@@ -4059,17 +4278,22 @@ impl WorkspaceShell {
     /// caller BEFORE calling this; the `SaveConsoleAsTable` intent needs none
     /// (it re-reads the statement-under-cursor on confirm).
     ///
+    /// `initial` seeds the name field (editable). Pass `""` for the flows that
+    /// start blank (Save query / Save as table); the Save-chart flow passes the
+    /// generated default name (P9a-2).
+    ///
     /// Needs `&mut Window` because `NamePrompt::new` builds an `InputState`
     /// (single-line name field) eagerly.
     fn open_name_prompt_with(
         &mut self,
         title: impl Into<gpui::SharedString>,
+        initial: impl Into<gpui::SharedString>,
         intent: NamePromptIntent,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
         use crate::view::name_prompt::{NamePrompt, NamePromptEvent};
-        let prompt = cx.new(|cx| NamePrompt::new(title, window, cx));
+        let prompt = cx.new(|cx| NamePrompt::new(title, initial, window, cx));
         let sub = cx.subscribe(
             &prompt,
             |ws: &mut Self, _prompt, ev: &NamePromptEvent, cx| {
@@ -4105,6 +4329,9 @@ impl WorkspaceShell {
                 }
                 Some(NamePromptIntent::SaveViewAsTable) => {
                     self.save_view_as_table(name, cx);
+                }
+                Some(NamePromptIntent::SaveChart) => {
+                    self.save_named_chart(name, cx);
                 }
                 None => {}
             }
@@ -4343,8 +4570,8 @@ impl WorkspaceShell {
     /// trap).
     fn open_md_token_prompt(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         use crate::view::name_prompt::{NamePrompt, NamePromptEvent};
-        let prompt =
-            cx.new(|cx| NamePrompt::new(dat0_i18n::t("connections.md.token_prompt"), window, cx));
+        let prompt = cx
+            .new(|cx| NamePrompt::new(dat0_i18n::t("connections.md.token_prompt"), "", window, cx));
         let sub = cx.subscribe_in(
             &prompt,
             window,

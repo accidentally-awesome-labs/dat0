@@ -112,6 +112,7 @@ async fn session_round_trip_preserves_stack() {
         active_sql_tab: None,
         query_history: Vec::new(),
         saved_queries: Vec::new(),
+        charts: Vec::new(),
         attachments: Vec::new(),
         ui: Default::default(),
     };
@@ -224,6 +225,7 @@ async fn full_loop_persist_then_restore() {
         active_sql_tab: None,
         query_history: Vec::new(),
         saved_queries: Vec::new(),
+        charts: Vec::new(),
         attachments: Vec::new(),
         ui: Default::default(),
     };
@@ -271,11 +273,11 @@ async fn full_loop_persist_then_restore() {
     );
 
     // --- Phase 7: verify the on-disk session.json declares the current schema
-    // (v8) with correct content ---
+    // (v9) with correct content ---
     let raw = std::fs::read_to_string(&session_json).unwrap();
     assert!(
-        raw.contains("\"schema_version\": 8") || raw.contains("\"schema_version\":8"),
-        "session.json must declare the current schema_version (8)"
+        raw.contains("\"schema_version\": 9") || raw.contains("\"schema_version\":9"),
+        "session.json must declare the current schema_version (9)"
     );
     assert!(
         raw.contains("\"eq\"") || raw.contains("eq"),

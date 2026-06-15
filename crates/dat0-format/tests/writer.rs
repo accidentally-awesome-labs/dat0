@@ -41,6 +41,7 @@ async fn writer_emits_expected_zip_entries() {
         sources: Sources { sources: vec![] },
         views: Views { views: vec![] },
         queries: Queries { queries: vec![] },
+        charts: Charts { charts: vec![] },
     };
     let out = dir.path().join("out.dat0");
     Writer::write(&contents, &engine, &out).await.unwrap();

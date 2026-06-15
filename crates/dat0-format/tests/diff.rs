@@ -43,12 +43,23 @@ fn no_queries() -> Queries {
     Queries { queries: vec![] }
 }
 
+fn no_charts() -> Charts {
+    Charts { charts: vec![] }
+}
+
 #[test]
 fn identical_recipes_diff_empty() {
     let a = Recipe {
         tables: vec![rt("sales", 42, &["id"])],
     };
-    let d = compute(&a, &no_queries(), &a.clone(), &no_queries());
+    let d = compute(
+        &a,
+        &no_queries(),
+        &no_charts(),
+        &a.clone(),
+        &no_queries(),
+        &no_charts(),
+    );
     assert!(d.is_empty(), "identical recipes must produce an empty diff");
 }
 
@@ -60,7 +71,14 @@ fn row_count_delta_detected() {
     let b = Recipe {
         tables: vec![rt("sales", 50, &["id"])],
     };
-    let d = compute(&a, &no_queries(), &b, &no_queries());
+    let d = compute(
+        &a,
+        &no_queries(),
+        &no_charts(),
+        &b,
+        &no_queries(),
+        &no_charts(),
+    );
     assert!(!d.is_empty());
     assert_eq!(d.row_count_deltas.len(), 1);
     assert_eq!(d.row_count_deltas[0], ("sales".into(), 42, 50));
@@ -78,7 +96,14 @@ fn schema_column_added_listed() {
     let b = Recipe {
         tables: vec![rt("sales", 42, &["id", "amount"])],
     };
-    let d = compute(&a, &no_queries(), &b, &no_queries());
+    let d = compute(
+        &a,
+        &no_queries(),
+        &no_charts(),
+        &b,
+        &no_queries(),
+        &no_charts(),
+    );
     assert!(!d.is_empty());
     assert_eq!(d.schema.len(), 1, "exactly one column-added schema delta");
     let delta = &d.schema[0];
@@ -102,7 +127,14 @@ fn dropped_table_is_lineage_delta() {
     let b = Recipe {
         tables: vec![rt("sales", 42, &["id"])],
     };
-    let d = compute(&a, &no_queries(), &b, &no_queries());
+    let d = compute(
+        &a,
+        &no_queries(),
+        &no_charts(),
+        &b,
+        &no_queries(),
+        &no_charts(),
+    );
     assert!(!d.is_empty());
     assert_eq!(
         d.lineage.len(),
@@ -127,7 +159,7 @@ fn changed_query_sql_is_query_delta() {
     let qb = Queries {
         queries: vec![pq("top_sales", "SELECT * FROM sales LIMIT 25")],
     };
-    let d = compute(&a, &qa, &a.clone(), &qb);
+    let d = compute(&a, &qa, &no_charts(), &a.clone(), &qb, &no_charts());
     assert!(!d.is_empty());
     assert_eq!(d.queries.len(), 1, "exactly one query delta");
     let delta = &d.queries[0];
@@ -156,7 +188,14 @@ fn changed_derivation_is_lineage_delta() {
     let b = Recipe {
         tables: vec![rt("monthly", 12, &["m"])],
     };
-    let d = compute(&a, &no_queries(), &b, &no_queries());
+    let d = compute(
+        &a,
+        &no_queries(),
+        &no_charts(),
+        &b,
+        &no_queries(),
+        &no_charts(),
+    );
     assert!(!d.is_empty());
     assert_eq!(d.lineage.len(), 1);
     assert_eq!(d.lineage[0].table, "monthly");
@@ -172,7 +211,7 @@ fn changed_derivation_is_lineage_delta() {
 
 #[test]
 fn render_json_and_text_round_trip_shape() {
-    // A non-empty diff renders to a JSON object with the four dimension keys and
+    // A non-empty diff renders to a JSON object with the five dimension keys and
     // a non-empty text summary (sanity that the renderers don't panic / are wired).
     let a = Recipe {
         tables: vec![rt("sales", 42, &["id"])],
@@ -180,13 +219,69 @@ fn render_json_and_text_round_trip_shape() {
     let b = Recipe {
         tables: vec![rt("sales", 50, &["id", "amount"])],
     };
-    let d = compute(&a, &no_queries(), &b, &no_queries());
+    let d = compute(
+        &a,
+        &no_queries(),
+        &no_charts(),
+        &b,
+        &no_queries(),
+        &no_charts(),
+    );
     let json = d.render_json();
     assert!(json.get("schema").is_some());
     assert!(json.get("lineage").is_some());
     assert!(json.get("queries").is_some());
     assert!(json.get("row_count_deltas").is_some());
+    assert!(json.get("charts").is_some());
     let text = d.render_text();
     assert!(!text.is_empty());
     assert!(text.contains("sales"));
+}
+
+#[test]
+fn charts_added_removed_changed() {
+    use dat0_engine::chart_spec::{ChartSpec, ChartType};
+    let mk = |name: &str, ty: ChartType| dat0_format::PackageChart {
+        id: uuid::Uuid::now_v7(),
+        name: name.into(),
+        spec: ChartSpec {
+            chart_type: ty,
+            source: "\"t\"".into(),
+            x: Some("a".into()),
+            y: Some("b".into()),
+            group: None,
+            color: None,
+            title: String::new(),
+        },
+        saved_at: 0,
+    };
+    let a = dat0_format::Charts {
+        charts: vec![mk("keep", ChartType::Bar), mk("gone", ChartType::Line)],
+    };
+    let b = dat0_format::Charts {
+        charts: vec![mk("keep", ChartType::Scatter), mk("new", ChartType::Area)],
+    };
+
+    let empty_recipe = dat0_format::Recipe { tables: vec![] };
+    let empty_q = dat0_format::Queries { queries: vec![] };
+    let d = dat0_format::diff::compute(&empty_recipe, &empty_q, &a, &empty_recipe, &empty_q, &b);
+
+    let names: std::collections::BTreeMap<_, _> = d
+        .charts
+        .iter()
+        .map(|c| (c.name.clone(), c.change.clone()))
+        .collect();
+    assert!(matches!(
+        names.get("gone"),
+        Some(dat0_format::diff::ChartChange::Removed)
+    ));
+    assert!(matches!(
+        names.get("new"),
+        Some(dat0_format::diff::ChartChange::Added)
+    ));
+    assert!(matches!(
+        names.get("keep"),
+        Some(dat0_format::diff::ChartChange::SpecChanged { .. })
+    ));
+    assert!(!d.is_empty());
 }

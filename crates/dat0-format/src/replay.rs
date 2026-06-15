@@ -270,6 +270,10 @@ impl ReplayEngine {
             sources,
             views: parsed.views.clone(),
             queries: parsed.queries.clone(),
+            // Charts carry no replayable data dimension (they reference
+            // tables/columns by name), so replay preserves them verbatim — the
+            // refreshed recipe re-runs the same tables the chart specs name.
+            charts: parsed.charts.clone(),
         })
     }
 }

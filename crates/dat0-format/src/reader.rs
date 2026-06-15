@@ -11,7 +11,7 @@ use sha2::{Digest, Sha256};
 
 use crate::FORMAT_VERSION;
 use crate::error::{FormatError, Result};
-use crate::model::{PackageManifest, ParsedPackage, Queries, Recipe, Sources, Views};
+use crate::model::{Charts, PackageManifest, ParsedPackage, Queries, Recipe, Sources, Views};
 
 /// Reads and validates a `.dat0` package file.
 pub struct Reader;
@@ -52,6 +52,15 @@ impl Reader {
         let sources: Sources = read_json(&mut zip, "sources.json")?;
         let views: Views = read_json(&mut zip, "views.json")?;
         let queries: Queries = read_json(&mut zip, "queries.json")?;
+        // `charts.json` was added in P9a-2; older packages omit it. Treat a
+        // missing entry as an empty chart set rather than erroring (forward-compat).
+        let charts: Charts = match read_json::<Charts>(&mut zip, "charts.json") {
+            Ok(c) => c,
+            Err(FormatError::Zip(zip::result::ZipError::FileNotFound)) => {
+                Charts { charts: Vec::new() }
+            }
+            Err(e) => return Err(e),
+        };
 
         // 3. Verify all checksums recorded in the manifest.
         for (entry, expected) in &manifest.checksums {
@@ -75,6 +84,7 @@ impl Reader {
             sources,
             views,
             queries,
+            charts,
             zip_path: path.to_path_buf(),
         })
     }

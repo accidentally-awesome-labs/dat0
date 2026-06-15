@@ -122,6 +122,7 @@ fn session_round_trips_sql_tabs_via_setter() {
         active_sql_tab: Some(0),
         query_history: vec![],
         saved_queries: vec![],
+        charts: vec![],
         attachments: vec![],
         ui: Default::default(),
     };

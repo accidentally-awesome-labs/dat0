@@ -11,8 +11,10 @@
 //! same DuckDB file (silent-empty-db bug).
 
 use dat0_app::package;
+use dat0_app::session::charts::SavedChart;
 use dat0_app::session::queries::SavedQuery;
 use dat0_app::session::{Session, Tab};
+use dat0_engine::chart_spec::{ChartSpec, ChartType};
 use dat0_engine::{DerivedOrigin, QueryEngine, TableOrigin};
 
 const BUDGET: u64 = 128 * 1024 * 1024;
@@ -79,6 +81,24 @@ async fn export_then_unpack_is_state_equivalent() {
         id: uuid::Uuid::now_v7(),
         name: "top".into(),
         sql: "SELECT * FROM sales LIMIT 5".into(),
+        saved_at: 0,
+    }])
+    .unwrap();
+
+    // A saved chart (P9a-2), to assert PackageChart -> SavedChart survives the
+    // unpack→recover_workspace path (write_session_json hydration).
+    sess.set_charts(vec![SavedChart {
+        id: uuid::Uuid::now_v7(),
+        name: "Monthly totals".into(),
+        spec: ChartSpec {
+            chart_type: ChartType::Bar,
+            source: "\"main\".\"monthly\"".into(),
+            x: Some("m".into()),
+            y: Some("c".into()),
+            group: None,
+            color: None,
+            title: String::new(),
+        },
         saved_at: 0,
     }])
     .unwrap();
@@ -160,6 +180,17 @@ async fn export_then_unpack_is_state_equivalent() {
         reopened.saved_queries()[0].sql,
         "SELECT * FROM sales LIMIT 5"
     );
+
+    // The saved chart must round-trip through unpack→recover (P9a-2): the chart
+    // is dropped here if write_session_json forgets to hydrate `charts`.
+    assert_eq!(
+        reopened.charts().len(),
+        1,
+        "saved chart must survive unpack"
+    );
+    assert_eq!(reopened.charts()[0].name, "Monthly totals");
+    assert_eq!(reopened.charts()[0].spec.chart_type, ChartType::Bar);
+    assert_eq!(reopened.charts()[0].spec.y.as_deref(), Some("c"));
 
     reopened.engine.close().await.unwrap();
 }

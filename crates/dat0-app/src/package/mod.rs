@@ -24,11 +24,13 @@ use dat0_engine::{
     quote_ident,
 };
 use dat0_format::{
-    ColumnFingerprint, Derivation, PackageContents, PackageQuery, PackageSource, PackageView,
-    ParsedPackage, Queries, Recipe, RecipeTable, Sources, TableKind, Views,
+    Charts, ColumnFingerprint, Derivation, PackageChart, PackageContents, PackageQuery,
+    PackageSource, PackageView, ParsedPackage, Queries, Recipe, RecipeTable, Sources, TableKind,
+    Views,
 };
 
 use crate::session::Session;
+use crate::session::charts::SavedChart;
 use crate::session::queries::SavedQuery;
 use crate::session::{SESSION_SCHEMA_VERSION, SessionState, Tab};
 
@@ -141,7 +143,19 @@ pub async fn session_to_contents(sess: &Session) -> Result<PackageContents> {
             })
             .collect(),
     };
-    contents_from_engine(sess.engine.as_ref(), sess.window_id, views, queries).await
+    let charts = Charts {
+        charts: sess
+            .charts()
+            .iter()
+            .map(|c| PackageChart {
+                id: c.id,
+                name: c.name.clone(),
+                spec: c.spec.clone(),
+                saved_at: c.saved_at,
+            })
+            .collect(),
+    };
+    contents_from_engine(sess.engine.as_ref(), sess.window_id, views, queries, charts).await
 }
 
 /// EXPORT core, decoupled from a live [`Session`]: walk `engine`'s catalog into a
@@ -154,6 +168,7 @@ pub async fn contents_from_engine(
     workspace_id: uuid::Uuid,
     views: Views,
     queries: Queries,
+    charts: Charts,
 ) -> Result<PackageContents> {
     let tables = engine
         .get_tables()
@@ -199,6 +214,7 @@ pub async fn contents_from_engine(
         sources: Sources { sources },
         views,
         queries,
+        charts,
     })
 }
 
@@ -291,7 +307,8 @@ pub async fn contents_to_workspace(parsed: &ParsedPackage, dir: &Path, budget: u
     crate::workspace::manifest::write(&dat0.join("manifest.json"), &manifest)
         .context("contents_to_workspace: write manifest")?;
 
-    // Reconstruct session.json (schema v8) from the package views + queries.
+    // Reconstruct session.json (current schema) from the package views, queries,
+    // and charts.
     write_session_json(parsed, &dat0).context("contents_to_workspace: write session.json")?;
 
     Ok(())
@@ -416,9 +433,9 @@ fn derivation_to_origin(derivation: &Derivation) -> DerivedOrigin {
     }
 }
 
-/// Build + write `<dat0>/session.json` (schema v8) from the package's portable
-/// views (→ tabs) and queries (→ saved queries), matching the on-disk shape
-/// [`Session::persist`] writes.
+/// Build + write `<dat0>/session.json` (current schema) from the package's
+/// portable views (→ tabs), queries (→ saved queries), and charts (→ saved
+/// charts), matching the on-disk shape [`Session::persist`] writes.
 fn write_session_json(parsed: &ParsedPackage, dat0: &Path) -> Result<()> {
     let tabs: Vec<Tab> = parsed
         .views
@@ -447,11 +464,26 @@ fn write_session_json(parsed: &ParsedPackage, dat0: &Path) -> Result<()> {
         })
         .collect();
 
+    // Saved charts (P9a-2): hydrate the unpacked workspace from the package's
+    // charts so they survive into the editable session (mirrors `saved_queries`).
+    let charts: Vec<SavedChart> = parsed
+        .charts
+        .charts
+        .iter()
+        .map(|c| SavedChart {
+            id: c.id,
+            name: c.name.clone(),
+            spec: c.spec.clone(),
+            saved_at: c.saved_at,
+        })
+        .collect();
+
     let state = SessionState {
         schema_version: SESSION_SCHEMA_VERSION,
         tabs,
         active_tab,
         saved_queries,
+        charts,
         ..Default::default()
     };
 
