@@ -29,6 +29,9 @@ pub enum ConnectionsEvent {
     DisconnectMd,
     /// Forget the stored token (and disconnect).
     ForgetMd,
+    /// Probe MotherDuck with the stored token and report a transient pass/fail
+    /// message (design §3.1). Routes to the token prompt if no token is stored.
+    TestMd,
     /// Open the native file picker to attach a SQLite file (trim-valve ②).
     AttachSqlite,
     /// Detach the attachment with the given alias.
@@ -56,12 +59,22 @@ pub fn render_connections(
 
     // State-driven action buttons for the MotherDuck section.
     let md_actions = match status {
-        ConnectionStatus::Disconnected => div().flex().flex_row().gap_2().child(action_button(
-            "connections-md-connect",
-            dat0_i18n::t("connections.md.connect"),
-            ConnectionsEvent::ConnectMd,
-            cx,
-        )),
+        ConnectionStatus::Disconnected => div()
+            .flex()
+            .flex_row()
+            .gap_2()
+            .child(action_button(
+                "connections-md-connect",
+                dat0_i18n::t("connections.md.connect"),
+                ConnectionsEvent::ConnectMd,
+                cx,
+            ))
+            .child(action_button(
+                "connections-md-test",
+                dat0_i18n::t("connections.md.test"),
+                ConnectionsEvent::TestMd,
+                cx,
+            )),
         ConnectionStatus::Connecting => {
             // No buttons while connecting — just the status text above.
             div()
@@ -80,6 +93,12 @@ pub fn render_connections(
                 "connections-md-forget",
                 dat0_i18n::t("connections.md.forget"),
                 ConnectionsEvent::ForgetMd,
+                cx,
+            ))
+            .child(action_button(
+                "connections-md-test",
+                dat0_i18n::t("connections.md.test"),
+                ConnectionsEvent::TestMd,
                 cx,
             )),
         ConnectionStatus::Error(msg) => div()
@@ -115,6 +134,12 @@ pub fn render_connections(
         .child(div().child(status_label(status)))
         .child(md_actions)
         .child(md_databases);
+    // Transient Test-connection result (design §3.1); only appended when one is pending,
+    // so the parent gap_2 does not leave a phantom 8 px gap when there is no message.
+    let md_section = match manager.md_test_result() {
+        Some(msg) => md_section.child(div().child(SharedString::from(msg.to_string()))),
+        None => md_section,
+    };
 
     // Attached-files section: one row per sqlite attachment + an "Attach…" button.
     let mut files = div().flex().flex_col().gap_1();

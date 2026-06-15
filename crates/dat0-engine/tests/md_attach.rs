@@ -34,7 +34,7 @@ fn spike_s1_install_load_only() {
     eprintln!("S1 OK: motherduck extension installed + loaded on duckdb-rs 1.4.4");
 }
 
-use dat0_engine::{AttachOpts, DuckDBEngine, MemoryBudget, QueryEngine};
+use dat0_engine::{AttachOpts, DuckDBEngine, MemoryBudget, QueryEngine, TableOrigin};
 
 fn it_budget() -> MemoryBudget {
     MemoryBudget {
@@ -129,6 +129,27 @@ async fn engine_attaches_md_and_queries_then_detaches() {
     )
     .await;
     assert!(n.parse::<i64>().unwrap() >= 0);
+
+    // P9b: the catalog "Cloud" group classifies an Attached table as MotherDuck
+    // iff its recorded origin `source` starts with "md:". Lock that engine
+    // contract against the live account. `get_tables` must succeed after an md
+    // attach (P6a found get_tables was silently broken whenever ANY db was
+    // attached), and — since only md is attached here — every Attached-origin
+    // table it returns must carry an md: source. Lenient on count: an account
+    // may have md dbs with zero tables, so we assert the contract, not presence.
+    let tables = engine
+        .get_tables()
+        .await
+        .expect("get_tables after md attach");
+    for ti in &tables {
+        if let TableOrigin::Attached { source, .. } = &ti.origin {
+            assert!(
+                source.starts_with("md:"),
+                "attached table {} has non-md source {source:?} (only md is attached)",
+                ti.name
+            );
+        }
+    }
 
     // Do NOT detach: in workspace mode DETACH persists to the account's saved
     // workspace (it would mutate the user's MotherDuck account and break

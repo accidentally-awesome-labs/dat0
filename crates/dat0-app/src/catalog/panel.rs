@@ -1,5 +1,5 @@
 //! Catalog left-dock panel (P6a §4). Renders the pure [`CatalogTree`](crate::catalog::CatalogTree)
-//! as three sections (Sources / Tables / Derived); each node is a clickable row
+//! as four sections (Sources / Cloud / Tables / Derived); each node is a clickable row
 //! that opens that table into the main grid via [`WorkspaceShell::open_table_tab`].
 //!
 //! Like [`crate::connections::panel`], this is a *free function* — not a GPUI
@@ -21,15 +21,20 @@ pub(crate) fn section_label(name: &str, n: usize) -> String {
 
 /// Render the catalog dock from the current tree. Called from
 /// `WorkspaceShell::render`. A pure function of `tree` — the only state read is
-/// `tree.sources` / `tree.tables` / `tree.derived`.
+/// `tree.sources` / `tree.cloud` / `tree.tables` / `tree.derived`.
 pub fn render_catalog(
     tree: &crate::catalog::CatalogTree,
     cx: &mut Context<WorkspaceShell>,
 ) -> gpui::AnyElement {
-    let sections = [
-        ("Sources", &tree.sources),
-        ("Tables", &tree.tables),
-        ("Derived", &tree.derived),
+    // (display label, stable id for ElementIds, nodes).
+    // Structural section names ("Sources"/"Tables"/"Derived") are English literals;
+    // Cloud is i18n'd but uses a stable id "Cloud" for locale-independent GPUI
+    // ElementIds (prevents click/hover cross-talk across sections).
+    let sections: [(String, &str, &Vec<crate::catalog::CatalogNode>); 4] = [
+        ("Sources".to_string(), "Sources", &tree.sources),
+        (dat0_i18n::t("catalog.cloud"), "Cloud", &tree.cloud),
+        ("Tables".to_string(), "Tables", &tree.tables),
+        ("Derived".to_string(), "Derived", &tree.derived),
     ];
 
     let mut root = div()
@@ -39,14 +44,14 @@ pub fn render_catalog(
         .p_2()
         .child(div().child(SharedString::from(dat0_i18n::t("catalog.title"))));
 
-    for (title, nodes) in sections {
+    for (label, id, nodes) in &sections {
         let mut section = div()
             .flex()
             .flex_col()
             .gap_1()
-            .child(div().child(SharedString::from(section_label(title, nodes.len()))));
-        for node in nodes {
-            section = section.child(catalog_row(title, &node.name, cx));
+            .child(div().child(SharedString::from(section_label(label, nodes.len()))));
+        for node in nodes.iter() {
+            section = section.child(catalog_row(id, &node.name, cx));
         }
         root = root.child(section);
     }
@@ -84,5 +89,11 @@ mod tests {
     #[test]
     fn section_header_label_counts_nodes() {
         assert_eq!(section_label("Tables", 3), "Tables (3)");
+    }
+
+    #[test]
+    fn cloud_section_label_is_i18n_resolved() {
+        // t() echoes the key when missing, so this also asserts the key exists.
+        assert_eq!(dat0_i18n::t("catalog.cloud"), "Cloud");
     }
 }

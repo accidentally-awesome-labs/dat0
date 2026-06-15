@@ -4375,6 +4375,9 @@ impl WorkspaceShell {
         use crate::connections::panel::ConnectionsEvent;
         use crate::connections::token_store::KeychainTokenStore;
 
+        // Any connection action dismisses a prior Test-connection message.
+        self.connections.clear_md_test_result();
+
         match ev {
             // Connect (or Retry from an error state).
             ConnectionsEvent::ConnectMd => {
@@ -4393,6 +4396,32 @@ impl WorkspaceShell {
                         self.connections.set_md_status(ConnectionStatus::Connecting);
                         cx.notify();
                         self.spawn_md_connect(token, cx);
+                    }
+                    Err(e) => {
+                        self.connections
+                            .set_md_status(ConnectionStatus::Error(e.to_string()));
+                        cx.notify();
+                    }
+                }
+            }
+            // Test connection: same precheck as Connect, but spawns the probe
+            // that records a transient pass/fail message.
+            ConnectionsEvent::TestMd => {
+                let store = match KeychainTokenStore::new() {
+                    Ok(s) => s,
+                    Err(e) => {
+                        self.connections
+                            .set_md_status(ConnectionStatus::Error(e.to_string()));
+                        cx.notify();
+                        return;
+                    }
+                };
+                match precheck(&store) {
+                    Ok(Precheck::NeedToken) => self.open_md_token_prompt(window, cx),
+                    Ok(Precheck::Ready(token)) => {
+                        self.connections.set_md_status(ConnectionStatus::Connecting);
+                        cx.notify();
+                        self.spawn_md_test(token, cx);
                     }
                     Err(e) => {
                         self.connections
@@ -4516,6 +4545,8 @@ impl WorkspaceShell {
                                     let _ = sess.set_attachments(atts);
                                 }
                                 drop(sess);
+                                // Populate the catalog Cloud group immediately (md dbs just attached).
+                                ws.refresh_catalog(cx);
                             }
                             cx.notify();
                         });
@@ -4525,6 +4556,64 @@ impl WorkspaceShell {
                 tracing::warn!(
                     "spawn_md_connect: no MainThreadDispatcher installed; result dropped"
                 );
+            }
+        });
+    }
+
+    /// Spawn the async MotherDuck "Test connection" probe. Identical engine
+    /// bridge to [`spawn_md_connect`] (idempotent workspace-mode ATTACH with the
+    /// stored token), but additionally records a transient pass/fail message via
+    /// `set_md_test_result` so the panel can confirm the probe ran — the status
+    /// pill alone cannot signal "still OK" when already Connected. The token is
+    /// moved straight into `run_connect` and never logged.
+    ///
+    /// [`spawn_md_connect`]: Self::spawn_md_connect
+    fn spawn_md_test(&mut self, token: String, cx: &mut Context<Self>) {
+        let engine = self.engine();
+        let engine_for_list = engine.clone();
+        let ws_weak = cx.entity().downgrade();
+        tokio::spawn(async move {
+            let status = crate::connections::connect::run_connect(engine, token).await;
+            let connected = matches!(status, crate::connections::ConnectionStatus::Connected);
+            let message = crate::connections::connect::test_result_message(&status);
+            let dbs = if connected {
+                crate::connections::connect::list_databases(engine_for_list).await
+            } else {
+                Vec::new()
+            };
+            if let Some(dispatcher) = crate::window_registry::dispatcher() {
+                let _ = dispatcher.dispatch(move |app: &mut gpui::App| {
+                    if let Some(ws) = ws_weak.upgrade() {
+                        ws.update(app, |ws, cx| {
+                            ws.connections.set_md_status(status.clone());
+                            if connected {
+                                ws.connections.set_md_databases(dbs.clone());
+                                // Persist the md attachment (idempotent) so a
+                                // recover re-attaches it — matches spawn_md_connect.
+                                let mut sess = ws.session.lock();
+                                let mut atts = sess.attachments().to_vec();
+                                if !atts.iter().any(|a| {
+                                    matches!(a.kind, crate::session::PersistedAttachmentKind::Md)
+                                }) {
+                                    atts.push(crate::session::PersistedAttachment {
+                                        alias: crate::connections::MD_ALIAS.to_string(),
+                                        kind: crate::session::PersistedAttachmentKind::Md,
+                                    });
+                                    let _ = sess.set_attachments(atts);
+                                }
+                                drop(sess);
+                                // Populate the catalog Cloud group immediately (md dbs just attached).
+                                ws.refresh_catalog(cx);
+                            }
+                            // Set the message AFTER status (set_md_status never
+                            // touches md_test_result).
+                            ws.connections.set_md_test_result(message);
+                            cx.notify();
+                        });
+                    }
+                });
+            } else {
+                tracing::warn!("spawn_md_test: no MainThreadDispatcher installed; result dropped");
             }
         });
     }
