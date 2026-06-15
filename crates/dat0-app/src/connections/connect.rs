@@ -43,6 +43,19 @@ pub async fn run_connect(engine: Arc<DuckDBEngine>, token: String) -> Connection
     }
 }
 
+/// Localized one-line result for a completed "Test connection" probe (design
+/// §3.1). Pure — maps the terminal `ConnectionStatus` of a `run_connect` probe
+/// to a message the panel shows transiently. Never includes the token.
+pub fn test_result_message(status: &ConnectionStatus) -> String {
+    match status {
+        ConnectionStatus::Connected => dat0_i18n::t("connections.md.test.ok"),
+        ConnectionStatus::Error(msg) => msg.clone(),
+        // Disconnected/Connecting are not terminal probe outcomes; map to a
+        // generic failure rather than asserting.
+        _ => dat0_i18n::t("connections.md.test.fail"),
+    }
+}
+
 // NOTE: there is intentionally no `run_disconnect` that DETACHes MotherDuck.
 // In workspace mode `DETACH` persists to the account's saved workspace, so
 // dat0's Disconnect is a SOFT disconnect (UI/state only) — see
@@ -96,5 +109,21 @@ mod tests {
         assert!(matches!(precheck(&store).unwrap(), Precheck::NeedToken));
         store.set("tok").unwrap();
         assert!(matches!(precheck(&store).unwrap(), Precheck::Ready(_)));
+    }
+
+    #[test]
+    fn test_result_message_maps_status() {
+        assert_eq!(
+            test_result_message(&ConnectionStatus::Connected),
+            "Connection OK"
+        );
+        assert_eq!(
+            test_result_message(&ConnectionStatus::Error("boom".into())),
+            "boom"
+        );
+        assert_eq!(
+            test_result_message(&ConnectionStatus::Disconnected),
+            "Connection test failed"
+        );
     }
 }
