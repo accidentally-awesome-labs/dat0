@@ -79,6 +79,7 @@
   "connections.toggle": "Toggle Connections panel",
   "catalog.title": "Catalog",
   "catalog.toggle": "Toggle Catalog",
+  "catalog.cloud": "Cloud",
   "inspector.toggle": "Toggle Inspector",
   "inspector.title": "Inspector",
   "inspector.loading": "Profiling…",
