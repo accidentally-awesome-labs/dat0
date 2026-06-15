@@ -4545,6 +4545,8 @@ impl WorkspaceShell {
                                     let _ = sess.set_attachments(atts);
                                 }
                                 drop(sess);
+                                // Populate the catalog Cloud group immediately (md dbs just attached).
+                                ws.refresh_catalog(cx);
                             }
                             cx.notify();
                         });
@@ -4600,6 +4602,8 @@ impl WorkspaceShell {
                                     let _ = sess.set_attachments(atts);
                                 }
                                 drop(sess);
+                                // Populate the catalog Cloud group immediately (md dbs just attached).
+                                ws.refresh_catalog(cx);
                             }
                             // Set the message AFTER status (set_md_status never
                             // touches md_test_result).
