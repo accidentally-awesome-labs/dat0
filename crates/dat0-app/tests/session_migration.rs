@@ -230,7 +230,7 @@ fn v2_round_trip_through_serialization() {
 }
 
 /// Session::recover eagerly calls persist() after loading, so a v1 file is
-/// rewritten as the current schema (v8) on the first open — no subsequent
+/// rewritten as the current schema (v9) on the first open — no subsequent
 /// mutation required.
 #[tokio::test]
 async fn recover_eagerly_writes_back_current_version_on_first_open() {
@@ -254,12 +254,12 @@ async fn recover_eagerly_writes_back_current_version_on_first_open() {
         .await
         .expect("Session::recover should succeed on a v1 file");
 
-    // The on-disk file must now be the current schema (v8) without any further
+    // The on-disk file must now be the current schema (v9) without any further
     // persist() call.
     let after = fs::read_to_string(&session_path).unwrap();
     assert!(
-        after.contains("\"schema_version\": 8") || after.contains("\"schema_version\":8"),
-        "post-recover file should be current schema (v8), got: {}",
+        after.contains("\"schema_version\": 9") || after.contains("\"schema_version\":9"),
+        "post-recover file should be current schema (v9), got: {}",
         &after[..after.len().min(300)]
     );
 }
@@ -503,9 +503,9 @@ fn v7_file_migrates_to_v8_with_default_ui() {
     // migrate_v7_to_v8 arm, defaulting `ui` to both-docks-hidden / all-collapsed.
     let raw = r#"{"schema_version":7,"tabs":[],"active_tab":null,"sql_tabs":[],"active_sql_tab":null,
         "query_history":[],"saved_queries":[],"attachments":[]}"#;
-    let state = migrate::load_str(raw).expect("v7 should migrate to v8");
+    let state = migrate::load_str(raw).expect("v7 should migrate to current");
     assert_eq!(state.schema_version, SESSION_SCHEMA_VERSION);
-    assert_eq!(state.schema_version, 8);
+    assert_eq!(state.schema_version, 9);
     assert!(
         !state.ui.catalog_panel_visible,
         "v7 -> v8: catalog dock defaults hidden"
@@ -527,7 +527,7 @@ fn v8_roundtrips_ui() {
         "ui":{"catalog_panel_visible":true,"inspector_panel_visible":true,
               "catalog_expanded":["orders","customers"],"catalog_selection":"orders"}}"#;
     let state = migrate::load_str(raw).expect("v8 loads");
-    assert_eq!(state.schema_version, 8);
+    assert_eq!(state.schema_version, SESSION_SCHEMA_VERSION);
     assert!(state.ui.catalog_panel_visible);
     assert!(state.ui.inspector_panel_visible);
     assert_eq!(state.ui.catalog_expanded, vec!["orders", "customers"]);

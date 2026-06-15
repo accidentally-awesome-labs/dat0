@@ -112,6 +112,7 @@ async fn session_round_trip_preserves_stack() {
         active_sql_tab: None,
         query_history: Vec::new(),
         saved_queries: Vec::new(),
+        charts: Vec::new(),
         attachments: Vec::new(),
         ui: Default::default(),
     };
@@ -224,6 +225,7 @@ async fn full_loop_persist_then_restore() {
         active_sql_tab: None,
         query_history: Vec::new(),
         saved_queries: Vec::new(),
+        charts: Vec::new(),
         attachments: Vec::new(),
         ui: Default::default(),
     };

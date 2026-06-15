@@ -356,6 +356,7 @@ async fn projection_filter_export_remove_undo_restore() {
         active_sql_tab: None,
         query_history: Vec::new(),
         saved_queries: Vec::new(),
+        charts: Vec::new(),
         attachments: Vec::new(),
         ui: Default::default(),
     };

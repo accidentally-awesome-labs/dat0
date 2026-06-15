@@ -20,6 +20,7 @@ use uuid::Uuid;
 
 use dat0_engine::{DuckDBEngine, MemoryBudget, QueryEngine, Transformation};
 
+pub mod charts;
 pub mod migrate;
 pub mod queries;
 pub use migrate::SessionLoadError;
@@ -52,7 +53,10 @@ use queries::{HistoryEntry, SavedQuery};
 ///
 /// v7 → v8 (P6a) adds `ui` (catalog/inspector dock + tree state). Purely
 /// additive: v7 files default `ui` to all-collapsed / both-docks-hidden.
-pub const SESSION_SCHEMA_VERSION: u32 = 8;
+///
+/// v8 → v9 (P9a-2) adds `charts` (persisted saved charts). Purely additive: v8
+/// files default `charts` to an empty vec.
+pub const SESSION_SCHEMA_VERSION: u32 = 9;
 
 /// A single tab within a scratch session.
 ///
@@ -144,6 +148,8 @@ pub struct SessionState {
     #[serde(default)]
     pub saved_queries: Vec<SavedQuery>,
     #[serde(default)]
+    pub charts: Vec<crate::session::charts::SavedChart>,
+    #[serde(default)]
     pub attachments: Vec<PersistedAttachment>,
     #[serde(default)]
     pub ui: SessionUiState,
@@ -163,6 +169,7 @@ impl Default for SessionState {
             active_sql_tab: None,
             query_history: Vec::new(),
             saved_queries: Vec::new(),
+            charts: Vec::new(),
             attachments: Vec::new(),
             ui: SessionUiState::default(),
         }
@@ -193,6 +200,7 @@ pub struct Session {
     active_sql_tab: Option<usize>,
     query_history: Vec<HistoryEntry>,
     saved_queries: Vec<SavedQuery>,
+    charts: Vec<crate::session::charts::SavedChart>,
     attachments: Vec<PersistedAttachment>,
     ui: SessionUiState,
 }
@@ -234,6 +242,7 @@ impl Session {
             active_sql_tab: None,
             query_history: Vec::new(),
             saved_queries: Vec::new(),
+            charts: Vec::new(),
             attachments: Vec::new(),
             ui: SessionUiState::default(),
         };
@@ -312,6 +321,7 @@ impl Session {
             active_sql_tab: state.active_sql_tab,
             query_history: state.query_history,
             saved_queries: state.saved_queries,
+            charts: state.charts,
             attachments: state.attachments,
             ui: state.ui,
         };
@@ -384,6 +394,7 @@ impl Session {
             active_sql_tab: state.active_sql_tab,
             query_history: state.query_history,
             saved_queries: state.saved_queries,
+            charts: state.charts,
             attachments: state.attachments,
             ui: state.ui,
         };
@@ -430,6 +441,7 @@ impl Session {
             active_sql_tab: None,
             query_history: Vec::new(),
             saved_queries,
+            charts: Vec::new(),
             attachments: Vec::new(),
             ui: SessionUiState::default(),
         }
@@ -600,6 +612,18 @@ impl Session {
         &self.saved_queries
     }
 
+    /// Persisted saved charts (P9a-2).
+    pub fn charts(&self) -> &[crate::session::charts::SavedChart] {
+        &self.charts
+    }
+
+    /// Replace saved charts and persist. Mirrors `set_saved_queries`.
+    pub fn set_charts(&mut self, charts: Vec<crate::session::charts::SavedChart>) -> Result<()> {
+        self.charts = charts;
+        self.persist()
+            .context("session::set_charts: persist failed")
+    }
+
     /// Replace the persisted attachment set and persist (P5c).
     pub fn set_attachments(&mut self, attachments: Vec<PersistedAttachment>) -> Result<()> {
         self.attachments = attachments;
@@ -643,6 +667,7 @@ impl Session {
             active_sql_tab: self.active_sql_tab,
             query_history: self.query_history.clone(),
             saved_queries: self.saved_queries.clone(),
+            charts: self.charts.clone(),
             attachments: self.attachments.clone(),
             ui: self.ui.clone(),
         };
