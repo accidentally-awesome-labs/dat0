@@ -4603,7 +4603,7 @@ impl WorkspaceShell {
                             }
                             // Set the message AFTER status (set_md_status never
                             // touches md_test_result).
-                            ws.connections.set_md_test_result(message.clone());
+                            ws.connections.set_md_test_result(message);
                             cx.notify();
                         });
                     }

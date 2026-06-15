@@ -125,12 +125,6 @@ pub fn render_connections(
         }
     }
 
-    // Transient Test-connection result (design §3.1); empty when none pending.
-    let md_test = match manager.md_test_result() {
-        Some(msg) => div().child(SharedString::from(msg.to_string())),
-        None => div(),
-    };
-
     let md_section = div()
         .flex()
         .flex_col()
@@ -139,8 +133,13 @@ pub fn render_connections(
         .child(div().child(SharedString::from(dat0_i18n::t("connections.md.heading"))))
         .child(div().child(status_label(status)))
         .child(md_actions)
-        .child(md_databases)
-        .child(md_test);
+        .child(md_databases);
+    // Transient Test-connection result (design §3.1); only appended when one is pending,
+    // so the parent gap_2 does not leave a phantom 8 px gap when there is no message.
+    let md_section = match manager.md_test_result() {
+        Some(msg) => md_section.child(div().child(SharedString::from(msg.to_string()))),
+        None => md_section,
+    };
 
     // Attached-files section: one row per sqlite attachment + an "Attach…" button.
     let mut files = div().flex().flex_col().gap_1();
