@@ -6,6 +6,7 @@ pub mod provider;
 pub mod request;
 pub mod settings;
 pub mod ssrf;
+pub mod transport;
 pub mod wire;
 
 pub use provider::{Provider, WireKind};
