@@ -2,6 +2,7 @@
 //! + key storage + settings + a single network seam (transport) + GPUI panel.
 
 pub mod key_store;
+pub mod panel;
 pub mod provider;
 pub mod request;
 pub mod settings;
