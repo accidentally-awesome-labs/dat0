@@ -1902,6 +1902,27 @@ pub struct WorkspaceShell {
     /// sequence of type/axis changes never lands a stale chart (mirrors the
     /// inspector's load-supersede guard).
     pub(crate) chart_load_id: u64,
+    /// Monotonic id incremented on every Test-connection kickoff AND on every
+    /// config-mutation that would change what a test means (provider switch, key
+    /// change, model change, toggle flip). A spawned test result is only written
+    /// back if it still carries the current id — mirrors `chart_load_id`.
+    pub(crate) ai_test_load_id: u64,
+    /// Whether the left-dock AI panel is shown (P9c-1 T9). Toggled by the
+    /// `AiPanelToggle` action; gates the AI dock in `render`.
+    pub(crate) ai_panel_visible: bool,
+    /// AI key/model entry modal (reuses [`NamePrompt`](crate::view::name_prompt::NamePrompt)).
+    /// `Some` while the "Set API key…" / "Set model…" prompt is open; cleared on
+    /// Confirm / Cancel. Rendered as a window overlay child in `render` (P9c-1 T9).
+    pub(crate) ai_entry_prompt: Option<gpui::Entity<crate::view::name_prompt::NamePrompt>>,
+    /// Subscription to the AI entry prompt's `NamePromptEvent`. Stored so the
+    /// Confirm/Cancel callback stays registered — a dropped `Subscription`
+    /// deregisters silently (the P4a T10b trap). Cleared alongside `ai_entry_prompt`.
+    pub(crate) ai_entry_prompt_sub: Option<gpui::Subscription>,
+    /// Live AI-panel draft state (provider/model/toggles + key-set indicator +
+    /// transient test-result). Loaded from `AiSettings` + a keychain key-presence
+    /// probe when the panel opens (P9c-1 T9). The API KEY itself is never held
+    /// here — only a "key is set" boolean.
+    pub(crate) ai_panel: crate::ai::panel::AiPanel,
     /// Inspector state: profile target + (table,epoch)-keyed profile cache +
     /// load supersede (P6a T8). Profiles are loaded off-thread by
     /// [`Self::load_inspector_profile`].
@@ -1982,10 +2003,15 @@ impl WorkspaceShell {
             sql_parents: Default::default(),
             inspector_panel_visible: ui.inspector_panel_visible,
             inspector: crate::inspector::InspectorModel::new(),
+            ai_panel_visible: false,
+            ai_panel: crate::ai::panel::AiPanel::default(),
+            ai_entry_prompt: None,
+            ai_entry_prompt_sub: None,
             chart_panel_visible: false,
             chart_panel: crate::charts::panel::ChartPanel::new(),
             chart_image: None,
             chart_load_id: 0,
+            ai_test_load_id: 0,
             banners: Vec::new(),
             md_token_prompt: None,
             md_token_prompt_sub: None,
@@ -4697,6 +4723,329 @@ impl WorkspaceShell {
         self.md_token_prompt = Some(prompt);
         cx.notify();
     }
+
+    // ── AI panel (P9c-1 T9) ────────────────────────────────────────────────
+
+    /// Open the on-disk settings store (`config_dir/settings.toml`). Returns
+    /// `None` (logging) when the config dir is unavailable — callers skip the
+    /// persist rather than crash. The API KEY is never routed through this store
+    /// (it lives only in the keychain).
+    fn ai_settings_store() -> Option<crate::settings::store::SettingsStore> {
+        match crate::platform::config_dir() {
+            Ok(dir) => Some(crate::settings::store::SettingsStore::with_path(
+                dir.join("settings.toml"),
+            )),
+            Err(e) => {
+                tracing::warn!(?e, "ai_settings_store: config_dir unavailable; AI settings not persisted");
+                None
+            }
+        }
+    }
+
+    /// Toggle the left-dock AI panel. On open, hydrate the draft state from the
+    /// persisted `AiSettings` and probe the keychain for whether a key is set for
+    /// the selected provider (the key value itself is never read into state).
+    pub(crate) fn toggle_ai_panel(&mut self, cx: &mut gpui::Context<Self>) {
+        self.ai_panel_visible = !self.ai_panel_visible;
+        if self.ai_panel_visible {
+            self.hydrate_ai_panel();
+        }
+        cx.notify();
+    }
+
+    /// Load the AI-panel draft from persisted settings + keychain key-presence.
+    /// Never reads the key value — only whether a key exists for the provider.
+    fn hydrate_ai_panel(&mut self) {
+        let settings = Self::ai_settings_store()
+            .and_then(|s| s.load_or_default().ok())
+            .map(|s| s.ai)
+            .unwrap_or_default();
+        let provider = settings
+            .provider
+            .as_deref()
+            .and_then(crate::ai::Provider::from_id);
+        let key_set = provider
+            .and_then(|p| {
+                use crate::ai::key_store::KeyStore as _;
+                crate::ai::key_store::KeychainKeyStore::new()
+                    .ok()
+                    .and_then(|ks| ks.get(p).ok())
+                    .flatten()
+            })
+            .is_some();
+        self.ai_panel = crate::ai::panel::AiPanel {
+            provider,
+            key_set,
+            model: settings.model,
+            enabled: settings.enabled,
+            advanced_override: settings.advanced_override,
+            include_sample_rows: settings.include_sample_rows,
+            test_result: None,
+        };
+    }
+
+    /// Mutate the persisted `AiSettings` in place via the atomic settings-write
+    /// path (load → mutate → save). The API KEY is never a field here, so it can
+    /// never reach settings.toml. Logs + skips on any store error.
+    fn update_ai_settings(&self, f: impl FnOnce(&mut crate::ai::AiSettings)) {
+        let Some(store) = Self::ai_settings_store() else {
+            return;
+        };
+        let mut settings = match store.load_or_default() {
+            Ok(s) => s,
+            Err(e) => {
+                tracing::warn!(?e, "update_ai_settings: load failed; change not persisted");
+                return;
+            }
+        };
+        f(&mut settings.ai);
+        if let Err(e) = store.save(&settings) {
+            tracing::warn!(?e, "update_ai_settings: save failed; change not persisted");
+        }
+    }
+
+    /// Handle one AI-panel button event. Mirrors [`Self::handle_connections_event`]:
+    /// config changes persist to settings.toml (NEVER the key), the key writes to
+    /// the keychain, and Test-connection runs `ai::transport::test_connection`
+    /// async (off the GPUI main thread), recording a transient result.
+    pub(crate) fn handle_ai_panel_event(
+        &mut self,
+        ev: crate::ai::panel::AiPanelEvent,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        use crate::ai::panel::AiPanelEvent;
+
+        // Any config action dismisses a prior Test-connection message.
+        self.ai_panel.test_result = None;
+
+        match ev {
+            AiPanelEvent::SelectProvider(p) => {
+                // Config changed → any in-flight test result is stale.
+                self.ai_test_load_id = self.ai_test_load_id.wrapping_add(1);
+                self.ai_panel.provider = Some(p);
+                let id = p.id().to_string();
+                self.update_ai_settings(|s| s.provider = Some(id));
+                // Re-probe the keychain for whether THIS provider has a key set.
+                use crate::ai::key_store::KeyStore as _;
+                self.ai_panel.key_set = crate::ai::key_store::KeychainKeyStore::new()
+                    .ok()
+                    .and_then(|ks| ks.get(p).ok())
+                    .flatten()
+                    .is_some();
+                cx.notify();
+            }
+            // Empty string = open the entry prompt; a non-empty value (re-dispatched
+            // from the prompt's Confirm) writes the key to the keychain.
+            AiPanelEvent::SetKey(value) => {
+                // Config changed → any in-flight test result is stale.
+                self.ai_test_load_id = self.ai_test_load_id.wrapping_add(1);
+                if value.is_empty() {
+                    self.open_ai_entry_prompt(AiEntryKind::Key, window, cx);
+                } else {
+                    let Some(provider) = self.ai_panel.provider else {
+                        return; // No provider selected → nothing to key.
+                    };
+                    use crate::ai::key_store::KeyStore as _;
+                    match crate::ai::key_store::KeychainKeyStore::new()
+                        .and_then(|ks| ks.set(provider, &value))
+                    {
+                        Ok(()) => {
+                            // Reflect "key set" WITHOUT retaining the key value.
+                            self.ai_panel.key_set = true;
+                        }
+                        Err(e) => {
+                            // The message must not contain the key (it doesn't —
+                            // KeychainKeyStore errors never embed the secret).
+                            self.ai_panel.test_result =
+                                Some(crate::ai::panel::test_result_message(false, &e.to_string()));
+                        }
+                    }
+                    cx.notify();
+                }
+            }
+            AiPanelEvent::SetModel(value) => {
+                // Config changed → any in-flight test result is stale.
+                self.ai_test_load_id = self.ai_test_load_id.wrapping_add(1);
+                if value.is_empty() {
+                    self.open_ai_entry_prompt(AiEntryKind::Model, window, cx);
+                } else {
+                    self.ai_panel.model = value.clone();
+                    self.update_ai_settings(|s| s.model = value);
+                    cx.notify();
+                }
+            }
+            AiPanelEvent::ToggleEnabled => {
+                // Config changed → any in-flight test result is stale.
+                self.ai_test_load_id = self.ai_test_load_id.wrapping_add(1);
+                self.ai_panel.enabled = !self.ai_panel.enabled;
+                let v = self.ai_panel.enabled;
+                self.update_ai_settings(|s| s.enabled = v);
+                cx.notify();
+            }
+            AiPanelEvent::ToggleAdvancedOverride => {
+                // Config changed → any in-flight test result is stale.
+                self.ai_test_load_id = self.ai_test_load_id.wrapping_add(1);
+                self.ai_panel.advanced_override = !self.ai_panel.advanced_override;
+                let v = self.ai_panel.advanced_override;
+                self.update_ai_settings(|s| s.advanced_override = v);
+                cx.notify();
+            }
+            AiPanelEvent::ToggleIncludeSampleRows => {
+                // Config changed → any in-flight test result is stale.
+                self.ai_test_load_id = self.ai_test_load_id.wrapping_add(1);
+                self.ai_panel.include_sample_rows = !self.ai_panel.include_sample_rows;
+                let v = self.ai_panel.include_sample_rows;
+                self.update_ai_settings(|s| s.include_sample_rows = v);
+                cx.notify();
+            }
+            AiPanelEvent::ForgetKey => {
+                // Config changed → any in-flight test result is stale.
+                self.ai_test_load_id = self.ai_test_load_id.wrapping_add(1);
+                if let Some(provider) = self.ai_panel.provider {
+                    use crate::ai::key_store::KeyStore as _;
+                    if let Ok(ks) = crate::ai::key_store::KeychainKeyStore::new() {
+                        let _ = ks.forget(provider);
+                    }
+                }
+                self.ai_panel.key_set = false;
+                cx.notify();
+            }
+            AiPanelEvent::TestConnection => self.spawn_ai_test(cx),
+        }
+    }
+
+    /// Spawn the async AI Test-connection probe. Reads the key from the keychain
+    /// (never logged, never held in state), loads the persisted `AiSettings`, and
+    /// runs `ai::transport::test_connection` (which carries the SSRF + schema-only
+    /// guarantees) off the GPUI main thread. The transient pass/fail is written
+    /// back on the main thread via the registry dispatcher — mirrors
+    /// [`Self::spawn_md_test`].
+    fn spawn_ai_test(&mut self, cx: &mut gpui::Context<Self>) {
+        let Some(provider) = self.ai_panel.provider else {
+            self.ai_panel.test_result = Some(crate::ai::panel::test_result_message(
+                false,
+                &dat0_i18n::t("ai.test.no_provider"),
+            ));
+            cx.notify();
+            return;
+        };
+        // Resolve the key + settings on the main thread BEFORE spawning so the
+        // task captures only owned `Send` values. The key is moved straight into
+        // the task and dropped when it ends; it is never logged.
+        use crate::ai::key_store::KeyStore as _;
+        let key = match crate::ai::key_store::KeychainKeyStore::new()
+            .ok()
+            .and_then(|ks| ks.get(provider).ok())
+            .flatten()
+        {
+            Some(k) => k,
+            None => {
+                self.ai_panel.test_result = Some(crate::ai::panel::test_result_message(
+                    false,
+                    &dat0_i18n::t("ai.test.no_key"),
+                ));
+                cx.notify();
+                return;
+            }
+        };
+        let cfg = Self::ai_settings_store()
+            .and_then(|s| s.load_or_default().ok())
+            .map(|s| s.ai)
+            .unwrap_or_default();
+        // Supersede guard (mirrors `chart_load_id`): bump before spawning so that
+        // any config change that arrives while the request is in flight invalidates
+        // this result.
+        self.ai_test_load_id = self.ai_test_load_id.wrapping_add(1);
+        let load_id = self.ai_test_load_id;
+        let ws_weak = cx.entity().downgrade();
+        tokio::spawn(async move {
+            let outcome = crate::ai::transport::test_connection(provider, &key, &cfg).await;
+            // Drop the key as early as possible (it is no longer needed).
+            drop(key);
+            let message =
+                crate::ai::panel::test_result_message(outcome.ok, &outcome.message);
+            if let Some(dispatcher) = crate::window_registry::dispatcher() {
+                let _ = dispatcher.dispatch(move |app: &mut gpui::App| {
+                    if let Some(ws) = ws_weak.upgrade() {
+                        ws.update(app, |ws, cx| {
+                            // Supersede: a config change arrived while we were in
+                            // flight → the result is stale; drop it.
+                            if ws.ai_test_load_id != load_id {
+                                tracing::debug!(
+                                    "spawn_ai_test: stale result discarded \
+                                     (load_id={load_id}, current={})",
+                                    ws.ai_test_load_id
+                                );
+                                return;
+                            }
+                            ws.ai_panel.test_result = Some(message);
+                            cx.notify();
+                        });
+                    }
+                });
+            } else {
+                tracing::warn!("spawn_ai_test: no MainThreadDispatcher installed; result dropped");
+            }
+        });
+        cx.notify();
+    }
+
+    /// Open the AI key/model entry modal (reuses
+    /// [`NamePrompt`](crate::view::name_prompt::NamePrompt)). On Confirm the entered
+    /// value is re-dispatched as the corresponding non-empty `SetKey`/`SetModel`
+    /// event (which performs the keychain write / settings save). For a key entry
+    /// the value never touches panel state until it is written to the keychain, and
+    /// is never echoed back into a field.
+    fn open_ai_entry_prompt(
+        &mut self,
+        kind: AiEntryKind,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        use crate::view::name_prompt::{NamePrompt, NamePromptEvent};
+        let label = match kind {
+            AiEntryKind::Key => dat0_i18n::t("ai.key.prompt"),
+            AiEntryKind::Model => dat0_i18n::t("ai.model.prompt"),
+        };
+        let prompt = cx.new(|cx| NamePrompt::new(label, "", window, cx));
+        let sub = cx.subscribe_in(
+            &prompt,
+            window,
+            move |ws: &mut Self, _prompt, ev: &NamePromptEvent, window, cx| match ev {
+                NamePromptEvent::Confirm(value) => {
+                    let value = value.clone();
+                    // Close the prompt first.
+                    ws.ai_entry_prompt = None;
+                    ws.ai_entry_prompt_sub = None;
+                    if value.is_empty() {
+                        cx.notify();
+                        return;
+                    }
+                    let ev = match kind {
+                        AiEntryKind::Key => crate::ai::panel::AiPanelEvent::SetKey(value),
+                        AiEntryKind::Model => crate::ai::panel::AiPanelEvent::SetModel(value),
+                    };
+                    ws.handle_ai_panel_event(ev, window, cx);
+                }
+                NamePromptEvent::Cancel => {
+                    ws.ai_entry_prompt = None;
+                    ws.ai_entry_prompt_sub = None;
+                    cx.notify();
+                }
+            },
+        );
+        self.ai_entry_prompt_sub = Some(sub);
+        self.ai_entry_prompt = Some(prompt);
+        cx.notify();
+    }
+}
+
+/// Which AI field the entry modal is collecting (P9c-1 T9).
+#[derive(Debug, Clone, Copy)]
+enum AiEntryKind {
+    Key,
+    Model,
 }
 
 // ---------------------------------------------------------------------------
@@ -5081,6 +5430,20 @@ impl Render for WorkspaceShell {
                     .into_any_element()
             });
 
+        // AI key/model entry overlay (P9c-1 T9). Mounted by `open_ai_entry_prompt`;
+        // emits `NamePromptEvent` routed via the stored `ai_entry_prompt_sub`
+        // subscription (Confirm → re-dispatch SetKey/SetModel, Cancel → dismiss).
+        // Same top-centre placement as the other modals.
+        let ai_entry_prompt_overlay: Option<gpui::AnyElement> =
+            self.ai_entry_prompt.as_ref().map(|p| {
+                div()
+                    .absolute()
+                    .top_16()
+                    .left_1_2()
+                    .child(p.clone())
+                    .into_any_element()
+            });
+
         // Saved-query picker overlay (P5b T8). Window-level, flag-gated on
         // `saved_picker_open`; reads `session.saved_queries()` LIVE so a delete
         // refreshes the list on the next render. Picking a row routes the SQL
@@ -5414,6 +5777,12 @@ impl Render for WorkspaceShell {
                     ws.toggle_chart_panel(cx);
                 },
             ))
+            // ── AI panel toggle (P9c-1 T9) ────────────────────────────────────
+            .on_action(cx.listener(
+                |ws: &mut Self, _: &crate::menu_macos::AiPanelToggle, _window, cx| {
+                    ws.toggle_ai_panel(cx);
+                },
+            ))
             .on_key_down(key_handler)
             .on_click(click_to_focus)
             .drag_over::<ExternalPaths>(|style, _, _, _| style.bg(gpui::rgba(0x0088_ff22)))
@@ -5444,6 +5813,13 @@ impl Render for WorkspaceShell {
                         div().w_64().border_r_1().child(
                             crate::connections::panel::render_connections(&self.connections, cx),
                         )
+                    }))
+                    // AI panel left dock (P9c-1 T9) → … | Connections | AI | body.
+                    .children(self.ai_panel_visible.then(|| {
+                        div()
+                            .w_64()
+                            .border_r_1()
+                            .child(crate::ai::panel::render_ai_panel(&self.ai_panel, cx))
                     }))
                     .child(div().flex_1().child(body))
                     // Inspector right dock last → Catalog | Connections | body | Inspector.
@@ -5476,6 +5852,7 @@ impl Render for WorkspaceShell {
             .children(editor_overlay)
             .children(export_overlay)
             .children(name_prompt_overlay)
+            .children(ai_entry_prompt_overlay)
             .children(saved_picker_overlay)
             .children(md_token_prompt_overlay)
             // Mount gpui-component's overlay layers (P7c T8). `Root::render`

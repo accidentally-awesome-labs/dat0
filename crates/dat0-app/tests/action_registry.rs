@@ -76,7 +76,7 @@ fn lookup_returns_descriptor() {
 }
 
 #[test]
-fn builtins_register_thirty_three() {
+fn builtins_register_thirty_four() {
     let reg = ActionRegistry::new();
     dat0_app::actions::builtin::register_all(&reg).unwrap();
     // Ten from P3b/P4a + seven from P4b T9 (copy/cut/paste/fill_down/set_null/set_value/delete_rows)
@@ -86,7 +86,8 @@ fn builtins_register_thirty_three() {
     // + two from P7a T7 (workspace.open/workspace.save) = 31.
     // + one from P7c T5 (live.refresh — the live-data Refresh banner button) = 32.
     // + one from P9a T7 (chart.visualize — the right-dock chart panel toggle) = 33.
-    assert_eq!(reg.count(), 33);
+    // + one from P9c-1 T9 (ai.panel.open — the left-dock AI panel toggle) = 34.
+    assert_eq!(reg.count(), 34);
     let titles: Vec<String> = reg.iter().map(|d| d.title).collect();
     assert!(titles.contains(&"New Window".to_string()));
     assert!(titles.contains(&"Open Settings".to_string()));
@@ -132,6 +133,15 @@ fn builtins_register_thirty_three() {
     assert!(titles.contains(&"Refresh from source".to_string()));
     // P9a T7 addition (right-dock chart panel toggle).
     assert!(reg.contains("chart.visualize"), "missing chart.visualize");
+    // P9c-1 T9 addition (left-dock AI panel toggle).
+    assert!(reg.contains("ai.panel.open"), "missing ai.panel.open");
+}
+
+/// P9c-1 T9: the AI panel toggle action is registered in the built-in set.
+#[test]
+fn ai_panel_open_action_is_registered() {
+    let reg = dat0_app::actions::test_registry();
+    assert!(reg.contains(dat0_app::actions::builtin::ids::AI_PANEL_OPEN));
 }
 
 #[test]
