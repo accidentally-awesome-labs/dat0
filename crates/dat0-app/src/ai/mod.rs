@@ -3,6 +3,7 @@
 
 pub mod provider;
 pub mod request;
+pub mod wire;
 
 pub use provider::{Provider, WireKind};
 pub use request::{AiRequest, ColumnSchema, SampleRows, SchemaContext, TableSchema};
