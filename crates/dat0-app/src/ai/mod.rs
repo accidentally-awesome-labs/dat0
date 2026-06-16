@@ -4,8 +4,10 @@
 pub mod key_store;
 pub mod provider;
 pub mod request;
+pub mod settings;
 pub mod ssrf;
 pub mod wire;
 
 pub use provider::{Provider, WireKind};
 pub use request::{AiRequest, ColumnSchema, SampleRows, SchemaContext, TableSchema};
+pub use settings::AiSettings;
