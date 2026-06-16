@@ -3,6 +3,7 @@
 
 pub mod provider;
 pub mod request;
+pub mod ssrf;
 pub mod wire;
 
 pub use provider::{Provider, WireKind};
