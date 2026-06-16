@@ -2,5 +2,7 @@
 //! + key storage + settings + a single network seam (transport) + GPUI panel.
 
 pub mod provider;
+pub mod request;
 
 pub use provider::{Provider, WireKind};
+pub use request::{AiRequest, ColumnSchema, SampleRows, SchemaContext, TableSchema};
