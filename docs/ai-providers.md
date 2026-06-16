@@ -52,10 +52,11 @@ the toggle has no effect.
 Press **Test connection** to send a trivial fixed prompt through the full
 provider + security + payload path and verify that your key is accepted.
 
-- The button is disabled if no provider is selected (**"Select a provider first"**)
-  or no key is stored (**"Enter an API key first"**).
-- A green **Connection OK** result confirms your key works and the endpoint is
-  reachable. A red result shows the error returned by the provider.
+- If no provider is selected or no key is stored, pressing it shows an inline
+  notice (**"Select a provider first"** / **"Enter an API key first"**) instead
+  of sending a request.
+- A green **✓ Connected** result confirms your key works and the endpoint is
+  reachable. A red **✗** result shows the error returned by the provider.
 
 ## What leaves your machine
 
