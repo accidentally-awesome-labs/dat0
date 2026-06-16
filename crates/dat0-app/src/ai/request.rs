@@ -40,8 +40,11 @@ impl SchemaContext {
     pub fn render(&self) -> String {
         let mut out = String::new();
         for t in &self.tables {
-            let cols: Vec<String> =
-                t.columns.iter().map(|c| format!("{} {}", c.name, c.ty)).collect();
+            let cols: Vec<String> = t
+                .columns
+                .iter()
+                .map(|c| format!("{} {}", c.name, c.ty))
+                .collect();
             out.push_str(&format!("{}({})\n", t.name, cols.join(", ")));
         }
         out
@@ -72,8 +75,14 @@ mod tests {
             tables: vec![TableSchema {
                 name: "users".into(),
                 columns: vec![
-                    ColumnSchema { name: "id".into(), ty: "INTEGER".into() },
-                    ColumnSchema { name: "email".into(), ty: "VARCHAR".into() },
+                    ColumnSchema {
+                        name: "id".into(),
+                        ty: "INTEGER".into(),
+                    },
+                    ColumnSchema {
+                        name: "email".into(),
+                        ty: "VARCHAR".into(),
+                    },
                 ],
             }],
         };

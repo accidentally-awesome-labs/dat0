@@ -90,10 +90,22 @@ mod tests {
 
     #[test]
     fn rejects_http_and_local_hosts_without_override() {
-        assert!(matches!(validate_url("http://api.example.com", false), Err(SsrfError::NotHttps)));
-        assert!(matches!(validate_url("https://localhost", false), Err(SsrfError::BlockedHost(_))));
-        assert!(matches!(validate_url("https://127.0.0.1", false), Err(SsrfError::BlockedHost(_))));
-        assert!(matches!(validate_url("https://10.0.0.1", false), Err(SsrfError::BlockedHost(_))));
+        assert!(matches!(
+            validate_url("http://api.example.com", false),
+            Err(SsrfError::NotHttps)
+        ));
+        assert!(matches!(
+            validate_url("https://localhost", false),
+            Err(SsrfError::BlockedHost(_))
+        ));
+        assert!(matches!(
+            validate_url("https://127.0.0.1", false),
+            Err(SsrfError::BlockedHost(_))
+        ));
+        assert!(matches!(
+            validate_url("https://10.0.0.1", false),
+            Err(SsrfError::BlockedHost(_))
+        ));
         assert!(validate_url("https://api.example.com", false).is_ok());
     }
 
@@ -106,19 +118,33 @@ mod tests {
     #[test]
     fn blocks_ipv4_compatible_ipv6_loopback() {
         // ::127.0.0.1 (IPv4-compatible form, top 96 bits zero) must re-check the embedded v4.
-        assert!(is_blocked_ip(IpAddr::V6(Ipv6Addr::new(0, 0, 0, 0, 0, 0, 0x7f00, 0x0001))));
+        assert!(is_blocked_ip(IpAddr::V6(Ipv6Addr::new(
+            0, 0, 0, 0, 0, 0, 0x7f00, 0x0001
+        ))));
         // ::ffff:127.0.0.1 (mapped form) still blocked.
-        assert!(is_blocked_ip(IpAddr::V6(Ipv6Addr::new(0, 0, 0, 0, 0, 0xffff, 0x7f00, 0x0001))));
+        assert!(is_blocked_ip(IpAddr::V6(Ipv6Addr::new(
+            0, 0, 0, 0, 0, 0xffff, 0x7f00, 0x0001
+        ))));
         // ::10.0.0.1 (compatible, private v4) blocked too.
-        assert!(is_blocked_ip(IpAddr::V6(Ipv6Addr::new(0, 0, 0, 0, 0, 0, 0x0a00, 0x0001))));
+        assert!(is_blocked_ip(IpAddr::V6(Ipv6Addr::new(
+            0, 0, 0, 0, 0, 0, 0x0a00, 0x0001
+        ))));
         // A genuine public IPv6 is NOT blocked (regression guard).
-        assert!(!is_blocked_ip(IpAddr::V6(Ipv6Addr::new(0x2606, 0x4700, 0, 0, 0, 0, 0, 1))));
+        assert!(!is_blocked_ip(IpAddr::V6(Ipv6Addr::new(
+            0x2606, 0x4700, 0, 0, 0, 0, 0, 1
+        ))));
     }
 
     #[test]
     fn rejects_trailing_dot_localhost() {
-        assert!(matches!(validate_url("https://localhost./", false), Err(SsrfError::BlockedHost(_))));
+        assert!(matches!(
+            validate_url("https://localhost./", false),
+            Err(SsrfError::BlockedHost(_))
+        ));
         // also via a bracketed IPv4-compatible IPv6 loopback URL:
-        assert!(matches!(validate_url("https://[::127.0.0.1]/", false), Err(SsrfError::BlockedHost(_))));
+        assert!(matches!(
+            validate_url("https://[::127.0.0.1]/", false),
+            Err(SsrfError::BlockedHost(_))
+        ));
     }
 }

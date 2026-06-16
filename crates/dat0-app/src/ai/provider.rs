@@ -80,7 +80,11 @@ mod tests {
         // Custom has no fixed URL; the other three do, all https.
         assert_eq!(Provider::Custom.fixed_base_url(), None);
         for p in [Provider::Anthropic, Provider::OpenAI, Provider::OpenRouter] {
-            assert!(p.fixed_base_url().unwrap().starts_with("https://"), "{:?}", p);
+            assert!(
+                p.fixed_base_url().unwrap().starts_with("https://"),
+                "{:?}",
+                p
+            );
         }
         // round-trip id <-> Provider
         assert_eq!(Provider::from_id("custom"), Some(Provider::Custom));

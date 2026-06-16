@@ -43,7 +43,12 @@ async fn resolve_base_url(provider: Provider, cfg: &AiSettings) -> Result<String
     Ok(cfg.custom_base_url.clone())
 }
 
-pub async fn send(provider: Provider, key: &str, cfg: &AiSettings, req: &AiRequest) -> Result<String> {
+pub async fn send(
+    provider: Provider,
+    key: &str,
+    cfg: &AiSettings,
+    req: &AiRequest,
+) -> Result<String> {
     let base = resolve_base_url(provider, cfg).await?;
     let w = wire::for_kind(provider.wire_kind());
     let body = w.build_body(&req.model, req);
@@ -59,17 +64,23 @@ pub async fn send(provider: Provider, key: &str, cfg: &AiSettings, req: &AiReque
         rb = rb.header(name, value);
     }
     // OpenRouter courtesy identity headers (optional, harmless elsewhere).
-    rb = rb.header("HTTP-Referer", "https://dat0.app").header("X-Title", "dat0");
+    rb = rb
+        .header("HTTP-Referer", "https://dat0.app")
+        .header("X-Title", "dat0");
     let resp = rb.send().await?;
     let status = resp.status();
     let bytes = resp.bytes().await?;
     if !status.is_success() {
         // Surface the raw body (lossy) — non-JSON errors (proxy 502 HTML,
         // plaintext) are exactly what the user needs to diagnose a bad key/URL.
-        bail!("provider returned {}: {}", status, String::from_utf8_lossy(&bytes));
+        bail!(
+            "provider returned {}: {}",
+            status,
+            String::from_utf8_lossy(&bytes)
+        );
     }
-    let json: serde_json::Value = serde_json::from_slice(&bytes)
-        .map_err(|e| anyhow!("invalid JSON from provider: {e}"))?;
+    let json: serde_json::Value =
+        serde_json::from_slice(&bytes).map_err(|e| anyhow!("invalid JSON from provider: {e}"))?;
     w.parse_response(&json)
 }
 
@@ -77,8 +88,14 @@ pub async fn send(provider: Provider, key: &str, cfg: &AiSettings, req: &AiReque
 pub async fn test_connection(provider: Provider, key: &str, cfg: &AiSettings) -> TestOutcome {
     let req = AiRequest::ping(&cfg.model);
     match send(provider, key, cfg, &req).await {
-        Ok(_) => TestOutcome { ok: true, message: "Connected".into() },
-        Err(e) => TestOutcome { ok: false, message: e.to_string() },
+        Ok(_) => TestOutcome {
+            ok: true,
+            message: "Connected".into(),
+        },
+        Err(e) => TestOutcome {
+            ok: false,
+            message: e.to_string(),
+        },
     }
 }
 

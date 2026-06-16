@@ -4736,7 +4736,10 @@ impl WorkspaceShell {
                 dir.join("settings.toml"),
             )),
             Err(e) => {
-                tracing::warn!(?e, "ai_settings_store: config_dir unavailable; AI settings not persisted");
+                tracing::warn!(
+                    ?e,
+                    "ai_settings_store: config_dir unavailable; AI settings not persisted"
+                );
                 None
             }
         }
@@ -4992,8 +4995,7 @@ impl WorkspaceShell {
             let outcome = crate::ai::transport::test_connection(provider, &key, &cfg).await;
             // Drop the key as early as possible (it is no longer needed).
             drop(key);
-            let message =
-                crate::ai::panel::test_result_message(outcome.ok, &outcome.message);
+            let message = crate::ai::panel::test_result_message(outcome.ok, &outcome.message);
             if let Some(dispatcher) = crate::window_registry::dispatcher() {
                 let _ = dispatcher.dispatch(move |app: &mut gpui::App| {
                     if let Some(ws) = ws_weak.upgrade() {

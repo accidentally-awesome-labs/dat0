@@ -156,11 +156,9 @@ pub fn render_ai_panel(panel: &AiPanel, cx: &mut Context<WorkspaceShell>) -> gpu
     // Shows the current model (or the provider's placeholder hint when empty).
     let model_display = if panel.model.is_empty() {
         match panel.provider {
-            Some(p) => SharedString::from(format!(
-                "{}: {}",
-                dat0_i18n::t("ai.model"),
-                p.model_hint()
-            )),
+            Some(p) => {
+                SharedString::from(format!("{}: {}", dat0_i18n::t("ai.model"), p.model_hint()))
+            }
             None => SharedString::from(dat0_i18n::t("ai.model")),
         }
     } else {

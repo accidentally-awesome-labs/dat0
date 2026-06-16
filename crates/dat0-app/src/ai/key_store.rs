@@ -53,7 +53,10 @@ impl KeyStore for MemoryKeyStore {
         Ok(self.inner.lock().unwrap().get(provider.id()).cloned())
     }
     fn set(&self, provider: Provider, key: &str) -> Result<()> {
-        self.inner.lock().unwrap().insert(provider.id(), key.to_string());
+        self.inner
+            .lock()
+            .unwrap()
+            .insert(provider.id(), key.to_string());
         Ok(())
     }
     fn forget(&self, provider: Provider) -> Result<()> {
@@ -73,8 +76,14 @@ mod tests {
         assert!(s.get(Provider::OpenRouter).unwrap().is_none());
         s.set(Provider::OpenRouter, "sk-or-123").unwrap();
         s.set(Provider::Anthropic, "sk-ant-456").unwrap();
-        assert_eq!(s.get(Provider::OpenRouter).unwrap().as_deref(), Some("sk-or-123"));
-        assert_eq!(s.get(Provider::Anthropic).unwrap().as_deref(), Some("sk-ant-456"));
+        assert_eq!(
+            s.get(Provider::OpenRouter).unwrap().as_deref(),
+            Some("sk-or-123")
+        );
+        assert_eq!(
+            s.get(Provider::Anthropic).unwrap().as_deref(),
+            Some("sk-ant-456")
+        );
         s.forget(Provider::OpenRouter).unwrap();
         assert!(s.get(Provider::OpenRouter).unwrap().is_none());
         assert!(s.get(Provider::Anthropic).unwrap().is_some());

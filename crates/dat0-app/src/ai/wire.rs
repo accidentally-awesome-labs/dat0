@@ -116,7 +116,10 @@ mod tests {
             schema: SchemaContext {
                 tables: vec![TableSchema {
                     name: "users".into(),
-                    columns: vec![ColumnSchema { name: "email".into(), ty: "VARCHAR".into() }],
+                    columns: vec![ColumnSchema {
+                        name: "email".into(),
+                        ty: "VARCHAR".into(),
+                    }],
                 }],
             },
             prompt: "top users".into(),
@@ -148,7 +151,9 @@ mod tests {
     #[test]
     fn sample_rows_appear_only_when_gated() {
         let w = OpenAiCompatWire;
-        let with = SampleRows { rows: vec![vec!["SECRET_ROW_VALUE".into()]] };
+        let with = SampleRows {
+            rows: vec![vec!["SECRET_ROW_VALUE".into()]],
+        };
         let body = w.build_body("m", &req_with_schema(Some(with)));
         assert!(body.to_string().contains("SECRET_ROW_VALUE"));
         // ...and absent when None:
