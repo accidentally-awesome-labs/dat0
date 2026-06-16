@@ -167,6 +167,8 @@ pub fn build_menus(_cx: &mut gpui::App) -> Vec<gpui::Menu> {
                 MenuItem::action(dat0_i18n::t("inspector.toggle"), InspectorToggle),
                 // P9a T7: Charts right-dock toggle (Visualize).
                 MenuItem::action(dat0_i18n::t("chart.visualize"), ChartVisualize),
+                // P9c-1 T9: AI panel left-dock toggle.
+                MenuItem::action(dat0_i18n::t("menu.ai_panel"), AiPanelToggle),
             ],
         },
         Menu {
@@ -235,6 +237,8 @@ gpui::actions!(
         InspectorToggle,
         // P9a T7: Charts right-dock toggle (Visualize).
         ChartVisualize,
+        // P9c-1 T9: AI panel left-dock toggle.
+        AiPanelToggle,
         // P7a T7: workspace save flow.
         SaveWorkspace,
         // P7a T10: File → Open Recent fan-out (10-slot cap; see OPEN_RECENT_MENU_CAP).

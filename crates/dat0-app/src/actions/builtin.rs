@@ -62,6 +62,8 @@ pub mod ids {
     pub const WORKSPACE_SAVE: &str = "workspace.save";
     // P7c T5: one-click re-import of an externally-changed source file.
     pub const LIVE_REFRESH: &str = "live.refresh";
+    // P9c-1 T9: open/toggle the AI panel (BYOK secure-plumbing dock).
+    pub const AI_PANEL_OPEN: &str = "ai.panel.open";
 }
 
 /// Register every built-in action onto `reg`. Returns an error if any id

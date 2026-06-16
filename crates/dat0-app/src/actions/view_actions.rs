@@ -90,6 +90,19 @@ pub fn register(reg: &ActionRegistry) -> Result<(), RegisterError> {
         }),
     })?;
 
+    // P9c-1 T9: AI panel toggle. Like CHART_VISUALIZE, the toggle works from
+    // `cx` alone (hydrates from settings + a keychain key-presence probe), so the
+    // App-path dispatch CAN do the work via `focused_workspace` + `toggle_ai_panel`.
+    reg.register(ActionDescriptor {
+        id: ActionId::from(ids::AI_PANEL_OPEN),
+        title: dat0_i18n::t("menu.ai_panel"),
+        group: ActionGroup::Settings,
+        keybinding: None, // also reachable view-scoped via the View menu item
+        dispatch: Arc::new(|app| {
+            dispatch_ai_panel(app);
+        }),
+    })?;
+
     reg.register(ActionDescriptor {
         id: ActionId::from(ids::SQL_RUN),
         title: dat0_i18n::t("sql.run"),
@@ -187,6 +200,17 @@ pub fn dispatch_visualize(app: &mut gpui::App) {
         return;
     };
     workspace.update(app, |ws, cx| ws.toggle_chart_panel(cx));
+}
+
+/// Dispatch body for `ai.panel.open` (P9c-1 T9). Toggles the focused workspace's
+/// left-dock AI panel; on open it hydrates the draft from persisted `AiSettings`
+/// + a keychain key-presence probe. No-op when no workspace is focused.
+pub fn dispatch_ai_panel(app: &mut gpui::App) {
+    let Some(workspace) = focused_workspace(app) else {
+        tracing::debug!("ai.panel.open: no focused workspace");
+        return;
+    };
+    workspace.update(app, |ws, cx| ws.toggle_ai_panel(cx));
 }
 
 /// Retrieve the focused `WorkspaceShell` entity, if available.

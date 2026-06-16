@@ -1,3 +1,4 @@
+use crate::ai::settings::AiSettings;
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -8,6 +9,7 @@ pub struct Settings {
     pub theme: Theme,
     pub telemetry: Telemetry,
     pub workspace: Workspace,
+    pub ai: AiSettings,
 }
 
 impl Default for Settings {
@@ -18,6 +20,7 @@ impl Default for Settings {
             theme: Theme::default(),
             telemetry: Telemetry::default(),
             workspace: Workspace::default(),
+            ai: AiSettings::default(),
         }
     }
 }

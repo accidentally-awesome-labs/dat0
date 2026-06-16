@@ -158,6 +158,21 @@ jobs:
           MOTHERDUCK_TOKEN: ${{ secrets.MOTHERDUCK_TOKEN }}
           CARGO_BUILD_JOBS: ${{ (runner.os == 'Linux' && runner.environment == 'github-hosted') && '2' || 'default' }}
         run: cargo test -p dat0-engine --test md_attach --target ${{ matrix.target.triple }} -- --include-ignored
+      # P9c-1: OpenRouter AI round-trip is a REQUIRED gate (mirrors MD pattern).
+      # Secret: Settings → Secrets and variables → Actions → OPENROUTER_API_KEY.
+      - name: Require OpenRouter API key
+        env:
+          OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
+        run: |
+          if [ -z "$OPENROUTER_API_KEY" ]; then
+            echo "::error::OPENROUTER_API_KEY secret is required for P9c-1 AI integration tests"
+            exit 1
+          fi
+      - name: OpenRouter AI integration tests
+        env:
+          OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
+          CARGO_BUILD_JOBS: ${{ (runner.os == 'Linux' && runner.environment == 'github-hosted') && '2' || 'default' }}
+        run: cargo test -p dat0-app --test ai_live --target ${{ matrix.target.triple }} -- --nocapture
       # Bench is macOS-only (single host class — variance across runners
       # makes cross-OS comparison meaningless). Artifact-only at P3a; spec
       # line 819 defers the merge-gate threshold to P10.
