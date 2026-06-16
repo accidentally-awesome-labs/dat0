@@ -4804,6 +4804,28 @@ impl WorkspaceShell {
         }
     }
 
+    /// Show the first-use AI privacy notice exactly once, then persist the ack so it
+    /// never reappears (D5 / R17 transparency). Idempotent: gated on the persisted
+    /// `privacy_ack`. Banner is text-only (no action buttons — D-021).
+    fn maybe_show_ai_privacy_banner(&self) {
+        let ack = Self::ai_settings_store()
+            .and_then(|s| s.load_or_default().ok())
+            .map(|s| s.ai.privacy_ack)
+            .unwrap_or(false);
+        if crate::ai::settings::should_show_privacy_banner(ack) {
+            crate::error_ux::banner::push(crate::error_ux::banner::Banner {
+                title: dat0_i18n::t("ai.privacy.title"),
+                body: dat0_i18n::t("ai.privacy.body"),
+                link: None,
+                primary: None,
+                secondary: None,
+                kind: crate::error_ux::banner::BannerKind::Info,
+                dismissible: true,
+            });
+            self.update_ai_settings(|s| s.privacy_ack = true);
+        }
+    }
+
     /// Handle one AI-panel button event. Mirrors [`Self::handle_connections_event`]:
     /// config changes persist to settings.toml (NEVER the key), the key writes to
     /// the keychain, and Test-connection runs `ai::transport::test_connection`
@@ -4881,6 +4903,10 @@ impl WorkspaceShell {
                 self.ai_panel.enabled = !self.ai_panel.enabled;
                 let v = self.ai_panel.enabled;
                 self.update_ai_settings(|s| s.enabled = v);
+                // Show privacy notice on first enable (idempotent: gated by persisted ack).
+                if v {
+                    self.maybe_show_ai_privacy_banner();
+                }
                 cx.notify();
             }
             AiPanelEvent::ToggleAdvancedOverride => {
@@ -4911,7 +4937,10 @@ impl WorkspaceShell {
                 self.ai_panel.key_set = false;
                 cx.notify();
             }
-            AiPanelEvent::TestConnection => self.spawn_ai_test(cx),
+            AiPanelEvent::TestConnection => {
+                self.maybe_show_ai_privacy_banner();
+                self.spawn_ai_test(cx);
+            }
         }
     }
 

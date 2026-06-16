@@ -25,6 +25,11 @@ pub struct AiSettings {
     pub privacy_ack: bool,
 }
 
+/// Show the first-use AI privacy notice exactly once — gated on the persisted ack.
+pub fn should_show_privacy_banner(ack: bool) -> bool {
+    !ack
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -39,6 +44,12 @@ mod tests {
         assert!(!a.advanced_override);
         assert!(!a.include_sample_rows);
         assert!(!a.privacy_ack);
+    }
+
+    #[test]
+    fn privacy_banner_shows_once() {
+        assert!(should_show_privacy_banner(false));
+        assert!(!should_show_privacy_banner(true));
     }
 
     #[test]
