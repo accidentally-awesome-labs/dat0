@@ -6,6 +6,7 @@ pub mod panel;
 pub mod provider;
 pub mod request;
 pub mod settings;
+pub mod sse;
 pub mod ssrf;
 pub mod transport;
 pub mod wire;
