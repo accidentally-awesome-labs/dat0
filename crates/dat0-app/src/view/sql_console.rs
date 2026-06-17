@@ -70,7 +70,12 @@ pub struct NlPreview {
 
 impl NlPreview {
     pub fn new(prompt: String) -> Self {
-        Self { prompt, sql: String::new(), streaming: true, error: None }
+        Self {
+            prompt,
+            sql: String::new(),
+            streaming: true,
+            error: None,
+        }
     }
     pub fn push(&mut self, text: &str) {
         self.sql.push_str(text);
@@ -96,7 +101,12 @@ pub struct ExplainView {
 
 impl ExplainView {
     pub fn new(sql: String) -> Self {
-        Self { sql, prose: String::new(), streaming: true, error: None }
+        Self {
+            sql,
+            prose: String::new(),
+            streaming: true,
+            error: None,
+        }
     }
     pub fn push(&mut self, text: &str) {
         self.prose.push_str(text);
@@ -1077,7 +1087,8 @@ impl Render for SqlConsole {
             // ── Explain side panel (P9c-2 T7) ────────────────────────────────
             .children(self.explain.as_ref().map(|e| {
                 let mut panel = div().flex().flex_col().gap_1().p_2().border_t_1();
-                panel = panel.child(div().child(SharedString::from(dat0_i18n::t("sql.explain.title"))));
+                panel =
+                    panel.child(div().child(SharedString::from(dat0_i18n::t("sql.explain.title"))));
                 panel = panel.child(div().child(SharedString::from(e.prose.clone())));
                 if let Some(err) = &e.error {
                     panel = panel.child(div().child(SharedString::from(format!("✗ {err}"))));

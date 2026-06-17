@@ -17,7 +17,10 @@ pub struct SchemaCaps {
 
 impl Default for SchemaCaps {
     fn default() -> Self {
-        Self { max_tables: 40, max_cols_per_table: 60 }
+        Self {
+            max_tables: 40,
+            max_cols_per_table: 60,
+        }
     }
 }
 
@@ -62,7 +65,11 @@ mod tests {
     use dat0_engine::types::{ColumnInfo, TableInfo, TableOrigin};
 
     fn col(name: &str, ty: &str) -> ColumnInfo {
-        ColumnInfo { name: name.into(), data_type: ty.into(), nullable: true }
+        ColumnInfo {
+            name: name.into(),
+            data_type: ty.into(),
+            nullable: true,
+        }
     }
     fn tbl(name: &str, cols: Vec<ColumnInfo>) -> TableInfo {
         TableInfo {
@@ -83,20 +90,31 @@ mod tests {
         let (ctx, note) = build_schema_context(&tables, SchemaCaps::default());
         assert!(note.is_none());
         assert_eq!(ctx.tables.len(), 1);
-        let cols: Vec<&str> = ctx.tables[0].columns.iter().map(|c| c.name.as_str()).collect();
+        let cols: Vec<&str> = ctx.tables[0]
+            .columns
+            .iter()
+            .map(|c| c.name.as_str())
+            .collect();
         assert_eq!(cols, vec!["email"]); // surrogate dropped
         assert_eq!(ctx.tables[0].columns[0].ty, "VARCHAR");
     }
 
     #[test]
     fn truncates_and_notes() {
-        let tables: Vec<TableInfo> =
-            (0..50).map(|i| tbl(&format!("t{i}"), vec![col("c", "INTEGER")])).collect();
-        let caps = SchemaCaps { max_tables: 40, max_cols_per_table: 60 };
+        let tables: Vec<TableInfo> = (0..50)
+            .map(|i| tbl(&format!("t{i}"), vec![col("c", "INTEGER")]))
+            .collect();
+        let caps = SchemaCaps {
+            max_tables: 40,
+            max_cols_per_table: 60,
+        };
         let (ctx, note) = build_schema_context(&tables, caps);
         assert_eq!(ctx.tables.len(), 40);
         let note = note.expect("truncation note");
-        assert!(note.contains("10"), "note should mention 10 omitted tables: {note}");
+        assert!(
+            note.contains("10"),
+            "note should mention 10 omitted tables: {note}"
+        );
     }
 
     #[test]
@@ -128,7 +146,10 @@ mod tests {
         ] {
             let s = body.to_string();
             assert!(s.contains("orders") && s.contains("amount") && s.contains("total revenue"));
-            assert!(!s.contains("SECRET_ROW_VALUE"), "row data must never appear: {s}");
+            assert!(
+                !s.contains("SECRET_ROW_VALUE"),
+                "row data must never appear: {s}"
+            );
         }
     }
 }

@@ -5138,30 +5138,24 @@ impl WorkspaceShell {
         let ws_weak_finish = ws_weak.clone();
 
         tokio::spawn(async move {
-            let result = crate::ai::transport::send_stream(
-                provider,
-                &key,
-                &cfg,
-                &req,
-                |delta| {
-                    let text = delta.to_string();
-                    let ws_weak_delta = ws_weak.clone();
-                    if let Some(d) = crate::window_registry::dispatcher() {
-                        let _ = d.dispatch(move |app: &mut gpui::App| {
-                            if let Some(ws) = ws_weak_delta.upgrade() {
-                                ws.update(app, |ws, cx| {
-                                    if ws.ai_stream_load_id != load_id {
-                                        return; // stale → drop
-                                    }
-                                    if let Some(console) = &ws.sql_console {
-                                        console.update(cx, |c, cx| c.push_nl_delta(&text, cx));
-                                    }
-                                });
-                            }
-                        });
-                    }
-                },
-            )
+            let result = crate::ai::transport::send_stream(provider, &key, &cfg, &req, |delta| {
+                let text = delta.to_string();
+                let ws_weak_delta = ws_weak.clone();
+                if let Some(d) = crate::window_registry::dispatcher() {
+                    let _ = d.dispatch(move |app: &mut gpui::App| {
+                        if let Some(ws) = ws_weak_delta.upgrade() {
+                            ws.update(app, |ws, cx| {
+                                if ws.ai_stream_load_id != load_id {
+                                    return; // stale → drop
+                                }
+                                if let Some(console) = &ws.sql_console {
+                                    console.update(cx, |c, cx| c.push_nl_delta(&text, cx));
+                                }
+                            });
+                        }
+                    });
+                }
+            })
             .await;
             drop(key);
             let err = result.err().map(|e| e.to_string());
@@ -5258,32 +5252,26 @@ impl WorkspaceShell {
         let ws_weak_finish = ws_weak.clone();
 
         tokio::spawn(async move {
-            let result = crate::ai::transport::send_stream(
-                provider,
-                &key,
-                &cfg,
-                &req,
-                |delta| {
-                    let text = delta.to_string();
-                    let ws_weak_delta = ws_weak.clone();
-                    if let Some(d) = crate::window_registry::dispatcher() {
-                        let _ = d.dispatch(move |app: &mut gpui::App| {
-                            if let Some(ws) = ws_weak_delta.upgrade() {
-                                ws.update(app, |ws, cx| {
-                                    if ws.ai_stream_load_id != load_id {
-                                        return; // stale → drop
-                                    }
-                                    if let Some(console) = &ws.sql_console {
-                                        console.update(cx, |c, cx| {
-                                            c.push_explain_delta(&text, cx);
-                                        });
-                                    }
-                                });
-                            }
-                        });
-                    }
-                },
-            )
+            let result = crate::ai::transport::send_stream(provider, &key, &cfg, &req, |delta| {
+                let text = delta.to_string();
+                let ws_weak_delta = ws_weak.clone();
+                if let Some(d) = crate::window_registry::dispatcher() {
+                    let _ = d.dispatch(move |app: &mut gpui::App| {
+                        if let Some(ws) = ws_weak_delta.upgrade() {
+                            ws.update(app, |ws, cx| {
+                                if ws.ai_stream_load_id != load_id {
+                                    return; // stale → drop
+                                }
+                                if let Some(console) = &ws.sql_console {
+                                    console.update(cx, |c, cx| {
+                                        c.push_explain_delta(&text, cx);
+                                    });
+                                }
+                            });
+                        }
+                    });
+                }
+            })
             .await;
             drop(key);
             let err = result.err().map(|e| e.to_string());
