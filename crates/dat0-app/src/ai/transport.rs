@@ -3,10 +3,12 @@
 use std::time::Duration;
 
 use anyhow::{Result, anyhow, bail};
+use futures::StreamExt as _;
 
 use crate::ai::provider::Provider;
 use crate::ai::request::AiRequest;
 use crate::ai::settings::AiSettings;
+use crate::ai::sse::SseDecoder;
 use crate::ai::{ssrf, wire};
 
 pub struct TestOutcome {
@@ -82,6 +84,65 @@ pub async fn send(
     let json: serde_json::Value =
         serde_json::from_slice(&bytes).map_err(|e| anyhow!("invalid JSON from provider: {e}"))?;
     w.parse_response(&json)
+}
+
+/// Streaming counterpart of [`send`]. SSRF-gated identically (via
+/// `resolve_base_url`). Sets `stream: true` on the wire body, consumes the
+/// chunked response through [`SseDecoder`] + `Wire::parse_sse_delta`, invokes
+/// `on_delta` per incremental text delta, and returns the full text.
+pub async fn send_stream(
+    provider: Provider,
+    key: &str,
+    cfg: &AiSettings,
+    req: &AiRequest,
+    mut on_delta: impl FnMut(&str),
+) -> Result<String> {
+    let base = resolve_base_url(provider, cfg).await?;
+    let w = wire::for_kind(provider.wire_kind());
+    let mut body = w.build_body(&req.model, req);
+    // Flip on streaming without touching the schema-only build_body (R17 path
+    // unchanged): both wire shapes accept a top-level `stream` flag.
+    body["stream"] = serde_json::json!(true);
+
+    let client = reqwest::Client::builder()
+        .timeout(Duration::from_secs(120)) // streaming runs longer than a ping
+        .build()?;
+    let mut rb = client
+        .post(w.endpoint(&base))
+        .header(reqwest::header::CONTENT_TYPE, "application/json")
+        .header(reqwest::header::ACCEPT, "text/event-stream")
+        .body(serde_json::to_vec(&body)?);
+    for (name, value) in w.auth_headers(key) {
+        rb = rb.header(name, value);
+    }
+    rb = rb
+        .header("HTTP-Referer", "https://dat0.app")
+        .header("X-Title", "dat0");
+
+    let resp = rb.send().await?;
+    let status = resp.status();
+    if !status.is_success() {
+        let bytes = resp.bytes().await?;
+        bail!(
+            "provider returned {}: {}",
+            status,
+            String::from_utf8_lossy(&bytes)
+        );
+    }
+
+    let mut decoder = SseDecoder::new();
+    let mut full = String::new();
+    let mut stream = resp.bytes_stream();
+    while let Some(chunk) = stream.next().await {
+        let chunk = chunk?;
+        for payload in decoder.feed(&chunk) {
+            if let Some(text) = w.parse_sse_delta(&payload) {
+                full.push_str(&text);
+                on_delta(&text);
+            }
+        }
+    }
+    Ok(full)
 }
 
 /// Trivial round-trip used by the AI panel's Test-connection button.
