@@ -39,5 +39,7 @@ mod tests {
         let s = explain_system().to_lowercase();
         assert!(s.contains("explain"));
         assert!(s.contains("sql"));
+        // The do-not-execute rail is the security invariant for Explain (design §13).
+        assert!(s.contains("do not") || s.contains("only explain"));
     }
 }
