@@ -55,6 +55,32 @@ pub enum ResultRegion {
     Pane,
 }
 
+/// Live NL→SQL preview-strip state. `None` on `SqlConsole` = strip hidden.
+#[derive(Debug, Clone)]
+pub struct NlPreview {
+    /// The NL prompt, echoed above the streamed SQL for context.
+    pub prompt: String,
+    /// Generated SQL, accumulated per SSE delta.
+    pub sql: String,
+    /// True while the stream is in flight (Stop shown); false → Insert/Discard.
+    pub streaming: bool,
+    /// Inline error (rate limit / refusal / HTTP body), shown red. Never blocks Insert.
+    pub error: Option<String>,
+}
+
+impl NlPreview {
+    pub fn new(prompt: String) -> Self {
+        Self { prompt, sql: String::new(), streaming: true, error: None }
+    }
+    pub fn push(&mut self, text: &str) {
+        self.sql.push_str(text);
+    }
+    pub fn finish(&mut self, error: Option<String>) {
+        self.streaming = false;
+        self.error = error;
+    }
+}
+
 /// The SQL Console GPUI entity. Owns the open tabs + the result-region state.
 /// Execution (run/cancel) is driven by `WorkspaceShell` via [`SqlConsoleEvent`].
 pub struct SqlConsole {
@@ -104,6 +130,11 @@ pub struct SqlConsole {
     /// [`queue_load`](Self::queue_load) and `render` drains it. `None` when
     /// nothing is pending.
     pub(crate) pending_load: Option<String>,
+    /// Live NL→SQL preview strip state (P9c-2 T6). `None` while hidden.
+    pub(crate) nl_preview: Option<NlPreview>,
+    /// Whether AI is ready (enabled + key set + model non-empty). Set by the
+    /// shell on AI config changes and on console creation. Gates the NL→SQL chip.
+    pub(crate) ai_ready: bool,
 }
 
 /// Install the autocomplete provider on a freshly-built tab editor (P5b T2).
@@ -149,6 +180,13 @@ pub enum SqlConsoleEvent {
     /// `engine.create_table(.., DerivedOrigin::Sql)` and refreshes the
     /// autocomplete snapshot.
     SaveAsTable,
+    /// Chip clicked — ask the shell to open the NL-prompt modal.
+    OpenNl2SqlPrompt,
+    /// User submitted an NL→SQL prompt from the chip. `WorkspaceShell` resolves
+    /// schema + key and streams the result into the preview strip.
+    Nl2Sql { prompt: String },
+    /// Stop the in-flight AI stream (NL→SQL or Explain) — supersede guard.
+    StopAiStream,
 }
 
 impl EventEmitter<SqlConsoleEvent> for SqlConsole {}
@@ -216,6 +254,8 @@ impl SqlConsole {
             last_routing: None,
             history_overlay: None,
             pending_load: None,
+            nl_preview: None,
+            ai_ready: false,
         }
     }
 
@@ -391,6 +431,27 @@ impl SqlConsole {
     pub fn queue_load(&mut self, sql: String, cx: &mut Context<Self>) {
         self.history_overlay = None;
         self.pending_load = Some(sql);
+        cx.notify();
+    }
+
+    pub(crate) fn begin_nl_preview(&mut self, prompt: String, cx: &mut Context<Self>) {
+        self.nl_preview = Some(NlPreview::new(prompt));
+        cx.notify();
+    }
+    pub(crate) fn push_nl_delta(&mut self, text: &str, cx: &mut Context<Self>) {
+        if let Some(p) = &mut self.nl_preview {
+            p.push(text);
+            cx.notify();
+        }
+    }
+    pub(crate) fn finish_nl_preview(&mut self, error: Option<String>, cx: &mut Context<Self>) {
+        if let Some(p) = &mut self.nl_preview {
+            p.finish(error);
+            cx.notify();
+        }
+    }
+    pub(crate) fn clear_nl_preview(&mut self, cx: &mut Context<Self>) {
+        self.nl_preview = None;
         cx.notify();
     }
 
@@ -842,11 +903,116 @@ impl Render for SqlConsole {
                                         cx.emit(SqlConsoleEvent::SaveAsTable);
                                     })),
                             )
+                            // ── NL→SQL chip (P9c-2 T6) ───────────────────────
+                            .child({
+                                let chip = div()
+                                    .id("nl2sql-chip")
+                                    .px_2()
+                                    .py_1()
+                                    .border_1()
+                                    .when(self.ai_ready, |d| d.cursor_pointer())
+                                    .child(SharedString::from(dat0_i18n::t("sql.nl2sql.chip")));
+                                if self.ai_ready {
+                                    chip.on_click(cx.listener(|_console, _ev, _window, cx| {
+                                        cx.emit(SqlConsoleEvent::OpenNl2SqlPrompt);
+                                    }))
+                                } else {
+                                    chip
+                                }
+                            })
                             .child(run_btn),
                     ),
             )
             .child(div().flex_1().child(editor))
             .child(region)
+            // ── NL→SQL preview strip (P9c-2 T6) ─────────────────────────────
+            .children(self.nl_preview.as_ref().map(|p| {
+                let mut strip = div().flex().flex_col().gap_1().p_2().border_t_1();
+                strip = strip.child(div().child(SharedString::from(format!(
+                    "{}: {}",
+                    dat0_i18n::t("sql.nl2sql.prompt"),
+                    p.prompt
+                ))));
+                strip = strip.child(div().child(SharedString::from(p.sql.clone())));
+                if let Some(err) = &p.error {
+                    strip = strip.child(div().child(SharedString::from(format!("✗ {err}"))));
+                }
+                if p.streaming {
+                    strip = strip.child(
+                        div()
+                            .id("nl2sql-stop")
+                            .px_2()
+                            .py_1()
+                            .border_1()
+                            .cursor_pointer()
+                            .child(SharedString::from(dat0_i18n::t("sql.ai.stop")))
+                            .on_click(cx.listener(|_console, _ev, _window, cx| {
+                                cx.emit(SqlConsoleEvent::StopAiStream);
+                            })),
+                    );
+                } else {
+                    strip = strip.child(
+                        div()
+                            .flex()
+                            .flex_row()
+                            .gap_1()
+                            .child(
+                                div()
+                                    .id("nl2sql-insert")
+                                    .px_2()
+                                    .py_1()
+                                    .border_1()
+                                    .cursor_pointer()
+                                    .child(SharedString::from(dat0_i18n::t("sql.nl2sql.insert")))
+                                    .on_click(cx.listener(|c, _ev, window, cx| {
+                                        if let Some(p) = c.nl_preview.take() {
+                                            c.load_into_new_tab(p.sql, window, cx);
+                                        }
+                                        cx.notify();
+                                    })),
+                            )
+                            .child(
+                                div()
+                                    .id("nl2sql-discard")
+                                    .px_2()
+                                    .py_1()
+                                    .border_1()
+                                    .cursor_pointer()
+                                    .child(SharedString::from(dat0_i18n::t("sql.nl2sql.discard")))
+                                    .on_click(cx.listener(|c, _ev, _window, cx| {
+                                        c.clear_nl_preview(cx);
+                                    })),
+                            ),
+                    );
+                }
+                strip
+            }))
             .children(history_overlay)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::NlPreview;
+
+    #[test]
+    fn nl_preview_accumulates_then_finishes() {
+        let mut p = NlPreview::new("top users".into());
+        assert!(p.streaming && p.sql.is_empty());
+        p.push("SEL");
+        p.push("ECT 1");
+        assert_eq!(p.sql, "SELECT 1");
+        p.finish(None);
+        assert!(!p.streaming && p.error.is_none());
+    }
+
+    #[test]
+    fn nl_preview_finish_with_error_keeps_partial() {
+        let mut p = NlPreview::new("q".into());
+        p.push("SELECT");
+        p.finish(Some("429 rate limited".into()));
+        assert!(!p.streaming);
+        assert_eq!(p.sql, "SELECT"); // partial retained for Insert/Discard
+        assert_eq!(p.error.as_deref(), Some("429 rate limited"));
     }
 }
