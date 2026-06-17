@@ -3587,9 +3587,6 @@ impl WorkspaceShell {
                     cx,
                 );
             }
-            Nl2Sql { prompt } => {
-                self.spawn_ai_nl2sql(prompt, cx);
-            }
             StopAiStream => {
                 // Supersede: drop the in-flight stream; partial text stays Insert-able.
                 // Also finish the Explain panel if that was the active stream (T7).

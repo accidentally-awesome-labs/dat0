@@ -221,9 +221,6 @@ pub enum SqlConsoleEvent {
     SaveAsTable,
     /// Chip clicked — ask the shell to open the NL-prompt modal.
     OpenNl2SqlPrompt,
-    /// User submitted an NL→SQL prompt from the chip. `WorkspaceShell` resolves
-    /// schema + key and streams the result into the preview strip.
-    Nl2Sql { prompt: String },
     /// Stop the in-flight AI stream (NL→SQL or Explain) — supersede guard.
     StopAiStream,
     /// Explain the whole active-tab buffer in a side panel (P9c-2 T7).
