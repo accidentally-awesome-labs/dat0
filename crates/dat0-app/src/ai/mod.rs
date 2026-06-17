@@ -3,6 +3,7 @@
 
 pub mod key_store;
 pub mod panel;
+pub mod prompt;
 pub mod provider;
 pub mod request;
 pub mod schema_ctx;
