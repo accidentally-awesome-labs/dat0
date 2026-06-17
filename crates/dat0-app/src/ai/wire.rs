@@ -12,6 +12,10 @@ pub trait Wire {
     fn auth_headers(&self, key: &str) -> Vec<(&'static str, String)>;
     fn build_body(&self, model: &str, req: &AiRequest) -> Value;
     fn parse_response(&self, body: &Value) -> Result<String>;
+    /// Extract an incremental text delta from one SSE `data:` JSON payload.
+    /// `None` for control/role/finish frames or unparseable input — the caller
+    /// skips those. The streaming counterpart of [`parse_response`].
+    fn parse_sse_delta(&self, data: &str) -> Option<String>;
 }
 
 /// Build the single user-message text: schema block + optional samples + prompt.
@@ -71,6 +75,13 @@ impl Wire for AnthropicWire {
             .map(|s| s.to_string())
             .context("anthropic: no text block in response")
     }
+    fn parse_sse_delta(&self, data: &str) -> Option<String> {
+        let v: Value = serde_json::from_str(data).ok()?;
+        if v["type"] == "content_block_delta" && v["delta"]["type"] == "text_delta" {
+            return v["delta"]["text"].as_str().map(|s| s.to_string());
+        }
+        None
+    }
 }
 
 impl Wire for OpenAiCompatWire {
@@ -93,6 +104,13 @@ impl Wire for OpenAiCompatWire {
             .as_str()
             .map(|s| s.to_string())
             .context("openai-compat: no choices[0].message.content")
+    }
+    fn parse_sse_delta(&self, data: &str) -> Option<String> {
+        let v: Value = serde_json::from_str(data).ok()?;
+        v["choices"][0]["delta"]["content"]
+            .as_str()
+            .filter(|s| !s.is_empty())
+            .map(|s| s.to_string())
     }
 }
 
@@ -171,5 +189,39 @@ mod tests {
             "content": [{"type": "text", "text": "hi"}]
         });
         assert_eq!(AnthropicWire.parse_response(&an).unwrap(), "hi");
+    }
+
+    #[test]
+    fn anthropic_parses_text_delta_only() {
+        let w = AnthropicWire;
+        let delta = r#"{"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"SEL"}}"#;
+        assert_eq!(w.parse_sse_delta(delta), Some("SEL".to_string()));
+        // Non-text frames yield nothing.
+        assert_eq!(
+            w.parse_sse_delta(r#"{"type":"message_start","message":{"id":"m"}}"#),
+            None
+        );
+        assert_eq!(
+            w.parse_sse_delta(r#"{"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}}"#),
+            None
+        );
+        assert_eq!(w.parse_sse_delta("not json"), None);
+    }
+
+    #[test]
+    fn openai_parses_choice_delta_only() {
+        let w = OpenAiCompatWire;
+        let chunk = r#"{"choices":[{"delta":{"content":"ECT"}}]}"#;
+        assert_eq!(w.parse_sse_delta(chunk), Some("ECT".to_string()));
+        // Role-only opener and empty/finish frames yield nothing.
+        assert_eq!(
+            w.parse_sse_delta(r#"{"choices":[{"delta":{"role":"assistant"}}]}"#),
+            None
+        );
+        assert_eq!(
+            w.parse_sse_delta(r#"{"choices":[{"delta":{},"finish_reason":"stop"}]}"#),
+            None
+        );
+        assert_eq!(w.parse_sse_delta("not json"), None);
     }
 }

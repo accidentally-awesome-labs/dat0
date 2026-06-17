@@ -3,9 +3,12 @@
 
 pub mod key_store;
 pub mod panel;
+pub mod prompt;
 pub mod provider;
 pub mod request;
+pub mod schema_ctx;
 pub mod settings;
+pub mod sse;
 pub mod ssrf;
 pub mod transport;
 pub mod wire;

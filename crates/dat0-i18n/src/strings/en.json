@@ -203,5 +203,14 @@
   "ai.test.no_provider": "Select a provider first",
   "ai.test.no_key": "Enter an API key first",
   "ai.privacy.title": "AI requests leave your machine",
-  "ai.privacy.body": "Schema names and your prompt are sent to the selected provider. No row data is sent unless 'Include sample rows' is on."
+  "ai.privacy.body": "Schema names and your prompt are sent to the selected provider. No row data is sent unless 'Include sample rows' is on.",
+  "sql.nl2sql.chip": "NL→SQL",
+  "sql.nl2sql.prompt": "Prompt",
+  "sql.nl2sql.prompt_title": "Describe the query",
+  "sql.nl2sql.insert": "Insert",
+  "sql.nl2sql.discard": "Discard",
+  "sql.ai.stop": "Stop",
+  "sql.explain.button": "Explain",
+  "sql.explain.title": "Explanation",
+  "sql.explain.close": "Close"
 }
