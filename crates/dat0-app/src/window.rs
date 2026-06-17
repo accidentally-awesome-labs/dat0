@@ -3592,9 +3592,22 @@ impl WorkspaceShell {
             }
             StopAiStream => {
                 // Supersede: drop the in-flight stream; partial text stays Insert-able.
+                // Also finish the Explain panel if that was the active stream (T7).
                 self.ai_stream_load_id = self.ai_stream_load_id.wrapping_add(1);
                 if let Some(console) = &self.sql_console {
-                    console.update(cx, |c, cx| c.finish_nl_preview(None, cx));
+                    console.update(cx, |c, cx| {
+                        c.finish_nl_preview(None, cx);
+                        c.finish_explain(None, cx);
+                    });
+                }
+            }
+            Explain => {
+                self.spawn_ai_explain(cx);
+            }
+            CloseExplain => {
+                self.ai_stream_load_id = self.ai_stream_load_id.wrapping_add(1);
+                if let Some(console) = &self.sql_console {
+                    console.update(cx, |c, cx| c.clear_explain(cx));
                 }
             }
         }
@@ -5161,6 +5174,128 @@ impl WorkspaceShell {
                             }
                             if let Some(console) = &ws.sql_console {
                                 console.update(cx, |c, cx| c.finish_nl_preview(err, cx));
+                            }
+                        });
+                    }
+                });
+            }
+        });
+        cx.notify();
+    }
+
+    /// Stream a plain-language explanation of the active-tab SQL buffer into the
+    /// Explain side panel (P9c-2 T7). Mirrors `spawn_ai_nl2sql` exactly, with:
+    /// - prompt = the whole active buffer SQL (read on main thread before spawn);
+    /// - system: `explain_system()`;
+    /// - `begin_explain`/`push_explain_delta`/`finish_explain` instead of NL variants;
+    /// - `max_tokens: 1024`; `sample_rows: None` (R17 invariant).
+    ///
+    /// Reuses the single `ai_stream_load_id` counter (no second counter added).
+    ///
+    /// R17 safety:
+    /// - `sample_rows: None` — Explain never sends row data.
+    /// - Schema built from `catalog_tables` via `build_schema_context`.
+    /// - Guard: `ai_stream_load_id` supersede check inside every dispatched closure.
+    fn spawn_ai_explain(&mut self, cx: &mut gpui::Context<Self>) {
+        use crate::ai::key_store::KeyStore as _;
+        let Some(provider) = self.ai_panel.provider else {
+            return;
+        };
+        let key = match crate::ai::key_store::KeychainKeyStore::new()
+            .ok()
+            .and_then(|ks| ks.get(provider).ok())
+            .flatten()
+        {
+            Some(k) => k,
+            None => return, // ai_ready gate prevents this; belt-and-suspenders
+        };
+        let cfg = Self::ai_settings_store()
+            .and_then(|s| s.load_or_default().ok())
+            .map(|s| s.ai)
+            .unwrap_or_default();
+        if cfg.model.is_empty() {
+            return;
+        }
+
+        // Read the active SQL on the main thread BEFORE spawning (no Send across
+        // the tokio boundary; the read needs &App which we have here).
+        let sql = match &self.sql_console {
+            Some(c) => c.read(cx).active_sql_and_cursor(cx).0,
+            None => return,
+        };
+        if sql.trim().is_empty() {
+            return;
+        }
+
+        // Build schema-only context from the cached catalog (R17: names+types only).
+        let (schema, note) = crate::ai::schema_ctx::build_schema_context(
+            &self.catalog_tables,
+            crate::ai::schema_ctx::SchemaCaps::default(),
+        );
+        // The Explain prompt IS the SQL; schema truncation note appended to the
+        // prompt text (not the schema field), per R17 design.
+        let mut explain_prompt = sql.clone();
+        if let Some(note) = note {
+            explain_prompt.push_str("\n\n(");
+            explain_prompt.push_str(&note);
+            explain_prompt.push(')');
+        }
+        let req = crate::ai::request::AiRequest {
+            model: cfg.model.clone(),
+            system: Some(crate::ai::prompt::explain_system().to_string()),
+            schema,
+            prompt: explain_prompt,
+            sample_rows: None, // R17: Explain never sends row data
+            max_tokens: 1024,
+        };
+
+        self.ai_stream_load_id = self.ai_stream_load_id.wrapping_add(1);
+        let load_id = self.ai_stream_load_id;
+        if let Some(console) = &self.sql_console {
+            console.update(cx, |c, cx| c.begin_explain(sql, cx));
+        }
+        let ws_weak = cx.entity().downgrade();
+        let ws_weak_finish = ws_weak.clone();
+
+        tokio::spawn(async move {
+            let result = crate::ai::transport::send_stream(
+                provider,
+                &key,
+                &cfg,
+                &req,
+                |delta| {
+                    let text = delta.to_string();
+                    let ws_weak_delta = ws_weak.clone();
+                    if let Some(d) = crate::window_registry::dispatcher() {
+                        let _ = d.dispatch(move |app: &mut gpui::App| {
+                            if let Some(ws) = ws_weak_delta.upgrade() {
+                                ws.update(app, |ws, cx| {
+                                    if ws.ai_stream_load_id != load_id {
+                                        return; // stale → drop
+                                    }
+                                    if let Some(console) = &ws.sql_console {
+                                        console.update(cx, |c, cx| {
+                                            c.push_explain_delta(&text, cx);
+                                        });
+                                    }
+                                });
+                            }
+                        });
+                    }
+                },
+            )
+            .await;
+            drop(key);
+            let err = result.err().map(|e| e.to_string());
+            if let Some(d) = crate::window_registry::dispatcher() {
+                let _ = d.dispatch(move |app: &mut gpui::App| {
+                    if let Some(ws) = ws_weak_finish.upgrade() {
+                        ws.update(app, |ws, cx| {
+                            if ws.ai_stream_load_id != load_id {
+                                return;
+                            }
+                            if let Some(console) = &ws.sql_console {
+                                console.update(cx, |c, cx| c.finish_explain(err, cx));
                             }
                         });
                     }

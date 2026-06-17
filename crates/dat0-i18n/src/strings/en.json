@@ -209,5 +209,8 @@
   "sql.nl2sql.prompt_title": "Describe the query",
   "sql.nl2sql.insert": "Insert",
   "sql.nl2sql.discard": "Discard",
-  "sql.ai.stop": "Stop"
+  "sql.ai.stop": "Stop",
+  "sql.explain.button": "Explain",
+  "sql.explain.title": "Explanation",
+  "sql.explain.close": "Close"
 }

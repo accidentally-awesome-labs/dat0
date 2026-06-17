@@ -81,6 +81,32 @@ impl NlPreview {
     }
 }
 
+/// Live Explain side-panel state. `None` on `SqlConsole` = panel hidden.
+#[derive(Debug, Clone)]
+pub struct ExplainView {
+    /// The SQL that was explained, kept for context display.
+    pub sql: String,
+    /// Streamed plain-language explanation, accumulated per SSE delta.
+    pub prose: String,
+    /// True while the stream is in flight (Stop shown); false → Close.
+    pub streaming: bool,
+    /// Inline error (rate limit / refusal / HTTP body), shown red.
+    pub error: Option<String>,
+}
+
+impl ExplainView {
+    pub fn new(sql: String) -> Self {
+        Self { sql, prose: String::new(), streaming: true, error: None }
+    }
+    pub fn push(&mut self, text: &str) {
+        self.prose.push_str(text);
+    }
+    pub fn finish(&mut self, error: Option<String>) {
+        self.streaming = false;
+        self.error = error;
+    }
+}
+
 /// The SQL Console GPUI entity. Owns the open tabs + the result-region state.
 /// Execution (run/cancel) is driven by `WorkspaceShell` via [`SqlConsoleEvent`].
 pub struct SqlConsole {
@@ -132,8 +158,11 @@ pub struct SqlConsole {
     pub(crate) pending_load: Option<String>,
     /// Live NL→SQL preview strip state (P9c-2 T6). `None` while hidden.
     pub(crate) nl_preview: Option<NlPreview>,
+    /// Live Explain side-panel state (P9c-2 T7). `None` while hidden.
+    pub(crate) explain: Option<ExplainView>,
     /// Whether AI is ready (enabled + key set + model non-empty). Set by the
-    /// shell on AI config changes and on console creation. Gates the NL→SQL chip.
+    /// shell on AI config changes and on console creation. Gates the NL→SQL chip
+    /// and the Explain button.
     pub(crate) ai_ready: bool,
 }
 
@@ -187,6 +216,10 @@ pub enum SqlConsoleEvent {
     Nl2Sql { prompt: String },
     /// Stop the in-flight AI stream (NL→SQL or Explain) — supersede guard.
     StopAiStream,
+    /// Explain the whole active-tab buffer in a side panel (P9c-2 T7).
+    Explain,
+    /// Close the Explain side panel.
+    CloseExplain,
 }
 
 impl EventEmitter<SqlConsoleEvent> for SqlConsole {}
@@ -255,6 +288,7 @@ impl SqlConsole {
             history_overlay: None,
             pending_load: None,
             nl_preview: None,
+            explain: None,
             ai_ready: false,
         }
     }
@@ -453,6 +487,34 @@ impl SqlConsole {
     pub(crate) fn clear_nl_preview(&mut self, cx: &mut Context<Self>) {
         self.nl_preview = None;
         cx.notify();
+    }
+
+    pub(crate) fn begin_explain(&mut self, sql: String, cx: &mut Context<Self>) {
+        self.explain = Some(ExplainView::new(sql));
+        cx.notify();
+    }
+    pub(crate) fn push_explain_delta(&mut self, text: &str, cx: &mut Context<Self>) {
+        if let Some(e) = &mut self.explain {
+            e.push(text);
+            cx.notify();
+        }
+    }
+    pub(crate) fn finish_explain(&mut self, error: Option<String>, cx: &mut Context<Self>) {
+        if let Some(e) = &mut self.explain {
+            e.finish(error);
+            cx.notify();
+        }
+    }
+    pub(crate) fn clear_explain(&mut self, cx: &mut Context<Self>) {
+        self.explain = None;
+        cx.notify();
+    }
+
+    /// True while any AI stream (NL→SQL or Explain) is actively streaming.
+    /// Used to gate the chip + Explain button so they are disabled mid-flight.
+    pub(crate) fn ai_busy(&self) -> bool {
+        self.nl_preview.as_ref().is_some_and(|p| p.streaming)
+            || self.explain.as_ref().is_some_and(|e| e.streaming)
     }
 
     /// Remove the tab at `ix`, keeping at least one open (P5a T10). Clamps the
@@ -904,20 +966,45 @@ impl Render for SqlConsole {
                                     })),
                             )
                             // ── NL→SQL chip (P9c-2 T6) ───────────────────────
+                            // Disabled while any AI stream is in flight (T7
+                            // follow-up: gate chip + Explain button consistently).
                             .child({
+                                let busy = self.ai_busy();
+                                let enabled = self.ai_ready && !busy;
                                 let chip = div()
                                     .id("nl2sql-chip")
                                     .px_2()
                                     .py_1()
                                     .border_1()
-                                    .when(self.ai_ready, |d| d.cursor_pointer())
+                                    .when(enabled, |d| d.cursor_pointer())
                                     .child(SharedString::from(dat0_i18n::t("sql.nl2sql.chip")));
-                                if self.ai_ready {
+                                if enabled {
                                     chip.on_click(cx.listener(|_console, _ev, _window, cx| {
                                         cx.emit(SqlConsoleEvent::OpenNl2SqlPrompt);
                                     }))
                                 } else {
                                     chip
+                                }
+                            })
+                            // ── Explain button (P9c-2 T7) ────────────────────
+                            // Disabled while AI not ready or a stream is in
+                            // flight (streaming gate consistent with chip above).
+                            .child({
+                                let busy = self.ai_busy();
+                                let enabled = self.ai_ready && !busy;
+                                let btn = div()
+                                    .id("sql-explain")
+                                    .px_2()
+                                    .py_1()
+                                    .border_1()
+                                    .when(enabled, |d| d.cursor_pointer())
+                                    .child(SharedString::from(dat0_i18n::t("sql.explain.button")));
+                                if enabled {
+                                    btn.on_click(cx.listener(|_console, _ev, _window, cx| {
+                                        cx.emit(SqlConsoleEvent::Explain);
+                                    }))
+                                } else {
+                                    btn
                                 }
                             })
                             .child(run_btn),
@@ -987,13 +1074,61 @@ impl Render for SqlConsole {
                 }
                 strip
             }))
+            // ── Explain side panel (P9c-2 T7) ────────────────────────────────
+            .children(self.explain.as_ref().map(|e| {
+                let mut panel = div().flex().flex_col().gap_1().p_2().border_t_1();
+                panel = panel.child(div().child(SharedString::from(dat0_i18n::t("sql.explain.title"))));
+                panel = panel.child(div().child(SharedString::from(e.prose.clone())));
+                if let Some(err) = &e.error {
+                    panel = panel.child(div().child(SharedString::from(format!("✗ {err}"))));
+                }
+                if e.streaming {
+                    panel = panel.child(
+                        div()
+                            .id("explain-stop")
+                            .px_2()
+                            .py_1()
+                            .border_1()
+                            .cursor_pointer()
+                            .child(SharedString::from(dat0_i18n::t("sql.ai.stop")))
+                            .on_click(cx.listener(|_console, _ev, _window, cx| {
+                                cx.emit(SqlConsoleEvent::StopAiStream);
+                            })),
+                    );
+                } else {
+                    panel = panel.child(
+                        div()
+                            .id("explain-close")
+                            .px_2()
+                            .py_1()
+                            .border_1()
+                            .cursor_pointer()
+                            .child(SharedString::from(dat0_i18n::t("sql.explain.close")))
+                            .on_click(cx.listener(|_console, _ev, _window, cx| {
+                                cx.emit(SqlConsoleEvent::CloseExplain);
+                            })),
+                    );
+                }
+                panel
+            }))
             .children(history_overlay)
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use super::NlPreview;
+    use super::{ExplainView, NlPreview};
+
+    #[test]
+    fn explain_view_accumulates_prose() {
+        let mut e = ExplainView::new("SELECT 1".into());
+        assert!(e.streaming && e.prose.is_empty());
+        e.push("This query ");
+        e.push("returns 1.");
+        assert_eq!(e.prose, "This query returns 1.");
+        e.finish(None);
+        assert!(!e.streaming);
+    }
 
     #[test]
     fn nl_preview_accumulates_then_finishes() {
