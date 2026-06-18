@@ -172,7 +172,12 @@ jobs:
         env:
           OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
           CARGO_BUILD_JOBS: ${{ (runner.os == 'Linux' && runner.environment == 'github-hosted') && '2' || 'default' }}
-        run: cargo test -p dat0-app --test ai_live --target ${{ matrix.target.triple }} -- --nocapture
+        # ai_live tests are `#[ignore]`d (live API) so the --workspace Test step
+        # above stays hermetic; --include-ignored runs them HERE, and is required
+        # or the step silently no-ops (mirrors the MotherDuck md_attach gate).
+        # --test-threads=1 serializes the two live calls so they don't fire
+        # simultaneously against the per-key rate window.
+        run: cargo test -p dat0-app --test ai_live --target ${{ matrix.target.triple }} -- --include-ignored --test-threads=1 --nocapture
       # Bench is macOS-only (single host class — variance across runners
       # makes cross-OS comparison meaningless). Artifact-only at P3a; spec
       # line 819 defers the merge-gate threshold to P10.
