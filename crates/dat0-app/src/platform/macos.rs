@@ -16,3 +16,10 @@ pub fn cache_dir() -> Result<PathBuf> {
         .context("no home")?
         .join("Library/Caches/dat0"))
 }
+
+/// Open `url` in the user's default browser via the macOS `open` shell tool.
+pub fn open_url(url: &str) -> Result<()> {
+    let status = std::process::Command::new("open").arg(url).status()?;
+    anyhow::ensure!(status.success(), "open_url failed for {url}");
+    Ok(())
+}

@@ -1476,6 +1476,12 @@ pub fn run_app(lock: AppLock, initial_paths: Vec<PathBuf>, main_loop: MainLoop) 
             save_workspace_flow(cx);
         });
 
+        // Wire Help → About → About box (P10a T5). Declared unconditionally in
+        // menu_macos.rs so the handler resolves on Linux too.
+        cx.on_action(|_action: &crate::menu_macos::ShowAbout, cx: &mut App| {
+            crate::about::open(cx);
+        });
+
         // Wire the .dat0 package actions (P8 T9). All declared unconditionally in
         // menu_macos.rs so the handlers resolve on Linux too (no visible menu).
         cx.on_action(|_action: &crate::menu_macos::ExportPackage, cx: &mut App| {
