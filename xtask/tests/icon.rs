@@ -28,4 +28,6 @@ fn assert_png(path: &Path, expect_dim: u32) {
 
 // thin wrapper so the test calls the lib fn (icon module is bin-private;
 // expose via a `pub` test-only re-export or move icon into a small lib target).
-fn xtask_icon_generate(out: &Path) { xtask::icon::generate(out).unwrap(); }
+fn xtask_icon_generate(out: &Path) {
+    xtask::icon::generate(out).unwrap();
+}

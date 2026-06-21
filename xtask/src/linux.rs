@@ -32,14 +32,7 @@ pub fn mime_xml() -> String {
 
 pub fn bundle(version: &str) -> Result<PathBuf> {
     let triple = "x86_64-unknown-linux-gnu";
-    run(Command::new("cargo").args([
-        "build",
-        "-p",
-        "dat0-app",
-        "--release",
-        "--target",
-        triple,
-    ]))?;
+    run(Command::new("cargo").args(["build", "-p", "dat0-app", "--release", "--target", triple]))?;
 
     let out = PathBuf::from("target/linux");
     let appdir = out.join("AppDir");
@@ -64,10 +57,7 @@ pub fn bundle(version: &str) -> Result<PathBuf> {
         desktop_entry(),
     )?;
     std::fs::write(appdir.join("dat0.desktop"), desktop_entry())?; // linuxdeploy top-level
-    std::fs::write(
-        appdir.join("usr/share/mime/packages/dat0.xml"),
-        mime_xml(),
-    )?;
+    std::fs::write(appdir.join("usr/share/mime/packages/dat0.xml"), mime_xml())?;
 
     // appimagetool packs AppDir → dat0.AppImage.
     let img = out.join("dat0.AppImage");

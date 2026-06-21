@@ -26,10 +26,8 @@ fn render(size: u32) -> RgbaImage {
             let outer = s * 0.32;
             let inner = s * 0.17;
             let is_ring = dist <= outer && dist >= inner;
-            let is_stem = fx >= cx + s * 0.20
-                && fx <= cx + s * 0.27
-                && fy >= cy - outer
-                && fy <= cy + outer;
+            let is_stem =
+                fx >= cx + s * 0.20 && fx <= cx + s * 0.27 && fy >= cy - outer && fy <= cy + outer;
             img.put_pixel(x, y, if is_ring || is_stem { FG } else { BG });
         }
     }
@@ -40,11 +38,7 @@ fn rounded_square(x: f32, y: f32, s: f32, r: f32) -> bool {
     let (lo, hi) = (r, s - r);
     let cx = x.clamp(lo, hi);
     let cy = y.clamp(lo, hi);
-    ((x - cx).powi(2) + (y - cy).powi(2)).sqrt() <= r
-        && x >= 0.0
-        && y >= 0.0
-        && x < s
-        && y < s
+    ((x - cx).powi(2) + (y - cy).powi(2)).sqrt() <= r && x >= 0.0 && y >= 0.0 && x < s && y < s
 }
 
 pub fn generate(out: &Path) -> Result<PathBuf> {

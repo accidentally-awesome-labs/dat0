@@ -51,12 +51,7 @@ pub fn verify(macos: bool, linux: bool) -> Result<()> {
     if macos {
         let dmg = "target/macos/dat0.dmg";
         // Simulate download quarantine, then assert Gatekeeper accepts it.
-        run(Command::new("xattr").args([
-            "-w",
-            "com.apple.quarantine",
-            "0081;0;Safari;",
-            dmg,
-        ]))?;
+        run(Command::new("xattr").args(["-w", "com.apple.quarantine", "0081;0;Safari;", dmg]))?;
         run(Command::new("spctl").args(["--assess", "--type", "install", "-vvv", dmg]))?;
         run(Command::new("xcrun").args(["stapler", "validate", dmg]))?;
         run(Command::new("codesign").args([

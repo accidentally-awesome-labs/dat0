@@ -5,7 +5,8 @@ use std::process::Command;
 /// Hand-written Info.plist (no plist-crate dep). `.dat0` is declared both as a
 /// handled document type and as an exported UTI (dev.dat0.package).
 pub fn info_plist(version: &str, git_sha: &str) -> String {
-    format!(r#"<?xml version="1.0" encoding="UTF-8"?>
+    format!(
+        r#"<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
@@ -35,14 +36,20 @@ pub fn info_plist(version: &str, git_sha: &str) -> String {
   </dict></array>
 </dict>
 </plist>
-"#)
+"#
+    )
 }
 
 pub fn bundle(version: &str, git_sha: &str) -> Result<PathBuf> {
     // 1. Build both arches.
     for triple in ["aarch64-apple-darwin", "x86_64-apple-darwin"] {
         run(Command::new("cargo").args([
-            "build", "-p", "dat0-app", "--release", "--target", triple,
+            "build",
+            "-p",
+            "dat0-app",
+            "--release",
+            "--target",
+            triple,
         ]))?;
     }
     // 2. lipo into a universal binary.
@@ -63,7 +70,10 @@ pub fn bundle(version: &str, git_sha: &str) -> Result<PathBuf> {
     // 3. Icon + Info.plist.
     super::icon::generate(Path::new("target/icon"))?;
     std::fs::copy("target/icon/dat0.icns", res_dir.join("dat0.icns")).context("copy icns")?;
-    std::fs::write(app.join("Contents/Info.plist"), info_plist(version, git_sha))?;
+    std::fs::write(
+        app.join("Contents/Info.plist"),
+        info_plist(version, git_sha),
+    )?;
     Ok(app)
 }
 

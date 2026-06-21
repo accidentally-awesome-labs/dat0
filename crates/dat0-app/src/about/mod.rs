@@ -18,8 +18,7 @@ use gpui_component::dialog::{Dialog, DialogButtonProps};
 
 /// The human-facing GitHub Releases page (NOT the API endpoint) opened by the
 /// "Download" button when a newer release is available.
-const RELEASES_PAGE_URL: &str =
-    "https://github.com/accidentally-awesome-labs/dat0/releases/latest";
+const RELEASES_PAGE_URL: &str = "https://github.com/accidentally-awesome-labs/dat0/releases/latest";
 
 /// Pure, testable text rows for the About box. `newer` = Some(tag) when a newer
 /// release exists (drives the nudge line).
@@ -32,7 +31,11 @@ pub fn summary_lines(b: &BuildInfo, newer: Option<&str>) -> Vec<String> {
         dat0_i18n::t("about.acknowledgements"),
     ];
     match newer {
-        Some(tag) => lines.push(format!("{} {}", dat0_i18n::t("about.update.available"), tag)),
+        Some(tag) => lines.push(format!(
+            "{} {}",
+            dat0_i18n::t("about.update.available"),
+            tag
+        )),
         None => lines.push(dat0_i18n::t("about.update.current")),
     }
     lines

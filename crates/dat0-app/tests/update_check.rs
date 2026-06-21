@@ -11,7 +11,8 @@ fn semver_compare_is_numeric_and_v_tolerant() {
 #[test]
 fn fetch_latest_parses_tag_name() {
     let mut server = mockito::Server::new();
-    let m = server.mock("GET", "/latest")
+    let m = server
+        .mock("GET", "/latest")
         .with_status(200)
         .with_header("content-type", "application/json")
         .with_body(r#"{"tag_name":"v0.2.0","name":"dat0 0.2.0"}"#)

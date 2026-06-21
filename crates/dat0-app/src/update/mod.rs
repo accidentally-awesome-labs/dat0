@@ -9,7 +9,11 @@ pub const LATEST_RELEASE_API: &str =
 fn parse(v: &str) -> (u64, u64, u64) {
     let v = v.trim().trim_start_matches('v');
     let mut it = v.split('.').map(|p| p.parse::<u64>().unwrap_or(0));
-    (it.next().unwrap_or(0), it.next().unwrap_or(0), it.next().unwrap_or(0))
+    (
+        it.next().unwrap_or(0),
+        it.next().unwrap_or(0),
+        it.next().unwrap_or(0),
+    )
 }
 
 /// True iff `latest` is a strictly newer semver than `current`.
