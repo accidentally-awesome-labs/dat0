@@ -42,8 +42,8 @@ that's modifying it; merge conflicts are signals worth investigating.
 |-------|----------------------------------------------------|--------|------|--------|
 | D-001 | Editable Settings widgets (author identity + theme dropdown) | closed | P1 | P3 |
 | D-002 | Theme live-switch through running window           | closed | P1   | P3     |
-| D-003 | Sparkle Objective-C `SUUpdater` bridge             | open | P1   | P10    |
-| D-004 | AppImageUpdate subprocess invocation               | open | P1   | P10    |
+| D-003 | Sparkle Objective-C `SUUpdater` bridge             | open | P1   | P10a-2 |
+| D-004 | AppImageUpdate subprocess invocation               | open | P1   | P10a-2 |
 | D-005 | Linux Secret Service "setup banner" UX             | open | P1   | TBD    |
 | D-006 | macOS x86_64 (Intel) CI matrix coverage            | open | P1   | TBD    |
 | D-007 | MotherDuck ATTACH end-to-end                       | closed | P2   | P5c    |
@@ -54,7 +54,7 @@ that's modifying it; merge conflicts are signals worth investigating.
 | D-012 | Engine catalog `TableInfo` synthesis (origin + schema) | closed | P2   | P3a    |
 | D-013 | Self-hosted macOS CI runner (cut hosted macos-14 10× billing) | open | P2 | TBD |
 | D-014 | Memory Budget Settings section | open | P3b | P3c / P9c |
-| D-015 | AccessKit / screen-reader selection-tree exposure | open | P4b | P10 |
+| D-015 | AccessKit / screen-reader selection-tree exposure | open | P4b | P10b |
 | D-018 | Workspace lineage DAG — node-edge graph with auto-layout (left→right topological), pan/zoom, whole-workspace view | open | P6b | — |
 | D-019 | Workspace concurrency/sync-drive: cross-machine lock, sync-drive detection, rich in-use modal, Settings → Workspace, force-unlock | closed | P7a | P7b |
 | D-020 | Live-data refresh: file-watcher on Tab.source_path → re-import on change (re-CTAS + replay transforms, debounced) + finish recovery_panel Sheet UI | closed | P7a | P7c |
@@ -152,7 +152,7 @@ that's modifying it; merge conflicts are signals worth investigating.
 
 - **Status:** open
 - **Deferred from:** P1 (T15)
-- **Target phase:** P10
+- **Target phase:** P10a-2
 - **Reason:** Cross-language Objective-C bridge needs notarized .app bundle +
   release pipeline before it's testable end-to-end. P1 doesn't sign or notarize.
 - **What P1 ships:** HTTP GET smoke against the appcast URL (satisfies the
@@ -162,13 +162,16 @@ that's modifying it; merge conflicts are signals worth investigating.
   parsing, signature verification, in-app update prompt UI, restart flow.
 - **Originating doc:** `docs/plans/2026-04-26-dat0-p1-foundation-plan.md` §"Risks & Caveats"
 - **Closes:** spec §21.2 P10 exit — "Sparkle 'Check for Updates' finds a test update + applies it"
-- **Last touched:** 2026-04-28
+- **Note (2026-06-21):** P10a ships the signed pipeline + a minimal update
+  *nudge* (About box → open Releases); the in-app Sparkle bridge moves to the
+  P10a-2 updater slice, gated on the Sparkle↔GPUI run-loop spike.
+- **Last touched:** 2026-06-21
 
 ### D-004 — AppImageUpdate subprocess invocation
 
 - **Status:** open
 - **Deferred from:** P1 (T15)
-- **Target phase:** P10
+- **Target phase:** P10a-2
 - **Reason:** Real subprocess invocation of `appimageupdatetool` requires a
   packaged AppImage; P1 builds plain Linux binaries.
 - **What P1 ships:** `AppImageUpdater` stub conforming to the `Updater` trait;
@@ -176,7 +179,10 @@ that's modifying it; merge conflicts are signals worth investigating.
 - **What target phase delivers:** Subprocess wiring, progress reporting,
   restart flow.
 - **Originating doc:** `docs/plans/2026-04-26-dat0-p1-foundation-plan.md` §"Risks & Caveats"
-- **Last touched:** 2026-04-28
+- **Note (2026-06-21):** P10a ships the signed pipeline + a minimal update
+  *nudge* (About box → open Releases); the AppImageUpdate subprocess invocation
+  moves to the P10a-2 updater slice, gated on the Sparkle↔GPUI run-loop spike.
+- **Last touched:** 2026-06-21
 
 ### D-005 — Linux Secret Service "setup banner" UX
 
@@ -219,7 +225,10 @@ that's modifying it; merge conflicts are signals worth investigating.
 - **Closes (partial):** spec §21.2 P1 exit — "Cold-launches on macOS arm64,
   macOS x86_64, Linux x86_64, Linux aarch64" — Apple Silicon + both Linux
   triples covered; macOS Intel coverage deferred.
-- **Last touched:** 2026-04-28
+- **Note (2026-06-21):** P10a's universal macOS build adds the
+  `x86_64-apple-darwin` build leg (lipo'd into the DMG); the full Intel *test*
+  matrix (running CI on actual Intel hardware) remains open.
+- **Last touched:** 2026-06-21
 
 ### D-007 — MotherDuck ATTACH end-to-end
 
@@ -495,7 +504,8 @@ that's modifying it; merge conflicts are signals worth investigating.
 - **Closes (partial):** the org Actions cap remediation chain started
   by the SQLite fixture + heavy-test split. Linux side complete;
   macOS side remains.
-- **Last touched:** 2026-05-14
+- **Note (2026-06-21):** still open; → P10c.
+- **Last touched:** 2026-06-21
 
 ### D-014 — Memory Budget Settings section
 
@@ -525,7 +535,7 @@ that's modifying it; merge conflicts are signals worth investigating.
 
 - **Status:** open
 - **Deferred from:** P4b (T0 probe finding; design decision 5)
-- **Target phase:** P10 (hardening)
+- **Target phase:** P10b
 - **Reason:** The P4b T0 probe (`docs/internal/dat0-p4b-t0-probe.md` §2) verified
   that AccessKit is **entirely absent** from the pinned GPUI 0.2.2 and
   gpui-component 0.5.1 — no `accesskit` dependency, no `AccessibilityNode`, no
@@ -545,8 +555,9 @@ that's modifying it; merge conflicts are signals worth investigating.
   → select-column (operability), not a screen-reader semantics tree.
 - **P5c note (2026-06-05):** The Connections panel (attachment list, connect/disconnect
   controls) and token-prompt modal are additional AccessKit / screen-reader surfaces
-  to cover in P10 alongside the selection tree (still deferred).
-- **Last touched:** 2026-06-05.
+  to cover alongside the selection tree (still deferred).
+- **Note (2026-06-21):** still open; → P10b.
+- **Last touched:** 2026-06-21.
 
 ---
 
