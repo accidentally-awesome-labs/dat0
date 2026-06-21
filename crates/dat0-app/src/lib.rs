@@ -1,5 +1,6 @@
 //! dat0 desktop application library (internal API surface).
 
+pub mod about;
 pub mod actions;
 pub mod ai;
 pub mod app_lock;
