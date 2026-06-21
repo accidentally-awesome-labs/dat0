@@ -796,6 +796,16 @@ fn bare_table_name(base: &str) -> String {
         .to_string()
 }
 
+/// Parse macOS `application:openURLs:` file URLs into local paths. macOS
+/// delivers opened files as percent-encoded `file://` URLs (e.g. `%20` for a
+/// space), so decode via `url::Url::to_file_path` rather than a raw strip.
+/// Non-file URLs (or unparseable entries) are skipped.
+fn paths_from_open_urls(urls: &[String]) -> Vec<std::path::PathBuf> {
+    urls.iter()
+        .filter_map(|u| url::Url::parse(u).ok()?.to_file_path().ok())
+        .collect()
+}
+
 // ── Chart toolbar axis-field plumbing (P9a T7) ──────────────────────────────
 //
 // Maps an `AxisRole` to the `ChartSpec` field that `build_plot_sql` reads for
@@ -1306,7 +1316,51 @@ pub fn run_app(lock: AppLock, initial_paths: Vec<PathBuf>, main_loop: MainLoop) 
     // from the context of a Tokio runtime"). The guard drops before `runtime`
     // (declared earlier), so teardown order is correct.
     let _rt_guard = runtime.enter();
-    Application::new().run(move |cx: &mut App| {
+
+    // macOS (and Linux GUI via XDG) deliver double-clicked / "Open With dat0"
+    // files through `application:openURLs:` (GPUI `on_open_urls`), NOT argv — so
+    // on macOS this is the ONLY intake path for a `.dat0` double-click (Linux
+    // also gets them via `Exec=dat0 %F` argv → `initial_paths`). Route them into
+    // the same `handle_drop` flow the cold-start `initial_paths` block uses.
+    // `on_open_urls` is on `Application` and must be registered before `run`.
+    // (S1 spike.)
+    let application = Application::new();
+    let session_for_open = Arc::clone(&session);
+    application.on_open_urls(move |urls: Vec<String>| {
+        let paths = paths_from_open_urls(&urls);
+        if paths.is_empty() {
+            return;
+        }
+        let session = Arc::clone(&session_for_open);
+        // The callback receives no `cx`, so re-enter the GPUI main thread with
+        // `&mut App` via the process-wide dispatcher (the same hop the UDS
+        // handler and `menu_macos::rebuild_menus_with_recents` use). Routing
+        // through GPUI's `cx.spawn` (not a bare `tokio::spawn`) lets the window
+        // observe the session mutation and refresh.
+        let Some(d) = crate::window_registry::dispatcher() else {
+            tracing::warn!("on_open_urls: dispatcher not installed; dropping open-files request");
+            return;
+        };
+        let _ = d.dispatch(move |cx: &mut App| {
+            let Some(handle) = cx.active_window() else {
+                tracing::warn!("on_open_urls: no active window; dropping open-files request");
+                return;
+            };
+            let _ = handle.update(cx, move |_root, _window, cx| {
+                cx.spawn(async move |_async_cx| {
+                    let outcomes = handle_drop(paths, session).await;
+                    let n = outcomes
+                        .iter()
+                        .filter(|o| matches!(o, DropOutcome::Registered { .. }))
+                        .count();
+                    tracing::info!(n_registered = n, "macOS/XDG open-urls files processed");
+                })
+                .detach();
+            });
+        });
+    });
+
+    application.run(move |cx: &mut App| {
         // Required before opening any window: initialises the gpui-component
         // theme, global state, and (in debug builds) the inspector. Without
         // this, dialogs/sheets/notifications wired up in later tasks (T17)
@@ -1474,6 +1528,12 @@ pub fn run_app(lock: AppLock, initial_paths: Vec<PathBuf>, main_loop: MainLoop) 
         });
         cx.on_action(|_action: &crate::menu_macos::SaveWorkspace, cx: &mut App| {
             save_workspace_flow(cx);
+        });
+
+        // Wire Help → About → About box (P10a T5). Declared unconditionally in
+        // menu_macos.rs so the handler resolves on Linux too.
+        cx.on_action(|_action: &crate::menu_macos::ShowAbout, cx: &mut App| {
+            crate::about::open(cx);
         });
 
         // Wire the .dat0 package actions (P8 T9). All declared unconditionally in
@@ -6168,7 +6228,38 @@ impl Render for WorkspaceShell {
 
 #[cfg(test)]
 mod tests {
-    use super::bare_table_name;
+    use super::{bare_table_name, paths_from_open_urls};
+    use std::path::PathBuf;
+
+    #[test]
+    fn open_urls_decode_to_local_paths() {
+        // macOS `application:openURLs:` delivers percent-encoded `file://` URLs.
+        // A plain path round-trips unchanged.
+        assert_eq!(
+            paths_from_open_urls(&["file:///tmp/a.dat0".into()]),
+            vec![PathBuf::from("/tmp/a.dat0")]
+        );
+        // A percent-encoded space (`%20`) must decode back to a real space.
+        assert_eq!(
+            paths_from_open_urls(&["file:///tmp/My%20Data/b.dat0".into()]),
+            vec![PathBuf::from("/tmp/My Data/b.dat0")]
+        );
+        // Non-file URLs and unparseable garbage are skipped (filtered out).
+        assert!(paths_from_open_urls(&["https://example.com".into()]).is_empty());
+        assert!(paths_from_open_urls(&["not a url".into()]).is_empty());
+        // A mixed batch keeps only the decodable file URLs, in order.
+        assert_eq!(
+            paths_from_open_urls(&[
+                "file:///tmp/one.dat0".into(),
+                "https://example.com".into(),
+                "file:///tmp/two.dat0".into(),
+            ]),
+            vec![
+                PathBuf::from("/tmp/one.dat0"),
+                PathBuf::from("/tmp/two.dat0")
+            ]
+        );
+    }
 
     #[test]
     fn bare_table_name_strips_quotes_and_schema() {
