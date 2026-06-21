@@ -2,11 +2,7 @@
 use anyhow::Result;
 use clap::{Parser, Subcommand};
 use std::path::PathBuf;
-
-mod icon;
-mod linux;
-mod macos;
-mod sign;
+use xtask::{icon, linux, macos, sign};
 
 #[derive(Parser)]
 #[command(bin_name = "xtask", about = "dat0 build/release tasks")]

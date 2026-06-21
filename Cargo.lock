@@ -9248,6 +9248,7 @@ dependencies = [
  "anyhow",
  "clap",
  "image 0.25.10",
+ "tempfile",
 ]
 
 [[package]]

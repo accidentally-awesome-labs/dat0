@@ -7,4 +7,7 @@ publish = false
 [dependencies]
 anyhow = { workspace = true }
 clap = { workspace = true }
-image = "0.25"
+image = { version = "0.25", default-features = false, features = ["png"] }
+
+[dev-dependencies]
+tempfile = { workspace = true }
