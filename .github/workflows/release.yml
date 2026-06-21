@@ -1,0 +1,91 @@
+name: Release
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch: {}   # dry run: builds + verifies, skips publish
+
+permissions:
+  contents: write
+
+jobs:
+  macos:
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with: { targets: aarch64-apple-darwin,x86_64-apple-darwin }
+      - run: brew install create-dmg
+      - name: Import Developer ID cert
+        env:
+          CERT_P12: ${{ secrets.APPLE_DEV_ID_CERT_P12 }}
+          CERT_PASSWORD: ${{ secrets.CERT_PASSWORD }}
+          KEYCHAIN_PASSWORD: ${{ secrets.KEYCHAIN_PASSWORD }}
+        run: |
+          echo "$CERT_P12" | base64 --decode > /tmp/cert.p12
+          security create-keychain -p "$KEYCHAIN_PASSWORD" build.keychain
+          security default-keychain -s build.keychain
+          security unlock-keychain -p "$KEYCHAIN_PASSWORD" build.keychain
+          security import /tmp/cert.p12 -k build.keychain -P "$CERT_PASSWORD" -T /usr/bin/codesign
+          security set-key-partition-list -S apple-tool:,apple: -s -k "$KEYCHAIN_PASSWORD" build.keychain
+      - name: Notary API key file
+        env: { AC_API_KEY_P8: "${{ secrets.AC_API_KEY_P8 }}" }
+        run: echo "$AC_API_KEY_P8" | base64 --decode > /tmp/ac_api_key.p8
+      - name: Bundle + sign + notarize
+        env:
+          VERSION: ${{ github.ref_type == 'tag' && github.ref_name || '0.0.0-dev' }}
+          AC_KEY_ID: ${{ secrets.AC_KEY_ID }}
+          AC_ISSUER_ID: ${{ secrets.AC_ISSUER_ID }}
+          AC_API_KEY_PATH: /tmp/ac_api_key.p8
+        run: |
+          SHA=$(git rev-parse --short HEAD)
+          cargo xtask gen-icon
+          cargo xtask bundle-macos --version "${VERSION#v}" --git-sha "$SHA"
+          cargo xtask sign-macos --identity "${{ secrets.DAT0_SIGN_IDENTITY }}"
+          cargo xtask verify --macos
+      - uses: actions/upload-artifact@v4
+        with: { name: dat0-dmg, path: target/macos/dat0.dmg }
+
+  linux:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Tools
+        run: |
+          sudo apt-get update && sudo apt-get install -y libfuse2 fuse desktop-file-utils
+          wget -q https://github.com/AppImage/AppImageKit/releases/download/continuous/appimagetool-x86_64.AppImage -O /usr/local/bin/appimagetool
+          chmod +x /usr/local/bin/appimagetool
+      - name: Import GPG key
+        env:
+          GPG_PRIVATE_KEY: ${{ secrets.GPG_PRIVATE_KEY }}
+          GPG_PASSPHRASE: ${{ secrets.GPG_PASSPHRASE }}
+        run: |
+          echo "$GPG_PRIVATE_KEY" | gpg --batch --import
+      - name: Bundle + sign
+        env: { VERSION: "${{ github.ref_type == 'tag' && github.ref_name || '0.0.0-dev' }}" }
+        run: |
+          cargo xtask gen-icon
+          cargo xtask bundle-linux --version "${VERSION#v}"
+      - name: Verify on clean Ubuntu
+        run: |
+          docker run --rm -v "$PWD/target/linux:/art" ubuntu:24.04 \
+            bash -c "cd /art && ./dat0.AppImage --appimage-extract >/dev/null && ./squashfs-root/AppRun --version"
+          cargo xtask verify --linux
+      - uses: actions/upload-artifact@v4
+        with: { name: dat0-appimage, path: 'target/linux/dat0.AppImage*' }
+
+  publish:
+    needs: [macos, linux]
+    if: github.ref_type == 'tag'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with: { path: dist }
+      - name: Checksums
+        run: cd dist && find . -type f \( -name '*.dmg' -o -name '*.AppImage' -o -name '*.sig' \) -exec sha256sum {} \; > SHA256SUMS
+      - name: Publish to GitHub Release
+        env: { GH_TOKEN: "${{ github.token }}" }
+        run: |
+          gh release create "${{ github.ref_name }}" --generate-notes \
+            $(find dist -type f \( -name '*.dmg' -o -name '*.AppImage' -o -name '*.sig' \)) dist/SHA256SUMS
