@@ -7,6 +7,7 @@ members = [
     "crates/dat0-fixtures",
     "crates/dat0-i18n",
     "crates/dat0-keychain",
+    "xtask",
 ]
 
 [workspace.package]
