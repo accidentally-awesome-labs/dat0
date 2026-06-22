@@ -1,6 +1,7 @@
 //! Minimal update *nudge* (not auto-update): compare the running version to the
 //! latest GitHub Release. Sparkle-agnostic — the full updater lands in P10a-2.
 
+pub mod apply;
 pub mod check;
 pub mod download;
 pub mod manifest;
