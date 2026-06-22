@@ -2,6 +2,7 @@
 //! latest GitHub Release. Sparkle-agnostic — the full updater lands in P10a-2.
 
 pub mod check;
+pub mod download;
 pub mod manifest;
 
 use anyhow::{Context, Result};
