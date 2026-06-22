@@ -1,6 +1,10 @@
 use crate::ai::settings::AiSettings;
 use serde::{Deserialize, Serialize};
 
+fn default_true() -> bool {
+    true
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Settings {
@@ -10,6 +14,10 @@ pub struct Settings {
     pub telemetry: Telemetry,
     pub workspace: Workspace,
     pub ai: AiSettings,
+    /// Whether to automatically check for updates at launch (default: true).
+    /// Users can opt out in Settings → Updates.
+    #[serde(default = "default_true")]
+    pub update_auto_check: bool,
 }
 
 impl Default for Settings {
@@ -21,6 +29,7 @@ impl Default for Settings {
             telemetry: Telemetry::default(),
             workspace: Workspace::default(),
             ai: AiSettings::default(),
+            update_auto_check: true,
         }
     }
 }

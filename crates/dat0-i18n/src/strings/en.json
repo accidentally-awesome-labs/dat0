@@ -220,5 +220,8 @@
   "sql.ai.stop": "Stop",
   "sql.explain.button": "Explain",
   "sql.explain.title": "Explanation",
-  "sql.explain.close": "Close"
+  "sql.explain.close": "Close",
+  "settings.updates": "Updates",
+  "settings.update.auto_check": "Automatically check for updates at launch",
+  "settings.updates.placeholder": "dat0 can check for new versions at startup and let you know when one is available."
 }
