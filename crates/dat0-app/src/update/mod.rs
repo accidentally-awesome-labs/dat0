@@ -1,6 +1,8 @@
 //! Minimal update *nudge* (not auto-update): compare the running version to the
 //! latest GitHub Release. Sparkle-agnostic — the full updater lands in P10a-2.
 
+pub mod manifest;
+
 use anyhow::{Context, Result};
 
 pub const LATEST_RELEASE_API: &str =
