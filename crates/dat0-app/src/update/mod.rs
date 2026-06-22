@@ -5,6 +5,7 @@ pub mod apply;
 pub mod check;
 pub mod download;
 pub mod manifest;
+pub mod ui;
 
 use anyhow::{Context, Result};
 
