@@ -90,7 +90,6 @@ jobs:
       - name: Generate + sign update manifest
         env:
           MINISIGN_SECRET_KEY: ${{ secrets.MINISIGN_SECRET_KEY }}
-          GH_TOKEN: ${{ github.token }}
         run: |
           TARBALL=dist/dat0-app-tarball/dat0.app.tar.gz
           APPIMAGE=dist/dat0-appimage/dat0.AppImage

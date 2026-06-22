@@ -111,7 +111,12 @@ pub fn apply_update(install: &Path, downloaded: &Path) -> anyhow::Result<()> {
     if let Err(e) = std::fs::rename(&extracted_app, install) {
         // Rollback: restore backup.
         if backup_path.exists() {
-            let _ = std::fs::rename(&backup_path, install);
+            if let Err(rollback_err) = std::fs::rename(&backup_path, install) {
+                tracing::error!(
+                    "update rollback failed; install may be missing at {}: {rollback_err}",
+                    install.display()
+                );
+            }
         }
         let _ = std::fs::remove_dir_all(&tmp_extract);
         return Err(e).context("could not move new bundle into place");
@@ -188,7 +193,12 @@ pub fn apply_update(install: &Path, downloaded: &Path) -> anyhow::Result<()> {
     if let Err(e) = std::fs::rename(downloaded, install) {
         // Rollback
         if backup_path.exists() {
-            let _ = std::fs::rename(&backup_path, install);
+            if let Err(rollback_err) = std::fs::rename(&backup_path, install) {
+                tracing::error!(
+                    "update rollback failed; install may be missing at {}: {rollback_err}",
+                    install.display()
+                );
+            }
         }
         return Err(e).context("could not rename new binary into place");
     }
