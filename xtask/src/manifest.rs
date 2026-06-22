@@ -10,9 +10,21 @@
 ///   "linux": { "url": "...", "sha256": "...", "size": ... }
 /// }
 /// ```
-pub fn build_manifest(version: &str, macos_sha: &str, macos_size: u64, linux_sha: &str, linux_size: u64) -> String {
-    let macos_url = format!("https://github.com/accidentally-awesome-labs/dat0/releases/download/v{}/dat0.app.tar.gz", version);
-    let linux_url = format!("https://github.com/accidentally-awesome-labs/dat0/releases/download/v{}/dat0.AppImage", version);
+pub fn build_manifest(
+    version: &str,
+    macos_sha: &str,
+    macos_size: u64,
+    linux_sha: &str,
+    linux_size: u64,
+) -> String {
+    let macos_url = format!(
+        "https://github.com/accidentally-awesome-labs/dat0/releases/download/v{}/dat0.app.tar.gz",
+        version
+    );
+    let linux_url = format!(
+        "https://github.com/accidentally-awesome-labs/dat0/releases/download/v{}/dat0.AppImage",
+        version
+    );
 
     format!(
         r#"{{

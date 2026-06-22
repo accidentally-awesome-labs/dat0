@@ -1538,9 +1538,11 @@ pub fn run_app(lock: AppLock, initial_paths: Vec<PathBuf>, main_loop: MainLoop) 
 
         // Wire Help → Check for Updates (P10a-2 T6). Declared unconditionally in
         // menu_macos.rs so the handler resolves on Linux too.
-        cx.on_action(|_action: &crate::menu_macos::CheckForUpdates, cx: &mut App| {
-            crate::update::ui::run_update_flow(cx, true);
-        });
+        cx.on_action(
+            |_action: &crate::menu_macos::CheckForUpdates, cx: &mut App| {
+                crate::update::ui::run_update_flow(cx, true);
+            },
+        );
 
         // Wire the .dat0 package actions (P8 T9). All declared unconditionally in
         // menu_macos.rs so the handlers resolve on Linux too (no visible menu).
@@ -1718,9 +1720,8 @@ pub fn run_app(lock: AppLock, initial_paths: Vec<PathBuf>, main_loop: MainLoop) 
         // itself just spawns a thread and returns immediately.
         {
             let auto_check = if let Ok(cfg_dir) = crate::platform::config_dir() {
-                let store = crate::settings::store::SettingsStore::with_path(
-                    cfg_dir.join("settings.toml"),
-                );
+                let store =
+                    crate::settings::store::SettingsStore::with_path(cfg_dir.join("settings.toml"));
                 store
                     .load_or_default()
                     .map(|s| s.update_auto_check)

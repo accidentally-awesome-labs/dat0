@@ -76,16 +76,12 @@ pub fn apply_update(install: &Path, downloaded: &Path) -> anyhow::Result<()> {
 
     // --- Phase 1: validate + extract BEFORE touching the install ---
     // Use a sibling temp dir (same filesystem as install → rename is atomic).
-    let install_parent = install
-        .parent()
-        .context("install path has no parent")?;
+    let install_parent = install.parent().context("install path has no parent")?;
     let tmp_extract = install_parent.join(".dat0_update_extract");
     if tmp_extract.exists() {
-        std::fs::remove_dir_all(&tmp_extract)
-            .context("could not clean stale extract dir")?;
+        std::fs::remove_dir_all(&tmp_extract).context("could not clean stale extract dir")?;
     }
-    std::fs::create_dir_all(&tmp_extract)
-        .context("could not create extract dir")?;
+    std::fs::create_dir_all(&tmp_extract).context("could not create extract dir")?;
 
     // Extract — fails here if `downloaded` doesn't exist or is not a valid tar.gz.
     let status = std::process::Command::new("tar")
@@ -101,17 +97,15 @@ pub fn apply_update(install: &Path, downloaded: &Path) -> anyhow::Result<()> {
     }
 
     // Find the .app bundle inside the extract dir.
-    let extracted_app = find_app_in_dir(&tmp_extract)
-        .context("no .app bundle found in extracted archive")?;
+    let extracted_app =
+        find_app_in_dir(&tmp_extract).context("no .app bundle found in extracted archive")?;
 
     // --- Phase 2: move install aside (backup) ---
     let backup_path = install_parent.join(".dat0_update_backup.app");
     if backup_path.exists() {
-        std::fs::remove_dir_all(&backup_path)
-            .context("could not remove stale backup")?;
+        std::fs::remove_dir_all(&backup_path).context("could not remove stale backup")?;
     }
-    std::fs::rename(install, &backup_path)
-        .context("could not move install aside for backup")?;
+    std::fs::rename(install, &backup_path).context("could not move install aside for backup")?;
 
     // --- Phase 3: move new bundle into place ---
     if let Err(e) = std::fs::rename(&extracted_app, install) {
@@ -176,8 +170,7 @@ pub fn apply_update(install: &Path, downloaded: &Path) -> anyhow::Result<()> {
         .context("could not stat downloaded file")?
         .permissions();
     perms.set_mode(perms.mode() | 0o755);
-    std::fs::set_permissions(downloaded, perms)
-        .context("could not chmod downloaded file")?;
+    std::fs::set_permissions(downloaded, perms).context("could not chmod downloaded file")?;
 
     // --- Phase 2: backup ---
     let backup_path = {
@@ -189,8 +182,7 @@ pub fn apply_update(install: &Path, downloaded: &Path) -> anyhow::Result<()> {
         p.set_file_name(fname);
         p
     };
-    std::fs::rename(install, &backup_path)
-        .context("could not move install aside for backup")?;
+    std::fs::rename(install, &backup_path).context("could not move install aside for backup")?;
 
     // --- Phase 3: rename downloaded over target (MANDATORY — never cp/write-in-place) ---
     if let Err(e) = std::fs::rename(downloaded, install) {
@@ -220,9 +212,7 @@ pub fn apply_update(_install: &Path, _downloaded: &Path) -> anyhow::Result<()> {
 pub fn relaunch(install: &Path) -> ! {
     #[cfg(target_os = "macos")]
     {
-        let _ = std::process::Command::new("open")
-            .arg(install)
-            .spawn();
+        let _ = std::process::Command::new("open").arg(install).spawn();
         std::process::exit(0);
     }
     #[cfg(target_os = "linux")]

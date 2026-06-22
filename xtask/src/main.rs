@@ -72,7 +72,8 @@ fn main() -> Result<()> {
             linux_sha,
             linux_size,
         } => {
-            let json = manifest::build_manifest(&version, &macos_sha, macos_size, &linux_sha, linux_size);
+            let json =
+                manifest::build_manifest(&version, &macos_sha, macos_size, &linux_sha, linux_size);
             std::fs::write("target/latest.json", json)?;
             Ok(())
         }

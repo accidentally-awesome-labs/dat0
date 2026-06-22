@@ -36,7 +36,11 @@ pub enum InstallPath {
 /// `writable` = `apply::is_writable(&apply::install_root().unwrap_or_default())`.
 /// Callers should evaluate this off the main thread and pass the result here.
 pub fn prompt_action_for(writable: bool) -> InstallPath {
-    if writable { InstallPath::Swap } else { InstallPath::Nudge }
+    if writable {
+        InstallPath::Swap
+    } else {
+        InstallPath::Nudge
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -44,8 +48,7 @@ pub fn prompt_action_for(writable: bool) -> InstallPath {
 // ---------------------------------------------------------------------------
 
 /// The human-facing GitHub Releases page opened by the Nudge path.
-const RELEASES_PAGE_URL: &str =
-    "https://github.com/accidentally-awesome-labs/dat0/releases/latest";
+const RELEASES_PAGE_URL: &str = "https://github.com/accidentally-awesome-labs/dat0/releases/latest";
 
 /// Kick the update check off-thread.  Called from:
 /// - The `CheckForUpdates` menu action handler (manual trigger, `is_manual=true`).
@@ -146,11 +149,7 @@ fn show_update_prompt(cx: &mut App, update: crate::update::AvailableUpdate) {
     use gpui_component::WindowExt as _;
     use gpui_component::dialog::{Dialog, DialogButtonProps};
 
-    let title = format!(
-        "{} {}",
-        dat0_i18n::t("update.available"),
-        update.version
-    );
+    let title = format!("{} {}", dat0_i18n::t("update.available"), update.version);
     let install_restart = dat0_i18n::t("update.install_restart");
     let later = dat0_i18n::t("update.later");
 

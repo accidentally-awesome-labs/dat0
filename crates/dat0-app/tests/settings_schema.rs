@@ -19,7 +19,10 @@ fn round_trip_toml() {
 #[test]
 fn update_auto_check_defaults_true() {
     let s = Settings::default();
-    assert!(s.update_auto_check, "update_auto_check should default to true");
+    assert!(
+        s.update_auto_check,
+        "update_auto_check should default to true"
+    );
 }
 
 #[test]
