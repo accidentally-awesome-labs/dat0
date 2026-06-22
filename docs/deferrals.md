@@ -42,8 +42,8 @@ that's modifying it; merge conflicts are signals worth investigating.
 |-------|----------------------------------------------------|--------|------|--------|
 | D-001 | Editable Settings widgets (author identity + theme dropdown) | closed | P1 | P3 |
 | D-002 | Theme live-switch through running window           | closed | P1   | P3     |
-| D-003 | Sparkle Objective-C `SUUpdater` bridge             | open | P1   | P10a-2 |
-| D-004 | AppImageUpdate subprocess invocation               | open | P1   | P10a-2 |
+| D-003 | Sparkle Objective-C `SUUpdater` bridge             | closed | P1   | P10a-2 |
+| D-004 | AppImageUpdate subprocess invocation               | closed | P1   | P10a-2 |
 | D-005 | Linux Secret Service "setup banner" UX             | open | P1   | TBD    |
 | D-006 | macOS x86_64 (Intel) CI matrix coverage            | open | P1   | TBD    |
 | D-007 | MotherDuck ATTACH end-to-end                       | closed | P2   | P5c    |
@@ -65,6 +65,7 @@ that's modifying it; merge conflicts are signals worth investigating.
 | D-025 | Derived-table provenance not persisted across workspace reopen (cold CLI export flattens derived → base) | open | P8 | — |
 | D-026 | Python (non-Rust) `.dat0` reader — format is reader-ready (Parquet + tagged JSON) | open | P8 | — |
 | D-027 | In-app Inspect polish (read-only badge, scratch GC, multi-source GUI replay, Unpack button) | open | P8 | — |
+| D-028 | Privileged `/Applications` auto-update (SMJobBless/SMAppService helper for authenticated install) | open | P10a-2 | v1.x |
 
 ## At-a-glance — Plan defects
 
@@ -150,7 +151,7 @@ that's modifying it; merge conflicts are signals worth investigating.
 
 ### D-003 — Sparkle Objective-C `SUUpdater` bridge
 
-- **Status:** open
+- **Status:** closed
 - **Deferred from:** P1 (T15)
 - **Target phase:** P10a-2
 - **Reason:** Cross-language Objective-C bridge needs notarized .app bundle +
@@ -165,11 +166,14 @@ that's modifying it; merge conflicts are signals worth investigating.
 - **Note (2026-06-21):** P10a ships the signed pipeline + a minimal update
   *nudge* (About box → open Releases); the in-app Sparkle bridge moves to the
   P10a-2 updater slice, gated on the Sparkle↔GPUI run-loop spike.
-- **Last touched:** 2026-06-21
+- **Note (2026-06-22):** Closed — superseded by P10a-2's unified Rust updater
+  (minisign-signed `latest.json` + cross-platform self-swap); the Sparkle
+  `SUUpdater` scaffolding was retired in T5. Merged in P10a-2.
+- **Last touched:** 2026-06-22
 
 ### D-004 — AppImageUpdate subprocess invocation
 
-- **Status:** open
+- **Status:** closed
 - **Deferred from:** P1 (T15)
 - **Target phase:** P10a-2
 - **Reason:** Real subprocess invocation of `appimageupdatetool` requires a
@@ -182,7 +186,10 @@ that's modifying it; merge conflicts are signals worth investigating.
 - **Note (2026-06-21):** P10a ships the signed pipeline + a minimal update
   *nudge* (About box → open Releases); the AppImageUpdate subprocess invocation
   moves to the P10a-2 updater slice, gated on the Sparkle↔GPUI run-loop spike.
-- **Last touched:** 2026-06-21
+- **Note (2026-06-22):** Closed — superseded by P10a-2's unified Rust updater
+  (minisign-signed `latest.json` + cross-platform self-swap); the AppImageUpdate
+  subprocess scaffolding was retired in T5. Merged in P10a-2.
+- **Last touched:** 2026-06-22
 
 ### D-005 — Linux Secret Service "setup banner" UX
 
@@ -864,6 +871,38 @@ that's modifying it; merge conflicts are signals worth investigating.
 - **Originating doc:** P8 T9; `crates/dat0-app/src/package/inspect.rs`.
 - **User-facing doc:** `docs/dat0-packages.md` § "In the app".
 - **Last touched:** 2026-06-13.
+
+---
+
+### D-028 — Privileged `/Applications` auto-update (SMJobBless / SMAppService helper)
+
+- **Status:** open
+- **Deferred from:** P10a-2 (design non-goal — user-writable-only scope)
+- **Target phase:** v1.x
+- **What it is:** When dat0 is installed in a location the running user cannot
+  write to (e.g. `/Applications` owned by root), the P10a-2 updater's
+  `is_writable` check returns false and the updater falls back to the P10a nudge
+  (opens the GitHub Releases URL). A privileged updater helper would allow
+  one-click in-app installs even into system-owned locations:
+  - **macOS:** an `SMJobBless`- or `SMAppService`-registered privileged helper
+    tool that requests user authentication (Touch ID / password prompt via
+    Security framework), then performs the `.app` swap at the privileged path.
+  - **Linux:** equivalent approach (e.g. a `pkexec`/PolicyKit wrapper or an
+    `systemd` activation unit that can write to `/opt` or `/usr/local`).
+- **Why deferred:** The P10a-2 updater targets the common user-level install
+  case (dat0 dropped into `~/Applications` or equivalent, or installed via a
+  user-writable path). Privileged helpers add significant OS-integration surface
+  (code-signing requirements, entitlements, SMJobBless / SMAppService
+  registration, PolicyKit `.policy` files) that is disproportionate to the P10a-2
+  scope and requires additional testing on both platforms. The nudge fallback
+  is a safe and complete substitute for v0 users.
+- **Originating doc:** `docs/plans/2026-06-22-dat0-p10a-2-design.md` (non-goals:
+  privileged `/Applications` update); `docs/plans/2026-06-22-dat0-p10a-2-uat.md`
+  §3 (not-writable fallback UAT scenario).
+- **Note (2026-06-22):** opened at P10a-2 merge. The not-writable fallback
+  (`is_writable` → nudge) is exercised in the UAT checklist §3. Full SMJobBless /
+  PolicyKit wiring is v1.x scope.
+- **Last touched:** 2026-06-22
 
 ---
 
