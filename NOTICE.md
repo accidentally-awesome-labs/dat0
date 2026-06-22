@@ -1204,6 +1204,7 @@ Used by:
 - fax_derive 0.2.0 — https://github.com/pdf-rs/fax
 - libm 0.2.16 — https://github.com/rust-lang/compiler-builtins
 - malloc_buf 0.0.6 — https://github.com/SSheldon/malloc_buf
+- minisign-verify 0.2.5 — https://github.com/jedisct1/rust-minisign-verify
 - objc2-encode 4.1.0 — https://github.com/madsmtm/objc2
 - objc2-foundation 0.3.2 — https://github.com/madsmtm/objc2
 - objc2 0.6.4 — https://github.com/madsmtm/objc2
