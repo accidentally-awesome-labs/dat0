@@ -74,6 +74,8 @@ pub fn bundle(version: &str, git_sha: &str) -> Result<PathBuf> {
         app.join("Contents/Info.plist"),
         info_plist(version, git_sha),
     )?;
+    // 4. Create tar.gz of the .app bundle.
+    run(Command::new("tar").args(["-czf", "target/macos/dat0.app.tar.gz", "-C", "target/macos", "dat0.app"]))?;
     Ok(app)
 }
 

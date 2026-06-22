@@ -2,7 +2,7 @@
 use anyhow::Result;
 use clap::{Parser, Subcommand};
 use std::path::PathBuf;
-use xtask::{icon, linux, macos, sign};
+use xtask::{icon, linux, macos, manifest, sign};
 
 #[derive(Parser)]
 #[command(bin_name = "xtask", about = "dat0 build/release tasks")]
@@ -42,6 +42,19 @@ enum Cmd {
         #[arg(long)]
         linux: bool,
     },
+    /// Generate latest.json manifest for auto-update.
+    GenManifest {
+        #[arg(long)]
+        version: String,
+        #[arg(long)]
+        macos_sha: String,
+        #[arg(long)]
+        macos_size: u64,
+        #[arg(long)]
+        linux_sha: String,
+        #[arg(long)]
+        linux_size: u64,
+    },
 }
 
 fn main() -> Result<()> {
@@ -52,5 +65,16 @@ fn main() -> Result<()> {
         Cmd::SignMacos { identity } => sign::sign_and_notarize(&identity).map(|_| ()),
         Cmd::BundleLinux { version } => linux::bundle(&version).map(|_| ()),
         Cmd::Verify { macos, linux } => sign::verify(macos, linux),
+        Cmd::GenManifest {
+            version,
+            macos_sha,
+            macos_size,
+            linux_sha,
+            linux_size,
+        } => {
+            let json = manifest::build_manifest(&version, &macos_sha, macos_size, &linux_sha, linux_size);
+            std::fs::write("target/latest.json", json)?;
+            Ok(())
+        }
     }
 }
