@@ -1,12 +1,11 @@
 # dat0 Security Runbook
 
-> Operational security reference for P10a's signing and notarization secrets.
+> Operational security reference for P10a and P10a-2's signing and notarization secrets.
 > Covers renewal cadence, key storage, rotation procedures, and the
 > SECURITY.md inbox process.
 >
-> Scope: **P10a secrets only** (Apple Developer cert, GPG signing key, notary
-> API key). EdDSA appcast-signing-key rotation is documented when the in-app
-> updater lands in P10a-2; the shipped P10a code does not yet consume that key.
+> Scope: **P10a secrets** (Apple Developer cert, GPG signing key, notary
+> API key) **+ P10a-2 minisign update-signing key** (`latest.json` signature).
 
 ---
 
@@ -146,6 +145,106 @@ regular schedule (e.g. yearly for the CI subkey):
 
 ---
 
+## minisign Update-Signing Key (`latest.json`)
+
+### What it is
+
+The minisign secret key is used by the `release.yml` CI workflow to sign the
+`latest.json` update manifest. The in-app updater (`dat0-app`) fetches
+`latest.json` and verifies its minisign signature before trusting any version
+or download URL. The app embeds the public key at build time via:
+
+```rust
+const MINISIGN_PUBLIC_KEY: &str = include_str!("../assets/minisign-public-key.txt");
+```
+
+(`crates/dat0-app/assets/minisign-public-key.txt`). The app **verifies only**
+— it never holds the secret key.
+
+### Passphrase decision — **passwordless CI key** (deliberate)
+
+The CI key is generated without a passphrase (`-W` flag):
+
+```bash
+# Generate a new passwordless minisign key pair:
+minisign -G -W -p minisign-public-key.txt -s minisign-secret-key.key
+# Or with rsign (Rust re-implementation):
+rsign generate -W -p minisign-public-key.txt -s minisign-secret-key.key
+```
+
+**Passwordless is deliberate.** The P10a GPG signing key ran into a
+passphrase-propagation pitfall in `release.yml` — `GPG_PASSPHRASE` was set in
+the "Import" step's `env:` but did not reach the "Bundle + sign" step, so the
+detach-sign hung waiting for a PIN. See the
+[GPG "Passphrase decision" note](#passphrase-decision-verify-at-first-dry-run)
+above. A passwordless minisign key avoids that class of bug entirely: the key
+is disposable (rotate on compromise), and the GitHub Secret encryption is the
+sole access control — a passphrase would add no meaningful protection over the
+secret itself. The CI signs `latest.json` non-interactively with no PIN prompt.
+
+### Storage
+
+- **Secret key contents** — stored only as the `MINISIGN_SECRET_KEY` GitHub
+  Actions repository secret (the full ASCII content of `minisign-secret-key.key`)
+  plus an offline backup in a password manager. The raw file must **never be
+  committed** to the repository.
+- **Public key** — committed to the repository at
+  `crates/dat0-app/assets/minisign-public-key.txt` and embedded by the app
+  via `include_str!`. This is the only key material that belongs in version
+  control.
+
+To load the secret in CI (`release.yml`):
+
+```yaml
+- name: Sign latest.json
+  env:
+    MINISIGN_SECRET_KEY: ${{ secrets.MINISIGN_SECRET_KEY }}
+  run: |
+    echo "$MINISIGN_SECRET_KEY" > /tmp/minisign.key
+    rsign sign -s /tmp/minisign.key latest.json
+    rm /tmp/minisign.key
+```
+
+### Rotation
+
+Rotate the minisign key if the secret is believed compromised, or on a regular
+schedule (e.g. yearly):
+
+1. Generate a new passwordless key pair (see "Passphrase decision" above).
+2. Update `MINISIGN_SECRET_KEY` in GitHub Secrets with the new secret key contents.
+3. Replace `crates/dat0-app/assets/minisign-public-key.txt` with the new public
+   key and commit it.
+4. Cut a new release that ships the updated embedded public key. Clients running
+   the **old** embedded key can still verify **old** releases — they cannot verify
+   releases signed with the new key until they update. This is the migration
+   caveat: there is no cross-signing or key-transition window; prompt users to
+   update before rotating if the old key is not compromised. In a compromise
+   scenario, rotate immediately and accept that clients still on the old embedded
+   key will see signature-verification failures (and fall back to the manual
+   nudge) until they update; communicate this urgently via the release notes and
+   a SECURITY advisory.
+5. Annotate the release notes for the first release signed with the new key.
+6. Run a `workflow_dispatch` dry run to confirm the new key signs and verifies
+   cleanly.
+
+### Current state — dry-run blocker
+
+> **The production key is NOT yet provisioned.** `crates/dat0-app/assets/minisign-public-key.txt`
+> currently holds the **T1 test key** (generated during development). Before any
+> real release, a human MUST:
+>
+> 1. Generate a production passwordless key pair (see above).
+> 2. Set `MINISIGN_SECRET_KEY` to the new secret key in GitHub Secrets.
+> 3. Replace the embedded public key in `crates/dat0-app/assets/minisign-public-key.txt`
+>    and commit it.
+>
+> Until these steps are done, either the test key ships to real users (invalid for
+> production releases) or the CI sign step fails (no production secret set). The
+> full end-to-end validation is a `workflow_dispatch` dry-run + the clean-VM UAT
+> in `docs/plans/2026-06-22-dat0-p10a-2-uat.md`.
+
+---
+
 ## Keychain Bootstrap Password
 
 The `KEYCHAIN_PASSWORD` secret is used only to create and unlock the ephemeral
@@ -189,22 +288,11 @@ On receipt of a security report:
 
 ---
 
-## EdDSA appcast signing key (P10a-2)
-
-> **Not yet active in P10a.** The shipped P10a code delivers a minimal update
-> *nudge* only (About box → "Download latest" link to the GitHub Releases page).
-> The in-app Sparkle bridge (D-003) and AppImageUpdate subprocess (D-004) move
-> to the P10a-2 updater slice.
-
-When P10a-2 lands, this section will document: the `ed25519` appcast signing
-key pair, rotation procedure, the Sparkle `SUPublicEDKey` bundle string, and
-the AppImage update-info URL. Until then, no appcast key rotation is needed.
-
----
-
 ## See also
 
 - `docs/release-runbook.md` — full secret inventory, cut-a-release steps
-- `docs/plans/2026-06-17-dat0-p10a-uat.md` — clean-VM verification checklist
+- `docs/plans/2026-06-17-dat0-p10a-uat.md` — P10a clean-VM verification checklist
+- `docs/plans/2026-06-22-dat0-p10a-2-uat.md` — P10a-2 auto-update clean-VM UAT checklist
 - `SECURITY.md` — public-facing disclosure policy
-- `docs/deferrals.md` D-003 / D-004 — Sparkle bridge / AppImageUpdate (P10a-2)
+- `docs/deferrals.md` D-003 / D-004 — closed by P10a-2 (unified Rust updater superseded Sparkle/AppImageUpdate)
+- `docs/deferrals.md` D-028 — privileged `/Applications` auto-update (SMJobBless helper, v1.x)

@@ -8,6 +8,7 @@
 
 pub mod profile;
 pub mod theme;
+pub mod updates;
 pub mod workspace;
 
 /// Trait implemented by every settings panel section.
@@ -33,5 +34,6 @@ pub fn all_sections() -> Vec<Box<dyn SettingsSection>> {
         Box::new(profile::ProfileSection),
         Box::new(theme::ThemeSection),
         Box::new(workspace::WorkspaceSection),
+        Box::new(updates::UpdatesSection),
     ]
 }

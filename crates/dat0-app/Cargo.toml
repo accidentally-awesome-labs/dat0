@@ -55,6 +55,7 @@ lru = { workspace = true }
 futures = { workspace = true }
 reqwest = { workspace = true }
 sha2 = { workspace = true }
+minisign-verify = "0.2" # P10a-2 updater: Ed25519 manifest signature verification (verify-only, no transitive deps)
 # SQL syntax highlighting in the P5 console. The grammar is registered at
 # runtime via gpui-component's LanguageRegistry (P5a §0 decision 6). We
 # deliberately do NOT enable gpui-component's all-or-nothing

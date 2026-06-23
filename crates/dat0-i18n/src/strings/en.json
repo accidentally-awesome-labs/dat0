@@ -64,6 +64,7 @@
   "menu.window.zoom": "Zoom",
   "menu.help": "Help",
   "menu.help.about": "About dat0",
+  "menu.help.check_updates": "Check for Updates…",
   "menu.help.docs": "Documentation",
   "menu.help.discord": "Join Discord",
   "about.title": "dat0",
@@ -220,5 +221,15 @@
   "sql.ai.stop": "Stop",
   "sql.explain.button": "Explain",
   "sql.explain.title": "Explanation",
-  "sql.explain.close": "Close"
+  "sql.explain.close": "Close",
+  "settings.updates": "Updates",
+  "settings.update.auto_check": "Automatically check for updates at launch",
+  "settings.updates.placeholder": "dat0 can check for new versions at startup and let you know when one is available.",
+  "update.available": "Update available:",
+  "update.install_restart": "Install & Restart",
+  "update.later": "Later",
+  "update.checking": "Checking for updates…",
+  "update.up_to_date": "dat0 is up to date.",
+  "update.downloading": "Downloading update…",
+  "update.failed": "Update failed"
 }

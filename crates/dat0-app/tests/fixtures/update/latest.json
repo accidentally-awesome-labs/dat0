@@ -1,0 +1,5 @@
+{
+  "version": "0.2.0",
+  "macos": { "url": "https://example.invalid/dat0.app.tar.gz", "sha256": "aaaa", "size": 100 },
+  "linux": { "url": "https://example.invalid/dat0.AppImage", "sha256": "bbbb", "size": 200 }
+}

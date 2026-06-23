@@ -1,7 +1,24 @@
 //! Minimal update *nudge* (not auto-update): compare the running version to the
 //! latest GitHub Release. Sparkle-agnostic — the full updater lands in P10a-2.
 
+pub mod apply;
+pub mod check;
+pub mod download;
+pub mod manifest;
+pub mod ui;
+
 use anyhow::{Context, Result};
+
+pub const MANIFEST_URL: &str =
+    "https://github.com/accidentally-awesome-labs/dat0/releases/latest/download/latest.json";
+pub const MANIFEST_SIG_URL: &str = "https://github.com/accidentally-awesome-labs/dat0/releases/latest/download/latest.json.minisig";
+
+/// An available update returned by `check::fetch_update`.
+#[derive(Debug, Clone)]
+pub struct AvailableUpdate {
+    pub version: String,
+    pub artifact: manifest::ArtifactEntry,
+}
 
 pub const LATEST_RELEASE_API: &str =
     "https://api.github.com/repos/accidentally-awesome-labs/dat0/releases/latest";

@@ -182,6 +182,9 @@ pub fn build_menus(_cx: &mut gpui::App) -> Vec<gpui::Menu> {
             name: dat0_i18n::t("menu.help").into(),
             items: vec![
                 MenuItem::action(dat0_i18n::t("menu.help.about"), ShowAbout),
+                // P10a-2 T6: manual update check.
+                MenuItem::action(dat0_i18n::t("menu.help.check_updates"), CheckForUpdates),
+                MenuItem::separator(),
                 MenuItem::action(dat0_i18n::t("menu.help.docs"), OpenDocs),
                 MenuItem::action(dat0_i18n::t("menu.help.discord"), OpenDiscord),
             ],
@@ -221,6 +224,8 @@ gpui::actions!(
         Minimize,
         Zoom,
         ShowAbout,
+        // P10a-2 T6: "Check for Updates" menu action.
+        CheckForUpdates,
         OpenDocs,
         OpenDiscord,
         // P5a T11: SQL Console entry points (toggle / run / cancel / tab lifecycle).

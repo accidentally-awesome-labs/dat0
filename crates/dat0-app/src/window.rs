@@ -1536,6 +1536,14 @@ pub fn run_app(lock: AppLock, initial_paths: Vec<PathBuf>, main_loop: MainLoop) 
             crate::about::open(cx);
         });
 
+        // Wire Help → Check for Updates (P10a-2 T6). Declared unconditionally in
+        // menu_macos.rs so the handler resolves on Linux too.
+        cx.on_action(
+            |_action: &crate::menu_macos::CheckForUpdates, cx: &mut App| {
+                crate::update::ui::run_update_flow(cx, true);
+            },
+        );
+
         // Wire the .dat0 package actions (P8 T9). All declared unconditionally in
         // menu_macos.rs so the handlers resolve on Linux too (no visible menu).
         cx.on_action(|_action: &crate::menu_macos::ExportPackage, cx: &mut App| {
@@ -1701,6 +1709,32 @@ pub fn run_app(lock: AppLock, initial_paths: Vec<PathBuf>, main_loop: MainLoop) 
                 .detach();
                 let _ = window;
             });
+        }
+
+        // P10a-2 T6: launch-time update check.
+        //
+        // Gated on the persisted `Settings.update_auto_check` (default: true).
+        // Reads the settings store synchronously here (same pattern as
+        // `load_workspace_settings`), then fires the check off-thread so app
+        // startup is never blocked on the network.  The `run_update_flow` call
+        // itself just spawns a thread and returns immediately.
+        {
+            let auto_check = if let Ok(cfg_dir) = crate::platform::config_dir() {
+                let store =
+                    crate::settings::store::SettingsStore::with_path(cfg_dir.join("settings.toml"));
+                store
+                    .load_or_default()
+                    .map(|s| s.update_auto_check)
+                    .unwrap_or(true) // err → safe default: check
+            } else {
+                true // no config dir → safe default: check
+            };
+            if crate::update::ui::should_check_on_launch(auto_check) {
+                tracing::debug!("run_app: firing background update check");
+                crate::update::ui::run_update_flow(cx, false);
+            } else {
+                tracing::debug!("run_app: update_auto_check=false; skipping launch check");
+            }
         }
 
         // Bring the application to the foreground so the new window isn't
