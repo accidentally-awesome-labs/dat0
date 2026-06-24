@@ -4,6 +4,12 @@
 
 use super::sections;
 use crate::settings::store::SettingsStore;
+
+/// Which right-dock panel to toggle in the focused workspace window.
+enum DockKind {
+    Ai,
+    Connections,
+}
 use gpui::{
     Entity, IntoElement, ParentElement as _, Render, Styled as _, Window, div, prelude::*, px,
 };
@@ -296,6 +302,59 @@ impl SettingsPanel {
             .child(dat0_i18n::t("settings.memory_budget.footnote"))
     }
 
+    /// Toggle a right-dock panel in the focused workspace window (cross-window).
+    /// Because this reaches into a separate window's entity, it takes `&mut App`
+    /// rather than a panel-scoped context — call via plain `on_click` closure.
+    fn launch_dock(cx: &mut gpui::App, which: DockKind) {
+        let Some(weak) = crate::window_registry::focused_workspace_weak() else {
+            tracing::warn!("settings: no focused workspace to toggle dock");
+            return;
+        };
+        let Some(any_entity) = weak.upgrade() else {
+            return;
+        };
+        let Ok(shell) = any_entity.downcast::<crate::window::WorkspaceShell>() else {
+            return;
+        };
+        shell.update(cx, |ws, cx| match which {
+            DockKind::Ai => ws.toggle_ai_panel(cx),
+            DockKind::Connections => {
+                ws.connections_panel_visible = !ws.connections_panel_visible;
+                cx.notify();
+            }
+        });
+    }
+
+    fn render_motherduck(&self) -> impl IntoElement {
+        use gpui_component::button::Button;
+        div()
+            .flex()
+            .flex_col()
+            .gap_2()
+            .p_3()
+            .child(dat0_i18n::t("settings.motherduck.placeholder"))
+            .child(
+                Button::new("md-open")
+                    .label(dat0_i18n::t("settings.motherduck.manage"))
+                    .on_click(|_e, _w, cx| Self::launch_dock(cx, DockKind::Connections)),
+            )
+    }
+
+    fn render_ai(&self) -> impl IntoElement {
+        use gpui_component::button::Button;
+        div()
+            .flex()
+            .flex_col()
+            .gap_2()
+            .p_3()
+            .child(dat0_i18n::t("settings.ai.placeholder"))
+            .child(
+                Button::new("ai-open")
+                    .label(dat0_i18n::t("settings.ai.configure"))
+                    .on_click(|_e, _w, cx| Self::launch_dock(cx, DockKind::Ai)),
+            )
+    }
+
     fn persist_inputs(&self, cx: &gpui::App) {
         let name = self.name_input.read(cx).value().to_string();
         let email = self.email_input.read(cx).value().to_string();
@@ -319,6 +378,8 @@ impl Render for SettingsPanel {
             "workspace" => self.render_workspace(cx).into_any_element(),
             "updates" => self.render_updates(cx).into_any_element(),
             "advanced" => self.render_advanced(cx).into_any_element(),
+            "motherduck" => self.render_motherduck().into_any_element(),
+            "ai" => self.render_ai().into_any_element(),
             _ => div()
                 .p_3()
                 .child(dat0_i18n::t("settings.section.placeholder"))
