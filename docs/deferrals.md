@@ -53,7 +53,7 @@ that's modifying it; merge conflicts are signals worth investigating.
 | D-011 | Remove `__debug_query_scalar` test-only helper     | closed | P2   | P3a    |
 | D-012 | Engine catalog `TableInfo` synthesis (origin + schema) | closed | P2   | P3a    |
 | D-013 | Self-hosted macOS CI runner (cut hosted macos-14 10× billing) | open | P2 | TBD |
-| D-014 | Memory Budget Settings section | open | P3b | P3c / P9c |
+| D-014 | Memory Budget Settings section | closed | P3b | P3c / P9c |
 | D-015 | AccessKit / screen-reader selection-tree exposure | open | P4b | P10b |
 | D-018 | Workspace lineage DAG — node-edge graph with auto-layout (left→right topological), pan/zoom, whole-workspace view | open | P6b | — |
 | D-019 | Workspace concurrency/sync-drive: cross-machine lock, sync-drive detection, rich in-use modal, Settings → Workspace, force-unlock | closed | P7a | P7b |
@@ -516,7 +516,7 @@ that's modifying it; merge conflicts are signals worth investigating.
 
 ### D-014 — Memory Budget Settings section
 
-- **Status:** open
+- **Status:** closed
 - **Deferred from:** P3b (T11 scope decision)
 - **Target phase:** P3c (if split) or P9c (settings polish)
 - **Reason:** P3b T11 scope locks to D-001 wording (Profile + Theme widgets).
@@ -533,8 +533,12 @@ that's modifying it; merge conflicts are signals worth investigating.
   connection per window), or — if reapply-on-live-connection turns out to
   carry mid-query risk — a footnote "applies next window" tied to the
   control with a Restart hint.
+- **Closure note (2026-06-23):** Closed by P10b — editable Memory Budget
+  section (`memory_budget_mb`) + read-once `memory_budget_bytes` helper at all
+  window-open sites; applies to new windows (live-reapply on a running
+  connection remains a v1.x note).
 - **Originating doc:** `docs/specs/2026-05-25-dat0-p3b-ux-polish-design.md` §7.
-- **Last touched:** 2026-05-25.
+- **Last touched:** 2026-06-23.
 
 ---
 
