@@ -231,5 +231,7 @@
   "update.checking": "Checking for updates…",
   "update.up_to_date": "dat0 is up to date.",
   "update.downloading": "Downloading update…",
-  "update.failed": "Update failed"
+  "update.failed": "Update failed",
+  "settings.window.title": "Settings",
+  "settings.section.placeholder": "This section is coming up in a later step."
 }
