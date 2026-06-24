@@ -14,6 +14,7 @@ pub struct SettingsPanel {
     selected_section: String,
     name_input: Entity<InputState>,
     email_input: Entity<InputState>,
+    budget_input: Entity<InputState>,
     store: SettingsStore,
 }
 
@@ -31,10 +32,17 @@ impl SettingsPanel {
                 .placeholder("Email")
                 .default_value(email0)
         });
+        let mb0 = store
+            .load_or_default()
+            .map(|s| s.memory_budget_mb)
+            .unwrap_or(1024)
+            .to_string();
+        let budget_input = cx.new(|cx| InputState::new(window, cx).default_value(mb0));
         Self {
             selected_section: "profile".into(),
             name_input,
             email_input,
+            budget_input,
             store,
         }
     }
@@ -103,21 +111,36 @@ impl SettingsPanel {
             .child(Input::new(&self.email_input))
     }
 
-    fn persist_profile(&self, cx: &gpui::App) {
+    fn render_memory_budget(&self, _cx: &mut gpui::Context<Self>) -> impl IntoElement {
+        div()
+            .flex()
+            .flex_col()
+            .gap_2()
+            .p_3()
+            .child(dat0_i18n::t("settings.memory_budget.placeholder"))
+            .child(Input::new(&self.budget_input))
+            .child(dat0_i18n::t("settings.memory_budget.footnote"))
+    }
+
+    fn persist_inputs(&self, cx: &gpui::App) {
         let name = self.name_input.read(cx).value().to_string();
         let email = self.email_input.read(cx).value().to_string();
         let _ = sections::profile::ProfileSection::on_name_change(&self.store, &name);
         let _ = sections::profile::ProfileSection::on_email_change(&self.store, &email);
+        if let Ok(mb) = self.budget_input.read(cx).value().trim().parse::<u32>() {
+            let _ = crate::settings::set_memory_budget_mb(&self.store, mb);
+        }
     }
 }
 
 impl Render for SettingsPanel {
     fn render(&mut self, window: &mut Window, cx: &mut gpui::Context<Self>) -> impl IntoElement {
         // Persist Profile inputs on each render tick (cheap; values are short).
-        self.persist_profile(cx);
+        self.persist_inputs(cx);
         let content = match self.selected_section.as_str() {
             "profile" => self.render_profile(cx).into_any_element(),
             "theme" => self.render_theme(cx).into_any_element(),
+            "memory_budget" => self.render_memory_budget(cx).into_any_element(),
             _ => div()
                 .p_3()
                 .child(dat0_i18n::t("settings.section.placeholder"))
