@@ -62,6 +62,36 @@ impl SettingsPanel {
             }))
     }
 
+    fn render_theme(&self, cx: &mut gpui::Context<Self>) -> impl IntoElement {
+        use gpui_component::button::Button;
+        let current = self
+            .store
+            .get_string("theme.id")
+            .unwrap_or_else(|| "dark".into());
+        div()
+            .flex()
+            .flex_col()
+            .gap_2()
+            .p_3()
+            .child(dat0_i18n::t("settings.theme.placeholder"))
+            .child(
+                Button::new("settings-theme-cycle")
+                    .label(format!("{}: {}", dat0_i18n::t("settings.theme"), current))
+                    .on_click(cx.listener(|this, _ev, _w, cx| {
+                        const ORDER: [&str; 3] = ["dark", "light", "high-contrast"];
+                        let cur = this
+                            .store
+                            .get_string("theme.id")
+                            .unwrap_or_else(|| "dark".into());
+                        let i = ORDER.iter().position(|t| *t == cur).unwrap_or(0);
+                        let next = ORDER[(i + 1) % ORDER.len()];
+                        let _ = this.store.set("theme.id", next);
+                        crate::theme::Theme::switch(cx, next);
+                        cx.notify();
+                    })),
+            )
+    }
+
     fn render_profile(&self, _cx: &mut gpui::Context<Self>) -> impl IntoElement {
         div()
             .flex()
@@ -87,6 +117,7 @@ impl Render for SettingsPanel {
         self.persist_profile(cx);
         let content = match self.selected_section.as_str() {
             "profile" => self.render_profile(cx).into_any_element(),
+            "theme" => self.render_theme(cx).into_any_element(),
             _ => div()
                 .p_3()
                 .child(dat0_i18n::t("settings.section.placeholder"))
