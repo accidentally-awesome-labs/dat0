@@ -564,7 +564,8 @@ that's modifying it; merge conflicts are signals worth investigating.
   controls) and token-prompt modal are additional AccessKit / screen-reader surfaces
   to cover alongside the selection tree (still deferred).
 - **Note (2026-06-21):** still open; → P10b.
-- **Last touched:** 2026-06-21.
+- **Re-checked P10b (2026-06-23):** `accesskit` still absent from `Cargo.lock`, gpui pinned `=0.2.2`. Stays open; v1 a11y = operability + AA contrast (see `docs/a11y.md`); revisit when the GPUI pin ships an AccessKit adapter.
+- **Last touched:** 2026-06-23.
 
 ---
 
