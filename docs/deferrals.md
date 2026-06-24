@@ -66,6 +66,7 @@ that's modifying it; merge conflicts are signals worth investigating.
 | D-026 | Python (non-Rust) `.dat0` reader — format is reader-ready (Parquet + tagged JSON) | open | P8 | — |
 | D-027 | In-app Inspect polish (read-only badge, scratch GC, multi-source GUI replay, Unpack button) | open | P8 | — |
 | D-028 | Privileged `/Applications` auto-update (SMJobBless/SMAppService helper for authenticated install) | open | P10a-2 | v1.x |
+| D-029 | Settings panel persist-on-render → change-gate (per-frame fsync); + P10b cleanup (orphan `SettingsView`/dead `render` trait, 2 hardcoded input placeholders, orphan `settings.update.auto_check` key) + correct the "i18n-check fails on missing keys" claim (it is warn-only) | open | P10b | P10c |
 
 ## At-a-glance — Plan defects
 
@@ -908,6 +909,51 @@ that's modifying it; merge conflicts are signals worth investigating.
   (`is_writable` → nudge) is exercised in the UAT checklist §3. Full SMJobBless /
   PolicyKit wiring is v1.x scope.
 - **Last touched:** 2026-06-22
+
+---
+
+### D-029 — Settings panel persist-on-render → change-gate (+ P10b cleanup trio)
+
+- **Status:** open
+- **Deferred from:** P10b (plan-sanctioned model; final whole-branch review flagged the cost)
+- **Target phase:** P10c
+- **What it is:** `SettingsPanel::render` (`crates/dat0-app/src/settings_ui/panel.rs`)
+  calls `persist_inputs(cx)` on **every render tick**, unconditionally. Each call
+  routes Profile name/email (and, on the memory_budget section, the budget value)
+  through `store.set`/`set_memory_budget_mb` → `SettingsStore::save`, which does an
+  atomic write with `f.sync_all()` + parent-dir fsync (PD-002). So a Profile render
+  performs 2 fsync-ing atomic `settings.toml` writes per frame (3 on memory_budget),
+  **even when nothing changed** (`set` does not diff). On a hot render loop (hover,
+  cursor blink, any external `cx.notify()`) this is double-fsync-per-frame to the
+  config dir, which can stall the UI thread on a slow/synced drive and races the
+  `SettingsWatcher`. The plan explicitly sanctioned this ("cheap; values are short")
+  and correctness is fine (last-write-wins, idempotent) — this is a perf smell, not
+  a bug.
+- **Fix when picked up:** change-gate the persistence — cache the last-persisted
+  `String`s on the panel and only call the setter when the input value actually
+  changed, or move persistence to the input `on_change`/blur hook instead of render.
+- **Bundled P10b cleanups (all zero-risk subtractions, do together in P10c):**
+  - Delete the orphaned `SettingsView` struct + its `Render` impl + the now-dead
+    `SettingsSection::render()` trait method and its 9 placeholder impls
+    (`settings_ui/mod.rs` + `sections/*`). `SettingsPanel` superseded them in P10b
+    T4; `SettingsView` is instantiated nowhere and `section.render()` is never
+    called. Both `pub`, so they compile without a dead-code warning today.
+  - i18n the two hardcoded input placeholders `.placeholder("Name")`/`("Email")`
+    in `panel.rs` (add `settings.profile.*_placeholder` keys).
+  - Drop the orphan i18n key `settings.update.auto_check` (referenced only in a
+    comment in `sections/updates.rs`; now duplicates `settings.updates.toggle`'s
+    value) + the stale comment.
+- **Process note (i18n-check):** the planning docs claim `scripts/i18n-check.sh`
+  "fails on a missing (referenced-but-absent) key." It does NOT — it is a warn-only
+  un-i18n'd-literal heuristic that `exit 0`s and does not resolve referenced keys
+  against `en.json`; `dat0_i18n::t` returns the key string itself on a miss (no
+  panic). P10b ships zero missing keys (final review verified every `settings_ui`
+  `t("…")` resolves), but the next phase should not over-trust this gate. A real
+  key-resolution check is a candidate follow-up.
+- **Originating doc:** `docs/plans/2026-06-23-dat0-p10b-plan.md` (T4/T7 persist-on-render;
+  Global Constraints i18n-check claim). Final whole-branch review 2026-06-23 (verdict:
+  merge OK with this filed as a tracked follow-up).
+- **Last touched:** 2026-06-23
 
 ---
 
