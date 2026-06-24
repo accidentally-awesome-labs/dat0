@@ -20,7 +20,10 @@ The logging pipeline redacts absolute file-system paths before they are written:
 - Windows paths (`C:\<name>\…`)
 
 …are all replaced with `<redacted>`. The redaction is applied in the `before_send`
-hook in `crates/dat0-app/src/telemetry/redaction.rs` and to local log output.
+hook in `crates/dat0-app/src/telemetry/redaction.rs` before any crash event leaves
+the process. Local log output is written by a standard tracing subscriber and is
+**not** separately redacted — treat your local log files as potentially containing
+absolute paths.
 
 ---
 
@@ -70,7 +73,7 @@ machine** via dat0's telemetry or AI features:
 
 | Category | Detail |
 |---|---|
-| Schema and column names | Table names, column names, and data types stay local |
+| Schema and column names | Not sent in crash telemetry. (Schema and column names + types **are** sent to your configured AI provider when you use the AI feature — see §4.) |
 | Query text and results | SQL you write or results dat0 returns are never sent |
 | File paths | Absolute file-system paths are redacted before any outbound network call |
 | Source data | Row values from your tables or imported files are never transmitted |
@@ -85,17 +88,21 @@ machine** via dat0's telemetry or AI features:
 ## 4. AI feature and outbound API calls
 
 When you use the AI (NL→SQL) feature, dat0 sends a request to the AI provider
-you configured (Anthropic, OpenAI, OpenRouter, or a Custom endpoint). The payload
-is schema-only:
+you configured (Anthropic, OpenAI, OpenRouter, or a Custom endpoint). By default
+the payload is schema-only:
 
-- **Sent:** table names, column names, and column types.
-- **Never sent:** row values, query results, file paths, or `.dat0` package
-  contents.
+- **Sent by default:** table names, column names, and column types.
+- **Never sent:** query results, file paths, or `.dat0` package contents.
+- **Sent only when you enable the toggle:** If you turn on the
+  **include-sample-rows** toggle (in the AI panel), a bounded set of stringified
+  preview row values from the current result is also included in the request to
+  your AI provider. This toggle is off by default (`include_sample_rows = false`
+  in `AiSettings`).
 
-The schema-only filter is enforced structurally in
+The schema-only default is enforced structurally in
 `crates/dat0-app/src/ai/schema_ctx.rs` and `crates/dat0-app/src/ai/request.rs`.
-The `AiRequest` type has no field that can carry row data; the `SchemaContext`
-built by `build_schema_context` maps names and types only.
+The `SchemaContext` built by `build_schema_context` maps names and types only.
+`AiRequest.sample_rows` is `None` unless the include-sample-rows toggle is on.
 
 dat0 does not proxy your AI requests through its own servers. Requests go directly
 from your machine to the provider endpoint you configured. Custom provider URLs
@@ -123,7 +130,8 @@ network configuration is required.
 |---|---|
 | Stack trace + OS + dat0 version (crash report) | Only if you opt in (default: off) |
 | AI schema payload (table/column names + types) | Only when you use the AI feature, directly to your chosen provider |
-| Query text, row data, results, file paths | Never |
+| AI sample-rows payload (preview row values) | Only when you use the AI feature **and** have enabled the include-sample-rows toggle (off by default) |
+| Query text, results, file paths | Never |
 | API keys, MotherDuck token | Never (OS keychain only) |
 | `.dat0` package contents | Never |
 
