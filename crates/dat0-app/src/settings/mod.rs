@@ -1,3 +1,4 @@
+pub mod budget;
 mod schema;
 pub mod store;
 pub mod watcher;
