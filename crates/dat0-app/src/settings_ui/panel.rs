@@ -195,6 +195,96 @@ impl SettingsPanel {
             .child(Input::new(&self.email_input))
     }
 
+    fn render_advanced(&self, cx: &mut gpui::Context<Self>) -> impl IntoElement {
+        use gpui_component::button::{Button, ButtonVariants as _};
+        let b = crate::about::build_info::BuildInfo::current();
+        let level = self
+            .store
+            .load_or_default()
+            .map(|s| s.log_level)
+            .unwrap_or_else(|_| "info,dat0=debug".into());
+        div()
+            .flex()
+            .flex_col()
+            .gap_2()
+            .p_3()
+            .child(format!("dat0 {} ({})", b.version, b.git_sha))
+            .child(
+                Button::new("adv-open-logs")
+                    .label(dat0_i18n::t("settings.advanced.open_logs"))
+                    .on_click(|_e, _w, _cx| {
+                        if let Ok(d) = crate::platform::cache_dir() {
+                            let _ = crate::platform::open_url(&d.to_string_lossy());
+                        }
+                    }),
+            )
+            .child(
+                Button::new("adv-reveal-config")
+                    .label(dat0_i18n::t("settings.advanced.reveal_config"))
+                    .on_click(|_e, _w, _cx| {
+                        if let Ok(d) = crate::platform::config_dir() {
+                            let _ = crate::platform::open_url(&d.to_string_lossy());
+                        }
+                    }),
+            )
+            .child(
+                Button::new("adv-log-level")
+                    .label(format!(
+                        "{}: {}",
+                        dat0_i18n::t("settings.advanced.log_level"),
+                        level
+                    ))
+                    .on_click(cx.listener(|this, _e, _w, cx| {
+                        const LV: [&str; 4] = ["error", "warn", "info,dat0=debug", "debug"];
+                        let cur = this
+                            .store
+                            .load_or_default()
+                            .map(|s| s.log_level)
+                            .unwrap_or_else(|_| "info,dat0=debug".into());
+                        let i = LV.iter().position(|l| *l == cur).unwrap_or(2);
+                        let _ = crate::settings::set_log_level(&this.store, LV[(i + 1) % LV.len()]);
+                        cx.notify();
+                    })),
+            )
+            .child(
+                Button::new("adv-reset")
+                    .label(dat0_i18n::t("settings.advanced.reset"))
+                    .ghost()
+                    .on_click(cx.listener(|this, _e, window, cx| {
+                        this.open_reset_confirm(window, cx);
+                    })),
+            )
+    }
+
+    fn open_reset_confirm(&self, window: &mut Window, cx: &mut gpui::Context<Self>) {
+        use gpui_component::WindowExt as _;
+        use gpui_component::dialog::{Dialog, DialogButtonProps};
+        // SettingsStore is not Clone; create a fresh store path-equivalent and
+        // wrap in Rc so the Fn builder closure can clone it on each invocation.
+        let store = std::rc::Rc::new(crate::settings::store::SettingsStore::with_path(
+            crate::platform::config_dir()
+                .expect("config dir")
+                .join("settings.toml"),
+        ));
+        window.open_dialog(cx, move |dialog: Dialog, _w, _cx| {
+            let store = std::rc::Rc::clone(&store);
+            dialog
+                .title(dat0_i18n::t("settings.advanced.reset.title"))
+                .confirm()
+                .button_props(
+                    DialogButtonProps::default()
+                        .ok_text(dat0_i18n::t("settings.advanced.reset.ok"))
+                        .cancel_text(dat0_i18n::t("common.cancel")),
+                )
+                .child(dat0_i18n::t("settings.advanced.reset.body"))
+                .on_ok(move |_e, _w, _cx| {
+                    let _ = store.save(&crate::settings::Settings::default());
+                    true
+                })
+                .on_cancel(|_e, _w, _cx| true)
+        });
+    }
+
     fn render_memory_budget(&self, _cx: &mut gpui::Context<Self>) -> impl IntoElement {
         div()
             .flex()
@@ -228,6 +318,7 @@ impl Render for SettingsPanel {
             "telemetry" => self.render_telemetry(cx).into_any_element(),
             "workspace" => self.render_workspace(cx).into_any_element(),
             "updates" => self.render_updates(cx).into_any_element(),
+            "advanced" => self.render_advanced(cx).into_any_element(),
             _ => div()
                 .p_3()
                 .child(dat0_i18n::t("settings.section.placeholder"))
