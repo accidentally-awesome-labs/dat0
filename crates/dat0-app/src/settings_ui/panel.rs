@@ -70,6 +70,90 @@ impl SettingsPanel {
             }))
     }
 
+    fn toggle_row(
+        &self,
+        id: &'static str,
+        label_key: &'static str,
+        on: bool,
+        cx: &mut gpui::Context<Self>,
+        set: fn(&SettingsStore, bool) -> anyhow::Result<()>,
+    ) -> impl IntoElement {
+        div()
+            .id(id)
+            .cursor_pointer()
+            .flex()
+            .flex_row()
+            .gap_2()
+            .px_3()
+            .py_1()
+            .child(if on { "[x]" } else { "[ ]" })
+            .child(dat0_i18n::t(label_key))
+            .on_click(cx.listener(move |this, _ev, _w, cx| {
+                let _ = set(&this.store, !on);
+                cx.notify();
+            }))
+    }
+
+    fn render_telemetry(&self, cx: &mut gpui::Context<Self>) -> impl IntoElement {
+        use gpui_component::button::Button;
+        let on = self
+            .store
+            .load_or_default()
+            .map(|s| s.telemetry.crash_submission_enabled)
+            .unwrap_or(false);
+        div()
+            .flex()
+            .flex_col()
+            .gap_2()
+            .p_3()
+            .child(self.toggle_row(
+                "tg-telemetry",
+                "settings.telemetry.toggle",
+                on,
+                cx,
+                sections::telemetry::set_crash_submission_enabled,
+            ))
+            .child(
+                Button::new("telemetry-privacy")
+                    .label(dat0_i18n::t("settings.telemetry.learn_more"))
+                    .on_click(|_ev, _w, _cx| {
+                        let _ = crate::platform::open_url(
+                            "https://github.com/accidentally-awesome-labs/dat0/blob/main/docs/privacy.md",
+                        );
+                    }),
+            )
+    }
+
+    fn render_workspace(&self, cx: &mut gpui::Context<Self>) -> impl IntoElement {
+        let on = self
+            .store
+            .load_or_default()
+            .map(|s| s.workspace.treat_all_as_networked)
+            .unwrap_or(false);
+        div().flex().flex_col().gap_2().p_3().child(self.toggle_row(
+            "tg-workspace",
+            "settings.workspace.toggle",
+            on,
+            cx,
+            sections::workspace::set_treat_all_as_networked,
+        ))
+    }
+
+    fn render_updates(&self, cx: &mut gpui::Context<Self>) -> impl IntoElement {
+        let on = self
+            .store
+            .load_or_default()
+            .map(|s| s.update_auto_check)
+            .unwrap_or(false);
+        div().flex().flex_col().gap_2().p_3().child(self.toggle_row(
+            "tg-updates",
+            "settings.updates.toggle",
+            on,
+            cx,
+            sections::updates::set_update_auto_check,
+        ))
+    }
+
     fn render_theme(&self, cx: &mut gpui::Context<Self>) -> impl IntoElement {
         use gpui_component::button::Button;
         let current = self
@@ -141,6 +225,9 @@ impl Render for SettingsPanel {
             "profile" => self.render_profile(cx).into_any_element(),
             "theme" => self.render_theme(cx).into_any_element(),
             "memory_budget" => self.render_memory_budget(cx).into_any_element(),
+            "telemetry" => self.render_telemetry(cx).into_any_element(),
+            "workspace" => self.render_workspace(cx).into_any_element(),
+            "updates" => self.render_updates(cx).into_any_element(),
             _ => div()
                 .p_3()
                 .child(dat0_i18n::t("settings.section.placeholder"))
