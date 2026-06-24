@@ -11,9 +11,20 @@ use crate::{
 };
 
 /// Initialize the tracing subscriber. Idempotent — calling twice is a no-op.
+///
+/// When `RUST_LOG` is unset, the fallback directive is read from the persisted
+/// `settings.toml` (`log_level` field, default `"info,dat0=debug"`). On any
+/// error reading the file the hardcoded default is used — never panics.
 pub fn init_logging() -> Result<()> {
-    let filter =
-        EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info,dat0=debug"));
+    let persisted = crate::settings::store::SettingsStore::with_path(
+        platform::config_dir()
+            .unwrap_or_default()
+            .join("settings.toml"),
+    )
+    .load_or_default()
+    .map(|s| s.log_level)
+    .unwrap_or_else(|_| "info,dat0=debug".to_string());
+    let filter = EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new(&persisted));
     let _ = tracing_subscriber::registry()
         .with(filter)
         .with(fmt::layer().with_target(false).compact())

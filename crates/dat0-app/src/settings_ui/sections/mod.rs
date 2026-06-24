@@ -6,7 +6,12 @@
 //! single source of truth consumed by `SettingsView` (in the parent
 //! module) and by the tests in `tests/settings_ui.rs`.
 
+pub mod advanced;
+pub mod ai;
+pub mod memory_budget;
+pub mod motherduck;
 pub mod profile;
+pub mod telemetry;
 pub mod theme;
 pub mod updates;
 pub mod workspace;
@@ -28,12 +33,17 @@ pub trait SettingsSection {
     fn render(&self, _window: &mut gpui::Window, _cx: &mut gpui::App) -> gpui::AnyElement;
 }
 
-/// Return every section the settings panel knows about, in display order.
+/// Return every section the settings panel knows about, in §24.2 display order.
 pub fn all_sections() -> Vec<Box<dyn SettingsSection>> {
     vec![
         Box::new(profile::ProfileSection),
         Box::new(theme::ThemeSection),
+        Box::new(memory_budget::MemoryBudgetSection),
+        Box::new(motherduck::MotherDuckSection),
+        Box::new(ai::AiSection),
+        Box::new(telemetry::TelemetrySection),
         Box::new(workspace::WorkspaceSection),
         Box::new(updates::UpdatesSection),
+        Box::new(advanced::AdvancedSection),
     ]
 }

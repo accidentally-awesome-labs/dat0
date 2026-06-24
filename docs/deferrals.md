@@ -53,7 +53,7 @@ that's modifying it; merge conflicts are signals worth investigating.
 | D-011 | Remove `__debug_query_scalar` test-only helper     | closed | P2   | P3a    |
 | D-012 | Engine catalog `TableInfo` synthesis (origin + schema) | closed | P2   | P3a    |
 | D-013 | Self-hosted macOS CI runner (cut hosted macos-14 10× billing) | open | P2 | TBD |
-| D-014 | Memory Budget Settings section | open | P3b | P3c / P9c |
+| D-014 | Memory Budget Settings section | closed | P3b | P3c / P9c |
 | D-015 | AccessKit / screen-reader selection-tree exposure | open | P4b | P10b |
 | D-018 | Workspace lineage DAG — node-edge graph with auto-layout (left→right topological), pan/zoom, whole-workspace view | open | P6b | — |
 | D-019 | Workspace concurrency/sync-drive: cross-machine lock, sync-drive detection, rich in-use modal, Settings → Workspace, force-unlock | closed | P7a | P7b |
@@ -66,6 +66,7 @@ that's modifying it; merge conflicts are signals worth investigating.
 | D-026 | Python (non-Rust) `.dat0` reader — format is reader-ready (Parquet + tagged JSON) | open | P8 | — |
 | D-027 | In-app Inspect polish (read-only badge, scratch GC, multi-source GUI replay, Unpack button) | open | P8 | — |
 | D-028 | Privileged `/Applications` auto-update (SMJobBless/SMAppService helper for authenticated install) | open | P10a-2 | v1.x |
+| D-029 | Settings panel persist-on-render → change-gate (per-frame fsync); + P10b cleanup (orphan `SettingsView`/dead `render` trait, 2 hardcoded input placeholders, orphan `settings.update.auto_check` key) + correct the "i18n-check fails on missing keys" claim (it is warn-only) | open | P10b | P10c |
 
 ## At-a-glance — Plan defects
 
@@ -516,7 +517,7 @@ that's modifying it; merge conflicts are signals worth investigating.
 
 ### D-014 — Memory Budget Settings section
 
-- **Status:** open
+- **Status:** closed
 - **Deferred from:** P3b (T11 scope decision)
 - **Target phase:** P3c (if split) or P9c (settings polish)
 - **Reason:** P3b T11 scope locks to D-001 wording (Profile + Theme widgets).
@@ -533,8 +534,12 @@ that's modifying it; merge conflicts are signals worth investigating.
   connection per window), or — if reapply-on-live-connection turns out to
   carry mid-query risk — a footnote "applies next window" tied to the
   control with a Restart hint.
+- **Closure note (2026-06-23):** Closed by P10b — editable Memory Budget
+  section (`memory_budget_mb`) + read-once `memory_budget_bytes` helper at all
+  window-open sites; applies to new windows (live-reapply on a running
+  connection remains a v1.x note).
 - **Originating doc:** `docs/specs/2026-05-25-dat0-p3b-ux-polish-design.md` §7.
-- **Last touched:** 2026-05-25.
+- **Last touched:** 2026-06-23.
 
 ---
 
@@ -564,7 +569,8 @@ that's modifying it; merge conflicts are signals worth investigating.
   controls) and token-prompt modal are additional AccessKit / screen-reader surfaces
   to cover alongside the selection tree (still deferred).
 - **Note (2026-06-21):** still open; → P10b.
-- **Last touched:** 2026-06-21.
+- **Re-checked P10b (2026-06-23):** `accesskit` still absent from `Cargo.lock`, gpui pinned `=0.2.2`. Stays open; v1 a11y = operability + AA contrast (see `docs/a11y.md`); revisit when the GPUI pin ships an AccessKit adapter.
+- **Last touched:** 2026-06-23.
 
 ---
 
@@ -903,6 +909,51 @@ that's modifying it; merge conflicts are signals worth investigating.
   (`is_writable` → nudge) is exercised in the UAT checklist §3. Full SMJobBless /
   PolicyKit wiring is v1.x scope.
 - **Last touched:** 2026-06-22
+
+---
+
+### D-029 — Settings panel persist-on-render → change-gate (+ P10b cleanup trio)
+
+- **Status:** open
+- **Deferred from:** P10b (plan-sanctioned model; final whole-branch review flagged the cost)
+- **Target phase:** P10c
+- **What it is:** `SettingsPanel::render` (`crates/dat0-app/src/settings_ui/panel.rs`)
+  calls `persist_inputs(cx)` on **every render tick**, unconditionally. Each call
+  routes Profile name/email (and, on the memory_budget section, the budget value)
+  through `store.set`/`set_memory_budget_mb` → `SettingsStore::save`, which does an
+  atomic write with `f.sync_all()` + parent-dir fsync (PD-002). So a Profile render
+  performs 2 fsync-ing atomic `settings.toml` writes per frame (3 on memory_budget),
+  **even when nothing changed** (`set` does not diff). On a hot render loop (hover,
+  cursor blink, any external `cx.notify()`) this is double-fsync-per-frame to the
+  config dir, which can stall the UI thread on a slow/synced drive and races the
+  `SettingsWatcher`. The plan explicitly sanctioned this ("cheap; values are short")
+  and correctness is fine (last-write-wins, idempotent) — this is a perf smell, not
+  a bug.
+- **Fix when picked up:** change-gate the persistence — cache the last-persisted
+  `String`s on the panel and only call the setter when the input value actually
+  changed, or move persistence to the input `on_change`/blur hook instead of render.
+- **Bundled P10b cleanups (all zero-risk subtractions, do together in P10c):**
+  - Delete the orphaned `SettingsView` struct + its `Render` impl + the now-dead
+    `SettingsSection::render()` trait method and its 9 placeholder impls
+    (`settings_ui/mod.rs` + `sections/*`). `SettingsPanel` superseded them in P10b
+    T4; `SettingsView` is instantiated nowhere and `section.render()` is never
+    called. Both `pub`, so they compile without a dead-code warning today.
+  - i18n the two hardcoded input placeholders `.placeholder("Name")`/`("Email")`
+    in `panel.rs` (add `settings.profile.*_placeholder` keys).
+  - Drop the orphan i18n key `settings.update.auto_check` (referenced only in a
+    comment in `sections/updates.rs`; now duplicates `settings.updates.toggle`'s
+    value) + the stale comment.
+- **Process note (i18n-check):** the planning docs claim `scripts/i18n-check.sh`
+  "fails on a missing (referenced-but-absent) key." It does NOT — it is a warn-only
+  un-i18n'd-literal heuristic that `exit 0`s and does not resolve referenced keys
+  against `en.json`; `dat0_i18n::t` returns the key string itself on a miss (no
+  panic). P10b ships zero missing keys (final review verified every `settings_ui`
+  `t("…")` resolves), but the next phase should not over-trust this gate. A real
+  key-resolution check is a candidate follow-up.
+- **Originating doc:** `docs/plans/2026-06-23-dat0-p10b-plan.md` (T4/T7 persist-on-render;
+  Global Constraints i18n-check claim). Final whole-branch review 2026-06-23 (verdict:
+  merge OK with this filed as a tracked follow-up).
+- **Last touched:** 2026-06-23
 
 ---
 

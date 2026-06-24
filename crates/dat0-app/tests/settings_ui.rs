@@ -100,6 +100,29 @@ fn workspace_section_is_registered() {
 }
 
 #[test]
+fn registry_covers_all_nine_sections_in_spec_order() {
+    let ids: Vec<&str> = dat0_app::settings_ui::sections::all_sections()
+        .iter()
+        .map(|s| s.id())
+        .collect();
+    assert_eq!(
+        ids,
+        vec![
+            "profile",
+            "theme",
+            "memory_budget",
+            "motherduck",
+            "ai",
+            "telemetry",
+            "workspace",
+            "updates",
+            "advanced"
+        ],
+        "Settings sidebar must cover all §24.2 sections in order"
+    );
+}
+
+#[test]
 fn settings_store_set_rejects_unknown_key() {
     let store = SettingsStore::open_in_memory();
     let err = store

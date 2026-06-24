@@ -1,3 +1,4 @@
+pub mod contrast;
 mod zed_schema;
 
 use anyhow::{Context, Result};

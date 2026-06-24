@@ -124,6 +124,21 @@ fn load_workspace_settings() -> crate::settings::Workspace {
     }
 }
 
+/// Per-window DuckDB memory budget from the persisted setting (1 GiB default on any error).
+///
+/// Reads `settings.toml` from the OS config dir on every call so new windows
+/// pick up the latest value without requiring an app restart. Falls back to 1 GiB
+/// on any error (config dir unavailable, missing file, or parse failure) — mirrors
+/// the same config_dir path pattern used by `load_workspace_settings` above.
+fn configured_memory_budget() -> u64 {
+    let store = crate::settings::store::SettingsStore::with_path(
+        crate::platform::config_dir()
+            .expect("config dir")
+            .join("settings.toml"),
+    );
+    crate::settings::budget::memory_budget_bytes(&store)
+}
+
 /// Validate `folder` is a `.dat0/` workspace and open a window for it.
 ///
 /// Called by [`open_workspace_flow`] after the user picks a folder. Also
@@ -249,7 +264,7 @@ pub(crate) fn spawn_workspace_window(
             return;
         }
     };
-    let budget = 1024 * 1024 * 1024;
+    let budget = configured_memory_budget();
     let rt = match tokio::runtime::Handle::try_current() {
         Ok(h) => h,
         Err(_) => {
@@ -319,7 +334,7 @@ fn promote_focused_into(cx: &mut App, target: PathBuf) {
     let Ok(shell) = any_entity.downcast::<WorkspaceShell>() else {
         return;
     };
-    let budget = 1024 * 1024 * 1024;
+    let budget = configured_memory_budget();
     shell.update(cx, |shell, _cx| {
         let session = shell.session_arc();
         let mut guard = session.lock();
@@ -387,8 +402,12 @@ fn promote_focused_into(cx: &mut App, target: PathBuf) {
 
 // ─── .dat0 package flows (P8 T9) ──────────────────────────────────────────
 
-/// Default engine memory budget for package GUI ops (1 GiB, matching the
-/// workspace open/save flows).
+/// Fixed engine memory budget for read-only package (`.dat0`) inspect/convert
+/// operations — intentionally NOT driven by `Settings.memory_budget_mb` because
+/// package ops are transient read-only tasks that don't need to follow the
+/// user's live workspace preference. Workspace budget is now settings-driven
+/// (via `configured_memory_budget()`); this constant documents the deliberate
+/// divergence.
 const PACKAGE_BUDGET: u64 = 1024 * 1024 * 1024;
 
 /// `ExportPackage` handler: save the FOCUSED live workspace to a `.dat0` package.
@@ -1069,7 +1088,7 @@ pub(crate) fn spawn_window(
     // related cross-thread bridge work.
     let rt = tokio::runtime::Handle::try_current();
     let session = match rt {
-        Ok(handle) => handle.block_on(Session::new(state_root, 1024 * 1024 * 1024)),
+        Ok(handle) => handle.block_on(Session::new(state_root, configured_memory_budget())),
         Err(_) => {
             tracing::warn!("spawn_window: no tokio runtime on calling thread — skipping");
             return;
@@ -1104,7 +1123,7 @@ pub(crate) fn spawn_recovered_scratch(cx: &mut App, scratch_dir: PathBuf) {
             return;
         }
     };
-    let budget = 1024 * 1024 * 1024;
+    let budget = configured_memory_budget();
     let rt = match tokio::runtime::Handle::try_current() {
         Ok(h) => h,
         Err(_) => {
@@ -1249,7 +1268,7 @@ pub fn run_app(lock: AppLock, initial_paths: Vec<PathBuf>, main_loop: MainLoop) 
     let runtime = tokio::runtime::Runtime::new().expect("tokio runtime");
 
     let state_root = crate::platform::data_dir().expect("data dir");
-    let budget = 1024 * 1024 * 1024; // 1 GB
+    let budget = configured_memory_budget();
     let session = runtime
         .block_on(Session::new(&state_root, budget))
         .expect("session");

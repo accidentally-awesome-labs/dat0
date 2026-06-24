@@ -14,6 +14,7 @@
 //! gpui-component `setting` module (Reference A) is the higher-level
 //! alternative we may migrate to in a later milestone.
 
+pub mod panel;
 pub mod sections;
 
 use gpui::{IntoElement, Render, div, prelude::*};
@@ -41,12 +42,33 @@ impl Default for SettingsView {
     }
 }
 
-/// Open the settings panel as a dedicated window. T3 (P3b) ships a
-/// tracing stub so the `settings.open` built-in action (see
-/// [`crate::actions::builtin::ids::SETTINGS_OPEN`]) can resolve today;
-/// T13 (D-001 + D-002 follow-up) wires the real window-open path.
-pub fn open_settings_window(_app: &mut gpui::App) {
-    tracing::info!("settings_ui::open_settings_window stub — T13 wires the real window");
+/// Open the settings panel as a dedicated window (P10b T4 — discharges T13 / D-001).
+/// Previously a tracing stub; now opens the real `SettingsPanel` GPUI window.
+pub fn open_settings_window(cx: &mut gpui::App) {
+    use crate::settings::store::SettingsStore;
+    use gpui::{Bounds, TitlebarOptions, WindowBounds, WindowOptions, px, size};
+    use gpui_component::Root;
+
+    let store = SettingsStore::with_path(
+        crate::platform::config_dir()
+            .expect("config dir")
+            .join("settings.toml"),
+    );
+    let bounds = Bounds::centered(None, size(px(720.), px(560.)), cx);
+    let _ = cx.open_window(
+        WindowOptions {
+            window_bounds: Some(WindowBounds::Windowed(bounds)),
+            titlebar: Some(TitlebarOptions {
+                title: Some(dat0_i18n::t("settings.window.title").into()),
+                ..Default::default()
+            }),
+            ..Default::default()
+        },
+        move |window, cx| {
+            let view = cx.new(|cx| panel::SettingsPanel::new(store, window, cx));
+            cx.new(|cx| Root::new(view, window, cx))
+        },
+    );
 }
 
 impl Render for SettingsView {
