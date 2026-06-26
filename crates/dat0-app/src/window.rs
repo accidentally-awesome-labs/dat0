@@ -5544,7 +5544,6 @@ impl WorkspaceShell {
     /// `handle_drop` → data-source pipeline.  For `Remote` (NYC taxi): reuses
     /// `fetch_remote` + `fetch_failed_banner`.  Mirrors `drop_listener`'s
     /// `cx.spawn` + view-refresh pattern.  Wired by T4 hero buttons.
-    #[allow(dead_code)] // called from T4 hero wiring; not yet connected
     pub(crate) fn open_sample_kind(
         &mut self,
         kind: crate::sample_data::SampleKind,
@@ -5626,7 +5625,6 @@ impl WorkspaceShell {
     ///
     /// Wired by T4 hero recents list.  `Context<Self>` derefs to `App` so the
     /// free-function calls below compile without an explicit cast.
-    #[allow(dead_code)] // called from T4 hero wiring
     pub(crate) fn open_recent_entry(
         &mut self,
         entry: crate::recents::RecentEntry,
@@ -5646,7 +5644,6 @@ impl WorkspaceShell {
     /// → `handle_drop` → data-source refresh.  Mirrors `drop_listener`.
     ///
     /// Wired by T4 hero "Open file…" button.
-    #[allow(dead_code)] // called from T4 hero wiring
     pub(crate) fn open_file_picker(&mut self, cx: &mut Context<Self>) {
         let rx = cx.prompt_for_paths(gpui::PathPromptOptions {
             files: true,
@@ -5974,9 +5971,7 @@ impl Render for WorkspaceShell {
                     Err(_) => true,
                 };
                 // TODO(T8): read real first_run_done from settings
-                EmptyState::new(recents_empty, true)
-                    .render(cx)
-                    .into_any_element()
+                EmptyState::new(recents_empty, true).render(cx)
             }
         };
 

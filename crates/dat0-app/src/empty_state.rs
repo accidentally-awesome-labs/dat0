@@ -1,21 +1,24 @@
-//! Empty-state hero (P3b T7).
+//! Empty-state hero (P3b T7, wired P11a T4).
 //!
 //! Rendered by [`crate::window::WorkspaceShell::render`] when the session
-//! has no open tabs AND the user has no recents yet — the "first launch /
-//! cleared workspace" hero with two columns:
+//! has no open tabs — the "first launch / cleared workspace" hero with two
+//! columns:
 //!
 //! - **Left (`drop_zone`, flex-grow):** "Drop a file to start" affordance.
-//! - **Right (`recents_column`, fixed 280 px):** sample-data picker when
-//!   recents are empty, or the recents list itself once the user has
-//!   opened a file before.
+//! - **Right (fixed 280 px):** sample-data picker when recents are empty
+//!   (3 wired buttons + "Open file…"), or the recents list once the user has
+//!   opened a file before (each entry wired + "Open file…").
 //!
-//! T7 ships the skeleton only. Sample-button click handlers (extract
-//! bundled bytes via [`crate::sample_data::ensure_bundled_extracted`],
-//! then mount a [`crate::grid::GridDataSource`]) are deliberately
-//! deferred to a T7 follow-up so the render branch can land alongside
-//! the bundled assets without dragging in the data-source plumbing.
+//! P11a T4 wires all previously-inert buttons to the T3 shell helpers
+//! (`open_sample_kind`, `open_recent_entry`, `open_file_picker`), closing
+//! the P3b dead-skeleton debt.  Render is UAT-verified, not unit-tested —
+//! see the in-file smoke test for the structural guard.
+//!
+//! GPUI note: `on_click` lives on `StatefulInteractiveElement` (not
+//! `InteractiveElement`), so every clickable element must have an `.id(…)`
+//! assigned first to become `Stateful<Div>`.
 
-use gpui::{IntoElement, ParentElement, Styled, div, px};
+use gpui::{IntoElement, ParentElement, Styled, div, prelude::*, px};
 
 /// Which hero variant to render. `Enriched` (first run only) adds the
 /// value-prop band + featured demo CTA above the base hero; `Plain` is the
@@ -41,8 +44,7 @@ pub fn should_auto_tour(first_run_done: bool) -> bool {
 }
 
 /// View model for the empty-state hero. `recents_empty=true` shows the
-/// sample-data picker; `false` shows the recents list (still T7
-/// follow-up — for the skeleton both branches render placeholder copy).
+/// sample-data picker; `false` shows the recents list.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct EmptyState {
     pub recents_empty: bool,
@@ -57,22 +59,32 @@ impl EmptyState {
         }
     }
 
-    /// Build the two-column hero. Returns an `AnyElement` because the
-    /// caller (`WorkspaceShell::render`) folds this branch alongside the
-    /// `Table` branch via `into_any_element()` (single-return-type rule
-    /// for `impl IntoElement`).
+    /// Build the two-column hero.
     ///
-    /// `_cx` is reserved for later use (sample-button click handlers
-    /// need `&mut App` to schedule the bundled-extract task); kept in
-    /// the signature so the T7 follow-up patch can attach handlers
-    /// without churning the call site in `WorkspaceShell::render`.
-    pub fn render(&self, _cx: &mut gpui::App) -> impl IntoElement {
+    /// Returns `AnyElement` because the two column branches (samples vs.
+    /// recents) produce different concrete element types that must be widened
+    /// to a common type, and callers fold this branch alongside the `Table`
+    /// branch via `AnyElement`.
+    ///
+    /// `cx` is `&mut Context<WorkspaceShell>` so button click handlers can
+    /// use `cx.listener(...)` to reach the shell's action helpers directly.
+    pub fn render(
+        &self,
+        cx: &mut gpui::Context<crate::window::WorkspaceShell>,
+    ) -> gpui::AnyElement {
+        let right_col: gpui::AnyElement = if self.recents_empty {
+            self.sample_column(cx)
+        } else {
+            self.recents_column(cx)
+        };
+
         div()
             .size_full()
             .flex()
             .flex_row()
             .child(self.drop_zone())
-            .child(self.recents_column())
+            .child(div().w(px(280.)).child(right_col))
+            .into_any_element()
     }
 
     fn drop_zone(&self) -> impl IntoElement {
@@ -84,22 +96,85 @@ impl EmptyState {
             .child("Drop a file to start")
     }
 
-    fn recents_column(&self) -> impl IntoElement {
-        let body = if self.recents_empty {
-            // Sample-data picker — labels only at T7. The click handler
-            // (extract → mount GridDataSource) lands in a T7 follow-up.
-            div().flex().flex_col().child("Samples").children(
-                crate::sample_data::entries()
-                    .into_iter()
-                    .map(|e| div().child(e.title)),
-            )
-        } else {
-            // Recents list — wired in a T7 follow-up once the recents
-            // surface is plumbed into the view.
-            div().flex().flex_col().child("Recents…")
-        };
+    /// Right column when there are no recents: 3 wired sample-data buttons
+    /// (Iris CSV, Chinook SQLite, NYC taxi remote) plus "Open file…".
+    ///
+    /// Each clickable div is given a stable string ID — required by GPUI's
+    /// `StatefulInteractiveElement` (which provides `on_click`) before an
+    /// element participates in the hitbox/event system.
+    fn sample_column(
+        &self,
+        cx: &mut gpui::Context<crate::window::WorkspaceShell>,
+    ) -> gpui::AnyElement {
+        let mut col = div().flex().flex_col().child(div().child("Samples"));
 
-        div().w(px(280.)).child(body)
+        for (i, entry) in crate::sample_data::entries().into_iter().enumerate() {
+            let kind = entry.kind.clone();
+            let title = entry.title;
+            let subtitle = entry.subtitle;
+            let id = gpui::SharedString::from(format!("hero-sample-{i}"));
+            let handler = cx.listener(move |this, _ev, _window, cx| {
+                this.open_sample_kind(kind.clone(), cx);
+            });
+            col = col.child(
+                div()
+                    .id(id)
+                    .flex()
+                    .flex_col()
+                    .child(div().child(title))
+                    .child(div().child(subtitle))
+                    .on_click(handler),
+            );
+        }
+
+        let open_handler = cx.listener(|this, _ev, _window, cx| {
+            this.open_file_picker(cx);
+        });
+        col.child(
+            div()
+                .id("hero-open-file-samples")
+                .child("Open file…")
+                .on_click(open_handler),
+        )
+        .into_any_element()
+    }
+
+    /// Right column when recents exist: a clickable list of recent paths,
+    /// then "Open file…".
+    fn recents_column(
+        &self,
+        cx: &mut gpui::Context<crate::window::WorkspaceShell>,
+    ) -> gpui::AnyElement {
+        let recent_entries: Vec<crate::recents::RecentEntry> =
+            if let Ok(cfg) = crate::platform::config_dir() {
+                crate::recents::Recents::with_path(cfg.join("recents.json"))
+                    .list()
+                    .to_vec()
+            } else {
+                vec![]
+            };
+
+        let mut col = div().flex().flex_col().child(div().child("Recent"));
+
+        for (i, entry) in recent_entries.into_iter().enumerate() {
+            let label = entry.path().display().to_string();
+            let id = gpui::SharedString::from(format!("hero-recent-{i}"));
+            let handler = cx.listener(move |this, _ev, _window, cx| {
+                this.open_recent_entry(entry.clone(), cx);
+            });
+            col = col.child(div().id(id).child(label).on_click(handler));
+        }
+
+        let open_handler = cx.listener(|this, _ev, _window, cx| {
+            this.open_file_picker(cx);
+        });
+        col.child(
+            div()
+                .id("hero-open-file-recents")
+                .child("Open file…")
+                .on_click(open_handler),
+        )
+        .into_any_element()
     }
 }
 
@@ -125,5 +200,39 @@ mod tests {
     fn auto_tour_only_before_first_run_done() {
         assert!(should_auto_tour(false));
         assert!(!should_auto_tour(true));
+    }
+
+    /// Structural guard: the hero wires exactly 3 sample buttons.  If
+    /// `sample_data::entries()` changes count or kind-order, the render
+    /// code in `sample_column` will dispatch wrong actions — catch it here.
+    ///
+    /// Note: no `#[gpui::test]` render-smoke test exists in this crate
+    /// (no precedent at the pinned GPUI 0.2.2 rev), so the actual render
+    /// is verified via manual UAT rather than an automated harness.
+    #[test]
+    fn sample_buttons_cover_all_entries() {
+        let entries = crate::sample_data::entries();
+        assert_eq!(entries.len(), 3, "hero expects exactly 3 sample entries");
+        assert!(
+            matches!(
+                entries[0].kind,
+                crate::sample_data::SampleKind::BundledCsv { .. }
+            ),
+            "first sample must be BundledCsv (Iris)"
+        );
+        assert!(
+            matches!(
+                entries[1].kind,
+                crate::sample_data::SampleKind::BundledSqlite { .. }
+            ),
+            "second sample must be BundledSqlite (Chinook)"
+        );
+        assert!(
+            matches!(
+                entries[2].kind,
+                crate::sample_data::SampleKind::Remote { .. }
+            ),
+            "third sample must be Remote (NYC taxi)"
+        );
     }
 }
