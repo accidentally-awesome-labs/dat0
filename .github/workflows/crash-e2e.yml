@@ -16,7 +16,7 @@ jobs:
       - name: Skip if secrets absent
         id: gate
         run: |
-          if [ -z "${DAT0_GLITCHTIP_DSN_PUBLIC}" ] || [ -z "${GLITCHTIP_API_TOKEN}" ]; then
+          if [ -z "${DAT0_GLITCHTIP_DSN_PUBLIC}" ] || [ -z "${GLITCHTIP_API_TOKEN}" ] || [ -z "${GLITCHTIP_PROJECT_SLUG}" ]; then
             echo "secrets not set — skipping live e2e"; echo "run=false" >> "$GITHUB_OUTPUT"
           else
             echo "run=true" >> "$GITHUB_OUTPUT"

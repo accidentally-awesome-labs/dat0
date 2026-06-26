@@ -33,12 +33,12 @@ impl SettingsPanel {
         let email0 = store.get_string("author.email").unwrap_or_default();
         let name_input = cx.new(|cx| {
             InputState::new(window, cx)
-                .placeholder("Name")
+                .placeholder(dat0_i18n::t("settings.profile.name_placeholder"))
                 .default_value(name0.clone())
         });
         let email_input = cx.new(|cx| {
             InputState::new(window, cx)
-                .placeholder("Email")
+                .placeholder(dat0_i18n::t("settings.profile.email_placeholder"))
                 .default_value(email0.clone())
         });
         let mb0 = store

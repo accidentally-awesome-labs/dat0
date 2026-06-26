@@ -74,7 +74,14 @@ pub fn is_active() -> bool {
 }
 
 /// Capture a structured event. No-op when inactive.
-fn capture(level: Level, kind: &str, message: String, note: Option<&str>, release: Option<&str>) {
+fn capture(
+    level: Level,
+    kind: &str,
+    message: String,
+    note: Option<&str>,
+    release: Option<&str>,
+    backtrace: Option<&str>,
+) {
     if !is_active() {
         return;
     }
@@ -92,6 +99,14 @@ fn capture(level: Level, kind: &str, message: String, note: Option<&str>, releas
             .extra
             .insert("user_note".into(), Value::String(n.to_string()));
     }
+    if let Some(bt) = backtrace {
+        // Staged backtraces are already redacted at panic time (crash.rs); the
+        // before_send hook re-applies redact_event to every extra String as a
+        // second pass, so there is no new PII surface here.
+        event
+            .extra
+            .insert("backtrace".into(), Value::String(bt.to_string()));
+    }
     sentry::capture_event(event); // before_send redaction still applies
     if let Some(c) = sentry::Hub::current().client() {
         c.flush(Some(Duration::from_secs(5)));
@@ -106,6 +121,7 @@ pub fn submit_staged(crash: &crash::StagedCrash, note: Option<&str>) {
         crash.message.clone(),
         note,
         Some(&crash.version),
+        Some(&crash.backtrace),
     );
 }
 
@@ -116,6 +132,21 @@ pub fn submit_report(note: &str) {
         "report-a-bug",
         "User bug report".to_string(),
         Some(note),
+        None,
+        None,
+    );
+}
+
+/// Submit an operator/CI test event. The identifier is the event MESSAGE so it
+/// becomes the GlitchTip issue title (searchable), unlike a bug-report note
+/// which lands only in `extra.user_note`. No-op when inactive.
+pub fn submit_test_event(message: &str) {
+    capture(
+        Level::Info,
+        "e2e-test",
+        message.to_string(),
+        None,
+        None,
         None,
     );
 }

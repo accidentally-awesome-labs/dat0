@@ -30,7 +30,7 @@ while IFS= read -r key; do
         echo "::warning::i18n key referenced but absent from en.json: $key"
         MISSING=$((MISSING + 1))
     fi
-done < <(grep -rhoE 'dat0_i18n::t\("[^"]+"\)|t\("[^"]+"\)' crates/ 2>/dev/null \
+done < <(grep -rhoE 'dat0_i18n::t\("[^"]+"\)|[^a-zA-Z_]t\("[^"]+"\)' crates/ 2>/dev/null \
          | sed -E 's/.*t\("([^"]+)"\).*/\1/' | sort -u)
 echo "i18n-check: $MISSING referenced key(s) unresolved (warn-only)"
 exit 0

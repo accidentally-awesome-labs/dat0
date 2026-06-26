@@ -237,8 +237,8 @@ GlitchTip path exists; managed/Sentry is a fallback option noted in spec R11 if
 the self-hosted instance becomes unmaintainable). The public DSN is baked into
 the release binary at compile time via `env!("DAT0_GLITCHTIP_DSN_PUBLIC")` in
 `crates/dat0-app/src/telemetry/`. Development and CI builds use the stub value
-`"invalid"` (set in `.cargo/config.toml`) so no reports are sent during
-development. Only a release build compiled with the real DSN emits events.
+`https://stub@glitchtip.invalid/1` (set in `.cargo/config.toml`) so no reports
+are sent during development. Only a release build compiled with the real DSN emits events.
 
 ### CI secrets
 
@@ -249,7 +249,7 @@ gate runs live:
 | Secret name | What it is | Where to find it |
 |---|---|---|
 | `GLITCHTIP_DSN_PUBLIC` | Public DSN for the dat0 GlitchTip project (the full `https://…@host/N` URL). Used as `DAT0_GLITCHTIP_DSN_PUBLIC` at build time. | GlitchTip → project → Settings → Client Keys. |
-| `GLITCHTIP_API_TOKEN` | Personal or bot API token with read access to the dat0 project's issues. | GlitchtTip → account settings → API Tokens. |
+| `GLITCHTIP_API_TOKEN` | Personal or bot API token with read access to the dat0 project's issues. | GlitchTip → account settings → API Tokens. |
 | `GLITCHTIP_PROJECT_SLUG` | The URL slug for the dat0 project (e.g. `dat0`). | Visible in the GlitchTip project URL: `…/organizations/<org>/projects/<slug>/`. |
 
 The `crash-e2e.yml` workflow has `continue-on-error: true` (design D4 — a live

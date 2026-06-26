@@ -1,18 +1,10 @@
-//! Settings panel UI (P1.T16) — sidebar list of section labels on the
-//! left, active section's content pane on the right.
+//! Settings panel UI — sidebar list of section labels on the left,
+//! active section's content pane on the right.
 //!
-//! `SettingsView` is the GPUI `Render` entity. The plan (P1.T21 / boot
-//! orchestration) wires it to the View → Settings… menu action; until
-//! then this module is scaffolded but not yet opened from the running
-//! app. The two integration tests in `tests/settings_ui.rs` exercise the
-//! `sections` registry directly so the panel stays testable independent
-//! of the GPUI window lifecycle.
-//!
-//! Layout follows the lower-level Zed `settings_ui` pattern documented in
-//! `docs/internal/gpui-api-notes.md` §0.5 (Reference B): outer row split
-//! into a fixed-width sidebar (`w_64`) and a flex-1 content pane. The
-//! gpui-component `setting` module (Reference A) is the higher-level
-//! alternative we may migrate to in a later milestone.
+//! `SettingsPanel` (panel.rs) is the GPUI `Render` entity, opened as a
+//! dedicated window by `open_settings_window`. The two integration tests
+//! in `tests/settings_ui.rs` exercise the `sections` registry directly so
+//! the panel stays testable independent of the GPUI window lifecycle.
 
 pub mod panel;
 pub mod sections;

@@ -100,6 +100,11 @@ pub struct CrashGuard {
 impl CrashGuard {
     pub fn arm(data_dir: &Path) -> std::io::Result<Self> {
         crate::telemetry::crash::mark_running(data_dir)?;
+        // The panic hook stages `last-crash.json` unconditionally (panic context
+        // must not read settings). The payload is local-only and redacted. On the
+        // NEXT launch, if the user has opted OUT, `last-crash.json` is silently
+        // discarded (no dialog, no submission). The opt-out guarantee is satisfied
+        // by that relaunch discard, not by gating the hook itself.
         crate::telemetry::crash::install_panic_hook(data_dir.to_path_buf());
         Ok(Self {
             data_dir: data_dir.to_path_buf(),

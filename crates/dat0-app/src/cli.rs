@@ -210,7 +210,7 @@ pub fn run(cmd: PackageCmd) -> i32 {
                 return 2;
             }
         };
-        crate::telemetry::submit_report(&format!(
+        crate::telemetry::submit_test_event(&format!(
             "dat0 telemetry e2e {}",
             env!("CARGO_PKG_VERSION")
         ));

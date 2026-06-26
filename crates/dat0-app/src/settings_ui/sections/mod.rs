@@ -1,10 +1,9 @@
-//! Settings panel section registry (P1.T16).
+//! Settings panel section registry.
 //!
-//! Each section implements `SettingsSection` to declare its i18n key, a
-//! stable string id used for sidebar selection, and a `render` method that
-//! produces the right-pane content. The `all_sections()` registry is the
-//! single source of truth consumed by `SettingsView` (in the parent
-//! module) and by the tests in `tests/settings_ui.rs`.
+//! Each section implements `SettingsSection` to declare its i18n key and a
+//! stable string id used for sidebar selection. The `all_sections()` registry
+//! is the single source of truth consumed by `SettingsPanel` (panel.rs) for
+//! sidebar rendering, and by the tests in `tests/settings_ui.rs`.
 
 pub mod advanced;
 pub mod ai;
@@ -30,7 +29,9 @@ pub trait SettingsSection {
     fn id(&self) -> &'static str;
 }
 
-/// Return every section the settings panel knows about, in §24.2 display order.
+/// Return every section the settings panel knows about, in display order.
+/// Consumed by `SettingsPanel` (panel.rs) for sidebar rendering and by the
+/// `tests/settings_ui.rs` integration tests.
 pub fn all_sections() -> Vec<Box<dyn SettingsSection>> {
     vec![
         Box::new(profile::ProfileSection),
