@@ -22,6 +22,9 @@ pub struct SettingsPanel {
     email_input: Entity<InputState>,
     budget_input: Entity<InputState>,
     store: SettingsStore,
+    last_name: String,
+    last_email: String,
+    last_budget: String,
 }
 
 impl SettingsPanel {
@@ -31,25 +34,28 @@ impl SettingsPanel {
         let name_input = cx.new(|cx| {
             InputState::new(window, cx)
                 .placeholder("Name")
-                .default_value(name0)
+                .default_value(name0.clone())
         });
         let email_input = cx.new(|cx| {
             InputState::new(window, cx)
                 .placeholder("Email")
-                .default_value(email0)
+                .default_value(email0.clone())
         });
         let mb0 = store
             .load_or_default()
             .map(|s| s.memory_budget_mb)
             .unwrap_or(1024)
             .to_string();
-        let budget_input = cx.new(|cx| InputState::new(window, cx).default_value(mb0));
+        let budget_input = cx.new(|cx| InputState::new(window, cx).default_value(mb0.clone()));
         Self {
             selected_section: "profile".into(),
             name_input,
             email_input,
             budget_input,
             store,
+            last_name: name0,
+            last_email: email0,
+            last_budget: mb0,
         }
     }
 
@@ -355,15 +361,30 @@ impl SettingsPanel {
             )
     }
 
-    fn persist_inputs(&self, cx: &gpui::App) {
+    fn persist_inputs(&mut self, cx: &gpui::App) {
         let name = self.name_input.read(cx).value().to_string();
+        if changed(&self.last_name, &name) {
+            let _ = sections::profile::ProfileSection::on_name_change(&self.store, &name);
+            self.last_name = name;
+        }
         let email = self.email_input.read(cx).value().to_string();
-        let _ = sections::profile::ProfileSection::on_name_change(&self.store, &name);
-        let _ = sections::profile::ProfileSection::on_email_change(&self.store, &email);
-        if let Ok(mb) = self.budget_input.read(cx).value().trim().parse::<u32>() {
-            let _ = crate::settings::set_memory_budget_mb(&self.store, mb);
+        if changed(&self.last_email, &email) {
+            let _ = sections::profile::ProfileSection::on_email_change(&self.store, &email);
+            self.last_email = email;
+        }
+        let budget = self.budget_input.read(cx).value().trim().to_string();
+        if changed(&self.last_budget, &budget) {
+            if let Ok(mb) = budget.parse::<u32>() {
+                let _ = crate::settings::set_memory_budget_mb(&self.store, mb);
+            }
+            self.last_budget = budget;
         }
     }
+}
+
+/// True when the input value differs from the last value persisted this session.
+pub fn changed(prev: &str, next: &str) -> bool {
+    prev != next
 }
 
 impl Render for SettingsPanel {
