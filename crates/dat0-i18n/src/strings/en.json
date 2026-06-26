@@ -1,6 +1,12 @@
 {
   "app.name": "dat0",
   "app.tagline": "local-first data workbench",
+  "hero.tagline": "Explore data at native speed — local and private.",
+  "hero.take_tour": "Take a tour",
+  "hero.demo.heading": "Try the demo workspace",
+  "hero.demo.cta": "Open demo.dat0",
+  "hero.samples.heading": "Or start from a sample:",
+  "hero.open_file": "Open file…",
   "menu.file": "File",
   "menu.file.new_window": "New Window",
   "menu.file.open_file": "Open File…",
