@@ -42,6 +42,13 @@ pub enum PackageCmd {
     },
     /// `dat0 diff <a.dat0> <b.dat0> [--json]`
     Diff { a: PathBuf, b: PathBuf, json: bool },
+    /// Hidden operator/CI trigger: `dat0 __telemetry-test`.
+    ///
+    /// Inits telemetry ENABLED, sends one tagged event through the real DSN +
+    /// `before_send` redaction, flushes, and exits. Never shown in `--help`
+    /// (not in `VERBS`, not in the clap builder). Recognised only by the
+    /// early-return path in [`parse`].
+    TelemetryTest,
 }
 
 /// The set of recognized package subcommand verbs.
@@ -58,6 +65,11 @@ const VERBS: &[&str] = &["export", "unpack", "inspect", "replay", "diff"];
 /// for a parse error under a recognized subcommand).
 pub fn parse(args: &[String]) -> Option<PackageCmd> {
     let verb = args.get(1)?;
+    // Hidden operator/CI trigger: not in VERBS, not in clap — never appears in
+    // --help but is recognised here before the verb gate.
+    if verb == "__telemetry-test" {
+        return Some(PackageCmd::TelemetryTest);
+    }
     if !VERBS.contains(&verb.as_str()) {
         return None;
     }
@@ -186,6 +198,25 @@ fn cli_command() -> Command {
 /// engine's `spawn_blocking` works — P4b lesson). Returns a process exit code:
 /// `0` success, `1` logical failure (e.g. a non-empty diff, T5), `2` error.
 pub fn run(cmd: PackageCmd) -> i32 {
+    // Handle the hidden telemetry-test subcommand synchronously — no tokio
+    // runtime needed (submit_report flushes inline with a blocking sentry call).
+    if let PackageCmd::TelemetryTest = cmd {
+        // Operator/CI tool: build a live client regardless of the user's opt-in
+        // and emit one tagged event through the real DSN + before_send redaction.
+        let _t = match crate::telemetry::Telemetry::init(true) {
+            Ok(t) => t,
+            Err(e) => {
+                eprintln!("telemetry init failed: {e}");
+                return 2;
+            }
+        };
+        crate::telemetry::submit_report(&format!(
+            "dat0 telemetry e2e {}",
+            env!("CARGO_PKG_VERSION")
+        ));
+        println!("sent test event");
+        return 0;
+    }
     let rt = match tokio::runtime::Runtime::new() {
         Ok(rt) => rt,
         Err(e) => {
@@ -259,6 +290,11 @@ pub async fn run_async(cmd: PackageCmd) -> i32 {
                 2
             }
         },
+        // TelemetryTest is handled synchronously in `run()` before the tokio
+        // runtime is built; it can never reach this async dispatch path.
+        PackageCmd::TelemetryTest => {
+            unreachable!("TelemetryTest is handled in run() before the runtime")
+        }
     }
 }
 
