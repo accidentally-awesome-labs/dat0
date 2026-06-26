@@ -5534,6 +5534,199 @@ impl WorkspaceShell {
         self.ai_entry_prompt = Some(prompt);
         cx.notify();
     }
+
+    // ─── P11a T3: Hero open helpers ──────────────────────────────────────────
+
+    /// Materialize and open a sample dataset (P11a T3).
+    ///
+    /// For bundled variants (`BundledCsv` / `BundledSqlite`): extracts bytes
+    /// to `$state_root/samples/<dest>` (idempotent) then feeds the path to the
+    /// `handle_drop` → data-source pipeline.  For `Remote` (NYC taxi): reuses
+    /// `fetch_remote` + `fetch_failed_banner`.  Mirrors `drop_listener`'s
+    /// `cx.spawn` + view-refresh pattern.  Wired by T4 hero buttons.
+    #[allow(dead_code)] // called from T4 hero wiring; not yet connected
+    pub(crate) fn open_sample_kind(
+        &mut self,
+        kind: crate::sample_data::SampleKind,
+        cx: &mut Context<Self>,
+    ) {
+        use crate::sample_data::SampleKind;
+        let Some(state_root) = crate::window_registry::state_root() else {
+            crate::error_ux::push(crate::error_ux::Banner::error(
+                "Cannot open sample",
+                "App state directory not initialised",
+            ));
+            return;
+        };
+        let session = Arc::clone(&self.session);
+        match kind {
+            SampleKind::BundledCsv {
+                bytes,
+                dest_filename,
+            }
+            | SampleKind::BundledSqlite {
+                bytes,
+                dest_filename,
+            } => {
+                let path = match crate::sample_data::ensure_bundled_extracted(
+                    state_root,
+                    bytes,
+                    dest_filename,
+                ) {
+                    Ok(p) => p,
+                    Err(e) => {
+                        crate::error_ux::push(crate::error_ux::Banner::error(
+                            "Sample extract failed",
+                            e.to_string(),
+                        ));
+                        return;
+                    }
+                };
+                cx.spawn(async move |weak_shell, async_cx| {
+                    let outcomes = handle_drop(vec![path], session).await;
+                    Self::route_drop_outcomes(outcomes, weak_shell, async_cx).await;
+                })
+                .detach();
+            }
+            SampleKind::Remote {
+                url,
+                sha256,
+                dest_filename,
+                ..
+            } => {
+                let state_root = state_root.to_owned();
+                cx.spawn(
+                    async move |weak_shell, async_cx| match crate::sample_data::fetch_remote(
+                        url,
+                        sha256,
+                        &state_root,
+                        dest_filename,
+                    )
+                    .await
+                    {
+                        Ok(path) => {
+                            let outcomes = handle_drop(vec![path], session).await;
+                            Self::route_drop_outcomes(outcomes, weak_shell, async_cx).await;
+                        }
+                        Err(ref e) => {
+                            crate::error_ux::push(crate::sample_data::fetch_failed_banner(url, e));
+                        }
+                    },
+                )
+                .detach();
+            }
+        }
+    }
+
+    /// Open a recent workspace or package entry (P11a T3).
+    ///
+    /// - `Workspace` entries use `open_workspace_at` (opens / focuses the
+    ///   workspace window).
+    /// - `Package` entries use `open_package_at` (read-only Inspect window).
+    ///
+    /// Wired by T4 hero recents list.  `Context<Self>` derefs to `App` so the
+    /// free-function calls below compile without an explicit cast.
+    #[allow(dead_code)] // called from T4 hero wiring
+    pub(crate) fn open_recent_entry(
+        &mut self,
+        entry: crate::recents::RecentEntry,
+        cx: &mut Context<Self>,
+    ) {
+        use crate::recents::RecentEntry;
+        let path = entry.path().to_owned();
+        match entry {
+            RecentEntry::Workspace { .. } => open_workspace_at(cx, path),
+            RecentEntry::Package { .. } => open_package_at(cx, path),
+        }
+    }
+
+    /// Show the native file picker and open the chosen file (P11a T3).
+    ///
+    /// Equivalent to dropping a file onto the shell: `prompt_for_paths`
+    /// → `handle_drop` → data-source refresh.  Mirrors `drop_listener`.
+    ///
+    /// Wired by T4 hero "Open file…" button.
+    #[allow(dead_code)] // called from T4 hero wiring
+    pub(crate) fn open_file_picker(&mut self, cx: &mut Context<Self>) {
+        let rx = cx.prompt_for_paths(gpui::PathPromptOptions {
+            files: true,
+            directories: false,
+            multiple: false,
+            prompt: None,
+        });
+        let session = Arc::clone(&self.session);
+        cx.spawn(async move |weak_shell, async_cx| {
+            let path = match rx.await {
+                Ok(Ok(Some(mut v))) if !v.is_empty() => v.remove(0),
+                _ => return,
+            };
+            let outcomes = handle_drop(vec![path], session).await;
+            Self::route_drop_outcomes(outcomes, weak_shell, async_cx).await;
+        })
+        .detach();
+    }
+
+    /// Shared post-[`handle_drop`] outcome routing used by the three hero open
+    /// helpers (P11a T3).
+    ///
+    /// Mirrors the inner `cx.spawn` body of `drop_listener` exactly:
+    /// partitions outcomes into wizard requests and registered tables, opens
+    /// any import wizard dialogs, then promotes the last registered table into
+    /// the active data source with a full view refresh (`set_data_source` +
+    /// `refresh_catalog` + `cx.notify()`).
+    async fn route_drop_outcomes(
+        outcomes: Vec<DropOutcome>,
+        weak_shell: gpui::WeakEntity<WorkspaceShell>,
+        async_cx: &mut gpui::AsyncApp,
+    ) {
+        let mut wizard_requests: Vec<(std::path::PathBuf, crate::import_wizard::SniffSummary)> =
+            Vec::new();
+        let mut last_registered: Option<String> = None;
+        for o in outcomes {
+            match o {
+                DropOutcome::Registered { table_name, .. } => {
+                    last_registered = Some(table_name);
+                }
+                DropOutcome::OpenWizard { path, sniff } => {
+                    wizard_requests.push((path, sniff));
+                }
+                _ => {}
+            }
+        }
+        for (path, sniff) in wizard_requests {
+            let _ = async_cx.update(|app_cx| {
+                crate::import_wizard::open(app_cx, &path, sniff);
+            });
+        }
+        if let Some(table_name) = last_registered {
+            let engine = async_cx
+                .update(|app_cx| {
+                    weak_shell
+                        .update(app_cx, |view, _cx| view.session.lock().engine.clone())
+                        .ok()
+                })
+                .ok()
+                .flatten();
+            if let Some(engine) = engine {
+                match GridDataSource::new(engine, table_name.clone()).await {
+                    Ok(ds) => {
+                        let _ = async_cx.update(|app_cx| {
+                            let _ = weak_shell.update(app_cx, |view, cx| {
+                                let quoted = format!("\"{}\"", table_name.replace('"', "\"\""));
+                                view.view_model = Some(ViewModel::new(table_name.clone(), quoted));
+                                view.set_data_source(Arc::new(ds));
+                                view.refresh_catalog(cx);
+                                cx.notify();
+                            });
+                        });
+                    }
+                    Err(e) => {
+                        tracing::warn!("hero open: GridDataSource::new failed: {e}");
+                    }
+                }
+            }
+        }
+    }
 }
 
 /// Which AI field the entry modal is collecting (P9c-1 T9).
