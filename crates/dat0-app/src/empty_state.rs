@@ -17,17 +17,44 @@
 
 use gpui::{IntoElement, ParentElement, Styled, div, px};
 
+/// Which hero variant to render. `Enriched` (first run only) adds the
+/// value-prop band + featured demo CTA above the base hero; `Plain` is the
+/// wired P3 hero with no band and no auto-popup.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum HeroMode {
+    Enriched,
+    Plain,
+}
+
+/// First-run only ⇒ enriched. (`onboarding-v1.md` §3 state machine.)
+pub fn hero_mode(first_run_done: bool) -> HeroMode {
+    if first_run_done {
+        HeroMode::Plain
+    } else {
+        HeroMode::Enriched
+    }
+}
+
+/// The carousel auto-opens exactly once, on the very first run.
+pub fn should_auto_tour(first_run_done: bool) -> bool {
+    !first_run_done
+}
+
 /// View model for the empty-state hero. `recents_empty=true` shows the
 /// sample-data picker; `false` shows the recents list (still T7
 /// follow-up — for the skeleton both branches render placeholder copy).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct EmptyState {
     pub recents_empty: bool,
+    pub first_run_done: bool,
 }
 
 impl EmptyState {
-    pub fn new(recents_empty: bool) -> Self {
-        Self { recents_empty }
+    pub fn new(recents_empty: bool, first_run_done: bool) -> Self {
+        Self {
+            recents_empty,
+            first_run_done,
+        }
     }
 
     /// Build the two-column hero. Returns an `AnyElement` because the
@@ -82,9 +109,21 @@ mod tests {
 
     #[test]
     fn empty_state_can_be_constructed() {
-        let e = EmptyState::new(true);
+        let e = EmptyState::new(true, false);
         assert!(e.recents_empty);
-        let e2 = EmptyState::new(false);
+        let e2 = EmptyState::new(false, true);
         assert!(!e2.recents_empty);
+    }
+
+    #[test]
+    fn enriched_only_before_first_run_done() {
+        assert_eq!(hero_mode(false), HeroMode::Enriched);
+        assert_eq!(hero_mode(true), HeroMode::Plain);
+    }
+
+    #[test]
+    fn auto_tour_only_before_first_run_done() {
+        assert!(should_auto_tour(false));
+        assert!(!should_auto_tour(true));
     }
 }

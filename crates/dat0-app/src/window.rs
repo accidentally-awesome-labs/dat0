@@ -5855,7 +5855,10 @@ impl Render for WorkspaceShell {
                         .is_empty(),
                     Err(_) => true,
                 };
-                EmptyState::new(recents_empty).render(cx).into_any_element()
+                // TODO(T8): read real first_run_done from settings
+                EmptyState::new(recents_empty, true)
+                    .render(cx)
+                    .into_any_element()
             }
         };
 
