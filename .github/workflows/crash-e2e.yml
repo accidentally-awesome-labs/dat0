@@ -1,0 +1,44 @@
+name: crash-e2e
+on:
+  workflow_dispatch: {}
+  push:
+    branches: [main]
+jobs:
+  glitchtip-roundtrip:
+    runs-on: ubuntu-latest
+    continue-on-error: true   # D4: live external dep — must not redden main (ai_live lesson)
+    env:
+      DAT0_GLITCHTIP_DSN_PUBLIC: ${{ secrets.GLITCHTIP_DSN_PUBLIC }}
+      GLITCHTIP_API_TOKEN: ${{ secrets.GLITCHTIP_API_TOKEN }}
+      GLITCHTIP_PROJECT_SLUG: ${{ secrets.GLITCHTIP_PROJECT_SLUG }}
+    steps:
+      - uses: actions/checkout@v5
+      - name: Skip if secrets absent
+        id: gate
+        run: |
+          if [ -z "${DAT0_GLITCHTIP_DSN_PUBLIC}" ] || [ -z "${GLITCHTIP_API_TOKEN}" ]; then
+            echo "secrets not set — skipping live e2e"; echo "run=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "run=true" >> "$GITHUB_OUTPUT"
+          fi
+      - uses: dtolnay/rust-toolchain@stable
+        if: steps.gate.outputs.run == 'true'
+      - name: Build + send test event
+        if: steps.gate.outputs.run == 'true'
+        run: |
+          cargo build -p dat0-app --release --bin dat0
+          ./target/release/dat0 __telemetry-test
+      - name: Assert arrival in GlitchTip + no PII
+        if: steps.gate.outputs.run == 'true'
+        run: |
+          sleep 15  # ingestion lag
+          BASE="${GLITCHTIP_API_URL:-https://app.glitchtip.com}"
+          # NOTE: Confirm this API path against the live GlitchTip instance during UAT.
+          # Self-hosted instances may use /api/0/organizations/<org>/issues/ instead.
+          # The job is soft (continue-on-error: true), so a path mismatch surfaces
+          # as a yellow warning on CI, not a red gate on main.
+          RESP=$(curl -sf -H "Authorization: Bearer ${GLITCHTIP_API_TOKEN}" \
+            "${BASE}/api/0/projects/${GLITCHTIP_PROJECT_SLUG}/issues/?query=dat0+telemetry+e2e")
+          echo "$RESP" | grep -q "dat0 telemetry e2e" || { echo "test event not found"; exit 1; }
+          echo "$RESP" | grep -qE '/Users/|/home/' && { echo "PII leaked"; exit 1; } || true
+          echo "round-trip OK"
