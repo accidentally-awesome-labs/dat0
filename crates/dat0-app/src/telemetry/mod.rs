@@ -12,6 +12,7 @@
 
 pub mod crash;
 pub mod redaction;
+pub mod report_logic;
 
 use anyhow::Result;
 use sentry::ClientOptions;
