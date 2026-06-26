@@ -1555,6 +1555,19 @@ pub fn run_app(lock: AppLock, initial_paths: Vec<PathBuf>, main_loop: MainLoop) 
             crate::about::open(cx);
         });
 
+        // Wire Help → Report a Bug → crash/bug-report dialog (P10c T8).
+        // Declared unconditionally in menu_macos.rs so the handler resolves on
+        // Linux too (no visible menu item there, but the action still dispatches).
+        cx.on_action(|_action: &crate::menu_macos::ReportBug, cx: &mut App| {
+            if let Ok(dir) = crate::platform::data_dir() {
+                crate::view::crash_report::open_report(
+                    cx,
+                    crate::telemetry::report_logic::ReportKind::Bug,
+                    dir,
+                );
+            }
+        });
+
         // Wire Help → Check for Updates (P10a-2 T6). Declared unconditionally in
         // menu_macos.rs so the handler resolves on Linux too.
         cx.on_action(
@@ -1754,6 +1767,76 @@ pub fn run_app(lock: AppLock, initial_paths: Vec<PathBuf>, main_loop: MainLoop) 
             } else {
                 tracing::debug!("run_app: update_auto_check=false; skipping launch check");
             }
+        }
+
+        // P10c T8: relaunch crash-report prompt.
+        //
+        // Runs once at cold start, AFTER the first window is open and registered
+        // in the WindowRegistry.  We defer via dispatcher so that when
+        // `open_report` calls `cx.active_window()` the freshly-opened window
+        // is already considered "active" by gpui (the direct-call path has the
+        // window in the registry but macOS may not have assigned focus yet on
+        // the same tick).
+        //
+        // Gating (verbatim from D-029 spec):
+        //   1. opt_in=false         → discard staged data, NEVER prompt/transmit.
+        //   2. prior crash detected AND opt_in AND staged payload present
+        //                           → show Crash dialog with the payload.
+        //   3. prior crash (marker only, no staged JSON, e.g. SIGKILL)
+        //                           → discard bare marker; minimal-report is UAT-only.
+        //
+        // NOTE: `prior_crash_detected` returns true for EVERY cold start because
+        // `CrashGuard::arm` sets the running.marker BEFORE `run_app` enters.
+        // The REAL gate that prevents a dialog on clean exits is
+        // `read_staged(&dir).is_some()` (clear-exit Drop clears the marker but
+        // never the staged file — the staged file is only written by the panic hook).
+        if let Some(d) = crate::window_registry::dispatcher() {
+            let _ = d.dispatch(|cx: &mut App| {
+                if let Ok(dir) = crate::platform::data_dir() {
+                    // Read persisted setting once at startup (same pattern as
+                    // the P10a-2 update check above and boot.rs init_logging).
+                    // `unwrap_or(false)` = privacy-safe default (opt-out).
+                    let opt_in = crate::settings::store::SettingsStore::with_path(
+                        crate::platform::config_dir()
+                            .map(|d| d.join("settings.toml"))
+                            .unwrap_or_default(),
+                    )
+                    .load_or_default()
+                    .map(|s| s.telemetry.crash_submission_enabled)
+                    .unwrap_or(false);
+
+                    let prior = crate::telemetry::crash::prior_crash_detected(&dir);
+                    if crate::telemetry::report_logic::should_prompt(prior, opt_in) {
+                        if let Some(staged) = crate::telemetry::crash::read_staged(&dir) {
+                            tracing::info!(
+                                "run_app: prior crash detected with staged payload; \
+                                 opening crash report dialog"
+                            );
+                            crate::view::crash_report::open_report(
+                                cx,
+                                crate::telemetry::report_logic::ReportKind::Crash(staged),
+                                dir.clone(),
+                            );
+                        } else {
+                            // Marker survived but no panic payload (SIGKILL /
+                            // native crash).  Discard the bare marker; the
+                            // minimal-report path is a v1.x / UAT-only feature.
+                            tracing::debug!(
+                                "run_app: prior crash marker present but no staged \
+                                 payload (SIGKILL/native); clearing marker"
+                            );
+                            crate::telemetry::crash::clear_staged(&dir);
+                        }
+                    } else if !opt_in {
+                        // Opt-out: discard any staged data unconditionally.
+                        // MUST NOT prompt or transmit anything.
+                        crate::telemetry::crash::clear_staged(&dir);
+                        tracing::debug!(
+                            "run_app: crash_submission_enabled=false; staged data discarded"
+                        );
+                    }
+                }
+            });
         }
 
         // Bring the application to the foreground so the new window isn't

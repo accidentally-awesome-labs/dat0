@@ -222,3 +222,92 @@ Record the run URL in the release notes or in the team chat for traceability.
 - `docs/ci-mac-vm-runner.md` — tart-based self-hosted macOS runner (D-013)
 - `.github/workflows/release.yml` — the pipeline itself
 - `xtask/src/` — the `bundle-macos`, `sign-macos`, `bundle-linux`, `verify` subcommands
+
+---
+
+## GlitchTip / crash reporting
+
+> **Added P10c (2026-06-25).** Covers the self-hosted GlitchTip instance that
+> receives opt-in crash reports and Report-a-Bug events from dat0.
+
+### Instance and DSN provenance
+
+dat0 uses a **self-hosted GlitchTip instance** (confirmed by the user: only the
+GlitchTip path exists; managed/Sentry is a fallback option noted in spec R11 if
+the self-hosted instance becomes unmaintainable). The public DSN is baked into
+the release binary at compile time via `env!("DAT0_GLITCHTIP_DSN_PUBLIC")` in
+`crates/dat0-app/src/telemetry/`. Development and CI builds use the stub value
+`https://stub@glitchtip.invalid/1` (set in `.cargo/config.toml`) so no reports
+are sent during development. Only a release build compiled with the real DSN emits events.
+
+### CI secrets
+
+Add these three secrets to the GitHub repository
+(**Settings → Secrets and variables → Actions**) before the `crash-e2e` soft
+gate runs live:
+
+| Secret name | What it is | Where to find it |
+|---|---|---|
+| `GLITCHTIP_DSN_PUBLIC` | Public DSN for the dat0 GlitchTip project (the full `https://…@host/N` URL). Used as `DAT0_GLITCHTIP_DSN_PUBLIC` at build time. | GlitchTip → project → Settings → Client Keys. |
+| `GLITCHTIP_API_TOKEN` | Personal or bot API token with read access to the dat0 project's issues. | GlitchTip → account settings → API Tokens. |
+| `GLITCHTIP_PROJECT_SLUG` | The URL slug for the dat0 project (e.g. `dat0`). | Visible in the GlitchTip project URL: `…/organizations/<org>/projects/<slug>/`. |
+
+The `crash-e2e.yml` workflow has `continue-on-error: true` (design D4 — a live
+external dependency must never redden `main`). The job is a clean skip when any
+of the three secrets are absent.
+
+### DSN rotation
+
+If the DSN needs to be rotated (key compromise, project re-key):
+
+1. In GlitchTip: generate a new DSN key for the dat0 project.
+2. Update `GLITCHTIP_DSN_PUBLIC` in GitHub Secrets.
+3. Cut a new release build — the DSN is baked in at compile time, so the old
+   binary continues to use the old key until users update.
+4. Revoke the old key in GlitchTip only after the majority of users are on a
+   build that carries the new DSN (check crash-volume drop on the old key).
+
+### Postgres backups and uptime monitoring
+
+GlitchTip persists data in Postgres. Recommended hygiene:
+
+- **Daily backups:** `pg_dump` or managed-snapshot at the hosting layer.
+  Retain at least 7 days of snapshots.
+- **Uptime check:** add the GlitchTip web URL to an uptime monitor (e.g.
+  UptimeRobot free tier). Alert to a team channel. If the instance goes dark,
+  dat0 continues operating normally (the SDK drops events silently when the
+  DSN is unreachable); no user data is lost, but crash signals stop arriving.
+- **Spec R11 fallback:** if the self-hosted instance becomes unmaintainable,
+  migrate to Sentry's managed free tier. The DSN format is compatible;
+  rotation procedure above applies.
+
+### Reading incoming crash issues
+
+1. Open GlitchTip → dat0 project → **Issues**.
+2. Each crash shows: exception type, top-of-stack, OS/arch/version, and the
+   free-form note the user appended before submitting.
+3. Filter by `environment:production` to exclude test events.
+4. Look for the `dat0 telemetry e2e` tag/title to identify CI smoke events;
+   these can be muted or filtered as noise once the gate is stable.
+5. **Redaction check (periodic):** spot-check that `filepath`, `abs_path`, and
+   `module` fields do not contain real home-directory paths. The redactor
+   (`telemetry/redact.rs`) strips `/Users/<name>/` and `/home/<name>/`; confirm
+   it is still active after any telemetry refactor.
+
+### Manual smoke test
+
+To verify the live round-trip outside of CI, build with the real DSN and run:
+
+```bash
+DAT0_GLITCHTIP_DSN_PUBLIC="<real-dsn>" cargo build -p dat0-app --release --bin dat0
+./target/release/dat0 __telemetry-test
+# Wait ~15 s, then check GlitchTip Issues for "dat0 telemetry e2e"
+```
+
+The `__telemetry-test` subcommand (implemented in T10) emits a synthetic
+`message`-type event with the title `"dat0 telemetry e2e"` and exits 0. It
+exercises the full submission path (panic hook bypassed; direct `sentry::capture_message`)
+without triggering a real panic or leaving a crash sentinel on disk.
+
+See also `docs/plans/2026-06-24-dat0-p10c-uat.md` §4 for the full manual UAT
+sequence.

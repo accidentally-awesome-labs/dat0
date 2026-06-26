@@ -9,7 +9,6 @@
 
 use super::SettingsSection;
 use crate::settings::store::SettingsStore;
-use gpui::{IntoElement, ParentElement, div};
 
 pub struct UpdatesSection;
 
@@ -28,17 +27,6 @@ impl SettingsSection for UpdatesSection {
 
     fn id(&self) -> &'static str {
         "updates"
-    }
-
-    fn render(&self, _window: &mut gpui::Window, _cx: &mut gpui::App) -> gpui::AnyElement {
-        // Placeholder — the real gpui_component::Switch binding to
-        // `set_update_auto_check` mounts when the settings window is fully
-        // wired (same seam as workspace's toggle; see gpui-component-api-notes
-        // §3.6). Label: dat0_i18n::t("settings.update.auto_check").
-        // forward-declared i18n key — bound when the real auto-check Switch widget mounts (settings_ui sections are placeholder stubs today).
-        div()
-            .child(dat0_i18n::t("settings.updates.placeholder"))
-            .into_any_element()
     }
 }
 

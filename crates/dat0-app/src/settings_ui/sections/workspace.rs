@@ -8,7 +8,6 @@
 
 use super::SettingsSection;
 use crate::settings::store::SettingsStore;
-use gpui::{IntoElement, ParentElement, div};
 
 pub struct WorkspaceSection;
 
@@ -28,16 +27,6 @@ impl SettingsSection for WorkspaceSection {
 
     fn id(&self) -> &'static str {
         "workspace"
-    }
-
-    fn render(&self, _window: &mut gpui::Window, _cx: &mut gpui::App) -> gpui::AnyElement {
-        // Mirrors ThemeSection's placeholder render. The real
-        // gpui_component::Switch binding to `set_treat_all_as_networked`
-        // mounts when the settings window is fully wired (same seam as
-        // theme's Select; see gpui-component-api-notes §3.6).
-        div()
-            .child(dat0_i18n::t("settings.workspace.placeholder"))
-            .into_any_element()
     }
 }
 

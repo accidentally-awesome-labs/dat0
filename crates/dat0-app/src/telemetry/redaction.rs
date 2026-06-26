@@ -36,6 +36,19 @@ pub fn redact_event(mut event: Event<'static>) -> Option<Event<'static>> {
     }
     event.user = None;
     event.server_name = None;
+    if let Some(msg) = event.message.take() {
+        event.message = Some(redact_text(&msg));
+    }
+    for (_k, v) in event.extra.iter_mut() {
+        if let sentry::protocol::Value::String(s) = v {
+            *s = redact_text(s);
+        }
+    }
+    for bc in &mut event.breadcrumbs.values {
+        if let Some(m) = bc.message.take() {
+            bc.message = Some(redact_text(&m));
+        }
+    }
     Some(event)
 }
 
@@ -61,4 +74,10 @@ fn redact_text(s: &str) -> String {
         regex::Regex::new(r#"(/Users/[^/\s]+|/home/[^/\s]+|[A-Z]:\\[^\\\s]+)([\\/][^"'\s,]*)?"#)
             .expect("redaction regex must compile");
     re.replace_all(s, "<redacted>").into_owned()
+}
+
+/// Public wrapper over the path-redaction used by both `before_send` and the
+/// crash-staging payload builder.
+pub fn redact_text_pub(s: &str) -> String {
+    redact_text(s)
 }

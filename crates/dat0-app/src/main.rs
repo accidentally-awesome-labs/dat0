@@ -50,6 +50,14 @@ fn main() -> Result<()> {
         .expect("built-in actions must register without conflict");
     dat0_app::window_registry::install_action_registry(registry);
 
+    // Arm crash capture for the GUI lifetime: marks running + installs the
+    // panic-staging hook; the marker is cleared when `_crash_guard` drops on a
+    // clean return from run_app. (Package CLI front-door above exits before this,
+    // by design — headless package ops are not crash-prompted.)
+    let _crash_guard = dat0_app::boot::CrashGuard::arm(&state_dir)?;
+
     tracing::info!("dat0 starting");
-    dat0_app::run_app(lock, cli_paths, main_loop)
+    let result = dat0_app::run_app(lock, cli_paths, main_loop);
+    drop(_crash_guard); // explicit: clear marker on clean shutdown
+    result
 }

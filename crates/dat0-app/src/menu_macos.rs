@@ -187,6 +187,8 @@ pub fn build_menus(_cx: &mut gpui::App) -> Vec<gpui::Menu> {
                 MenuItem::separator(),
                 MenuItem::action(dat0_i18n::t("menu.help.docs"), OpenDocs),
                 MenuItem::action(dat0_i18n::t("menu.help.discord"), OpenDiscord),
+                // P10c T8: Report a Bug.
+                MenuItem::action(dat0_i18n::t("menu.help.report_bug"), ReportBug),
             ],
         },
     ]
@@ -228,6 +230,8 @@ gpui::actions!(
         CheckForUpdates,
         OpenDocs,
         OpenDiscord,
+        // P10c T8: Report a Bug — opens the crash/bug-report dialog.
+        ReportBug,
         // P5a T11: SQL Console entry points (toggle / run / cancel / tab lifecycle).
         SqlConsoleToggle,
         SqlRun,

@@ -1,4 +1,5 @@
 use anyhow::Result;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use tracing_subscriber::{EnvFilter, fmt, prelude::*};
 
@@ -86,6 +87,34 @@ impl AppContext {
             recents,
             _telemetry: telemetry,
         })
+    }
+}
+
+/// RAII guard: marks the run "in progress" + installs the crash-staging panic
+/// hook on `arm`, and removes the running marker on `Drop` (clean shutdown).
+/// A marker that survives into the next launch signals an unclean exit.
+pub struct CrashGuard {
+    data_dir: PathBuf,
+}
+
+impl CrashGuard {
+    pub fn arm(data_dir: &Path) -> std::io::Result<Self> {
+        crate::telemetry::crash::mark_running(data_dir)?;
+        // The panic hook stages `last-crash.json` unconditionally (panic context
+        // must not read settings). The payload is local-only and redacted. On the
+        // NEXT launch, if the user has opted OUT, `last-crash.json` is silently
+        // discarded (no dialog, no submission). The opt-out guarantee is satisfied
+        // by that relaunch discard, not by gating the hook itself.
+        crate::telemetry::crash::install_panic_hook(data_dir.to_path_buf());
+        Ok(Self {
+            data_dir: data_dir.to_path_buf(),
+        })
+    }
+}
+
+impl Drop for CrashGuard {
+    fn drop(&mut self) {
+        crate::telemetry::crash::clear_running(&self.data_dir);
     }
 }
 

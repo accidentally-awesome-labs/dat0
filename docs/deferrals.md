@@ -66,7 +66,7 @@ that's modifying it; merge conflicts are signals worth investigating.
 | D-026 | Python (non-Rust) `.dat0` reader — format is reader-ready (Parquet + tagged JSON) | open | P8 | — |
 | D-027 | In-app Inspect polish (read-only badge, scratch GC, multi-source GUI replay, Unpack button) | open | P8 | — |
 | D-028 | Privileged `/Applications` auto-update (SMJobBless/SMAppService helper for authenticated install) | open | P10a-2 | v1.x |
-| D-029 | Settings panel persist-on-render → change-gate (per-frame fsync); + P10b cleanup (orphan `SettingsView`/dead `render` trait, 2 hardcoded input placeholders, orphan `settings.update.auto_check` key) + correct the "i18n-check fails on missing keys" claim (it is warn-only) | open | P10b | P10c |
+| D-029 | Settings panel persist-on-render → change-gate (per-frame fsync); + P10b cleanup (orphan `SettingsView`/dead `render` trait, 2 hardcoded input placeholders, orphan `settings.update.auto_check` key) + correct the "i18n-check fails on missing keys" claim (it is warn-only) | closed | P10b | P10c |
 
 ## At-a-glance — Plan defects
 
@@ -513,7 +513,11 @@ that's modifying it; merge conflicts are signals worth investigating.
   by the SQLite fixture + heavy-test split. Linux side complete;
   macOS side remains.
 - **Note (2026-06-21):** still open; → P10c.
-- **Last touched:** 2026-06-21
+- **Note (2026-06-25):** P10c left this deferred — no Mac mini available; the
+  GlitchTip/crash-reporting half of P10 shipped, but the perf-gate runner stays
+  gated on hardware.
+- **Note (2026-06-25, beta channel):** beta channel still gated on a tester cohort; P10c did not start it.
+- **Last touched:** 2026-06-25
 
 ### D-014 — Memory Budget Settings section
 
@@ -914,7 +918,7 @@ that's modifying it; merge conflicts are signals worth investigating.
 
 ### D-029 — Settings panel persist-on-render → change-gate (+ P10b cleanup trio)
 
-- **Status:** open
+- **Status:** closed
 - **Deferred from:** P10b (plan-sanctioned model; final whole-branch review flagged the cost)
 - **Target phase:** P10c
 - **What it is:** `SettingsPanel::render` (`crates/dat0-app/src/settings_ui/panel.rs`)
@@ -953,7 +957,13 @@ that's modifying it; merge conflicts are signals worth investigating.
 - **Originating doc:** `docs/plans/2026-06-23-dat0-p10b-plan.md` (T4/T7 persist-on-render;
   Global Constraints i18n-check claim). Final whole-branch review 2026-06-23 (verdict:
   merge OK with this filed as a tracked follow-up).
-- **Last touched:** 2026-06-23
+- **Closed in:** P10c (branch `p10c-crash-reporting`). Change-gated persist (T11) +
+  cleanup trio — orphan `SettingsView` + dead `render` trait (T12) + i18n-check
+  key-resolution + orphan `settings.update.auto_check` key removed (T9). Also
+  corrected the "i18n-check fails on missing keys" claim: it is warn-only (exit 0;
+  does not resolve referenced keys against `en.json`). Squash SHA not yet assigned
+  (pre-merge at time of writing).
+- **Last touched:** 2026-06-25
 
 ---
 
