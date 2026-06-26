@@ -10,6 +10,7 @@
 //! and by CI for release builds. Compile-time embedding lets us avoid
 //! per-invocation environment configuration in the desktop app.
 
+pub mod crash;
 pub mod redaction;
 
 use anyhow::Result;
