@@ -17,36 +17,11 @@
 pub mod panel;
 pub mod sections;
 
-use gpui::{IntoElement, Render, div, prelude::*};
-
-/// Settings panel view. Holds the currently selected section id; the
-/// section list itself is sourced from `sections::all_sections()` on
-/// every render so adding a new section requires only registering it
-/// there.
-pub struct SettingsView {
-    selected_section: String,
-}
-
-impl SettingsView {
-    /// Construct a new settings view with `profile` selected by default.
-    pub fn new() -> Self {
-        Self {
-            selected_section: "profile".into(),
-        }
-    }
-}
-
-impl Default for SettingsView {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
 /// Open the settings panel as a dedicated window (P10b T4 — discharges T13 / D-001).
 /// Previously a tracing stub; now opens the real `SettingsPanel` GPUI window.
 pub fn open_settings_window(cx: &mut gpui::App) {
     use crate::settings::store::SettingsStore;
-    use gpui::{Bounds, TitlebarOptions, WindowBounds, WindowOptions, px, size};
+    use gpui::{AppContext, Bounds, TitlebarOptions, WindowBounds, WindowOptions, px, size};
     use gpui_component::Root;
 
     let store = SettingsStore::with_path(
@@ -69,32 +44,4 @@ pub fn open_settings_window(cx: &mut gpui::App) {
             cx.new(|cx| Root::new(view, window, cx))
         },
     );
-}
-
-impl Render for SettingsView {
-    fn render(
-        &mut self,
-        window: &mut gpui::Window,
-        cx: &mut gpui::Context<Self>,
-    ) -> impl IntoElement {
-        // `Context<Self>` derefs to `App`, so we can pass `cx` straight to
-        // section renderers that expect `&mut gpui::App`.
-        let app: &mut gpui::App = cx;
-        let sections = sections::all_sections();
-        let active_index = sections
-            .iter()
-            .position(|s| s.id() == self.selected_section);
-
-        let sidebar = div().w_64().flex().flex_col().children(
-            sections
-                .iter()
-                .map(|s| div().child(dat0_i18n::t(s.name_key()))),
-        );
-
-        let content = div().flex_1().when_some(active_index, |d, idx| {
-            d.child(sections[idx].render(window, app))
-        });
-
-        div().flex().flex_row().child(sidebar).child(content)
-    }
 }

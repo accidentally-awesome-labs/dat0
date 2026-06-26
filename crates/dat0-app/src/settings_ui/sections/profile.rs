@@ -14,7 +14,6 @@
 
 use super::SettingsSection;
 use crate::settings::store::SettingsStore;
-use gpui::{IntoElement, ParentElement, div};
 
 pub struct ProfileSection;
 
@@ -43,17 +42,5 @@ impl SettingsSection for ProfileSection {
 
     fn id(&self) -> &'static str {
         "profile"
-    }
-
-    fn render(&self, _window: &mut gpui::Window, _cx: &mut gpui::App) -> gpui::AnyElement {
-        // T13 swaps this placeholder for two `gpui_component::Input`
-        // widgets bound to `on_name_change` / `on_email_change`. The
-        // SettingsStore plumbing is already live + tested via
-        // `tests/settings_ui.rs`; the view stub is the only piece
-        // pending mount of the real window (see D-001 closure note in
-        // `docs/deferrals.md` and §3 of the gpui-component spike doc).
-        div()
-            .child(dat0_i18n::t("settings.profile.placeholder"))
-            .into_any_element()
     }
 }

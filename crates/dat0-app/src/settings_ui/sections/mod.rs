@@ -28,9 +28,6 @@ pub trait SettingsSection {
 
     /// Stable identifier used for selection / addressing (e.g. `"profile"`).
     fn id(&self) -> &'static str;
-
-    /// Render the section's content pane.
-    fn render(&self, _window: &mut gpui::Window, _cx: &mut gpui::App) -> gpui::AnyElement;
 }
 
 /// Return every section the settings panel knows about, in §24.2 display order.

@@ -19,7 +19,6 @@
 
 use super::SettingsSection;
 use crate::settings::store::SettingsStore;
-use gpui::{IntoElement, ParentElement, div};
 
 pub struct ThemeSection;
 
@@ -75,16 +74,5 @@ impl SettingsSection for ThemeSection {
 
     fn id(&self) -> &'static str {
         "theme"
-    }
-
-    fn render(&self, _window: &mut gpui::Window, _cx: &mut gpui::App) -> gpui::AnyElement {
-        // T13 swaps this placeholder for a `gpui_component::Select`
-        // bound to `theme_change_handler`. The SettingsStore plumbing is
-        // already live + tested via `tests/settings_ui.rs`; the live
-        // fan-out is wired via the same handler (see D-002 closure in
-        // `docs/deferrals.md` and §3.6 of the gpui-component spike doc).
-        div()
-            .child(dat0_i18n::t("settings.theme.placeholder"))
-            .into_any_element()
     }
 }
