@@ -20,6 +20,7 @@ pub mod inspector;
 pub mod live_refresh_dialog;
 pub mod main_bridge;
 pub mod menu_macos;
+pub mod onboarding;
 pub mod package;
 pub mod platform;
 pub mod query;
