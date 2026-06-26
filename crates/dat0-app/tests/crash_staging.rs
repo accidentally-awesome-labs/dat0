@@ -47,3 +47,30 @@ fn read_staged_is_none_on_corrupt_json() {
         "corrupt staging must not panic"
     );
 }
+
+#[test]
+fn payload_from_panic_redacts_paths_and_keeps_message() {
+    let payload = std::panic::catch_unwind(|| {
+        // build a PanicHookInfo indirectly: set a hook that captures it.
+        let captured = std::sync::Arc::new(std::sync::Mutex::new(None));
+        let c2 = captured.clone();
+        std::panic::set_hook(Box::new(move |info| {
+            *c2.lock().unwrap() = Some(dat0_app::telemetry::crash::payload_from_panic(
+                info, "9.9.9",
+            ));
+        }));
+        let _ = std::panic::catch_unwind(|| panic!("boom at /Users/alice/secret/x.rs"));
+        let _ = std::panic::take_hook();
+        captured.lock().unwrap().clone()
+    })
+    .unwrap()
+    .expect("hook captured a payload");
+
+    assert_eq!(payload.version, "9.9.9");
+    assert!(payload.message.contains("boom"), "keeps panic message");
+    assert!(
+        !payload.message.contains("/Users/alice"),
+        "absolute path must be redacted from staged message: {}",
+        payload.message
+    );
+}

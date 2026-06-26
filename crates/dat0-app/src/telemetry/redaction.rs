@@ -62,3 +62,9 @@ fn redact_text(s: &str) -> String {
             .expect("redaction regex must compile");
     re.replace_all(s, "<redacted>").into_owned()
 }
+
+/// Public wrapper over the path-redaction used by both `before_send` and the
+/// crash-staging payload builder.
+pub fn redact_text_pub(s: &str) -> String {
+    redact_text(s)
+}
