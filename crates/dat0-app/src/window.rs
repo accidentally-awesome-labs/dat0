@@ -2147,6 +2147,12 @@ pub struct WorkspaceShell {
     /// Whether the "Save as workspace?" prompt has been shown this session
     /// (in-memory only — never persisted; shows at most once per launch).
     workspace_prompt_shown: bool,
+    /// Whether the first-run tour has been auto-scheduled this process
+    /// lifetime (in-memory only — never persisted). The persisted
+    /// `first_run_done` flag is the authoritative gate across launches; this
+    /// bool prevents the render-driven trigger from re-queuing the open on
+    /// every subsequent frame before `first_run_done` flips to `true`.
+    tour_auto_shown: bool,
     /// Live watcher over the active table's source file (P7c). Re-created
     /// whenever the active table changes (see [`Self::retarget_source_watch`]);
     /// `None` when the active table has no `File` origin. Dropping the field
@@ -2222,6 +2228,7 @@ impl WorkspaceShell {
             md_token_prompt: None,
             md_token_prompt_sub: None,
             workspace_prompt_shown: false,
+            tour_auto_shown: false,
             source_watcher: None,
             read_only: false,
         }
@@ -5971,14 +5978,44 @@ impl Render for WorkspaceShell {
             // both fall back to the empty-state hero. `recents_empty`
             // toggles the right-column content (samples vs. recents).
             _ => {
-                let recents_empty = match crate::platform::config_dir() {
-                    Ok(cfg) => Recents::with_path(cfg.join("recents.json"))
-                        .list()
-                        .is_empty(),
-                    Err(_) => true,
+                // One config_dir() call feeds both recents and the
+                // first_run_done read. On any error (config dir unavailable
+                // OR settings parse failure) both default conservatively:
+                // recents=empty, first_run_done=true (suppresses tour).
+                let (recents_empty, first_run_done) = match crate::platform::config_dir() {
+                    Ok(cfg) => {
+                        let re = Recents::with_path(cfg.join("recents.json"))
+                            .list()
+                            .is_empty();
+                        let frd = crate::settings::store::SettingsStore::with_path(
+                            cfg.join("settings.toml"),
+                        )
+                        .load_or_default()
+                        .map(|s| s.first_run_done)
+                        .unwrap_or(true); // suppress tour on load error
+                        (re, frd)
+                    }
+                    Err(_) => (true, true),
                 };
-                // TODO(T8): read real first_run_done from settings
-                EmptyState::new(recents_empty, true).render(cx)
+
+                // One-shot auto-open: schedule the tour exactly once per
+                // process. `tour_auto_shown` is set SYNCHRONOUSLY before
+                // scheduling so that subsequent render frames (which
+                // re-enter this branch before `first_run_done` persists)
+                // cannot re-queue a second open. The dispatcher hop defers
+                // `onboarding::open` out of the render frame, mirroring the
+                // `about::open` pattern (`window_registry::dispatcher()` +
+                // `dispatcher.dispatch`).
+                if !self.tour_auto_shown && crate::empty_state::should_auto_tour(first_run_done) {
+                    self.tour_auto_shown = true;
+                    if let Some(dispatcher) = crate::window_registry::dispatcher() {
+                        let _ = dispatcher.dispatch(|cx: &mut gpui::App| {
+                            crate::onboarding::open(cx);
+                        });
+                    }
+                }
+
+                EmptyState::new(recents_empty, first_run_done).render(cx)
             }
         };
 
