@@ -8,7 +8,8 @@
 
 /// One tour panel: a bundled illustration plus the i18n keys for its copy.
 pub struct Panel {
-    /// PNG bytes bundled at compile time (placeholder solid art until T11).
+    /// PNG bytes bundled at compile time — the panel's diagram illustration
+    /// (720×480 dark/blue, rendered at 360×240 in the modal; T11).
     pub image: &'static [u8],
     /// i18n key for the panel headline.
     pub title_key: &'static str,
