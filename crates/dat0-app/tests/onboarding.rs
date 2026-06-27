@@ -109,10 +109,6 @@ async fn demo_dat0_preserves_chart_lineage() {
     // 2b. At least one saved bar chart.
     //
     // Adjust the assertion message if the human authored a different chart type.
-    assert!(
-        !parsed.charts.charts.is_empty(),
-        "demo.dat0 must contain at least one saved chart (expected the 'Revenue by genre' bar chart)"
-    );
     let bar_chart = parsed
         .charts
         .charts
@@ -135,7 +131,8 @@ async fn demo_dat0_preserves_chart_lineage() {
     //
     //     `spec.source` is a DuckDB-qualified name like `"main"."revenue_by_genre"`;
     //     strip schema prefix + quotes to get the plain table name.
-    //     Adjust the strip logic below if the authoring quoting style differs.
+    //     If this assertion false-negatives due to quoting differences, tighten
+    //     the name-strip logic below after authoring the real artifact.
     let chart_source = bar_chart.unwrap().spec.source.as_str();
     let plain_source = chart_source
         .rsplit('.')
@@ -147,15 +144,11 @@ async fn demo_dat0_preserves_chart_lineage() {
         .tables
         .iter()
         .any(|t| t.name == plain_source && t.kind == dat0_format::TableKind::Derived);
-    // Soft assertion: if plain-name parsing doesn't match (quoting edge case),
-    // `has_derived` already guards that SOME Derived table exists.
-    // The human can tighten this to an exact name after authoring.
     assert!(
-        chart_source_derived || has_derived,
-        "bar chart source '{}' (plain: '{}') should map to a Derived recipe table; \
-         adjust the source-name strip logic above if quoting differs.",
-        chart_source,
-        plain_source
+        chart_source_derived,
+        "bar chart source '{}' (plain: '{}') must map to a Derived recipe table; \
+         if this false-negatives on identifier quoting, tighten the name-strip logic above after authoring.",
+        chart_source, plain_source
     );
 
     // 2d. At least one view with a non-empty pipeline (transform_stack).
