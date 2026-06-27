@@ -240,9 +240,26 @@ fn auto_show_suppressed_when_first_run_done(cx: &mut TestAppContext) {
         "precondition: flag seeded true"
     );
 
+    // Install the shared dispatcher and drain any stale closures a prior serial
+    // test left queued (draining before a window exists no-ops them harmlessly).
+    // This makes the test SYMMETRIC with `auto_show_opens_tour_exactly_once`:
+    // if suppression is broken and window.rs still posts an open onto the
+    // dispatcher, that closure is drained and executed below — opening a real
+    // dialog that fails the assert. Without this, a broken-suppression-but-
+    // dispatcher-routed regression would queue an open that is never executed,
+    // giving a false green.
+    ensure_dispatcher();
     init_components(cx);
+    drain_dispatcher(cx);
+
     let session = build_empty_session(state.path());
     let (_shell, cx) = open_shell_window(cx, session);
+    cx.run_until_parked();
+
+    // Drain the dispatcher: if suppression is broken, a queued open closure
+    // executes now and opens a dialog — the assert below will catch it.
+    // With suppression working, the queue is empty and no dialog appears.
+    drain_dispatcher(cx);
     cx.run_until_parked();
 
     assert!(
@@ -477,6 +494,8 @@ fn skip_click_dismisses_and_writes_flag(cx: &mut TestAppContext) {
     // hit-box, then click the "Skip" button (bottom-left of the controls row).
     cx.executor().advance_clock(Duration::from_secs(1));
     cx.run_until_parked();
+    // NOTE: (777, 550) is empirically tuned for the fixed 1920×1080 TestDisplay
+    // (Decorations::Server → window_paddings=0; deterministic on both platforms).
     cx.simulate_click(point(px(777.), px(550.)), Modifiers::none());
     cx.run_until_parked();
 
@@ -551,7 +570,13 @@ fn hero_sample_click_extracts_bundled_csv(cx: &mut TestAppContext) {
     // can assert the synchronous side effect that already happened.
     let prev_hook = std::panic::take_hook();
     std::panic::set_hook(Box::new(|_| {}));
+    // NOTE: this catch_unwind wraps ONLY the expected spawn-blocking headless-
+    // boundary panic ("no reactor running" from tokio inside the gpui executor).
+    // Any change here must re-confirm that the positive iris.exists() assert
+    // below remains live — that check is what prevents a false green.
     let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        // NOTE: (1700, 40) is empirically tuned for the fixed 1920×1080 TestDisplay
+        // (first sample card at the top of the 280 px right column; deterministic on both platforms).
         cx.simulate_click(point(px(1700.), px(40.)), Modifiers::none());
         cx.run_until_parked();
     }));
