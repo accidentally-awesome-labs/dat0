@@ -106,8 +106,13 @@ impl EmptyState {
             } else {
                 self.recents_column(cx)
             };
+            // `open_deferred` (not `open`): this click handler fires inside a
+            // `window.update` of the active window, where a synchronous
+            // `onboarding::open` re-enters the taken window and silently
+            // no-ops. The deferred dispatcher hop runs it from a plain App
+            // context after the frame (the auto-show mechanism).
             let take_tour_handler = cx.listener(|_this, _ev, _window, cx| {
-                crate::onboarding::open(cx);
+                crate::onboarding::open_deferred(cx);
             });
             let open_demo_handler = cx.listener(|_this, _ev, _window, cx| {
                 crate::window::open_demo_workspace(cx);
@@ -126,6 +131,11 @@ impl EmptyState {
                         .child(
                             div()
                                 .id("hero-take-tour")
+                                // Test-only locator (release no-op): lets the
+                                // headless UAT find this button's painted bounds
+                                // via `VisualTestContext::debug_bounds` instead of
+                                // a fragile hard-coded pixel.
+                                .debug_selector(|| "hero-take-tour".into())
                                 .child(dat0_i18n::t("hero.take_tour"))
                                 .on_click(take_tour_handler),
                         ),

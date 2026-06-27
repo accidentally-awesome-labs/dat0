@@ -46,6 +46,30 @@ pub fn open(cx: &mut App) {
     }
 }
 
+/// Open the tour from a caller that may already be INSIDE a `window.update` of
+/// the active window (gpui action-dispatch and mouse-event dispatch both run
+/// inside one).
+///
+/// `open` does `cx.active_window().update(..)`. When that runs synchronously
+/// from within the active window's own update, the window is already "taken"
+/// out of its slot, so the re-entrant update returns `Err`, which `open`
+/// swallows (`let _ = handle.update(..)`) — a silent no-op. That is exactly
+/// why "Help → Take a Tour" and the hero "Take a tour" button used to do
+/// nothing while the auto-show worked: the auto-show path hops the
+/// process-global [`MainThreadDispatcher`](crate::main_bridge::MainThreadDispatcher),
+/// which re-runs the open from a plain `App` context AFTER the current frame —
+/// no active-window borrow held. The manual re-entry points share that hazard,
+/// so they go through here, taking the same proven hop. Falls back to a direct
+/// `open` when no dispatcher is installed (e.g. unit tests, or any caller that
+/// is NOT inside a window-update — `open` is correct there).
+pub fn open_deferred(cx: &mut App) {
+    if let Some(dispatcher) = crate::window_registry::dispatcher() {
+        let _ = dispatcher.dispatch(|cx: &mut App| open(cx));
+    } else {
+        open(cx);
+    }
+}
+
 /// Persist `first_run_done = true` so the tour never auto-shows again. Logs (does
 /// NOT panic) on any settings-store error — failing to set the flag must not take
 /// down the UI; worst case the user sees the tour once more next launch.

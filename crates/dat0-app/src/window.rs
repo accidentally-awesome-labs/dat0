@@ -1611,8 +1611,13 @@ pub fn run_app(lock: AppLock, initial_paths: Vec<PathBuf>, main_loop: MainLoop) 
         // Wire Help → Take a Tour → onboarding carousel (P11a T7).
         // Declared unconditionally in menu_macos.rs so the handler resolves on
         // Linux too (no visible menu item there, but the action still dispatches).
+        // `open_deferred` (not `open`): this handler runs INSIDE a
+        // `window.update` of the active window, where a synchronous
+        // `onboarding::open` would re-enter that taken window and silently
+        // no-op. The deferred hop runs the open from a plain App context after
+        // the frame — same mechanism the auto-show uses.
         cx.on_action(|_a: &crate::menu_macos::TakeTour, cx: &mut App| {
-            crate::onboarding::open(cx);
+            crate::onboarding::open_deferred(cx);
         });
 
         // Wire hero → Open demo.dat0 → editable workspace (P11a T9).
