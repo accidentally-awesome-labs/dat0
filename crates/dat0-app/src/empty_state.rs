@@ -179,7 +179,7 @@ impl EmptyState {
             .flex()
             .items_center()
             .justify_center()
-            .child("Drop a file to start")
+            .child(dat0_i18n::t("hero.drop_zone"))
     }
 
     /// Right column when there are no recents: 3 wired sample-data buttons
@@ -192,7 +192,10 @@ impl EmptyState {
         &self,
         cx: &mut gpui::Context<crate::window::WorkspaceShell>,
     ) -> gpui::AnyElement {
-        let mut col = div().flex().flex_col().child(div().child("Samples"));
+        let mut col = div()
+            .flex()
+            .flex_col()
+            .child(div().child(dat0_i18n::t("hero.samples_label")));
 
         for (i, entry) in crate::sample_data::entries().into_iter().enumerate() {
             let kind = entry.kind.clone();
@@ -219,7 +222,7 @@ impl EmptyState {
         col.child(
             div()
                 .id("hero-open-file-samples")
-                .child("Open file…")
+                .child(dat0_i18n::t("hero.open_file"))
                 .on_click(open_handler),
         )
         .into_any_element()
@@ -240,7 +243,10 @@ impl EmptyState {
                 vec![]
             };
 
-        let mut col = div().flex().flex_col().child(div().child("Recent"));
+        let mut col = div()
+            .flex()
+            .flex_col()
+            .child(div().child(dat0_i18n::t("hero.recent_label")));
 
         for (i, entry) in recent_entries.into_iter().enumerate() {
             let label = entry.path().display().to_string();
@@ -257,7 +263,7 @@ impl EmptyState {
         col.child(
             div()
                 .id("hero-open-file-recents")
-                .child("Open file…")
+                .child(dat0_i18n::t("hero.open_file"))
                 .on_click(open_handler),
         )
         .into_any_element()

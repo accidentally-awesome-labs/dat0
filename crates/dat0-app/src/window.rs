@@ -2194,7 +2194,7 @@ pub struct WorkspaceShell {
     /// Whether the "Save as workspace?" prompt has been shown this session
     /// (in-memory only — never persisted; shows at most once per launch).
     workspace_prompt_shown: bool,
-    /// Whether the first-run tour has been auto-scheduled this process
+    /// Whether the first-run tour has been auto-scheduled this per-window
     /// lifetime (in-memory only — never persisted). The persisted
     /// `first_run_done` flag is the authoritative gate across launches; this
     /// bool prevents the render-driven trigger from re-queuing the open on
