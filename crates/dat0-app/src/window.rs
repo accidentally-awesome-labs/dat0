@@ -1568,6 +1568,13 @@ pub fn run_app(lock: AppLock, initial_paths: Vec<PathBuf>, main_loop: MainLoop) 
             }
         });
 
+        // Wire Help → Take a Tour → onboarding carousel (P11a T7).
+        // Declared unconditionally in menu_macos.rs so the handler resolves on
+        // Linux too (no visible menu item there, but the action still dispatches).
+        cx.on_action(|_a: &crate::menu_macos::TakeTour, cx: &mut App| {
+            crate::onboarding::open(cx);
+        });
+
         // Wire Help → Check for Updates (P10a-2 T6). Declared unconditionally in
         // menu_macos.rs so the handler resolves on Linux too.
         cx.on_action(

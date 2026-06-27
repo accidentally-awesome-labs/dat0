@@ -64,6 +64,8 @@ pub mod ids {
     pub const LIVE_REFRESH: &str = "live.refresh";
     // P9c-1 T9: open/toggle the AI panel (BYOK secure-plumbing dock).
     pub const AI_PANEL_OPEN: &str = "ai.panel.open";
+    // P11a T7: take-a-tour re-entry for command palette (carousel).
+    pub const ONBOARDING_TAKE_TOUR: &str = "onboarding.take_tour";
 }
 
 /// Register every built-in action onto `reg`. Returns an error if any id
@@ -208,6 +210,18 @@ pub fn register_all(reg: &ActionRegistry) -> Result<(), RegisterError> {
         // the focused workspace + calls the `run_refresh` stub; T6 fills in the
         // real re-import + replay flow.
         dispatch: Arc::new(crate::window::dispatch_live_refresh),
+    })?;
+
+    // P11a T7: "Take a Tour" — re-opens the onboarding carousel from the
+    // command palette (Linux has no menu bar; this is its only reach point).
+    reg.register(ActionDescriptor {
+        id: ActionId::from(ids::ONBOARDING_TAKE_TOUR),
+        title: dat0_i18n::t("menu.help.take_tour"),
+        group: ActionGroup::Navigation,
+        keybinding: None,
+        dispatch: Arc::new(|app| {
+            crate::onboarding::open(app);
+        }),
     })?;
 
     super::view_actions::register(reg)?;

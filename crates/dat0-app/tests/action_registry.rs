@@ -87,7 +87,8 @@ fn builtins_register_thirty_four() {
     // + one from P7c T5 (live.refresh — the live-data Refresh banner button) = 32.
     // + one from P9a T7 (chart.visualize — the right-dock chart panel toggle) = 33.
     // + one from P9c-1 T9 (ai.panel.open — the left-dock AI panel toggle) = 34.
-    assert_eq!(reg.count(), 34);
+    // + one from P11a T7 (onboarding.take_tour — tour re-entry for palette) = 35.
+    assert_eq!(reg.count(), 35);
     let titles: Vec<String> = reg.iter().map(|d| d.title).collect();
     assert!(titles.contains(&"New Window".to_string()));
     assert!(titles.contains(&"Open Settings".to_string()));
