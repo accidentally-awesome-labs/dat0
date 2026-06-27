@@ -62,7 +62,6 @@ fn bundled_samples_extract_to_state_root() {
 /// D-025 deferral and fall back to the raw Chinook open path until D-025 is
 /// resolved.
 #[tokio::test]
-#[ignore = "needs the real curated demo.dat0 (T10 human authoring via in-app export); the T9 placeholder has no chart/lineage/pipeline/SQL-tab"]
 async fn demo_dat0_preserves_chart_lineage() {
     use dat0_app::package;
     use dat0_app::sample_data::DEMO_DAT0;
