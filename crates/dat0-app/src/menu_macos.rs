@@ -236,6 +236,8 @@ gpui::actions!(
         ReportBug,
         // P11a T7: Take a Tour — re-opens the onboarding carousel.
         TakeTour,
+        // P11a T9: Open demo.dat0 — unpack bundled demo package as editable workspace.
+        OpenDemoWorkspace,
         // P5a T11: SQL Console entry points (toggle / run / cancel / tab lifecycle).
         SqlConsoleToggle,
         SqlRun,

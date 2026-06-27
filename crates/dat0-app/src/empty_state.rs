@@ -109,8 +109,8 @@ impl EmptyState {
             let take_tour_handler = cx.listener(|_this, _ev, _window, cx| {
                 crate::onboarding::open(cx);
             });
-            let open_demo_handler = cx.listener(|_this, _ev, _window, _cx| {
-                // TODO(T9): dispatch OpenDemoWorkspace
+            let open_demo_handler = cx.listener(|_this, _ev, _window, cx| {
+                crate::window::open_demo_workspace(cx);
             });
             div()
                 .size_full()

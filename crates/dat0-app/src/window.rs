@@ -703,6 +703,46 @@ fn unpack_package_into(cx: &mut App, pkg: PathBuf, dir: PathBuf) {
     }
 }
 
+/// `OpenDemoWorkspace` handler: unpack the bundled `demo.dat0` into a fresh
+/// editable workspace and open it (P11a T9).
+///
+/// Flow:
+/// 1. Write the `DEMO_DAT0` bundle bytes to `$state_root/demo.dat0` (a
+///    staging file that is overwritten on each call — harmless).
+/// 2. Choose a fresh dest dir `$state_root/demo/<uuid>/` (a new UUID per
+///    invocation prevents collisions if the user opens the demo more than once).
+/// 3. Call `unpack_package_into(cx, staging_pkg, dest_dir)`, which
+///    materializes the workspace and then calls `open_workspace_at`.
+///
+/// All error paths surface via `error_ux::push` so the UI stays responsive.
+pub(crate) fn open_demo_workspace(cx: &mut App) {
+    let base = crate::window_registry::state_root()
+        .map(|p| p.to_path_buf())
+        .unwrap_or_else(std::env::temp_dir);
+
+    // Write bundled bytes to a staging file (overwrite is safe; same bytes).
+    let staging_pkg = base.join("demo.dat0");
+    if let Err(e) = std::fs::write(&staging_pkg, crate::sample_data::DEMO_DAT0) {
+        crate::error_ux::push(crate::error_ux::Banner::warning_with_body(
+            dat0_i18n::t("package.open.failed.title"),
+            format!("{e}"),
+        ));
+        return;
+    }
+
+    // Fresh dest dir: each click opens an independent editable workspace.
+    let dest_dir = base.join("demo").join(uuid::Uuid::now_v7().to_string());
+    if let Err(e) = std::fs::create_dir_all(&dest_dir) {
+        crate::error_ux::push(crate::error_ux::Banner::warning_with_body(
+            dat0_i18n::t("package.open.failed.title"),
+            format!("{e}"),
+        ));
+        return;
+    }
+
+    unpack_package_into(cx, staging_pkg, dest_dir);
+}
+
 /// `ReplayPackage` handler: re-run a `.dat0` recipe against fresh source files.
 ///
 /// Picks the package, then ONE replacement source file, then the output `*.dat0`
@@ -1573,6 +1613,13 @@ pub fn run_app(lock: AppLock, initial_paths: Vec<PathBuf>, main_loop: MainLoop) 
         // Linux too (no visible menu item there, but the action still dispatches).
         cx.on_action(|_a: &crate::menu_macos::TakeTour, cx: &mut App| {
             crate::onboarding::open(cx);
+        });
+
+        // Wire hero → Open demo.dat0 → editable workspace (P11a T9).
+        // Declared unconditionally in menu_macos.rs; no menu item needed —
+        // only the first-run hero band button triggers it.
+        cx.on_action(|_a: &crate::menu_macos::OpenDemoWorkspace, cx: &mut App| {
+            open_demo_workspace(cx);
         });
 
         // Wire Help → Check for Updates (P10a-2 T6). Declared unconditionally in
