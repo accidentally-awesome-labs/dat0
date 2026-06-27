@@ -21,23 +21,30 @@
 //!   therefore asserted via its *observable* contract: a dialog appears exactly
 //!   once and a forced re-render does not stack a second one. That is a stronger
 //!   (behavioral) check than reading the bool.
-//! - The auto-show modal hop goes through the process-global
-//!   `window_registry::dispatcher()` (`OnceCell`). Only the FIRST test to install
-//!   a dispatcher gets a live consume-loop, so exactly one test
-//!   (`auto_show_opens_tour_exactly_once`) owns it; the others use the
-//!   synchronous `onboarding::open` entry point and never touch the dispatcher.
+//! - Both the auto-show AND the manual tour re-entry points (Help → Take a
+//!   Tour, the hero "Take a tour" button) hop the process-global
+//!   `window_registry::dispatcher()` (`OnceCell`, settable once per process) to
+//!   escape the window-update re-entrancy that would otherwise no-op the open.
+//!   Because that dispatcher is single-shot AND its receiver must outlive every
+//!   test, the dispatcher-driven tests share ONE install via [`ensure_dispatcher`]
+//!   and drain its queue synchronously with [`drain_dispatcher`] (the
+//!   app-agnostic `MainLoop::drain_for_test`, run from a plain `App` context —
+//!   exactly what the production consume-loop does, minus the async loop). Each
+//!   such test drains once up front (clearing any closure a prior serial test
+//!   left queued, which no-ops while no window is active) so it starts clean.
 
 use std::cell::RefCell;
 use std::path::Path;
 use std::rc::Rc;
 use std::sync::Arc;
+use std::sync::OnceLock;
 
 use gpui::{AppContext as _, Entity, TestAppContext, VisualTestContext};
 use gpui_component::{Root, WindowExt as _};
 use parking_lot::Mutex;
 use serial_test::serial;
 
-use dat0_app::main_bridge::MainThreadDispatcher;
+use dat0_app::main_bridge::{MainLoop, MainThreadDispatcher};
 use dat0_app::session::Session;
 use dat0_app::settings::set_first_run_done;
 use dat0_app::settings::store::SettingsStore;
@@ -109,6 +116,48 @@ fn init_components(cx: &mut TestAppContext) {
     cx.update(gpui_component::init);
 }
 
+/// Process-global `MainLoop` (the receiver half of the one dispatcher we
+/// install). The dispatcher itself lives in `window_registry`'s single-shot
+/// `OnceCell`; its receiver must outlive every test in this binary, so it is
+/// stashed here on first use and shared by all `#[serial]` tests.
+static MAIN_LOOP: OnceLock<Mutex<Option<MainLoop>>> = OnceLock::new();
+
+/// Install the process-global `MainThreadDispatcher` exactly once and keep its
+/// `MainLoop` so any (serial) test can drain it. The auto-show render and the
+/// manual tour re-entry handlers (`open_deferred`) both POST `onboarding::open`
+/// onto this dispatcher rather than re-entering the active window; the matching
+/// drain runs those queued closures. Idempotent: the second-and-later calls
+/// reuse the already-installed dispatcher (the `OnceCell` set is a no-op).
+fn ensure_dispatcher() {
+    let slot = MAIN_LOOP.get_or_init(|| Mutex::new(None));
+    let mut guard = slot.lock();
+    if guard.is_none() {
+        let (dispatcher, main_loop) = MainThreadDispatcher::new();
+        dat0_app::window_registry::install_dispatcher(dispatcher);
+        *guard = Some(main_loop);
+    }
+}
+
+/// Run every closure the production code posted to the dispatcher (e.g. the
+/// deferred `onboarding::open`) against the current `App` — exactly what the
+/// production consume-loop does, but synchronously.
+///
+/// Uses the App-only `TestAppContext::update`, NOT `VisualTestContext::update`:
+/// the latter takes the window out of its slot for the closure, which would
+/// re-create the very re-entrancy no-op the dispatcher hop exists to avoid.
+/// `&mut VisualTestContext` deref-coerces to `&mut TestAppContext`, so callers
+/// pass either — before a window exists (clearing stale closures, which then
+/// no-op) or after (actually opening the dialog on the active window).
+fn drain_dispatcher(cx: &mut TestAppContext) {
+    let Some(slot) = MAIN_LOOP.get() else {
+        return;
+    };
+    let mut guard = slot.lock();
+    if let Some(main_loop) = guard.as_mut() {
+        cx.update(|app| main_loop.drain_for_test(app));
+    }
+}
+
 // ----------------------------------------------------------------------------
 // 1. ★ auto-show-once — the single most important UAT item.
 // ----------------------------------------------------------------------------
@@ -123,34 +172,36 @@ fn auto_show_opens_tour_exactly_once(cx: &mut TestAppContext) {
     let state = tempfile::tempdir().unwrap();
     set_config_dir(cfg.path());
 
-    // Install the process-global dispatcher + a LIVE consume loop on this app,
-    // so the render's `dispatcher().dispatch(onboarding::open)` actually fires.
-    // (This is the exact mechanism window.rs:6058 uses.)
-    let (dispatcher, main_loop) = MainThreadDispatcher::new();
-    cx.update(|app| {
-        gpui_component::init(app);
-        dat0_app::window_registry::install_dispatcher(dispatcher);
-        app.spawn(async move |acx| {
-            let _ = main_loop.consume(acx).await;
-        })
-        .detach();
-    });
+    // Install the shared process-global dispatcher (the exact one window.rs:6058
+    // posts the auto-show onto), then clear any closure a prior serial test left
+    // queued — draining now, before a window exists, makes those stale
+    // `onboarding::open`s no-op (no active window) so we start clean.
+    ensure_dispatcher();
+    init_components(cx);
+    drain_dispatcher(cx);
 
     let session = build_empty_session(state.path());
     let (shell, cx) = open_shell_window(cx, session);
     cx.run_until_parked();
 
-    // The auto-show fired: a dialog is now on the window.
+    // The first-run empty-state render POSTED the tour open onto the dispatcher
+    // (window.rs:6058). Draining runs it from a plain `App` context — the hop
+    // that makes the open actually land (a direct in-render open would re-enter
+    // the taken window and no-op).
+    drain_dispatcher(cx);
+    cx.run_until_parked();
     assert!(
         dialog_open(cx),
         "first-run empty-state must auto-open the tour dialog"
     );
 
     // Force another render frame. The synchronous `tour_auto_shown` guard must
-    // prevent a SECOND dispatch — so still exactly one dialog. We prove
-    // "exactly one" by popping once: if a second had stacked, the window would
-    // still report an active dialog after a single close.
+    // prevent a SECOND dispatch — so the drain below finds nothing queued and
+    // there is still exactly one dialog. We prove "exactly one" by popping once:
+    // a second stacked dialog would survive a single close.
     shell.update(cx, |_shell, c| c.notify());
+    cx.run_until_parked();
+    drain_dispatcher(cx);
     cx.run_until_parked();
     assert!(
         dialog_open(cx),
@@ -216,14 +267,21 @@ fn onboarding_open_shows_carousel(cx: &mut TestAppContext) {
     let state = tempfile::tempdir().unwrap();
     set_config_dir(cfg.path());
 
+    // Seed first_run_done=true so the empty-state render neither shows the
+    // enriched band nor posts an auto-show — this test exercises ONLY the
+    // explicit `onboarding::open` entry point, independent of whether a prior
+    // serial test already installed the shared dispatcher.
+    let store = SettingsStore::with_path(cfg.path().join("settings.toml"));
+    set_first_run_done(&store, true).unwrap();
+
     init_components(cx);
     let session = build_empty_session(state.path());
     let (_shell, cx) = open_shell_window(cx, session);
     cx.run_until_parked();
 
-    // No dispatcher installed here → no auto-show; the dialog below is solely
-    // from our explicit call.
-    assert!(!dialog_open(cx), "no auto-show without a live dispatcher");
+    // No auto-show (flag seeded true); the dialog below is solely from our
+    // explicit call.
+    assert!(!dialog_open(cx), "no dialog before the explicit open");
 
     // Reach `onboarding::open` from a plain App context (NOT nested in a window
     // update — it re-enters the active window itself).
@@ -239,77 +297,135 @@ fn onboarding_open_shows_carousel(cx: &mut TestAppContext) {
 }
 
 // ----------------------------------------------------------------------------
-// 4. TakeTour action re-entry.
+// 4. TakeTour action OPENS the tour (the fix).
 // ----------------------------------------------------------------------------
 
-/// The Help → "Take a Tour" re-entry path. Dispatching the real `TakeTour`
-/// action ROUTES to a `&TakeTour` global handler with the active window
-/// resolvable (so the production `onboarding::open` call really executes). It
-/// does NOT visually open the dialog through this path — a confirmed re-entrancy
-/// no-op (see the NOTE below + report) that the dispatcher-based auto-show avoids.
+/// Help → "Take a Tour" (and the `menu_macos::TakeTour` action it dispatches)
+/// must actually OPEN the tour.
+///
+/// gpui's `dispatch_action` runs the handler INSIDE a `window.update` of the
+/// active window (App::dispatch_action → active_window.update → ... → the global
+/// `&TakeTour` listener). The OLD wiring called `onboarding::open` directly
+/// there, which re-entered that already-taken window via
+/// `cx.active_window().update(..)` and silently no-op'd — so "Take a Tour" did
+/// nothing. The fix routes the handler through `onboarding::open_deferred`,
+/// which hops the `MainThreadDispatcher` (running the open from a plain `App`
+/// context after the frame, exactly like the auto-show). This test reproduces
+/// the production one-line wiring verbatim (`run_app`'s registration is not
+/// separately callable) and asserts the dialog opens once the hop is drained.
+///
+/// Teeth: revert the handler to a direct `onboarding::open` and this fails —
+/// the in-update open no-ops AND nothing is posted to drain.
 #[gpui::test]
 #[serial]
-fn take_tour_action_routes_to_handler(cx: &mut TestAppContext) {
+fn take_tour_action_opens_tour_via_dispatcher(cx: &mut TestAppContext) {
     let cfg = tempfile::tempdir().unwrap();
     let state = tempfile::tempdir().unwrap();
     set_config_dir(cfg.path());
 
-    init_components(cx);
+    // Seed first_run_done=true so the empty-state render does NOT also auto-show
+    // — the only dialog this test can open is the one from the TakeTour action.
+    let store = SettingsStore::with_path(cfg.path().join("settings.toml"));
+    set_first_run_done(&store, true).unwrap();
 
-    // Mirror the production wiring (window.rs:1614,
-    // `cx.on_action(|_: &TakeTour, cx| onboarding::open(cx))`) but also record
-    // that the handler actually fired, AND remember whether `active_window`
-    // resolved inside the handler. The setup fn that registers the real handler
-    // (`run_app`) is not separately callable from a test, so the one-line handler
-    // is reproduced verbatim here.
-    let fired = Rc::new(RefCell::new(false));
-    let had_active_window = Rc::new(RefCell::new(false));
-    let f2 = fired.clone();
-    let w2 = had_active_window.clone();
+    ensure_dispatcher();
+    init_components(cx);
+    drain_dispatcher(cx); // clear any stale queued closure (no window yet → no-op)
+
+    // Production wiring, verbatim (window.rs:1614).
     cx.update(|app| {
-        app.on_action(
-            move |_: &dat0_app::menu_macos::TakeTour, app: &mut gpui::App| {
-                *f2.borrow_mut() = true;
-                *w2.borrow_mut() = app.active_window().is_some();
-                // The real handler — exercises the production re-entry call.
-                dat0_app::onboarding::open(app);
-            },
-        );
+        app.on_action(|_: &dat0_app::menu_macos::TakeTour, app: &mut gpui::App| {
+            dat0_app::onboarding::open_deferred(app);
+        });
     });
 
     let session = build_empty_session(state.path());
     let (_shell, cx) = open_shell_window(cx, session);
     cx.run_until_parked();
-    assert!(!dialog_open(cx), "no dialog before dispatch");
-
-    cx.dispatch_action(dat0_app::menu_macos::TakeTour);
-    cx.run_until_parked();
-
-    // The action routed to the registered global handler.
-    assert!(
-        *fired.borrow(),
-        "TakeTour action must route to the registered &TakeTour handler"
-    );
-    // And the handler did reach the production `onboarding::open` with an active
-    // window resolvable (so the re-entry call really executed).
-    assert!(
-        *had_active_window.borrow(),
-        "active window must resolve inside the TakeTour handler"
-    );
-
-    // NOTE (honest finding, see report): the dialog does NOT open via this path.
-    // gpui's `dispatch_action` runs the handler INSIDE a `window.update` of the
-    // active window (init_app_menus → App::dispatch_action → active_window.update
-    // → window.dispatch_action → defer → window.update → global listener), and
-    // `onboarding::open` re-enters that same window via
-    // `cx.active_window().update(..)`, which `update_window_id` rejects (the
-    // window is already `take()`-en) → the open silently no-ops. This is the
-    // exact reason the auto-show path hops through the `MainThreadDispatcher`
-    // (which runs `onboarding::open` from a plain App context — see test 1). The
-    // app-level open path is proven separately by `onboarding_open_shows_carousel`.
     assert!(
         !dialog_open(cx),
-        "documents the re-entrancy no-op: see test NOTE + report"
+        "precondition: no auto-show (first_run_done=true) → clean baseline"
+    );
+
+    // Dispatch the real action. The handler runs inside the active window's
+    // update; `open_deferred` therefore POSTS onto the dispatcher instead of
+    // re-entering. Draining runs it from a plain App context → the tour opens.
+    cx.dispatch_action(dat0_app::menu_macos::TakeTour);
+    cx.run_until_parked();
+    drain_dispatcher(cx);
+    cx.run_until_parked();
+
+    assert!(
+        dialog_open(cx),
+        "TakeTour must open the tour dialog (open_deferred hops the dispatcher \
+         out of the window-update re-entry that used to silently no-op)"
+    );
+
+    drop(state);
+}
+
+// ----------------------------------------------------------------------------
+// 4b. Hero "Take a tour" button OPENS the tour (the fix, via a real click).
+// ----------------------------------------------------------------------------
+
+/// The first-run hero band's "Take a tour" button (`id`/`debug_selector`
+/// `hero-take-tour`) must open the tour. Its click handler fires inside a
+/// `window.update`, so (like the menu action) a synchronous `onboarding::open`
+/// would re-enter the taken window and no-op; the fix routes it through
+/// `open_deferred`. We click the REAL button — located by its painted bounds via
+/// the release-no-op `debug_selector`, not a fragile hard-coded pixel — then
+/// drain the dispatcher hop and assert the dialog opens.
+///
+/// The enriched band only renders when `first_run_done=false`, which ALSO fires
+/// the auto-show. We flush + close that auto-show dialog first so the
+/// post-click dialog is cleanly attributable to the button click alone.
+///
+/// Teeth: revert the hero handler to a direct `onboarding::open` and this fails
+/// — the in-update open no-ops and nothing is posted to drain after the click.
+#[gpui::test]
+#[serial]
+fn hero_take_tour_button_opens_tour(cx: &mut TestAppContext) {
+    use gpui::Modifiers;
+
+    let cfg = tempfile::tempdir().unwrap();
+    let state = tempfile::tempdir().unwrap();
+    set_config_dir(cfg.path());
+    // first_run_done unset (false) → Enriched band (hero-take-tour painted).
+
+    ensure_dispatcher();
+    init_components(cx);
+    drain_dispatcher(cx); // clear any stale queued closure (no window yet → no-op)
+
+    let session = build_empty_session(state.path());
+    let (_shell, cx) = open_shell_window(cx, session);
+    cx.run_until_parked();
+
+    // Flush + dismiss the first-run auto-show so the baseline is dialog-free.
+    drain_dispatcher(cx);
+    cx.run_until_parked();
+    assert!(
+        dialog_open(cx),
+        "sanity: first-run auto-show opened a dialog"
+    );
+    cx.update(|window, app| window.close_dialog(app));
+    cx.run_until_parked();
+    assert!(!dialog_open(cx), "baseline: auto-show dialog closed");
+
+    // Locate + click the REAL hero button by its painted bounds. The band still
+    // renders (first_run_done is still false) and the auto-show will NOT re-fire
+    // (the per-shell `tour_auto_shown` guard is now set).
+    let bounds = cx
+        .debug_bounds("hero-take-tour")
+        .expect("hero-take-tour button must be painted in the enriched band");
+    cx.simulate_click(bounds.center(), Modifiers::none());
+    cx.run_until_parked();
+
+    // The click handler posted `open_deferred` onto the dispatcher; drain it.
+    drain_dispatcher(cx);
+    cx.run_until_parked();
+    assert!(
+        dialog_open(cx),
+        "clicking the hero 'Take a tour' button must open the tour dialog"
     );
 
     drop(state);
