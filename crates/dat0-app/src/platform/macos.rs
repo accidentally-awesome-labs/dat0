@@ -2,6 +2,12 @@ use anyhow::{Context, Result};
 use std::path::PathBuf;
 
 pub fn config_dir() -> Result<PathBuf> {
+    // Test / portable-install relocation seam: a non-empty `DAT0_CONFIG_DIR`
+    // overrides the default location verbatim. When unset/empty the body below
+    // is reached and behaves byte-identically to before this seam existed.
+    if let Some(p) = std::env::var_os("DAT0_CONFIG_DIR").filter(|p| !p.is_empty()) {
+        return Ok(PathBuf::from(p));
+    }
     Ok(dirs::home_dir()
         .context("no home")?
         .join("Library/Application Support/dat0"))

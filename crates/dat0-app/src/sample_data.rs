@@ -29,6 +29,14 @@ pub const IRIS_CSV: &[u8] = include_bytes!("../assets/iris.csv");
 /// Chinook sample SQLite, bundled via `include_bytes!`. MIT.
 pub const CHINOOK_SQLITE: &[u8] = include_bytes!("../assets/chinook.sqlite");
 
+/// Bundled placeholder demo workspace package (P11a T9).
+///
+/// A minimal valid `.dat0` zip (one trivial base table, one view) used by
+/// `[▶ Open demo.dat0]` in the first-run hero band. The real curated demo
+/// package (with the Chinook tour + pre-filled SQL + chart) replaces this in
+/// T10.
+pub const DEMO_DAT0: &[u8] = include_bytes!("../assets/demo.dat0");
+
 /// Remote URL for the NYC taxi Parquet sample. Fetched by T8.
 pub const NYC_TAXI_URL: &str = "https://github.com/accidentally-awesome-labs/dat0/releases/download/sample-data-v1/nyc_taxi.parquet";
 

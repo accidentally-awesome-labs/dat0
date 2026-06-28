@@ -33,12 +33,17 @@ pub struct Settings {
     /// tracing EnvFilter directive applied at next launch (default "info,dat0=debug").
     #[serde(default = "default_log_level")]
     pub log_level: String,
+    /// Whether first-run onboarding (enriched hero + auto-tour) has been
+    /// completed or skipped. Per-install, not per-workspace. Absent in
+    /// pre-v2 settings.toml → false, so upgraders see the tour once.
+    #[serde(default)]
+    pub first_run_done: bool,
 }
 
 impl Default for Settings {
     fn default() -> Self {
         Self {
-            schema_version: 1,
+            schema_version: 2,
             profile: Profile::default(),
             theme: Theme::default(),
             telemetry: Telemetry::default(),
@@ -47,6 +52,7 @@ impl Default for Settings {
             update_auto_check: true,
             memory_budget_mb: 1024,
             log_level: "info,dat0=debug".into(),
+            first_run_done: false,
         }
     }
 }
@@ -68,6 +74,16 @@ pub fn set_log_level(
 ) -> anyhow::Result<()> {
     let mut s = store.load_or_default()?;
     s.log_level = level.to_string();
+    store.save(&s)
+}
+
+/// Persist the first-run-onboarding-complete flag via the atomic write path.
+pub fn set_first_run_done(
+    store: &crate::settings::store::SettingsStore,
+    done: bool,
+) -> anyhow::Result<()> {
+    let mut s = store.load_or_default()?;
+    s.first_run_done = done;
     store.save(&s)
 }
 
@@ -104,4 +120,41 @@ pub struct Workspace {
     pub treat_paths_as_networked: Vec<std::path::PathBuf>,
     /// Global override: treat every workspace as networked (design D2).
     pub treat_all_as_networked: bool,
+}
+
+#[cfg(test)]
+mod first_run_tests {
+    use super::*;
+    use crate::settings::store::SettingsStore;
+
+    #[test]
+    fn first_run_done_defaults_false() {
+        // Fresh Settings (no file) => onboarding pending.
+        assert!(!Settings::default().first_run_done);
+    }
+
+    #[test]
+    fn absent_field_in_old_toml_reads_false() {
+        // A pre-v2 settings.toml has no `first_run_done` key.
+        let toml = "schema_version = 1\n";
+        let s: Settings = toml::from_str(toml).unwrap();
+        assert!(
+            !s.first_run_done,
+            "absent field must read as false (upgrader sees tour once)"
+        );
+    }
+
+    #[test]
+    fn set_first_run_done_round_trips() {
+        let store = SettingsStore::open_in_memory();
+        set_first_run_done(&store, true).unwrap();
+        assert!(store.load_or_default().unwrap().first_run_done);
+        set_first_run_done(&store, false).unwrap();
+        assert!(!store.load_or_default().unwrap().first_run_done);
+    }
+
+    #[test]
+    fn default_schema_version_is_2() {
+        assert_eq!(Settings::default().schema_version, 2);
+    }
 }

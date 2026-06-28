@@ -189,6 +189,8 @@ pub fn build_menus(_cx: &mut gpui::App) -> Vec<gpui::Menu> {
                 MenuItem::action(dat0_i18n::t("menu.help.discord"), OpenDiscord),
                 // P10c T8: Report a Bug.
                 MenuItem::action(dat0_i18n::t("menu.help.report_bug"), ReportBug),
+                // P11a T7: Take a Tour — re-opens the onboarding carousel.
+                MenuItem::action(dat0_i18n::t("menu.help.take_tour"), TakeTour),
             ],
         },
     ]
@@ -232,6 +234,10 @@ gpui::actions!(
         OpenDiscord,
         // P10c T8: Report a Bug — opens the crash/bug-report dialog.
         ReportBug,
+        // P11a T7: Take a Tour — re-opens the onboarding carousel.
+        TakeTour,
+        // P11a T9: Open demo.dat0 — unpack bundled demo package as editable workspace.
+        OpenDemoWorkspace,
         // P5a T11: SQL Console entry points (toggle / run / cancel / tab lifecycle).
         SqlConsoleToggle,
         SqlRun,

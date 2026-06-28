@@ -703,6 +703,46 @@ fn unpack_package_into(cx: &mut App, pkg: PathBuf, dir: PathBuf) {
     }
 }
 
+/// `OpenDemoWorkspace` handler: unpack the bundled `demo.dat0` into a fresh
+/// editable workspace and open it (P11a T9).
+///
+/// Flow:
+/// 1. Write the `DEMO_DAT0` bundle bytes to `$state_root/demo.dat0` (a
+///    staging file that is overwritten on each call — harmless).
+/// 2. Choose a fresh dest dir `$state_root/demo/<uuid>/` (a new UUID per
+///    invocation prevents collisions if the user opens the demo more than once).
+/// 3. Call `unpack_package_into(cx, staging_pkg, dest_dir)`, which
+///    materializes the workspace and then calls `open_workspace_at`.
+///
+/// All error paths surface via `error_ux::push` so the UI stays responsive.
+pub(crate) fn open_demo_workspace(cx: &mut App) {
+    let base = crate::window_registry::state_root()
+        .map(|p| p.to_path_buf())
+        .unwrap_or_else(std::env::temp_dir);
+
+    // Write bundled bytes to a staging file (overwrite is safe; same bytes).
+    let staging_pkg = base.join("demo.dat0");
+    if let Err(e) = std::fs::write(&staging_pkg, crate::sample_data::DEMO_DAT0) {
+        crate::error_ux::push(crate::error_ux::Banner::warning_with_body(
+            dat0_i18n::t("package.open.failed.title"),
+            format!("{e}"),
+        ));
+        return;
+    }
+
+    // Fresh dest dir: each click opens an independent editable workspace.
+    let dest_dir = base.join("demo").join(uuid::Uuid::now_v7().to_string());
+    if let Err(e) = std::fs::create_dir_all(&dest_dir) {
+        crate::error_ux::push(crate::error_ux::Banner::warning_with_body(
+            dat0_i18n::t("package.open.failed.title"),
+            format!("{e}"),
+        ));
+        return;
+    }
+
+    unpack_package_into(cx, staging_pkg, dest_dir);
+}
+
 /// `ReplayPackage` handler: re-run a `.dat0` recipe against fresh source files.
 ///
 /// Picks the package, then ONE replacement source file, then the output `*.dat0`
@@ -1568,6 +1608,25 @@ pub fn run_app(lock: AppLock, initial_paths: Vec<PathBuf>, main_loop: MainLoop) 
             }
         });
 
+        // Wire Help → Take a Tour → onboarding carousel (P11a T7).
+        // Declared unconditionally in menu_macos.rs so the handler resolves on
+        // Linux too (no visible menu item there, but the action still dispatches).
+        // `open_deferred` (not `open`): this handler runs INSIDE a
+        // `window.update` of the active window, where a synchronous
+        // `onboarding::open` would re-enter that taken window and silently
+        // no-op. The deferred hop runs the open from a plain App context after
+        // the frame — same mechanism the auto-show uses.
+        cx.on_action(|_a: &crate::menu_macos::TakeTour, cx: &mut App| {
+            crate::onboarding::open_deferred(cx);
+        });
+
+        // Wire hero → Open demo.dat0 → editable workspace (P11a T9).
+        // Declared unconditionally in menu_macos.rs; no menu item needed —
+        // only the first-run hero band button triggers it.
+        cx.on_action(|_a: &crate::menu_macos::OpenDemoWorkspace, cx: &mut App| {
+            open_demo_workspace(cx);
+        });
+
         // Wire Help → Check for Updates (P10a-2 T6). Declared unconditionally in
         // menu_macos.rs so the handler resolves on Linux too.
         cx.on_action(
@@ -2140,6 +2199,12 @@ pub struct WorkspaceShell {
     /// Whether the "Save as workspace?" prompt has been shown this session
     /// (in-memory only — never persisted; shows at most once per launch).
     workspace_prompt_shown: bool,
+    /// Whether the first-run tour has been auto-scheduled this per-window
+    /// lifetime (in-memory only — never persisted). The persisted
+    /// `first_run_done` flag is the authoritative gate across launches; this
+    /// bool prevents the render-driven trigger from re-queuing the open on
+    /// every subsequent frame before `first_run_done` flips to `true`.
+    tour_auto_shown: bool,
     /// Live watcher over the active table's source file (P7c). Re-created
     /// whenever the active table changes (see [`Self::retarget_source_watch`]);
     /// `None` when the active table has no `File` origin. Dropping the field
@@ -2215,6 +2280,7 @@ impl WorkspaceShell {
             md_token_prompt: None,
             md_token_prompt_sub: None,
             workspace_prompt_shown: false,
+            tour_auto_shown: false,
             source_watcher: None,
             read_only: false,
         }
@@ -5534,6 +5600,196 @@ impl WorkspaceShell {
         self.ai_entry_prompt = Some(prompt);
         cx.notify();
     }
+
+    // ─── P11a T3: Hero open helpers ──────────────────────────────────────────
+
+    /// Materialize and open a sample dataset (P11a T3).
+    ///
+    /// For bundled variants (`BundledCsv` / `BundledSqlite`): extracts bytes
+    /// to `$state_root/samples/<dest>` (idempotent) then feeds the path to the
+    /// `handle_drop` → data-source pipeline.  For `Remote` (NYC taxi): reuses
+    /// `fetch_remote` + `fetch_failed_banner`.  Mirrors `drop_listener`'s
+    /// `cx.spawn` + view-refresh pattern.  Wired by T4 hero buttons.
+    pub(crate) fn open_sample_kind(
+        &mut self,
+        kind: crate::sample_data::SampleKind,
+        cx: &mut Context<Self>,
+    ) {
+        use crate::sample_data::SampleKind;
+        let Some(state_root) = crate::window_registry::state_root() else {
+            crate::error_ux::push(crate::error_ux::Banner::error(
+                "Cannot open sample",
+                "App state directory not initialised",
+            ));
+            return;
+        };
+        let session = Arc::clone(&self.session);
+        match kind {
+            SampleKind::BundledCsv {
+                bytes,
+                dest_filename,
+            }
+            | SampleKind::BundledSqlite {
+                bytes,
+                dest_filename,
+            } => {
+                let path = match crate::sample_data::ensure_bundled_extracted(
+                    state_root,
+                    bytes,
+                    dest_filename,
+                ) {
+                    Ok(p) => p,
+                    Err(e) => {
+                        crate::error_ux::push(crate::error_ux::Banner::error(
+                            "Sample extract failed",
+                            e.to_string(),
+                        ));
+                        return;
+                    }
+                };
+                cx.spawn(async move |weak_shell, async_cx| {
+                    let outcomes = handle_drop(vec![path], session).await;
+                    Self::route_drop_outcomes(outcomes, weak_shell, async_cx).await;
+                })
+                .detach();
+            }
+            SampleKind::Remote {
+                url,
+                sha256,
+                dest_filename,
+                ..
+            } => {
+                let state_root = state_root.to_owned();
+                cx.spawn(
+                    async move |weak_shell, async_cx| match crate::sample_data::fetch_remote(
+                        url,
+                        sha256,
+                        &state_root,
+                        dest_filename,
+                    )
+                    .await
+                    {
+                        Ok(path) => {
+                            let outcomes = handle_drop(vec![path], session).await;
+                            Self::route_drop_outcomes(outcomes, weak_shell, async_cx).await;
+                        }
+                        Err(ref e) => {
+                            crate::error_ux::push(crate::sample_data::fetch_failed_banner(url, e));
+                        }
+                    },
+                )
+                .detach();
+            }
+        }
+    }
+
+    /// Open a recent workspace or package entry (P11a T3).
+    ///
+    /// - `Workspace` entries use `open_workspace_at` (opens / focuses the
+    ///   workspace window).
+    /// - `Package` entries use `open_package_at` (read-only Inspect window).
+    ///
+    /// Wired by T4 hero recents list.  `Context<Self>` derefs to `App` so the
+    /// free-function calls below compile without an explicit cast.
+    pub(crate) fn open_recent_entry(
+        &mut self,
+        entry: crate::recents::RecentEntry,
+        cx: &mut Context<Self>,
+    ) {
+        use crate::recents::RecentEntry;
+        let path = entry.path().to_owned();
+        match entry {
+            RecentEntry::Workspace { .. } => open_workspace_at(cx, path),
+            RecentEntry::Package { .. } => open_package_at(cx, path),
+        }
+    }
+
+    /// Show the native file picker and open the chosen file (P11a T3).
+    ///
+    /// Equivalent to dropping a file onto the shell: `prompt_for_paths`
+    /// → `handle_drop` → data-source refresh.  Mirrors `drop_listener`.
+    ///
+    /// Wired by T4 hero "Open file…" button.
+    pub(crate) fn open_file_picker(&mut self, cx: &mut Context<Self>) {
+        let rx = cx.prompt_for_paths(gpui::PathPromptOptions {
+            files: true,
+            directories: false,
+            multiple: false,
+            prompt: None,
+        });
+        let session = Arc::clone(&self.session);
+        cx.spawn(async move |weak_shell, async_cx| {
+            let path = match rx.await {
+                Ok(Ok(Some(mut v))) if !v.is_empty() => v.remove(0),
+                _ => return,
+            };
+            let outcomes = handle_drop(vec![path], session).await;
+            Self::route_drop_outcomes(outcomes, weak_shell, async_cx).await;
+        })
+        .detach();
+    }
+
+    /// Shared post-[`handle_drop`] outcome routing used by the three hero open
+    /// helpers (P11a T3).
+    ///
+    /// Mirrors the inner `cx.spawn` body of `drop_listener` exactly:
+    /// partitions outcomes into wizard requests and registered tables, opens
+    /// any import wizard dialogs, then promotes the last registered table into
+    /// the active data source with a full view refresh (`set_data_source` +
+    /// `refresh_catalog` + `cx.notify()`).
+    async fn route_drop_outcomes(
+        outcomes: Vec<DropOutcome>,
+        weak_shell: gpui::WeakEntity<WorkspaceShell>,
+        async_cx: &mut gpui::AsyncApp,
+    ) {
+        let mut wizard_requests: Vec<(std::path::PathBuf, crate::import_wizard::SniffSummary)> =
+            Vec::new();
+        let mut last_registered: Option<String> = None;
+        for o in outcomes {
+            match o {
+                DropOutcome::Registered { table_name, .. } => {
+                    last_registered = Some(table_name);
+                }
+                DropOutcome::OpenWizard { path, sniff } => {
+                    wizard_requests.push((path, sniff));
+                }
+                _ => {}
+            }
+        }
+        for (path, sniff) in wizard_requests {
+            let _ = async_cx.update(|app_cx| {
+                crate::import_wizard::open(app_cx, &path, sniff);
+            });
+        }
+        if let Some(table_name) = last_registered {
+            let engine = async_cx
+                .update(|app_cx| {
+                    weak_shell
+                        .update(app_cx, |view, _cx| view.session.lock().engine.clone())
+                        .ok()
+                })
+                .ok()
+                .flatten();
+            if let Some(engine) = engine {
+                match GridDataSource::new(engine, table_name.clone()).await {
+                    Ok(ds) => {
+                        let _ = async_cx.update(|app_cx| {
+                            let _ = weak_shell.update(app_cx, |view, cx| {
+                                let quoted = format!("\"{}\"", table_name.replace('"', "\"\""));
+                                view.view_model = Some(ViewModel::new(table_name.clone(), quoted));
+                                view.set_data_source(Arc::new(ds));
+                                view.refresh_catalog(cx);
+                                cx.notify();
+                            });
+                        });
+                    }
+                    Err(e) => {
+                        tracing::warn!("hero open: GridDataSource::new failed: {e}");
+                    }
+                }
+            }
+        }
+    }
 }
 
 /// Which AI field the entry modal is collecting (P9c-1 T9).
@@ -5718,82 +5974,7 @@ impl Render for WorkspaceShell {
             cx.spawn(
                 async move |weak_shell: gpui::WeakEntity<WorkspaceShell>, async_cx| {
                     let outcomes = handle_drop(paths_vec, session).await;
-
-                    // Route any `OpenWizard` outcomes to `import_wizard::open`
-                    // so T10/T11 implementers can light up the drawer view
-                    // through the existing seam. The current `open()` is a
-                    // stub that logs, so this is wiring-only — no behaviour
-                    // change for users until the drawer lands.
-                    //
-                    // Per spec §3.5: the last successfully-registered file
-                    // becomes the active tab. Partition outcomes into wizard
-                    // requests and registered tables in one pass.
-                    let mut wizard_requests: Vec<(
-                        std::path::PathBuf,
-                        crate::import_wizard::SniffSummary,
-                    )> = Vec::new();
-                    let mut last_registered: Option<String> = None;
-                    for o in outcomes {
-                        match o {
-                            DropOutcome::Registered { table_name, .. } => {
-                                last_registered = Some(table_name);
-                            }
-                            DropOutcome::OpenWizard { path, sniff } => {
-                                wizard_requests.push((path, sniff));
-                            }
-                            _ => {}
-                        }
-                    }
-                    for (path, sniff) in wizard_requests {
-                        let _ = async_cx.update(|app_cx| {
-                            crate::import_wizard::open(app_cx, &path, sniff);
-                        });
-                    }
-
-                    if let Some(table_name) = last_registered {
-                        // Obtain the engine Arc from the session via a sync update call.
-                        let engine = async_cx
-                            .update(|app_cx| {
-                                weak_shell
-                                    .update(app_cx, |view, _cx| view.session.lock().engine.clone())
-                                    .ok()
-                            })
-                            .ok()
-                            .flatten();
-
-                        if let Some(engine) = engine {
-                            match GridDataSource::new(engine, table_name.clone()).await {
-                                Ok(ds) => {
-                                    let _ = async_cx.update(|app_cx| {
-                                        let _ = weak_shell.update(app_cx, |view, cx| {
-                                            // T13: initialise ViewModel for the new table.
-                                            // The base_table is already-quoted per ViewModel
-                                            // design §4 ("base_table passed to ViewModel must
-                                            // already be quoted").
-                                            let quoted =
-                                                format!("\"{}\"", table_name.replace('"', "\"\""));
-                                            view.view_model = Some(ViewModel::new(
-                                                // Use table_name as tab_id for the single-tab
-                                                // P4a case; P4b will replace with a real UUID.
-                                                table_name.clone(),
-                                                quoted,
-                                            ));
-                                            view.set_data_source(Arc::new(ds));
-                                            // Reflect the newly-imported table in the
-                                            // Catalog dock (P6a T7).
-                                            view.refresh_catalog(cx);
-                                            cx.notify();
-                                        });
-                                    });
-                                }
-                                Err(e) => {
-                                    tracing::warn!(
-                                        "WorkspaceShell: GridDataSource::new failed: {e}"
-                                    );
-                                }
-                            }
-                        }
-                    }
+                    Self::route_drop_outcomes(outcomes, weak_shell, async_cx).await;
                 },
             )
             .detach();
@@ -5849,13 +6030,44 @@ impl Render for WorkspaceShell {
             // both fall back to the empty-state hero. `recents_empty`
             // toggles the right-column content (samples vs. recents).
             _ => {
-                let recents_empty = match crate::platform::config_dir() {
-                    Ok(cfg) => Recents::with_path(cfg.join("recents.json"))
-                        .list()
-                        .is_empty(),
-                    Err(_) => true,
+                // One config_dir() call feeds both recents and the
+                // first_run_done read. On any error (config dir unavailable
+                // OR settings parse failure) both default conservatively:
+                // recents=empty, first_run_done=true (suppresses tour).
+                let (recents_empty, first_run_done) = match crate::platform::config_dir() {
+                    Ok(cfg) => {
+                        let re = Recents::with_path(cfg.join("recents.json"))
+                            .list()
+                            .is_empty();
+                        let frd = crate::settings::store::SettingsStore::with_path(
+                            cfg.join("settings.toml"),
+                        )
+                        .load_or_default()
+                        .map(|s| s.first_run_done)
+                        .unwrap_or(true); // suppress tour on load error
+                        (re, frd)
+                    }
+                    Err(_) => (true, true),
                 };
-                EmptyState::new(recents_empty).render(cx).into_any_element()
+
+                // One-shot auto-open: schedule the tour exactly once per
+                // process. `tour_auto_shown` is set SYNCHRONOUSLY before
+                // scheduling so that subsequent render frames (which
+                // re-enter this branch before `first_run_done` persists)
+                // cannot re-queue a second open. The dispatcher hop defers
+                // `onboarding::open` out of the render frame, mirroring the
+                // `about::open` pattern (`window_registry::dispatcher()` +
+                // `dispatcher.dispatch`).
+                if !self.tour_auto_shown && crate::empty_state::should_auto_tour(first_run_done) {
+                    self.tour_auto_shown = true;
+                    if let Some(dispatcher) = crate::window_registry::dispatcher() {
+                        let _ = dispatcher.dispatch(|cx: &mut gpui::App| {
+                            crate::onboarding::open(cx);
+                        });
+                    }
+                }
+
+                EmptyState::new(recents_empty, first_run_done).render(cx)
             }
         };
 
