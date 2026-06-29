@@ -1,0 +1,5 @@
+---
+source: crates/dat0-engine/tests/render.rs
+expression: "compile_view_sql(BASE, &ops).unwrap()"
+---
+SELECT * FROM (SELECT * REPLACE (CASE WHEN __dat0_rowid = 7 THEN 'returned' ELSE "status" END AS "status", CASE WHEN __dat0_rowid = 9 THEN 0 ELSE "qty" END AS "qty") FROM "main"."orders" WHERE __dat0_rowid NOT IN (3, 5)) WHERE ("status" = 'shipped') AND ("price" BETWEEN 10.0 AND 99.5) AND ("region" IN ('us', 'eu')) ORDER BY "created_at" DESC, "id" ASC

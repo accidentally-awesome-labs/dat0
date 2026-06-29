@@ -27,6 +27,10 @@ tracing.workspace = true
 tokio = { workspace = true, features = ["rt-multi-thread", "macros", "fs", "sync", "time"] }
 criterion = { workspace = true }
 dat0-fixtures = { path = "../dat0-fixtures" }
+# UAT-automation proof slice: snapshot-gate the compiled view SQL for a realistic
+# composite transform stack (where the nested overlay output is too long to hand-
+# maintain as an `assert_eq!` literal). Committed `.snap` = CI regression baseline.
+insta = { workspace = true }
 
 [[bench]]
 name = "view_regen"
