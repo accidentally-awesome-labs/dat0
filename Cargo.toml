@@ -93,6 +93,11 @@ jsonschema = "0.36"
 # P3b T8: dev-only HTTP mock server for sample_data_fetch tests.
 mockito = "1"
 
+# UAT-automation proof slice: snapshot/approval gate over serialized state
+# (settings.toml, session.json, generated SQL, …) — the do-now tier from the
+# 2026-06-29 UAT-automation research. Text/serialized only; no pixel diffing.
+insta = "1"
+
 # Bench
 criterion = { version = "0.5", features = ["html_reports", "async_tokio"] }
 

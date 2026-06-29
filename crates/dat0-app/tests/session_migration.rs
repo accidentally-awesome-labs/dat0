@@ -533,3 +533,113 @@ fn v8_roundtrips_ui() {
     assert_eq!(state.ui.catalog_expanded, vec!["orders", "customers"]);
     assert_eq!(state.ui.catalog_selection.as_deref(), Some("orders"));
 }
+
+// ---------------------------------------------------------------------------
+// insta proof slice — gate the canonical session.json wire format.
+// ---------------------------------------------------------------------------
+
+/// PROOF SLICE for the "do-now" UAT-automation tier (research 2026-06-29), 3rd
+/// target: the `session.json` on-disk contract — the surface most exposed to
+/// silent migration/format drift (it has churned v1→v9).
+///
+/// The migration tests above assert individual fields survive a load; this one
+/// gates the ENTIRE serialized document for a representative populated session,
+/// using the exact serializer `Session::persist` writes (`to_*_pretty`). It
+/// therefore catches any drift a per-field assert would miss: a renamed key, a
+/// reordered field, a changed serde tag (`kind`/`type`/`value`), a flipped enum
+/// rename (`md`/`sqlite`), a dropped `#[serde(default)]`, or — critically — a
+/// `SESSION_SCHEMA_VERSION` bump (the snapshot's `schema_version` line tracks the
+/// constant, so a new migration MUST land as a reviewed snapshot change).
+///
+/// Determinism: every value is a fixed literal — pinned UUIDs via
+/// `Uuid::from_u128`, fixed epoch-millis, a hardcoded `source_path` — so NO
+/// `now()` / `now_v7()` enters the bytes. Output is byte-identical on macOS and
+/// Linux CI. The explicit (non-`..Default`) struct literal is itself a gate:
+/// adding a `SessionState` field fails compilation here until it is accounted
+/// for. Committed `.snap` = the regression baseline; insta never auto-creates
+/// snapshots under `CI`.
+#[test]
+fn session_json_wire_format_is_snapshot_gated() {
+    use dat0_app::session::queries::{HistoryEntry, SavedQuery};
+    use dat0_app::session::{
+        PersistedAttachment, PersistedAttachmentKind, SessionUiState, SqlTabState, Tab,
+    };
+    use dat0_engine::{FilterOp, FilterValue, Scalar, SortDirection, SortKey, Transformation};
+    use uuid::Uuid;
+
+    let state = SessionState {
+        schema_version: SESSION_SCHEMA_VERSION,
+        tabs: vec![
+            Tab {
+                table_name: "orders".into(),
+                source_path: Some(PathBuf::from("/data/orders.csv")),
+                transform_stack: vec![
+                    Transformation::Filter {
+                        column: "status".into(),
+                        op: FilterOp::Eq,
+                        value: FilterValue::Scalar {
+                            value: Scalar::Str("shipped".into()),
+                        },
+                    },
+                    Transformation::Sort {
+                        keys: vec![SortKey {
+                            column: "created_at".into(),
+                            direction: SortDirection::Desc,
+                        }],
+                    },
+                ],
+                undo_cursor: 2,
+                extra: serde_json::Map::new(),
+            },
+            Tab {
+                table_name: "customers".into(),
+                source_path: None,
+                transform_stack: vec![],
+                undo_cursor: 0,
+                extra: serde_json::Map::new(),
+            },
+        ],
+        active_tab: Some(0),
+        sql_tabs: vec![SqlTabState {
+            id: Uuid::from_u128(0x0000_0000_0000_7000_8000_0000_0000_002a),
+            title: "scratch".into(),
+            sql: "SELECT * FROM orders".into(),
+        }],
+        active_sql_tab: Some(0),
+        query_history: vec![HistoryEntry {
+            sql: "SELECT 1".into(),
+            ran_at: 1_700_000_000_000,
+            ok: true,
+            elapsed_ms: 12,
+        }],
+        saved_queries: vec![SavedQuery {
+            id: Uuid::from_u128(0x0000_0000_0000_7000_8000_0000_0000_002b),
+            name: "top orders".into(),
+            sql: "SELECT * FROM orders LIMIT 10".into(),
+            saved_at: 1_700_000_000_000,
+        }],
+        charts: vec![],
+        attachments: vec![
+            PersistedAttachment {
+                alias: "mdcloud".into(),
+                kind: PersistedAttachmentKind::Md,
+            },
+            PersistedAttachment {
+                alias: "local".into(),
+                kind: PersistedAttachmentKind::Sqlite {
+                    path: "/data/local.sqlite".into(),
+                },
+            },
+        ],
+        ui: SessionUiState {
+            catalog_panel_visible: true,
+            inspector_panel_visible: false,
+            catalog_expanded: vec!["main".into()],
+            catalog_selection: Some("orders".into()),
+        },
+    };
+
+    // Mirror the exact on-disk serializer (`Session::persist` → to_vec_pretty).
+    let json = serde_json::to_string_pretty(&state).unwrap();
+    insta::assert_snapshot!("session_json_wire_format", json);
+}

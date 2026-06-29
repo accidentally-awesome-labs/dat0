@@ -1,0 +1,91 @@
+---
+source: crates/dat0-app/tests/session_migration.rs
+expression: json
+---
+{
+  "schema_version": 9,
+  "tabs": [
+    {
+      "table_name": "orders",
+      "source_path": "/data/orders.csv",
+      "transform_stack": [
+        {
+          "kind": "filter",
+          "column": "status",
+          "op": "eq",
+          "value": {
+            "kind": "scalar",
+            "value": {
+              "type": "str",
+              "value": "shipped"
+            }
+          }
+        },
+        {
+          "kind": "sort",
+          "keys": [
+            {
+              "column": "created_at",
+              "direction": "desc"
+            }
+          ]
+        }
+      ],
+      "undo_cursor": 2
+    },
+    {
+      "table_name": "customers",
+      "source_path": null,
+      "transform_stack": [],
+      "undo_cursor": 0
+    }
+  ],
+  "active_tab": 0,
+  "sql_tabs": [
+    {
+      "id": "00000000-0000-7000-8000-00000000002a",
+      "title": "scratch",
+      "sql": "SELECT * FROM orders"
+    }
+  ],
+  "active_sql_tab": 0,
+  "query_history": [
+    {
+      "sql": "SELECT 1",
+      "ran_at": 1700000000000,
+      "ok": true,
+      "elapsed_ms": 12
+    }
+  ],
+  "saved_queries": [
+    {
+      "id": "00000000-0000-7000-8000-00000000002b",
+      "name": "top orders",
+      "sql": "SELECT * FROM orders LIMIT 10",
+      "saved_at": 1700000000000
+    }
+  ],
+  "charts": [],
+  "attachments": [
+    {
+      "alias": "mdcloud",
+      "kind": "md"
+    },
+    {
+      "alias": "local",
+      "kind": {
+        "sqlite": {
+          "path": "/data/local.sqlite"
+        }
+      }
+    }
+  ],
+  "ui": {
+    "catalog_panel_visible": true,
+    "inspector_panel_visible": false,
+    "catalog_expanded": [
+      "main"
+    ],
+    "catalog_selection": "orders"
+  }
+}

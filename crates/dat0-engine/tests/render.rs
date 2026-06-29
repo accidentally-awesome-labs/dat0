@@ -2,7 +2,8 @@
 //! shape against a fixed base table name and asserts the exact SQL emitted.
 
 use dat0_engine::{
-    FilterOp, FilterValue, Scalar, SortDirection, SortKey, Transformation, compile_view_sql,
+    CellEdit, FilterOp, FilterValue, RowKey, Scalar, SortDirection, SortKey, Transformation,
+    compile_view_sql,
 };
 
 const BASE: &str = "\"main\".\"orders\"";
@@ -420,5 +421,89 @@ fn empty_sort_keys_combined_with_filter_emits_no_order_by() {
     assert_eq!(
         compile_view_sql(BASE, &ops).unwrap(),
         "SELECT * FROM \"main\".\"orders\" WHERE (\"x\" = 1)"
+    );
+}
+
+// ----------------------------------------------------------------------------
+// insta proof slice — snapshot the WHOLE compiled SQL for a realistic composite
+// transform stack (highest-value next target after settings.toml).
+// ----------------------------------------------------------------------------
+
+/// PROOF SLICE for the "do-now" UAT-automation tier (research 2026-06-29),
+/// extended to the query builder — the most regression-prone surface.
+///
+/// The single-op tests above use exact `assert_eq!` golden strings, which works
+/// when the output is one line. This test exercises the full OVERLAY path (cell
+/// edits via `REPLACE` + a row-delete anti-join, wrapped so outer filters/sort
+/// see edited values) for a stack that also carries three filter shapes
+/// (string `=`, inclusive `BETWEEN`, `IN (...)`) and a two-key `ORDER BY`. The
+/// emitted SQL is a long nested expression where a hand-maintained `assert_eq!`
+/// literal would be error-prone to write and painful to update; `insta` captures
+/// it whole and an intended change is accepted with `cargo insta review` instead
+/// of re-typing the string.
+///
+/// `compile_view_sql` is a pure function over a fixed `BASE` and a fixed op
+/// stack — output is byte-identical on macOS and Linux CI. The committed `.snap`
+/// is the regression baseline; insta never auto-creates snapshots under `CI`.
+#[test]
+fn composite_overlay_stack_sql_is_snapshot_gated() {
+    let ops = [
+        Transformation::Filter {
+            column: "status".into(),
+            op: FilterOp::Eq,
+            value: FilterValue::Scalar {
+                value: Scalar::Str("shipped".into()),
+            },
+        },
+        Transformation::Filter {
+            column: "price".into(),
+            op: FilterOp::Between,
+            value: FilterValue::Range {
+                lo: Scalar::Float(10.0),
+                hi: Scalar::Float(99.5),
+                inclusive: true,
+            },
+        },
+        Transformation::Filter {
+            column: "region".into(),
+            op: FilterOp::In,
+            value: FilterValue::List {
+                values: vec![Scalar::Str("us".into()), Scalar::Str("eu".into())],
+            },
+        },
+        Transformation::Edit {
+            cells: vec![
+                CellEdit {
+                    row: RowKey::Surrogate { id: 7 },
+                    column: "status".into(),
+                    value: Scalar::Str("returned".into()),
+                },
+                CellEdit {
+                    row: RowKey::Surrogate { id: 9 },
+                    column: "qty".into(),
+                    value: Scalar::Int(0),
+                },
+            ],
+        },
+        Transformation::RowDelete {
+            rows: vec![RowKey::Surrogate { id: 3 }, RowKey::Surrogate { id: 5 }],
+        },
+        Transformation::Sort {
+            keys: vec![
+                SortKey {
+                    column: "created_at".into(),
+                    direction: SortDirection::Desc,
+                },
+                SortKey {
+                    column: "id".into(),
+                    direction: SortDirection::Asc,
+                },
+            ],
+        },
+    ];
+
+    insta::assert_snapshot!(
+        "composite_overlay_stack_sql",
+        compile_view_sql(BASE, &ops).unwrap()
     );
 }

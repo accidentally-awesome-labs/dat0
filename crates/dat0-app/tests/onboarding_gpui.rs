@@ -611,3 +611,43 @@ fn carousel_next_back_navigation_is_human_uat() {
     // Intentionally empty: documents what a human must still verify (the dots
     // pager advances, Back returns, "Get started" appears on the last panel).
 }
+
+// ----------------------------------------------------------------------------
+// 7. insta proof slice — gate the SERIALIZED state a behavioral flow produces.
+// ----------------------------------------------------------------------------
+
+/// PROOF SLICE for the "do-now" tier of the 2026-06-29 UAT-automation research:
+/// `insta` snapshot-gates the *serialized* state that a real production code
+/// path writes — here the `settings.toml` produced by the first-run-done persist
+/// path (`set_first_run_done` → `SettingsStore::save` → `toml::to_string_pretty`),
+/// the exact path the carousel "Skip" / "Get started" handlers reach via
+/// `mark_first_run_done`.
+///
+/// Why this beats the hand-rolled `first_run_done == true` assert in
+/// `skip_click_dismisses_and_writes_flag`: the snapshot captures the ENTIRE
+/// serialized file, so any drift in the settings schema, a field default, or the
+/// TOML formatting fails the gate — not just the one boolean. The committed
+/// `.snap` is the regression baseline; insta never auto-creates snapshots under
+/// `CI`, so a changed serialization reddens the build (run `cargo insta review`
+/// locally to accept an intended change).
+///
+/// Deterministic + cross-platform: `Settings` carries no paths/timestamps/random
+/// in its defaults, so the bytes are byte-identical on macOS and Linux CI. Plain
+/// `#[test]` — it writes to an explicit `with_path` store and never touches the
+/// process-global `DAT0_CONFIG_DIR`, so it needs no `#[serial]`. The value is in
+/// gating serialized output; the same one-liner extends to session.json,
+/// generated SQL, and `.dat0` export manifests.
+#[test]
+fn persisted_settings_toml_is_snapshot_gated() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("settings.toml");
+    let store = SettingsStore::with_path(path.clone());
+
+    // Drive the real production persist path (load defaults → set flag → atomic
+    // save), exactly what the onboarding Skip / Get-started handlers invoke.
+    set_first_run_done(&store, true).unwrap();
+
+    // Gate the exact bytes on disk, not a reconstructed struct.
+    let toml = std::fs::read_to_string(&path).unwrap();
+    insta::assert_snapshot!("persisted_settings_toml", toml);
+}
