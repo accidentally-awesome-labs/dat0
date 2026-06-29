@@ -1,0 +1,90 @@
+---
+source: crates/dat0-format/tests/model_serde.rs
+expression: json
+---
+{
+  "tables": [
+    {
+      "id": "t_sales",
+      "name": "sales",
+      "kind": "base",
+      "schema": [
+        {
+          "name": "region",
+          "type": "VARCHAR"
+        },
+        {
+          "name": "amount",
+          "type": "DOUBLE"
+        }
+      ],
+      "row_count": 1000,
+      "data": "data/sales.parquet",
+      "source_ref": "src_sales"
+    },
+    {
+      "id": "t_top",
+      "name": "top_sales",
+      "kind": "derived",
+      "schema": [
+        {
+          "name": "region",
+          "type": "VARCHAR"
+        }
+      ],
+      "row_count": 10,
+      "data": "data/top_sales.parquet",
+      "derivation": {
+        "kind": "sql",
+        "sql": "SELECT region FROM sales ORDER BY amount DESC LIMIT 10",
+        "parents": [
+          "t_sales"
+        ]
+      }
+    },
+    {
+      "id": "t_eu",
+      "name": "eu_sales",
+      "kind": "derived",
+      "schema": [
+        {
+          "name": "region",
+          "type": "VARCHAR"
+        },
+        {
+          "name": "amount",
+          "type": "DOUBLE"
+        }
+      ],
+      "row_count": 250,
+      "data": "data/eu_sales.parquet",
+      "derivation": {
+        "kind": "transform",
+        "parent": "t_sales",
+        "ops": [
+          {
+            "kind": "filter",
+            "column": "region",
+            "op": "eq",
+            "value": {
+              "kind": "scalar",
+              "value": {
+                "type": "str",
+                "value": "eu"
+              }
+            }
+          },
+          {
+            "kind": "sort",
+            "keys": [
+              {
+                "column": "amount",
+                "direction": "desc"
+              }
+            ]
+          }
+        ]
+      }
+    }
+  ]
+}
