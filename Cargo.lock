@@ -1848,6 +1848,7 @@ version = "0.1.0"
 dependencies = [
  "dat0-engine",
  "duckdb",
+ "insta",
  "jsonschema",
  "serde",
  "serde_json",

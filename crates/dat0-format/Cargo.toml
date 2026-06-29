@@ -28,3 +28,6 @@ duckdb = { workspace = true }
 [dev-dependencies]
 jsonschema = { workspace = true }
 tokio = { workspace = true }       # used by engine-backed async integration tests (T2+)
+# UAT-automation proof slice: snapshot-gate the canonical recipe.json wire form
+# (the `.dat0` format contract). Committed `.snap` = CI regression baseline.
+insta = { workspace = true }
