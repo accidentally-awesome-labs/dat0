@@ -100,9 +100,16 @@ impl AsyncHarness {
     }
 }
 
-/// Build the async harness and switch the gpui test executor into parking mode
-/// so `run_until_parked` waits for cross-thread `spawn_blocking` completions
-/// instead of panicking on the would-park JoinHandle.
+/// Build the async harness and call `cx.executor().allow_parking()` so an
+/// engine-backed import can be driven to completion via `block_test` on a
+/// captured `Task`.
+///
+/// NOTE: `allow_parking` does NOT make `run_until_parked` wait for the
+/// cross-thread `spawn_blocking` to re-enqueue — `run_until_parked` ticks the
+/// foreground queue and returns the instant the task parks on the JoinHandle,
+/// regardless of parking mode. See `engine_backed_async_flow_completes_in_harness`
+/// for the verified mechanism, and drive engine flows with
+/// `cx.executor().block_test(task)`, not `run_until_parked`.
 fn enter_async_harness(cx: &mut TestAppContext) -> AsyncHarness {
     let rt = tokio::runtime::Builder::new_multi_thread()
         .enable_all()
