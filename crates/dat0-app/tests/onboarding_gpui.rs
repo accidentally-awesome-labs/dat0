@@ -564,76 +564,108 @@ fn skip_click_dismisses_and_writes_flag(cx: &mut TestAppContext) {
 }
 
 // ----------------------------------------------------------------------------
-// 6. Hero sample button → real click drives the wired sample-open helper.
+// 6. Hero sample button → real click drives the full async import to completion.
 // ----------------------------------------------------------------------------
 
-/// Clicking the first hero sample card ("Iris", id `hero-sample-0`) drives the
-/// production `open_sample_kind` handler, which SYNCHRONOUSLY extracts the
-/// bundled CSV into `$state_root/samples/iris.csv` before spawning the async
-/// import. We assert that extraction — a real, observable side effect of the
-/// click reaching the wired helper.
+/// The first hero sample card ("Iris", id `hero-sample-0`) drives the production
+/// `open_sample_kind` → `cx.spawn(handle_drop → route_drop_outcomes)` flow to
+/// COMPLETION: the bundled CSV is extracted AND imported, leaving the `iris`
+/// table registered in the engine. (Pre-Gap-3 this test could only assert the
+/// synchronous CSV extraction because the async import's `spawn_blocking`
+/// panicked under the gpui test executor; the async harness now drives it home.)
 ///
-/// HEADLESS BOUNDARY (honest note, see report): the subsequent
-/// `cx.spawn(handle_drop(..))` runs the import via `tokio::task::spawn_blocking`
-/// (`file_drop.rs:76`, then `duckdb_engine.rs:254`). The gpui foreground test
-/// executor is NOT a tokio runtime, and entering one (`rt.enter()`) does not
-/// survive across the future's `.await` points when it is the gpui executor — not
-/// tokio — re-polling the task, so spawn_blocking panics with "no reactor
-/// running" *inside the detached task*. Production runs under tokio so this works
-/// there; here the FULL tab-open cannot execute. We therefore drive the real
-/// click, catch that boundary panic, and assert the deterministic reachable
-/// observable: the bundled CSV is on disk (extracted synchronously, before the
-/// spawn). The async tab-open itself is human-UAT-owed.
+/// Drive strategy: `open_sample_kind` uses `cx.spawn(...).detach()`, so the
+/// Task cannot be captured for `block_test`. Instead we pump the gpui foreground
+/// queue with repeated `run_until_parked` calls interleaved with real
+/// `thread::sleep` pauses. Each pump drives the detached task to its next
+/// `spawn_blocking` park (sniff on iteration 1, CTAS on iteration 2); the
+/// harness runtime's blocking pool runs the DuckDB work during the sleep; the
+/// waker re-enqueues the continuation for the next pump. We check the engine
+/// for the `iris` table after each cycle and break early once the import
+/// completes (~2-3 iterations in practice, 100 × 20 ms = 2 s budget).
 #[gpui::test]
 #[serial]
-fn hero_sample_click_extracts_bundled_csv(cx: &mut TestAppContext) {
+fn hero_sample_click_imports_bundled_csv(cx: &mut TestAppContext) {
+    use dat0_engine::QueryEngine as _;
     use gpui::{Modifiers, point, px};
 
     let cfg = tempfile::tempdir().unwrap();
     let state = tempfile::tempdir().unwrap();
     set_config_dir(cfg.path());
 
-    // Plain hero (no enriched band / no auto-show attempt) keeps the sample
-    // column at the deterministic top of the right column.
+    // Plain hero (no enriched band / auto-show) keeps the sample column at the
+    // deterministic top of the right column.
     let store = SettingsStore::with_path(cfg.path().join("settings.toml"));
     set_first_run_done(&store, true).unwrap();
-    // `open_sample_kind` early-returns with an error banner unless the state
-    // root is installed; point it at the test temp so the extraction target is
-    // observable.
+    // open_sample_kind early-returns unless the state root is installed.
     dat0_app::window_registry::install_state_root(state.path().to_path_buf());
 
+    let harness = enter_async_harness(cx);
+    let _guard = harness.enter(); // held to end-of-test
+
     init_components(cx);
-    let session = build_empty_session(state.path());
-    let (_shell, cx) = open_shell_window(cx, session);
+    let session = build_empty_session_in(&harness, state.path());
+    let (_shell, cx) = open_shell_window(cx, Arc::clone(&session));
     cx.run_until_parked();
 
-    let iris = state.path().join("samples").join("iris.csv");
-    assert!(!iris.exists(), "precondition: sample not yet extracted");
+    let iris_csv = state.path().join("samples").join("iris.csv");
+    assert!(!iris_csv.exists(), "precondition: sample not yet extracted");
 
-    // Click the first sample card (full-width row near the top of the 280px
-    // right column on the 1920-wide TestDisplay). The detached async import then
-    // hits the tokio/gpui-executor boundary and panics WITHIN the spawned task;
-    // silence the default hook for that expected panic and catch it so the test
-    // can assert the synchronous side effect that already happened.
-    let prev_hook = std::panic::take_hook();
-    std::panic::set_hook(Box::new(|_| {}));
-    // NOTE: this catch_unwind wraps ONLY the expected spawn-blocking headless-
-    // boundary panic ("no reactor running" from tokio inside the gpui executor).
-    // Any change here must re-confirm that the positive iris.exists() assert
-    // below remains live — that check is what prevents a false green.
-    let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-        // NOTE: (1700, 40) is empirically tuned for the fixed 1920×1080 TestDisplay
-        // (first sample card at the top of the 280 px right column; deterministic on both platforms).
-        cx.simulate_click(point(px(1700.), px(40.)), Modifiers::none());
-        cx.run_until_parked();
-    }));
-    std::panic::set_hook(prev_hook);
+    // Click the first sample card.
+    // NOTE: (1700, 40) is empirically tuned for the fixed 1920×1080 TestDisplay
+    // (first sample card at the top of the 280 px right column; deterministic
+    // on both platforms).
+    cx.simulate_click(point(px(1700.), px(40.)), Modifiers::none());
 
+    // Sync side-effect is immediate (inside open_sample_kind before the spawn):
+    // bundled CSV extracted to samples/iris.csv.
     assert!(
-        iris.exists(),
-        "clicking hero-sample-0 must extract the bundled Iris CSV (proves the \
-         wired open_sample_kind ran up to the headless tokio boundary)"
+        iris_csv.exists(),
+        "hero-sample-0 must extract the bundled Iris CSV"
     );
+
+    // Async tail: pump the gpui foreground queue until the `iris` table appears
+    // in the engine, or 2 s elapses (~100 × 20 ms). Each cycle:
+    //   1. run_until_parked  — drives the detached task to its next park point
+    //                          (spawn_blocking for sniff, then CTAS, then done).
+    //   2. get_tables        — check whether the CTAS has committed.
+    //   3. thread::sleep     — let the blocking pool finish the pending work so
+    //                          the waker re-enqueues the task continuation.
+    let engine = session.lock().engine.clone();
+    let mut imported = false;
+    for _ in 0..100 {
+        cx.run_until_parked();
+        let tables = harness
+            .block_on(async { engine.get_tables().await })
+            .unwrap_or_default();
+        if tables.iter().any(|t| t.name == "iris") {
+            imported = true;
+            break;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(20));
+    }
+    assert!(
+        imported,
+        "hero-sample-0 must import iris to completion (tables: {:?})",
+        harness
+            .block_on(async { engine.get_tables().await })
+            .unwrap_or_default()
+            .iter()
+            .map(|t| &t.name)
+            .collect::<Vec<_>>()
+    );
+
+    // Settle: drain any remaining detached-task work (add_tab → persist and
+    // route_drop_outcomes → GridDataSource::new) while `state` is still alive.
+    // The `#[gpui::test]` macro injects `dispatcher.run_until_parked()` AFTER
+    // the test function returns (i.e., after local variables including `state`
+    // are dropped). If pending task work remains at that point, `persist()`
+    // hits ENOENT because the temp dir has already been cleaned up. Two settle
+    // rounds are sufficient (one for add_tab, one for GridDataSource::new).
+    for _ in 0..3 {
+        std::thread::sleep(std::time::Duration::from_millis(50));
+        cx.run_until_parked();
+    }
 
     drop(state);
 }
