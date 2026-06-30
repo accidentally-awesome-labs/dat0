@@ -81,6 +81,46 @@ fn build_empty_session(state_root: &Path) -> Arc<Mutex<Session>> {
     Arc::new(Mutex::new(sess))
 }
 
+/// A tokio runtime kept alive for the whole test so the foreground-polled
+/// `cx.spawn` futures can call `tokio::task::spawn_blocking` (the engine and
+/// file-import paths are built on it). Mirrors production `run_app`
+/// (window.rs:1308/1377), which holds `runtime.enter()` for all of
+/// `Application::run`. The caller MUST bind `enter()`'s guard to a `_guard`
+/// held to end-of-test, and the harness MUST outlive every spawned task.
+struct AsyncHarness {
+    rt: tokio::runtime::Runtime,
+}
+
+impl AsyncHarness {
+    fn enter(&self) -> tokio::runtime::EnterGuard<'_> {
+        self.rt.enter()
+    }
+    fn block_on<F: std::future::Future>(&self, f: F) -> F::Output {
+        self.rt.block_on(f)
+    }
+}
+
+/// Build the async harness and switch the gpui test executor into parking mode
+/// so `run_until_parked` waits for cross-thread `spawn_blocking` completions
+/// instead of panicking on the would-park JoinHandle.
+fn enter_async_harness(cx: &mut TestAppContext) -> AsyncHarness {
+    let rt = tokio::runtime::Builder::new_multi_thread()
+        .enable_all()
+        .build()
+        .expect("tokio runtime");
+    cx.executor().allow_parking();
+    AsyncHarness { rt }
+}
+
+/// Like `build_empty_session`, but constructs the session on the harness
+/// runtime so its engine shares the runtime the test has entered.
+fn build_empty_session_in(h: &AsyncHarness, state_root: &Path) -> Arc<Mutex<Session>> {
+    let sess = h
+        .block_on(Session::new(state_root, BUDGET))
+        .expect("Session::new");
+    Arc::new(Mutex::new(sess))
+}
+
 /// Open a real window whose root view is a `gpui_component::Root` wrapping a
 /// fresh `WorkspaceShell` over `session` — exactly mirroring production
 /// (`window.rs::open_window_view`). The window is ACTIVATED inside the build
@@ -650,4 +690,85 @@ fn persisted_settings_toml_is_snapshot_gated() {
     // Gate the exact bytes on disk, not a reconstructed struct.
     let toml = std::fs::read_to_string(&path).unwrap();
     insta::assert_snapshot!("persisted_settings_toml", toml);
+}
+
+// ----------------------------------------------------------------------------
+// Gap 3 — async-flow support: canonical "engine op completes in-harness" test.
+// ----------------------------------------------------------------------------
+
+/// T0 spike (now a permanent regression test): with an entered tokio runtime +
+/// `allow_parking`, a `cx.spawn`ed flow that hits `tokio::task::spawn_blocking`
+/// (here a real CSV import via the production `handle_drop`) runs to COMPLETION
+/// under `#[gpui::test]` — no "no reactor running" panic, and the table is
+/// registered in the engine afterwards.
+///
+/// ## Which path worked: brief fallback 1 (capture the task + drive it).
+///
+/// The brief's PRIMARY path (`cx.spawn(..).detach(); cx.run_until_parked()`) does
+/// NOT complete the import — it leaves the engine empty (no panic, but no table).
+/// Root cause (verified against gpui 0.2.2): `run_until_parked` is literally
+/// `while dispatcher.tick(false) {}`; it drains the gpui executor's *current*
+/// queue and returns the instant the foreground task parks on the cross-thread
+/// tokio `JoinHandle` (the `spawn_blocking` inside `handle_drop`). It does NOT
+/// wait for the off-thread completion to re-enqueue the task. `allow_parking`
+/// only affects the `block`/`block_test` path, not `run_until_parked`.
+///
+/// So we apply fallback 1: capture the `Task` and drive it with a primitive that
+/// parks for the cross-thread wake — `BackgroundExecutor::block_test`
+/// (`block_internal(background_only = false, .., timeout = None)`). It ticks the
+/// FOREGROUND queue (where `cx.spawn` lands the task — `block()` uses
+/// `background_only = true` and would skip it) and, with `allow_parking` set,
+/// parks on its own unparker instead of panicking; the dispatcher's
+/// `dispatch`/`dispatch_on_main_thread` call `unpark_last()` when the tokio
+/// completion re-enqueues the runnable, so it re-ticks and runs the import to the
+/// end. (`harness.block_on(task)` would NOT work: tokio's `block_on` polls the
+/// gpui `Task` handle but never ticks the gpui dispatcher, so the foreground
+/// import body never runs.) The runtime is still entered for all of this so the
+/// `spawn_blocking` inside the import finds a reactor — that part of the brief's
+/// hypothesis (mirror `run_app`'s `runtime.enter()`) holds; only the *driver* had
+/// to change from `run_until_parked` to `block_test`.
+#[gpui::test]
+#[serial]
+fn engine_backed_async_flow_completes_in_harness(cx: &mut TestAppContext) {
+    use dat0_engine::QueryEngine as _;
+
+    let cfg = tempfile::tempdir().unwrap();
+    let state = tempfile::tempdir().unwrap();
+    set_config_dir(cfg.path());
+
+    let harness = enter_async_harness(cx);
+    let _guard = harness.enter(); // held to end-of-test
+
+    init_components(cx);
+    let session = build_empty_session_in(&harness, state.path());
+
+    // A tiny CSV on disk; importing it exercises the spawn_blocking engine path.
+    let csv = state.path().join("spike.csv");
+    std::fs::write(&csv, "a,b\n1,2\n3,4\n").unwrap();
+
+    let (_shell, cx) = open_shell_window(cx, Arc::clone(&session));
+    cx.run_until_parked();
+
+    // Spawn the real import flow exactly like the UI does (foreground `cx.spawn`),
+    // then DRIVE the captured task to completion with `block_test` (fallback 1) so
+    // the cross-thread `spawn_blocking` wake is actually awaited.
+    let sess = Arc::clone(&session);
+    let csv2 = csv.clone();
+    let task = cx.cx.spawn(async move |_app| {
+        let _ = dat0_app::file_drop::handle_drop(vec![csv2], sess).await;
+    });
+    cx.executor().block_test(task);
+
+    // The import's spawn_blocking completed → the engine has the `spike` table.
+    let engine = session.lock().engine.clone();
+    let tables = harness
+        .block_on(async move { engine.get_tables().await })
+        .expect("get_tables");
+    assert!(
+        tables.iter().any(|t| t.name == "spike"),
+        "engine-backed async import must complete in-harness (tables: {:?})",
+        tables.iter().map(|t| &t.name).collect::<Vec<_>>()
+    );
+
+    drop(state);
 }
