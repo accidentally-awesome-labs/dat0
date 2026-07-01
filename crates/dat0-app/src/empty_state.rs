@@ -242,14 +242,16 @@ impl EmptyState {
     /// `StatefulInteractiveElement` (which provides `on_click`) before an
     /// element participates in the hitbox/event system.
     ///
-    /// UAT Gap 2: each card's clickable container ALSO carries a stable
+    /// UAT Gap 2: each card's clickable container carries a stable
     /// `.a11y(static_id, AccessRole::Button, title)` (the dynamic
     /// `hero-sample-{i}` id above is fine for `on_click`'s hitbox but
     /// `debug_bounds`/`debug_selector` need a `&'static str` — see
-    /// [`sample_static_id`]), and the title text carries a content-only
-    /// `.a11y_label(AccessRole::Label, title)` so a headless test can locate
-    /// (and assert) a specific card without a hard-coded pixel offset.
-    /// Feature OFF (release) → both are identity no-ops.
+    /// [`sample_static_id`]) so a headless test can locate (and assert) a
+    /// specific card by role+title without a hard-coded pixel offset. The
+    /// title's text is already the Button node's label, so no separate
+    /// content-only Label node is emitted (that would duplicate the text and
+    /// make a role-agnostic `has_label(title)` panic on two matches).
+    /// Feature OFF (release) → identity no-op.
     fn sample_column(
         &self,
         cx: &mut gpui::Context<crate::window::WorkspaceShell>,
@@ -274,7 +276,7 @@ impl EmptyState {
                     .flex()
                     .flex_col()
                     .a11y(static_id, AccessRole::Button, title)
-                    .child(div().a11y_label(AccessRole::Label, title).child(title))
+                    .child(div().child(title))
                     .child(div().child(subtitle))
                     .on_click(handler),
             );

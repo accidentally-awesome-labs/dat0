@@ -79,23 +79,23 @@ fn a11y_capture_round_trips_and_click_by_label_opens_tour(cx: &mut TestAppContex
     let take_tour = dat0_app::dat0_i18n::t("hero.take_tour");
     let snap = A11ySnapshot::capture(vcx);
     // FRAME-BRACKET PROOF (Task-1 Step 8; recount Task 4 — Gap 2 sample-card
-    // annotations): the enriched hero has exactly EIGHT capture sites — the
+    // annotations): the enriched hero has exactly FIVE capture sites — the
     // tagline (`.a11y_label`) + `hero-take-tour` (`.a11y`) from Task 1, PLUS
-    // the 3 sample cards' `.a11y` (Button container) + `.a11y_label` (title
-    // text) pairs added in Task 4 (`sample_column` renders because this
-    // session is empty ⇒ `recents_empty = true`): 2 + 3*2 = 8. If the forced
-    // `refresh()` produced more than one render frame, the collector would
-    // hold duplicate nodes and this count would exceed 8 (and the
+    // the 3 sample cards' single `.a11y` Button each (title carried as the
+    // Button's own label) added in Task 4 (`sample_column` renders because
+    // this session is empty ⇒ `recents_empty = true`): 2 + 3 = 5. If the
+    // forced `refresh()` produced more than one render frame, the collector
+    // would hold duplicate nodes and this count would exceed 5 (and the
     // `get_by_label` lookups below would panic with "Found two or more
-    // nodes"). Exactly-8 (confirmed deterministic across repeated runs)
+    // nodes"). Exactly-5 (confirmed deterministic across repeated runs)
     // confirms the reset→refresh→run_until_parked→take bracket still yields
     // one clean frame — no generation counter needed.
     assert_eq!(
         snap.click_ids.len(),
-        8,
-        "expected exactly eight captured nodes (tagline + hero-take-tour + 3 sample cards \
-         × {{.a11y button, .a11y_label title}}); a different count means the frame bracket \
-         double- or under-rendered, or the sample-card annotation count changed"
+        5,
+        "expected exactly five captured nodes (tagline + hero-take-tour + 3 sample-card \
+         .a11y buttons); a different count means the frame bracket double- or under-rendered, \
+         or the sample-card annotation count changed"
     );
 
     // Content assertion (finalized API): findable by label, and by role+label.

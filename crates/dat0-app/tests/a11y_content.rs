@@ -489,9 +489,11 @@ fn inspector_renders_field_content(cx: &mut TestAppContext) {
 /// entirely `pub(crate)`, so none of it is reachable from an integration test (a
 /// different crate): the same wall the inspector test hit. This test therefore
 /// executes the query itself and calls the console's `pub` result-binding
-/// setters, which are EXACTLY the calls `finish_sql_run`'s Pane arm makes
-/// (`set_last_elapsed`, `set_pane_source`, `set_region(Pane)`). The console's
-/// real `render` then emits the timing chip + mounts the pane grid.
+/// setters — the same result-binding calls `finish_sql_run`'s Pane arm makes
+/// (`set_last_elapsed`, `set_pane_source`, `set_region(Pane)`); its extra
+/// `set_running(false)` is elided as a no-op for a never-started console
+/// (`running` defaults false). The console's real `render` then emits the
+/// timing chip + mounts the pane grid.
 ///
 /// ## Result cells reuse the shared grid delegate (no separate annotation)
 /// `SqlConsole::render`'s Pane arm builds a `GridTableDelegate` and renders it in

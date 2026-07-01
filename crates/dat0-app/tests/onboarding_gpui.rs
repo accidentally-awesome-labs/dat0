@@ -731,9 +731,12 @@ fn carousel_next_advances_panel_text(cx: &mut TestAppContext) {
     set_config_dir(cfg.path());
 
     // Seed first_run_done=true so the empty-state renders the PLAIN hero (the
-    // enriched band's a11y nodes render only when the flag is false) and posts no
-    // auto-show. The only captured nodes are then the carousel's own, keeping the
-    // by-label lookups unambiguous (unique-match — `has_label` panics on dups).
+    // enriched band's tagline/take-tour a11y nodes render only when the flag is
+    // false) and posts no auto-show. The plain hero still renders the sample
+    // cards' Button labels ("Iris"/"Chinook"/"NYC taxi"), but those don't collide
+    // with the carousel's panel headlines/bodies or its Next/Skip/Back buttons —
+    // so the by-label lookups below stay unique-match (`has_label` panics on dups;
+    // a future panel title equal to a sample title would need `has_label_any`).
     let store = SettingsStore::with_path(cfg.path().join("settings.toml"));
     set_first_run_done(&store, true).unwrap();
 
