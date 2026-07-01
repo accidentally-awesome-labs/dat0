@@ -340,6 +340,7 @@ Used by:
 - futures-lite 2.6.1 — https://github.com/smol-rs/futures-lite
 - gethostname 1.1.0 — https://codeberg.org/swsnr/gethostname.rs.git
 - gimli 0.32.3 — https://github.com/gimli-rs/gimli
+- git2 0.20.4 — https://github.com/rust-lang/git2-rs
 - glob 0.3.3 — https://github.com/rust-lang/glob
 - hashbrown 0.14.5 — https://github.com/rust-lang/hashbrown
 - hashbrown 0.15.5 — https://github.com/rust-lang/hashbrown
@@ -358,6 +359,8 @@ Used by:
 - itertools 0.14.0 — https://github.com/rust-itertools/itertools
 - jpeg-decoder 0.3.2 — https://github.com/image-rs/jpeg-decoder
 - lazy_static 1.5.0 — https://github.com/rust-lang-nursery/lazy-static.rs
+- libgit2-sys 0.18.4+1.9.3 — https://github.com/rust-lang/git2-rs
+- libz-sys 1.1.28 — https://github.com/rust-lang/libz-sys
 - linux-raw-sys 0.12.1 — https://github.com/sunfishcode/linux-raw-sys
 - linux-raw-sys 0.4.15 — https://github.com/sunfishcode/linux-raw-sys
 - lock_api 0.4.14 — https://github.com/Amanieu/parking_lot
@@ -600,6 +603,8 @@ Used by:
 - dat0-format 0.1.0 — https://github.com/accidentally-awesome-labs/dat0
 - dat0-i18n 0.1.0 — https://github.com/accidentally-awesome-labs/dat0
 - dat0-keychain 0.1.0 — https://github.com/accidentally-awesome-labs/dat0
+- accesskit 0.21.1 — https://github.com/AccessKit/accesskit
+- accesskit_consumer 0.30.1 — https://github.com/AccessKit/accesskit
 - allocator-api2 0.2.21 — https://github.com/zakarumych/allocator-api2
 - anyhow 1.0.102 — https://github.com/dtolnay/anyhow
 - async-trait 0.1.89 — https://github.com/dtolnay/async-trait
