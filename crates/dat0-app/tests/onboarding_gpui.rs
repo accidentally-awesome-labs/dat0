@@ -33,6 +33,8 @@
 //!   such test drains once up front (clearing any closure a prior serial test
 //!   left queued, which no-ops while no window is active) so it starts clean.
 
+mod support;
+
 use std::cell::RefCell;
 use std::path::Path;
 use std::rc::Rc;
@@ -43,6 +45,8 @@ use gpui::{AppContext as _, Entity, TestAppContext, VisualTestContext};
 use gpui_component::{Root, WindowExt as _};
 use parking_lot::Mutex;
 use serial_test::serial;
+
+use support::A11ySnapshot;
 
 use dat0_app::main_bridge::{MainLoop, MainThreadDispatcher};
 use dat0_app::session::Session;
@@ -500,18 +504,21 @@ fn hero_take_tour_button_opens_tour(cx: &mut TestAppContext) {
 // ----------------------------------------------------------------------------
 
 /// Resolves the brief's risky-unknown (b): `simulate_click` DOES hit-test
-/// buttons rendered inside a `window.open_dialog` overlay. A real pixel-click on
-/// the carousel's "Skip" button dismisses the dialog AND persists
+/// buttons rendered inside a `window.open_dialog` overlay. A real click on the
+/// carousel's "Skip" button dismisses the dialog AND persists
 /// `first_run_done=true` (via the production `mark_first_run_done` →
-/// `settings.toml` write). The click coordinates are derived from the dialog's
-/// deterministic geometry on the fixed 1920×1080 `TestDisplay`
-/// (`window_paddings` is 0 under `Decorations::Server`, identical on macOS and
-/// Linux); the slide-down animation is settled with `advance_clock` first so the
-/// hit-box is at its resting position.
+/// `settings.toml` write).
+///
+/// UAT Gap 2: the click is now located BY LABEL, not by a hand-tuned pixel. The
+/// Skip `Button` carries a test-only `.a11y("tour-skip", …)` annotation, so
+/// `A11ySnapshot::capture` finds it by its rendered label, recovers its static id,
+/// and resolves painted bounds via `debug_bounds` — proving the AccessKit node and
+/// the gpui hitbox stay in lockstep and retiring the fragile (777,550) constant.
+/// The slide-down animation is settled with `advance_clock` first so the hit-box
+/// is at its resting position when captured.
 #[gpui::test]
 #[serial]
 fn skip_click_dismisses_and_writes_flag(cx: &mut TestAppContext) {
-    use gpui::{Modifiers, point, px};
     use std::time::Duration;
 
     let cfg = tempfile::tempdir().unwrap();
@@ -538,12 +545,16 @@ fn skip_click_dismisses_and_writes_flag(cx: &mut TestAppContext) {
     assert!(dialog_open(cx), "carousel must be open at panel 0");
 
     // Settle the dialog slide-down animation so the button is at its resting
-    // hit-box, then click the "Skip" button (bottom-left of the controls row).
+    // hit-box, then click the "Skip" button BY LABEL. `A11ySnapshot::capture`
+    // reads the AccessKit tree the render emitted; `click` recovers Skip's static
+    // id (`tour-skip`) from the label, resolves its painted bounds via
+    // `debug_bounds`, and fires a real `simulate_click` at the centre — no
+    // hand-tuned (777,550) pixel constant, and it self-corrects if the layout
+    // moves.
     cx.executor().advance_clock(Duration::from_secs(1));
     cx.run_until_parked();
-    // NOTE: (777, 550) is empirically tuned for the fixed 1920×1080 TestDisplay
-    // (Decorations::Server → window_paddings=0; deterministic on both platforms).
-    cx.simulate_click(point(px(777.), px(550.)), Modifiers::none());
+    let snap = A11ySnapshot::capture(cx);
+    snap.click(cx, &dat0_app::dat0_i18n::t("onboarding.tour.skip"));
     cx.run_until_parked();
 
     // The overlay click really fired the Skip handler: dialog dismissed AND the
@@ -671,24 +682,93 @@ fn hero_sample_click_imports_bundled_csv(cx: &mut TestAppContext) {
 }
 
 // ----------------------------------------------------------------------------
-// Per-panel Next/Back navigation — human-UAT-owed (documented dead-end).
+// Per-panel Next navigation — CONTENT assertion via AccessKit (UAT Gap 2).
 // ----------------------------------------------------------------------------
 
-/// The brief asks to assert "Next → panel 1, Back → panel 0". That per-panel
-/// index is NOT observable headlessly: the carousel is a one-shot re-presented
-/// `Dialog` with no current-panel accessor, and gpui's test harness exposes no
-/// rendered-text extraction to read the panel's headline/body. Worse, a fixed
-/// pixel cannot reliably drive "Next" across panels: the "Back" button only
-/// appears from panel 1 on, which shifts the right-hand control group, so
-/// repeated clicks at one point oscillate between Next and Back instead of
-/// advancing. `skip_click_dismisses_and_writes_flag` DOES prove overlay clicks
-/// reach the controls row and fire a real handler (Skip → flag + dismiss); the
-/// remaining per-panel forward/back *visual* sequencing is left to manual UAT.
+/// Un-ignores the former dead-end (`carousel_next_back_navigation_is_human_uat`):
+/// the per-panel headline IS now observable headlessly. The carousel titles/bodies
+/// carry test-only `.a11y_label` annotations, so `A11ySnapshot::capture` reads the
+/// AccessKit tree the render emitted and asserts WHICH panel headline is on screen
+/// — the rendered-text extraction gpui itself cannot do.
+///
+/// Mechanism (why capture sees the current panel): the tour is a re-presented
+/// gpui-component `Dialog`; `WorkspaceShell::render` mounts `Root::render_dialog_layer`,
+/// which re-invokes the stored dialog builder on every frame. `capture`'s forced
+/// `window.refresh()` therefore re-runs `present_panel`'s body, re-firing the
+/// `.a11y_label`/`.a11y` calls for the CURRENT panel. Clicking "Next" BY LABEL
+/// (no pixel constant) closes-then-re-presents at panel 1; a fresh capture then
+/// finds panel 1's headline and no longer finds panel 0's.
+///
+/// The dialog's 0.25 s slide/fade animation is settled with `advance_clock`
+/// before each capture so `run_until_parked` yields a single stable frame (a
+/// mid-animation frame would re-request renders and duplicate the captured nodes,
+/// which would make the unique-match `has_label` panic).
+///
+/// Teeth: asserting `p2_title` present (or `p1_title` absent) BEFORE the click
+/// fails — proving the assertion is bound to the actual on-screen panel.
 #[gpui::test]
-#[ignore = "per-panel Next/Back index is not observable headlessly — human UAT (see doc comment + report)"]
-fn carousel_next_back_navigation_is_human_uat() {
-    // Intentionally empty: documents what a human must still verify (the dots
-    // pager advances, Back returns, "Get started" appears on the last panel).
+#[serial]
+fn carousel_next_advances_panel_text(cx: &mut TestAppContext) {
+    use std::time::Duration;
+
+    let cfg = tempfile::tempdir().unwrap();
+    let state = tempfile::tempdir().unwrap();
+    set_config_dir(cfg.path());
+
+    // Seed first_run_done=true so the empty-state renders the PLAIN hero (the
+    // enriched band's a11y nodes render only when the flag is false) and posts no
+    // auto-show. The only captured nodes are then the carousel's own, keeping the
+    // by-label lookups unambiguous (unique-match — `has_label` panics on dups).
+    let store = SettingsStore::with_path(cfg.path().join("settings.toml"));
+    set_first_run_done(&store, true).unwrap();
+
+    init_components(cx);
+    let session = build_empty_session(state.path());
+    let (_shell, cx) = open_shell_window(cx, session);
+    cx.run_until_parked();
+    assert!(!dialog_open(cx), "no dialog before the explicit open");
+
+    // Open the carousel at panel 0 (plain App context — `open` re-enters the
+    // active window itself, so it must NOT be nested in a window update).
+    cx.cx.update(dat0_app::onboarding::open);
+    cx.run_until_parked();
+    assert!(dialog_open(cx), "carousel must be open at panel 0");
+
+    let p1_title = dat0_app::dat0_i18n::t(dat0_app::onboarding::panels::PANELS[0].title_key);
+    let p2_title = dat0_app::dat0_i18n::t(dat0_app::onboarding::panels::PANELS[1].title_key);
+
+    // Settle the open animation, then read the emitted tree.
+    cx.executor().advance_clock(Duration::from_secs(1));
+    cx.run_until_parked();
+    let snap = A11ySnapshot::capture(cx);
+    assert!(
+        snap.has_label(&p1_title),
+        "panel 0 headline ({p1_title:?}) must render at open"
+    );
+    assert!(
+        !snap.has_label(&p2_title),
+        "panel 1 headline ({p2_title:?}) must NOT render before Next"
+    );
+
+    // Click Next BY LABEL — resolves id `tour-next` → `debug_bounds` → real click
+    // at the button's painted centre (retires the old (777,550) constant).
+    snap.click(cx, &dat0_app::dat0_i18n::t("onboarding.tour.next"));
+    cx.run_until_parked();
+    // Settle the newly-presented panel's animation before the second capture.
+    cx.executor().advance_clock(Duration::from_secs(1));
+    cx.run_until_parked();
+
+    let snap2 = A11ySnapshot::capture(cx);
+    assert!(
+        snap2.has_label(&p2_title),
+        "Next must advance to panel 1 headline ({p2_title:?})"
+    );
+    assert!(
+        !snap2.has_label(&p1_title),
+        "panel 0 headline ({p1_title:?}) must be gone after advancing"
+    );
+
+    drop(state);
 }
 
 // ----------------------------------------------------------------------------
