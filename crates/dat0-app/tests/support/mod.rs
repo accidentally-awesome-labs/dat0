@@ -137,6 +137,21 @@ impl A11ySnapshot {
         self.root().query_all_by_label(label).count()
     }
 
+    /// Substring content assertion (Task 6 — Inspector): is there **at least
+    /// one** captured node whose text CONTAINS `needle`? Wraps kittest's
+    /// `query_all_by_label_contains` (never panics on duplicates, like
+    /// [`Self::has_label_any`]). Use this for formatted strings that are
+    /// brittle to reconstruct exactly (e.g. the Inspector's
+    /// "name — N rows · M cols" overview line) — assert a stable substring
+    /// (the table name, a column header fragment, …) instead of the whole
+    /// rendered string.
+    pub fn has_label_contains(&self, needle: &str) -> bool {
+        self.root()
+            .query_all_by_label_contains(needle)
+            .next()
+            .is_some()
+    }
+
     /// Recover the static `.a11y` id for the single node matching `label`, or
     /// `None` if that node is content-only (`.a11y_label`, no click id).
     ///

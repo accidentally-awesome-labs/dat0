@@ -26,6 +26,16 @@
 //! because `set_var` is process-global and `#[gpui::test]` is multithreaded.
 //! The `a11y-capture` feature is auto-ON via the self-dev-dependency in
 //! Cargo.toml, so `dat0_app::a11y::*` are the real capture symbols.
+//!
+//! ## Task 6: Inspector field content
+//! `inspector_renders_field_content` (below) extends this file with the
+//! Inspector dock's profiling-content assertions. See that test's doc comment
+//! for why it calls `inspector::panel::render_inspector` directly instead of
+//! going through a mounted window (`InspectorModel`/`inspector_panel_visible`
+//! are `pub(crate)`, so the ONLY production entry point that populates them,
+//! `WorkspaceShell::open_table_tab`/`set_inspector_target`, is unreachable
+//! from an integration test — `render_inspector` is a pure fn of `model`
+//! precisely so a test can drive it directly instead).
 
 mod support;
 
@@ -284,6 +294,142 @@ fn grid_renders_cell_values_as_a11y_cells(cx: &mut TestAppContext) {
         std::thread::sleep(Duration::from_millis(50));
         cx.run_until_parked();
     }
+
+    drop(state);
+}
+
+// ----------------------------------------------------------------------------
+// Inspector renders profiled field text as AccessKit Label nodes (Task 6).
+// ----------------------------------------------------------------------------
+
+/// Build an `InspectorModel` for a real, type-pinned fixture table via the
+/// engine's genuine `SUMMARIZE` profiling (`profile_table` — the exact call
+/// `WorkspaceShell::load_inspector_profile` makes in production), then invoke
+/// the production `render_inspector` pure fn directly against a real
+/// `WorkspaceShell` entity/`Context` and assert the rendered content — the
+/// thing gpui itself cannot extract (UAT Gap 2).
+///
+/// ## Why call `render_inspector` directly (not through a mounted window)
+/// `WorkspaceShell::render()` only calls `render_inspector` when
+/// `inspector_panel_visible` is true, and only ever paints `self.inspector` —
+/// both fields are `pub(crate)`, and the only production entry point that
+/// populates them (`open_table_tab` → `set_inspector_target` →
+/// `load_inspector_profile`) is `pub(crate)` too, so none of it is reachable
+/// from an integration test (a different crate). `render_inspector` /
+/// `column_card` are documented as *pure functions of `model`* — precisely so
+/// a test can call them directly (the task brief's sanctioned fallback:
+/// "mount a minimal gpui view whose render returns render_inspector(&model)").
+/// We still need a REAL `Entity<WorkspaceShell>` + `Context<WorkspaceShell>`
+/// because the fn signature is hard-typed to it (the mode-toggle button
+/// builds a `cx.listener` closure) — but no window / paint cycle is required:
+/// `.a11y_label` pushes into the thread-local FRAME collector synchronously,
+/// at element-BUILD time, not at paint time (see `a11y/mod.rs`), so one
+/// direct call already yields exactly the nodes this render produces. That
+/// also means the usual `window.refresh()` frame-reset bracket
+/// (`A11ySnapshot::capture`) is unnecessary here — that bracket exists to
+/// force exactly one clean re-render of a window-mounted view; with no
+/// window in the loop there is exactly one render by construction. Since
+/// every `A11ySnapshot` field is `pub`, we build the snapshot straight from
+/// the raw `take_tree_update()` capture instead.
+///
+/// ## Determinism
+/// The fixture casts both columns (`CAST(... AS BIGINT)` / `CAST(... AS
+/// VARCHAR)`) so DuckDB's `SUMMARIZE` `column_type` is pinned rather than
+/// left to literal-inference — the column card headers ("id · BIGINT",
+/// "val · VARCHAR") are then stable, known strings. No timestamps/paths/
+/// random values are asserted.
+#[gpui::test]
+#[serial]
+fn inspector_renders_field_content(cx: &mut TestAppContext) {
+    let cfg = tempfile::tempdir().unwrap();
+    let state = tempfile::tempdir().unwrap();
+    set_config_dir(cfg.path());
+
+    let harness = enter_async_harness(cx);
+    let _guard = harness.enter(); // held to end-of-test (profile_table needs spawn_blocking)
+
+    let session = build_empty_session_in(&harness, state.path());
+    let engine = session.lock().engine.clone();
+
+    // A tiny, TYPE-PINNED table — see "Determinism" above.
+    harness
+        .block_on(async {
+            engine
+                .create_table(
+                    "probe",
+                    "SELECT CAST(id AS BIGINT) AS id, CAST(val AS VARCHAR) AS val \
+                     FROM (VALUES (1, 'a'), (2, 'b'), (3, 'c')) AS t(id, val)",
+                    dat0_engine::DerivedOrigin::Sql("probe fixture".into()),
+                )
+                .await
+        })
+        .expect("create_table probe");
+
+    // The exact call `WorkspaceShell::load_inspector_profile` makes in
+    // production for `ProfileTargetMode::WholeTable`.
+    let profile = harness
+        .block_on(async { engine.profile_table("probe", None).await })
+        .expect("profile_table probe");
+    assert_eq!(profile.rows, 3, "fixture has 3 rows");
+    // 3, not 2: `create_table` eagerly injects the `__dat0_rowid` surrogate
+    // (design §5, "at create time"), which SUMMARIZE profiles too — the
+    // overview line counts the raw profile column list (below), while
+    // `project_cards` (projection=None) filters the surrogate back out for
+    // the per-column CARDS, so exactly 2 cards render (id, val).
+    assert_eq!(
+        profile.columns.len(),
+        3,
+        "fixture has 3 profiled columns (id, val, __dat0_rowid surrogate)"
+    );
+
+    let mut model = dat0_app::inspector::InspectorModel::new();
+    model.set_target("probe".to_string());
+    model.put(profile);
+
+    // A real `WorkspaceShell` entity — no window needed (see doc comment).
+    let shell = cx.new(|cx| WorkspaceShell::new(Arc::clone(&session), cx));
+
+    dat0_app::a11y::reset();
+    shell.update(cx, |_ws, cx| {
+        let _ = dat0_app::inspector::panel::render_inspector(&model, None, cx);
+    });
+    let cap = dat0_app::a11y::take_tree_update();
+    let snap = A11ySnapshot {
+        state: kittest::State::new(cap.update),
+        click_ids: cap.click_ids,
+    };
+
+    // Overview line: brittle to reconstruct exactly in general (row/col
+    // counts are computed live), so assert the stable substring per the task
+    // brief rather than the whole formatted string.
+    assert!(
+        snap.has_label_contains("probe — 3 rows · 3 cols"),
+        "overview line must render the table's real profiled row/col counts \
+         (raw profile column count, INCLUDING the surrogate — see the comment \
+         at the `profile.columns.len()` assertion above)"
+    );
+
+    // Column card headers: exact-match is safe here — both are unique in
+    // this 2-column fixture (would panic on 2+ matches, not expected).
+    assert!(
+        snap.has_label("id · BIGINT"),
+        "the id column's card header must render its real profiled type"
+    );
+    assert!(
+        snap.has_label("val · VARCHAR"),
+        "the val column's card header must render its real profiled type"
+    );
+
+    // Teeth: content NOT in the fixture must be absent — proves the positive
+    // assertions are bound to real rendered content, not always-true.
+    assert!(
+        !snap.has_label_contains("nonexistent_col_zzz"),
+        "a column name absent from the table must not render as inspector content"
+    );
+    assert!(
+        !snap.has_label("id · DOUBLE"),
+        "the id column's real profiled type is BIGINT, not DOUBLE"
+    );
 
     drop(state);
 }
