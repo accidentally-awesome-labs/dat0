@@ -133,7 +133,18 @@ impl EmptyState {
                         .flex()
                         .flex_row()
                         .items_center()
-                        .child(div().flex_grow().child(dat0_i18n::t("hero.tagline")))
+                        .child(
+                            // Content-only locator (release no-op): `.a11y_label`
+                            // emits a `Role::Label` AccessKit node under the
+                            // `a11y-capture` feature so the headless UAT can find
+                            // the tagline BY ITS TEXT (UAT Gap 2). It is NOT
+                            // clickable (no id / no debug_selector) — content
+                            // assertion only. Feature OFF → identity no-op.
+                            div()
+                                .flex_grow()
+                                .a11y_label(AccessRole::Label, dat0_i18n::t("hero.tagline"))
+                                .child(dat0_i18n::t("hero.tagline")),
+                        )
                         .child(
                             div()
                                 .id("hero-take-tour")

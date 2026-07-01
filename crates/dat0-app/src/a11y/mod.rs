@@ -29,17 +29,31 @@ mod capture {
     use gpui::InteractiveElement;
     use std::cell::RefCell;
 
-    /// dat0's small role vocabulary, mapped to accesskit roles.
+    /// dat0's small role vocabulary, mapped to accesskit roles. Extended in
+    /// Gap 2 Task 2 to cover the surfaces Tasks 3-8 assert on (grid `Cell`/`Row`,
+    /// `Dialog`/`Alert` overlays) alongside the Task-1 `Button`/`Label`.
     #[derive(Clone, Copy, Debug)]
     pub enum AccessRole {
         Button,
         Label,
+        Cell,
+        Row,
+        Dialog,
+        Alert,
     }
     impl AccessRole {
-        fn to_accesskit(self) -> Role {
+        /// Map to the accesskit role. `pub` so the shared test-support snapshot
+        /// (in the integration-test crate — a different crate boundary) can build
+        /// `By::new().role(..)` queries via this without having to name
+        /// `accesskit::Role` directly (accesskit is not a dev-dependency).
+        pub fn to_accesskit(self) -> Role {
             match self {
                 AccessRole::Button => Role::Button,
                 AccessRole::Label => Role::Label,
+                AccessRole::Cell => Role::Cell,
+                AccessRole::Row => Role::Row,
+                AccessRole::Dialog => Role::Dialog,
+                AccessRole::Alert => Role::Alert,
             }
         }
     }
@@ -92,8 +106,16 @@ mod capture {
 
             for (i, c) in frame.iter().enumerate() {
                 let mut n = Node::new(c.role.to_accesskit());
-                // accesskit/kittest convention: Role::Label text lives in `value`;
-                // everything else (Button…) uses `label`.
+                // Value-vs-label rule (verified against kittest 0.3.0's
+                // `By::matches`, filter.rs): a query built with `.label(x)` reads
+                // `Node::value()` when `role == Role::Label` and `Node::label()`
+                // for every other role. So to make ONE label-based query
+                // (`has_label`) find every captured node uniformly, we store the
+                // text where that role's matcher looks: `Role::Label` → `value`,
+                // all other roles (Button/Cell/Row/Dialog/Alert) → `label`. This
+                // is also the accesskit authoring convention. (Do NOT move
+                // Cell/Row onto `set_value`: `By::matches` would then read their
+                // `label()` and find nothing, silently breaking label queries.)
                 match c.role {
                     AccessRole::Label => n.set_value(c.text.clone()),
                     _ => n.set_label(c.text.clone()),
@@ -111,12 +133,28 @@ mod capture {
         })
     }
 
-    /// Element-wrapper helper. `.a11y(id, role, label)` registers a clickable
-    /// node (static id → debug_bounds-resolvable) and chains debug_selector.
+    /// Element-wrapper helpers for AccessKit capture.
+    ///
+    /// - [`A11yExt::a11y`] registers a **clickable** node: it records the static
+    ///   `id` in the click-id side-map (so a label lookup can recover it and
+    ///   resolve painted geometry via `VisualTestContext::debug_bounds`) AND
+    ///   chains `debug_selector`. Use for buttons / interactive rows.
+    /// - [`A11yExt::a11y_label`] registers a **content-only** node: no click id,
+    ///   no `debug_selector`. Use for dynamic-id or non-interactive text (grid
+    ///   cells, headings, tagline) that a test only needs to *find by content*.
+    ///   `debug_bounds` takes a `&'static str`, so content nodes are not
+    ///   clickable — only `.a11y(id, …)` nodes are.
     pub trait A11yExt: InteractiveElement + Sized {
         fn a11y(self, id: &'static str, role: AccessRole, label: impl Into<String>) -> Self {
             push(role, label.into(), Some(id));
             self.debug_selector(move || id.to_string())
+        }
+
+        /// Content-only capture: emits an AccessKit node with `text` under
+        /// `role` but registers NO click id and chains no `debug_selector`.
+        fn a11y_label(self, role: AccessRole, text: impl Into<String>) -> Self {
+            push(role, text.into(), None);
+            self
         }
     }
     impl<T: InteractiveElement + Sized> A11yExt for T {}
@@ -128,14 +166,25 @@ pub use capture::{A11yCapture, A11yExt, AccessRole, reset, take_tree_update};
 // Release / no-capture stubs: identity helper, no accesskit, no debug_selector.
 #[cfg(not(feature = "a11y-capture"))]
 mod stub {
+    // Must mirror the capture enum's full variant set: production render code
+    // (empty_state.rs and the Tasks 3-8 surfaces) names `AccessRole::Cell` etc.
+    // and must compile in release builds where only these stubs exist.
     #[derive(Clone, Copy, Debug)]
     pub enum AccessRole {
         Button,
         Label,
+        Cell,
+        Row,
+        Dialog,
+        Alert,
     }
     pub trait A11yExt: Sized {
         #[inline]
         fn a11y(self, _id: &'static str, _role: AccessRole, _label: impl Into<String>) -> Self {
+            self
+        }
+        #[inline]
+        fn a11y_label(self, _role: AccessRole, _text: impl Into<String>) -> Self {
             self
         }
     }
