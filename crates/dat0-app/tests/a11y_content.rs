@@ -315,10 +315,14 @@ fn grid_renders_cell_values_as_a11y_cells(cx: &mut TestAppContext) {
 /// both fields are `pub(crate)`, and the only production entry point that
 /// populates them (`open_table_tab` → `set_inspector_target` →
 /// `load_inspector_profile`) is `pub(crate)` too, so none of it is reachable
-/// from an integration test (a different crate). `render_inspector` /
-/// `column_card` are documented as *pure functions of `model`* — precisely so
-/// a test can call them directly (the task brief's sanctioned fallback:
-/// "mount a minimal gpui view whose render returns render_inspector(&model)").
+/// from an integration test (a different crate): there is no test-reachable
+/// setter for `InspectorModel` or the panel's visibility. This test therefore
+/// calls the production `render_inspector` pub fn directly — an implementer
+/// judgment call, not something sanctioned by the task brief, the plan, or
+/// the design doc. `render_inspector` / `column_card` are documented as
+/// *pure functions of `model`*, which is what makes the direct call sound:
+/// it still fires the `.a11y_label` pushes at element-build time exactly as
+/// a mounted render would.
 /// We still need a REAL `Entity<WorkspaceShell>` + `Context<WorkspaceShell>`
 /// because the fn signature is hard-typed to it (the mode-toggle button
 /// builds a `cx.listener` closure) — but no window / paint cycle is required:
