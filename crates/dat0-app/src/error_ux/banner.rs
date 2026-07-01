@@ -157,6 +157,7 @@ pub fn merge_pending(live: &mut Vec<Banner>) {
     live.append(&mut drain_pending());
 }
 
+use crate::a11y::{A11yExt as _, AccessRole};
 use gpui::{IntoElement, ParentElement, Styled, div, px};
 use gpui_component::button::{Button, ButtonVariants as _};
 
@@ -232,9 +233,23 @@ pub fn render_banner(b: &Banner) -> impl IntoElement {
         .child(
             div()
                 .font_weight(gpui::FontWeight::SEMIBOLD)
+                // Content-only locator (UAT Gap 2, release no-op): the banner's
+                // title always renders, so it is the surface's headline
+                // content assertion — `AccessRole::Alert` since a banner IS an
+                // alert-style notice (matches the `Dialog`/`Alert` vocabulary
+                // added for Gap-2 overlay surfaces).
+                .a11y_label(AccessRole::Alert, b.title.clone())
                 .child(b.title.clone()),
         )
-        .children((!b.body.is_empty()).then(|| div().text_size(px(12.0)).child(b.body.clone())))
+        .children((!b.body.is_empty()).then(|| {
+            // Content-only locator (UAT Gap 2, release no-op): the body line
+            // only renders when non-empty, so it is annotated inside the same
+            // conditional as a plain `Role::Label` (secondary/detail text).
+            div()
+                .text_size(px(12.0))
+                .a11y_label(AccessRole::Label, b.body.clone())
+                .child(b.body.clone())
+        }))
         .children(buttons)
 }
 

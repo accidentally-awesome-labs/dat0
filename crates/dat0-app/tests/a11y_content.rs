@@ -623,3 +623,69 @@ fn sql_console_renders_result_and_timing_content(cx: &mut TestAppContext) {
 
     drop(state);
 }
+
+// ----------------------------------------------------------------------------
+// Error banner renders title/body as AccessKit content (Task 8).
+// ----------------------------------------------------------------------------
+
+/// `render_banner` is a pure fn of `&Banner` (no `cx`, no window, no engine), so
+/// — like the inspector/SQL tests, which hit the same crate-boundary wall (the
+/// shell's `banners` vec and its `pub(crate)` push path are not driven from an
+/// integration crate) — we call the production `render_banner` directly and
+/// capture the AccessKit nodes it emits at element-BUILD time (`.a11y_label`
+/// pushes synchronously into the thread-local FRAME, not at paint), then assert
+/// the title renders as an `Alert` node and the body as a `Label` node. Calling
+/// it directly is an implementer judgment call given the fn's pure signature —
+/// not attributed to the brief/plan/design. No window/refresh bracket is needed:
+/// with no mounted view there is exactly one render by construction, so we build
+/// the snapshot straight from the raw `take_tree_update()` (same as the inspector
+/// test).
+///
+/// Determinism: the asserted title/body are fixed literal strings — no
+/// timestamps/paths/random.
+#[gpui::test]
+#[serial]
+fn banner_renders_title_and_body_content(cx: &mut TestAppContext) {
+    use dat0_app::a11y::AccessRole;
+    use dat0_app::error_ux::banner::{Banner, render_banner};
+
+    const TITLE: &str = "Disk almost full";
+    const BODY: &str = "Free up space before importing large files.";
+    let banner = Banner::warning_with_body(TITLE, BODY);
+
+    // Build the element (fires the `.a11y_label` pushes) inside an App context;
+    // reset the collector immediately before so the captured tree holds ONLY
+    // this banner's nodes.
+    dat0_app::a11y::reset();
+    cx.update(|_app| {
+        let _ = render_banner(&banner);
+    });
+    let cap = dat0_app::a11y::take_tree_update();
+    let snap = A11ySnapshot {
+        state: kittest::State::new(cap.update),
+        click_ids: cap.click_ids,
+    };
+
+    // Title → `Alert` node (always rendered). `query_by_role` disambiguates by
+    // role and is safe (exactly one Alert node with this title).
+    assert!(
+        snap.query_by_role(AccessRole::Alert, TITLE),
+        "banner title must render as an AccessKit Alert node"
+    );
+    // Body → `Label` node (rendered because non-empty).
+    assert!(
+        snap.has_label(BODY),
+        "banner body must render as an AccessKit Label node"
+    );
+
+    // Teeth: content this banner never rendered must be absent — proves the
+    // positives are bound to real rendered content, not always-true.
+    assert!(
+        !snap.query_by_role(AccessRole::Alert, "A title this banner never set"),
+        "a title absent from the banner must not render as an Alert node"
+    );
+    assert!(
+        !snap.has_label("Body text that was never set"),
+        "body text absent from the banner must not render as a Label node"
+    );
+}
