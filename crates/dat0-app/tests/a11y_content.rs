@@ -54,6 +54,7 @@ use serial_test::serial;
 use dat0_app::grid::GridDataSource;
 use dat0_app::main_bridge::{MainLoop, MainThreadDispatcher};
 use dat0_app::session::Session;
+use dat0_app::view::sql_console::{ResultRegion, SqlConsole};
 use dat0_app::window::WorkspaceShell;
 use dat0_engine::QueryEngine as _;
 use support::A11ySnapshot;
@@ -125,6 +126,38 @@ fn open_shell_window(
     });
     let shell = slot.borrow().clone().expect("shell captured");
     (shell, vcx)
+}
+
+/// Open a real window whose root is a `gpui_component::Root` wrapping a fresh
+/// standalone [`SqlConsole`] — the console's production `render` then runs on
+/// every frame. `WorkspaceShell::toggle_sql_console` (the production entry that
+/// builds + mounts the console) is `pub(crate)`, so — like the whole
+/// `spawn_sql_run`/`finish_sql_run` run orchestration — it is unreachable from
+/// this integration crate (a different crate boundary); mounting the console
+/// directly is the analogue of the inspector test's direct `render_inspector`
+/// call. `SqlConsole::new` is `pub` and takes the same `&mut Window` the shell
+/// hands it, so the console is built exactly as production builds it.
+fn open_sql_console_window(
+    cx: &mut TestAppContext,
+) -> (Entity<SqlConsole>, &mut VisualTestContext) {
+    let slot: Rc<RefCell<Option<Entity<SqlConsole>>>> = Rc::new(RefCell::new(None));
+    let slot2 = slot.clone();
+    let (_root, vcx) = cx.add_window_view(move |window, cx| {
+        window.activate_window();
+        let console = cx.new(|c| {
+            SqlConsole::new(
+                &[],
+                None,
+                dat0_app::query::completion::new_shared_snapshot(),
+                window,
+                c,
+            )
+        });
+        *slot2.borrow_mut() = Some(console.clone());
+        Root::new(console, window, cx)
+    });
+    let console = slot.borrow().clone().expect("console captured");
+    (console, vcx)
 }
 
 /// Initialise the gpui-component theme global (required before any view that
@@ -434,6 +467,159 @@ fn inspector_renders_field_content(cx: &mut TestAppContext) {
         !snap.has_label("id · DOUBLE"),
         "the id column's real profiled type is BIGINT, not DOUBLE"
     );
+
+    drop(state);
+}
+
+// ----------------------------------------------------------------------------
+// SQL console result-pane + timing chip render as AccessKit content (Task 7).
+// ----------------------------------------------------------------------------
+
+/// Genuinely execute `SELECT 1 AS x` through the engine (create the result VIEW
+/// + build a `GridDataSource` over it — its ctor runs the async schema/row-count
+/// probes, so the query really runs), mount a standalone [`SqlConsole`],
+/// replicate `WorkspaceShell::finish_sql_run`'s Pane arm via the console's `pub`
+/// result-binding setters, settle the page-0 prefetch, then assert the console
+/// renders (a) the timing chip and (b) the result cell value `1` as AccessKit
+/// content — the rendered text gpui itself cannot extract (UAT Gap 2).
+///
+/// ## Why replicate finish_sql_run instead of driving it
+/// The production run pipeline — `toggle_sql_console` (build+mount the console),
+/// `spawn_sql_run` → `finish_sql_run` (run it, then bind the result) — is
+/// entirely `pub(crate)`, so none of it is reachable from an integration test (a
+/// different crate): the same wall the inspector test hit. This test therefore
+/// executes the query itself and calls the console's `pub` result-binding
+/// setters, which are EXACTLY the calls `finish_sql_run`'s Pane arm makes
+/// (`set_last_elapsed`, `set_pane_source`, `set_region(Pane)`). The console's
+/// real `render` then emits the timing chip + mounts the pane grid.
+///
+/// ## Result cells reuse the shared grid delegate (no separate annotation)
+/// `SqlConsole::render`'s Pane arm builds a `GridTableDelegate` and renders it in
+/// a `Table` — the SAME delegate the main grid uses, so its `render_td` cell
+/// values are ALREADY emitted as `Cell` nodes (Task 5). Task 7 therefore adds no
+/// new cell annotation; only the timing/status/error/cancelled/running text is
+/// newly annotated. Hence the cell assertion below is served by the Task-5
+/// annotation and the timing assertion by the Task-7 one.
+///
+/// ## Determinism
+/// Asserts only STABLE content: the chip's "ms" + "· local" substrings (never
+/// the elapsed-ms number, which is wall-clock) and the fixed result value `1`.
+#[gpui::test]
+#[serial]
+fn sql_console_renders_result_and_timing_content(cx: &mut TestAppContext) {
+    let cfg = tempfile::tempdir().unwrap();
+    let state = tempfile::tempdir().unwrap();
+    set_config_dir(cfg.path());
+
+    ensure_dispatcher();
+    let harness = enter_async_harness(cx);
+    let _guard = harness.enter(); // held to end-of-test (engine paths need spawn_blocking)
+    init_components(cx);
+    // The console's per-tab editor is a `code_editor("sql")`; register the SQL
+    // grammar exactly as production does at boot so the editor builds/highlights
+    // as it does in the app (idempotent — safe to call once here).
+    dat0_app::query::highlight::register_sql_language();
+    drain_dispatcher(cx); // clear any stale queued closure (no window yet → no-op)
+
+    let session = build_empty_session_in(&harness, state.path());
+    let engine = session.lock().engine.clone();
+
+    // Genuinely run `SELECT 1 AS x` exactly as spawn_sql_run's Result arm does:
+    // create the result VIEW then build a `GridDataSource` over it (the ctor runs
+    // the async schema + row-count probes → the query really executes). Driven to
+    // completion on the harness runtime via `block_on`.
+    let stmt = "SELECT 1 AS x";
+    let view_name = "sql_result_pane".to_string();
+    let started = std::time::Instant::now();
+    harness
+        .block_on(async { engine.create_or_replace_view(&view_name, stmt).await })
+        .expect("create_or_replace_view SELECT 1");
+    let ds = harness
+        .block_on(async { GridDataSource::new(Arc::clone(&engine), view_name.clone()).await })
+        .expect("GridDataSource::new over the result view");
+    let ds = Arc::new(ds);
+    let elapsed_ms = started.elapsed().as_millis() as u64;
+    // No MotherDuck attached → Local routing → chip suffix "· local".
+    let routing = dat0_app::connections::routing::classify_routing(stmt, &[]);
+    assert_eq!(
+        routing,
+        dat0_app::connections::routing::Routing::Local,
+        "a local SELECT with no MD attached routes Local"
+    );
+
+    // Mount the console standalone; its production `render` now runs each frame.
+    let (console, cx) = open_sql_console_window(cx);
+    cx.run_until_parked();
+
+    // Replicate finish_sql_run's Pane arm (see doc comment). `set_pane_source`
+    // kicks the first-page prefetch (a `tokio::spawn`) and posts its re-render
+    // notify back through the installed dispatcher — same as production.
+    let ds_for_bind = Arc::clone(&ds);
+    console.update(cx, |c, cx| {
+        c.set_last_elapsed(elapsed_ms, routing, cx);
+        c.set_pane_source(ds_for_bind, gpui::WeakEntity::new_invalid(), cx);
+        c.set_region(ResultRegion::Pane, cx);
+    });
+
+    // Settle page 0 into the pane grid LRU (else render_td paints the em-dash
+    // placeholder and the cell value would be absent) — same recipe as the grid
+    // cell test above.
+    let mut page_ready = false;
+    for _ in 0..100 {
+        cx.run_until_parked();
+        drain_dispatcher(cx);
+        cx.run_until_parked();
+        if ds.cell_render(0, 0).is_some() {
+            page_ready = true;
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(20));
+    }
+    assert!(
+        page_ready,
+        "page 0 must load into the pane grid LRU so render_td paints the real \
+         cell value (else it is the em-dash placeholder)"
+    );
+
+    let snap = A11ySnapshot::capture(cx);
+
+    // (a) Timing chip: assert STABLE substrings only — never the elapsed-ms
+    // number (wall-clock, non-deterministic). The chip renders "⏱ N ms · local".
+    assert!(
+        snap.has_label_contains("ms"),
+        "the timing chip must render as AccessKit content (⏱ N ms · local)"
+    );
+    assert!(
+        snap.has_label_contains("· local"),
+        "the timing chip's routing tag (· local) must render"
+    );
+
+    // (b) Result cell value: the SELECT 1 result renders as a Cell node. The
+    // pane grid reuses the virtualized `Table`, which re-runs render_td a
+    // non-uniform number of times, so assert EXISTENCE (Task-5 finding), not
+    // multiplicity.
+    assert!(
+        snap.has_label_any("1"),
+        "the SELECT 1 result cell must render as an AccessKit Cell node (count {})",
+        snap.count_label("1")
+    );
+
+    // Teeth: content NOT produced by this run must be absent — proves the
+    // positives are bound to real rendered content, not always-true.
+    assert!(
+        !snap.has_label_any("424242"),
+        "a value not in the result must not render as a Cell node"
+    );
+    assert!(
+        !snap.has_label_contains("· remotexyz"),
+        "a routing tag this run never produced must not render"
+    );
+
+    // Settle remaining detached-task work while `state` is still alive.
+    for _ in 0..3 {
+        std::thread::sleep(Duration::from_millis(50));
+        cx.run_until_parked();
+    }
 
     drop(state);
 }

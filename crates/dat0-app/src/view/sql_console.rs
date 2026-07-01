@@ -28,6 +28,7 @@ use gpui_component::input::{Input, InputState};
 use gpui_component::spinner::Spinner;
 use gpui_component::table::{Table, TableState};
 
+use crate::a11y::A11yExt as _;
 use crate::grid::{GridDataSource, GridTableDelegate};
 use crate::query::{ResultTarget, SqlTabMeta};
 use crate::window::WorkspaceShell;
@@ -768,16 +769,26 @@ impl Render for SqlConsole {
                         .min_h(gpui::px(120.0))
                         .child(Table::new(state).stripe(true).bordered(true))
                         .into_any_element(),
-                    None => div()
-                        .px_2()
-                        .py_1()
-                        .child(SharedString::from(dat0_i18n::t("sql.running")))
-                        .into_any_element(),
+                    None => {
+                        // UAT Gap 2 (test-only): the pane's "running…" placeholder
+                        // shown between bind and first-page prefetch. Content-only
+                        // `Label` node; compiles out (identity no-op) in release.
+                        let running = dat0_i18n::t("sql.running");
+                        div()
+                            .px_2()
+                            .py_1()
+                            .a11y_label(crate::a11y::AccessRole::Label, running.clone())
+                            .child(SharedString::from(running))
+                            .into_any_element()
+                    }
                 }
             }
             ResultRegion::Status(s) => div()
                 .px_2()
                 .py_1()
+                // UAT Gap 2 (test-only): DML/DDL status line ("N rows changed"/"OK")
+                // as a content-only `Label` node. No-op in release.
+                .a11y_label(crate::a11y::AccessRole::Label, s.clone())
                 .child(SharedString::from(s.clone()))
                 .into_any_element(),
             ResultRegion::Error(e) => {
@@ -790,6 +801,9 @@ impl Render for SqlConsole {
                     .items_center()
                     .px_2()
                     .py_1()
+                    // UAT Gap 2 (test-only): the DuckDB error strip as a content-only
+                    // `Alert` node (not `Label` — an error is an alert). No-op in release.
+                    .a11y_label(crate::a11y::AccessRole::Alert, msg.clone())
                     .child(SharedString::from(msg))
                     .child(
                         div()
@@ -804,11 +818,17 @@ impl Render for SqlConsole {
                     )
                     .into_any_element()
             }
-            ResultRegion::Cancelled => div()
-                .px_2()
-                .py_1()
-                .child(SharedString::from(dat0_i18n::t("sql.cancelled")))
-                .into_any_element(),
+            ResultRegion::Cancelled => {
+                // UAT Gap 2 (test-only): the "Cancelled" strip as a content-only
+                // `Label` node. No-op in release.
+                let cancelled = dat0_i18n::t("sql.cancelled");
+                div()
+                    .px_2()
+                    .py_1()
+                    .a11y_label(crate::a11y::AccessRole::Label, cancelled.clone())
+                    .child(SharedString::from(cancelled))
+                    .into_any_element()
+            }
         };
 
         // ── Query-history overlay (P5b T5) ──────────────────────────────────
@@ -900,13 +920,19 @@ impl Render for SqlConsole {
                                                 .last_routing
                                                 .map(|r| r.i18n_key())
                                                 .unwrap_or("sql.local");
+                                            let chip_text =
+                                                format!("⏱ {ms} ms · {}", dat0_i18n::t(key));
                                             div()
                                                 .px_2()
                                                 .py_1()
-                                                .child(SharedString::from(format!(
-                                                    "⏱ {ms} ms · {}",
-                                                    dat0_i18n::t(key)
-                                                )))
+                                                // UAT Gap 2 (test-only): the timing chip as a
+                                                // content-only `Label` node so the harness can
+                                                // assert it rendered. Compiles out in release.
+                                                .a11y_label(
+                                                    crate::a11y::AccessRole::Label,
+                                                    chip_text.clone(),
+                                                )
+                                                .child(SharedString::from(chip_text))
                                                 .into_any_element()
                                         }
                                         _ => div().into_any_element(),
