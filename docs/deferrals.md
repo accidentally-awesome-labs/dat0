@@ -574,7 +574,8 @@ that's modifying it; merge conflicts are signals worth investigating.
   to cover alongside the selection tree (still deferred).
 - **Note (2026-06-21):** still open; → P10b.
 - **Re-checked P10b (2026-06-23):** `accesskit` still absent from `Cargo.lock`, gpui pinned `=0.2.2`. Stays open; v1 a11y = operability + AA contrast (see `docs/a11y.md`); revisit when the GPUI pin ships an AccessKit adapter.
-- **Last touched:** 2026-06-23.
+- **UAT Gap 2 note (2026-07-01):** `accesskit`/`accesskit_consumer` (0.21) now appear in `Cargo.lock`, but **only** via the **test-only** `a11y-capture` cargo feature (enabled through a self-dev-dependency; OFF in `cargo build --release`, where the `.a11y*` helpers compile to identity no-ops). This is the UAT-automation content-assertion harness (`crates/dat0-app/src/a11y/`, `tests/support/`, `tests/a11y_content.rs`): dat0's own render code emits an AccessKit `TreeUpdate` that `kittest` reads in tests. **D-015 STAYS OPEN** — there is still no OS platform adapter, no always-on production emission, and no gpui integration, so the running app gains no screen-reader support. The upside: the `.a11y(id, role, label)` / `.a11y_label(role, text)` render-site annotations added across onboarding/hero/grid/inspector/SQL/error surfaces are a reusable down-payment — if the gpui pin ever ships an AccessKit adapter, those semantic annotations can feed a real production tree.
+- **Last touched:** 2026-07-01.
 
 ---
 

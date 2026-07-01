@@ -75,6 +75,20 @@ plotters = { workspace = true }
 # resolve to image 0.25.10 + smallvec 1.15.1) — no second image/smallvec copy.
 image = { version = "0.25", default-features = false }
 smallvec = "1"
+# UAT Gap 2 (AccessKit content-assertion): TEST-ONLY, feature-gated. These are
+# OPTIONAL and only linked when `a11y-capture` is on (dev/test builds via the
+# self-dev-dependency below). Release builds (`cargo build`) never see them —
+# `.a11y()` is an identity no-op. Does NOT provide production a11y (D-015 open).
+accesskit = { workspace = true, optional = true }
+accesskit_consumer = { workspace = true, optional = true }
+
+[features]
+# UAT Gap 2: turns on AccessKit capture during renders. It ALSO enables
+# `gpui/test-support`, because `.a11y()` chains `debug_selector`, which only
+# exists under `#[cfg(any(test, feature = "test-support"))]`. Auto-activated for
+# this crate's integration tests via the self-dev-dependency below, so CI's
+# flag-free `cargo test --workspace` still compiles capture in.
+a11y-capture = ["dep:accesskit", "dep:accesskit_consumer", "gpui/test-support"]
 
 # P9a Charts (Linux build fix): plotters' `ttf` feature pulls `font-kit`, which on
 # Linux compiles its `sources/fontconfig.rs` against `yeslogic-fontconfig-sys` v6.
@@ -103,6 +117,12 @@ mockito = { workspace = true }
 # produce (see `tests/onboarding_gpui.rs`). Committed `.snap` files are the CI
 # regression gate — insta never auto-creates snapshots under `CI`.
 insta = { workspace = true }
+# UAT Gap 2: the self-dev-dependency turns the `a11y-capture` feature ON for this
+# crate's own integration tests (a11y_spike.rs), so CI's flag-free
+# `cargo test --workspace` compiles capture in with no ci.yml change. kittest
+# reads the emitted `accesskit::TreeUpdate` (query by label/role).
+dat0-app = { path = ".", features = ["a11y-capture"] }
+kittest = { workspace = true }
 
 [[bench]]
 name = "engine_smoke"

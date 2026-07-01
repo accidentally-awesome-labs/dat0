@@ -13,6 +13,7 @@
 //! only arranges divs. Inline charts are a separate task (T10) — each card
 //! leaves room below the stat lines but contains no chart code yet.
 
+use crate::a11y::{A11yExt as _, AccessRole};
 use crate::inspector::lineage::{ChainStep, EdgeKind, NodeKind};
 use crate::inspector::projection::{ProjectionContext, RenderCard, project_cards};
 use crate::inspector::{InspectorModel, ProfileTargetMode, format};
@@ -28,12 +29,15 @@ pub fn render_inspector(
     projection: Option<ProjectionContext>,
     cx: &mut Context<WorkspaceShell>,
 ) -> gpui::AnyElement {
-    let mut root = div()
-        .flex()
-        .flex_col()
-        .gap_2()
-        .p_2()
-        .child(div().child(SharedString::from(dat0_i18n::t("inspector.title"))));
+    // Content-only locator (release no-op): `.a11y_label` emits a `Role::Label`
+    // AccessKit node under the `a11y-capture` feature so the headless UAT can
+    // assert the dock's title text (UAT Gap 2). Not clickable.
+    let title = dat0_i18n::t("inspector.title");
+    let mut root = div().flex().flex_col().gap_2().p_2().child(
+        div()
+            .a11y_label(AccessRole::Label, title.clone())
+            .child(SharedString::from(title)),
+    );
 
     // Overview line: target name + (rows · cols) when cached, else a placeholder.
     let overview = match (&model.target_table, model.cached()) {
@@ -46,7 +50,13 @@ pub fn render_inspector(
         (Some(name), None) => format!("{} — {}", name, dat0_i18n::t("inspector.loading")),
         (None, _) => dat0_i18n::t("inspector.empty").to_string(),
     };
-    root = root.child(div().child(SharedString::from(overview)));
+    // Content-only locator (UAT Gap 2): the "name — N rows · M cols" line the
+    // Inspector content test asserts (`has_label_contains`, brittle-string-safe).
+    root = root.child(
+        div()
+            .a11y_label(AccessRole::Label, overview.clone())
+            .child(SharedString::from(overview)),
+    );
 
     // Whole-table ⇄ View toggle. The label reflects the *current* mode; clicking
     // flips it and re-profiles (see `WorkspaceShell::toggle_inspector_mode`).
@@ -71,28 +81,34 @@ pub fn render_inspector(
     // full transitive closure. Replaces the P6a flat Dependents list. Clicking a
     // node opens that table (which re-roots the Inspector via open_table_tab).
     if let Some(target) = model.target_table.clone() {
-        let mut section = div()
-            .flex()
-            .flex_col()
-            .gap_1()
-            .child(div().child(SharedString::from(dat0_i18n::t("inspector.lineage"))));
+        let lineage_header = dat0_i18n::t("inspector.lineage");
+        let mut section = div().flex().flex_col().gap_1().child(
+            div()
+                .a11y_label(AccessRole::Label, lineage_header.clone())
+                .child(SharedString::from(lineage_header)),
+        );
 
         // Ancestors (roots → parent), each indented by depth.
         if !model.lineage.ancestors.is_empty() {
-            section = section.child(div().child(SharedString::from(dat0_i18n::t(
-                "inspector.lineage.sources",
-            ))));
+            let sources_header = dat0_i18n::t("inspector.lineage.sources");
+            section = section.child(
+                div()
+                    .a11y_label(AccessRole::Label, sources_header.clone())
+                    .child(SharedString::from(sources_header)),
+            );
             for step in &model.lineage.ancestors {
                 section = section.child(chain_row(step, cx));
             }
         }
 
         // The inspected table itself (highlighted, not clickable).
+        let target_row = format!("▸ {target}");
         section = section.child(
             div()
                 .px_1()
                 .border_1()
-                .child(SharedString::from(format!("▸ {target}"))),
+                .a11y_label(AccessRole::Label, target_row.clone())
+                .child(SharedString::from(target_row)),
         );
 
         // Descendants (child → leaf).
@@ -101,7 +117,11 @@ pub fn render_inspector(
         } else {
             dat0_i18n::t("inspector.lineage.usedby")
         };
-        section = section.child(div().child(SharedString::from(usedby)));
+        section = section.child(
+            div()
+                .a11y_label(AccessRole::Label, usedby.clone())
+                .child(SharedString::from(usedby)),
+        );
         for step in &model.lineage.descendants {
             section = section.child(chain_row(step, cx));
         }
@@ -175,14 +195,18 @@ fn column_card(
         None => format!("{} · {}", card.label, col.ty),
     };
     let stats = format::format_stats_line(col);
+    let distinct = format::format_distinct(col);
+    let null = format::format_null(col);
 
-    let mut card_div = div()
-        .flex()
-        .flex_col()
-        .gap_1()
-        .p_2()
-        .border_1()
-        .child(div().child(SharedString::from(header)));
+    // Content-only locators (release no-ops; UAT Gap 2): each card's rendered
+    // profiling text — the "label · TYPE" header, the numeric/length stats
+    // line, the distinct line, and the null line — gets a `.a11y_label` so the
+    // headless harness can assert real SUMMARIZE-derived content. Not clickable.
+    let mut card_div = div().flex().flex_col().gap_1().p_2().border_1().child(
+        div()
+            .a11y_label(AccessRole::Label, header.clone())
+            .child(SharedString::from(header)),
+    );
     if dimmed {
         card_div = card_div.opacity(0.55);
     }
@@ -190,10 +214,22 @@ fn column_card(
     // `format_stats_line` is empty for columns with neither numeric nor length
     // stats (booleans, all-null, …); skip the empty line for those.
     if !stats.is_empty() {
-        card_div = card_div.child(div().child(SharedString::from(stats)));
+        card_div = card_div.child(
+            div()
+                .a11y_label(AccessRole::Label, stats.clone())
+                .child(SharedString::from(stats)),
+        );
     }
-    card_div = card_div.child(div().child(SharedString::from(format::format_distinct(col))));
-    card_div = card_div.child(div().child(SharedString::from(format::format_null(col))));
+    card_div = card_div.child(
+        div()
+            .a11y_label(AccessRole::Label, distinct.clone())
+            .child(SharedString::from(distinct)),
+    );
+    card_div = card_div.child(
+        div()
+            .a11y_label(AccessRole::Label, null.clone())
+            .child(SharedString::from(null)),
+    );
 
     // Inline chart (T10): top-N bars for low-card, histogram for numeric — only
     // when its lazy data has been fetched (see `load_column_extras`). Keyed by

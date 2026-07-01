@@ -30,6 +30,14 @@ use gpui_component::dialog::Dialog;
 use gpui_component::{h_flex, v_flex};
 use std::sync::Arc;
 
+// UAT Gap 2: `.a11y(id, role, label)` / `.a11y_label(role, text)` annotate the
+// carousel so the headless harness can assert WHICH panel headline is rendered
+// and click carousel buttons BY LABEL (retiring the hard-coded pixel constant).
+// Under `a11y-capture` these emit AccessKit nodes (+ `debug_selector` for the
+// clickable buttons); in release builds they are identity no-ops (D-015 stays
+// open — this is test instrumentation, not production accessibility).
+use crate::a11y::{A11yExt as _, AccessRole};
+
 use panels::{PANELS, back, is_last, next};
 
 /// Open the first-run tour carousel at panel 0. Reached from `&mut App` via the
@@ -102,6 +110,15 @@ fn present_panel(window: &mut Window, cx: &mut App, index: usize) {
         // Skip: always available, bottom-left. Dismisses + marks done.
         let skip = Button::new("tour-skip")
             .label(dat0_i18n::t("onboarding.tour.skip"))
+            // gpui-component `Button` impls `InteractiveElement`, so `.a11y`
+            // applies directly (no wrapping div): it emits a `Button` AccessKit
+            // node AND chains `debug_selector("tour-skip")` so a label-located
+            // click can resolve painted bounds via `debug_bounds` — no pixel.
+            .a11y(
+                "tour-skip",
+                AccessRole::Button,
+                dat0_i18n::t("onboarding.tour.skip"),
+            )
             .on_click(move |_ev: &ClickEvent, window: &mut Window, cx: &mut App| {
                 mark_first_run_done();
                 window.close_dialog(cx);
@@ -114,21 +131,35 @@ fn present_panel(window: &mut Window, cx: &mut App, index: usize) {
         } else {
             dat0_i18n::t("onboarding.tour.next")
         };
-        let next_btn = Button::new("tour-next").label(next_label).on_click(
-            move |_ev: &ClickEvent, window: &mut Window, cx: &mut App| {
+        // The primary button's ROLE flips on the last panel (Next → Get started),
+        // so its a11y id + debug_selector must match the label it currently shows
+        // — a test locating "Get started" resolves `debug_bounds("tour-get-started")`.
+        let next_id = if last {
+            "tour-get-started"
+        } else {
+            "tour-next"
+        };
+        let next_btn = Button::new("tour-next")
+            .label(next_label.clone())
+            .a11y(next_id, AccessRole::Button, next_label)
+            .on_click(move |_ev: &ClickEvent, window: &mut Window, cx: &mut App| {
                 window.close_dialog(cx); // pop current panel
                 if last {
                     mark_first_run_done(); // finish
                 } else {
                     present_panel(window, cx, next(index)); // push next
                 }
-            },
-        );
+            });
 
         // Back: appears from panel 2 on (index > 0).
         let back_btn = show_back.then(|| {
             Button::new("tour-back")
                 .label(dat0_i18n::t("onboarding.tour.back"))
+                .a11y(
+                    "tour-back",
+                    AccessRole::Button,
+                    dat0_i18n::t("onboarding.tour.back"),
+                )
                 .on_click(move |_ev: &ClickEvent, window: &mut Window, cx: &mut App| {
                     window.close_dialog(cx);
                     present_panel(window, cx, back(index));
@@ -178,8 +209,21 @@ fn present_panel(window: &mut Window, cx: &mut App, index: usize) {
                             .w(px(360.0))
                             .h(px(240.0)),
                     )
-                    .child(div().text_xl().child(title.clone()))
-                    .child(div().child(body.clone()))
+                    // Content-only locators (release no-ops): emit `Label`
+                    // AccessKit nodes so the headless UAT can assert WHICH panel
+                    // headline/body is rendered (the per-panel content the old
+                    // `#[ignore]`d test called un-observable). Not clickable.
+                    .child(
+                        div()
+                            .text_xl()
+                            .a11y_label(AccessRole::Label, title.clone())
+                            .child(title.clone()),
+                    )
+                    .child(
+                        div()
+                            .a11y_label(AccessRole::Label, body.clone())
+                            .child(body.clone()),
+                    )
                     .child(controls),
             )
     });

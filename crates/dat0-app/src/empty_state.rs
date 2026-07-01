@@ -30,6 +30,12 @@
 
 use gpui::{IntoElement, ParentElement, Styled, div, prelude::*, px};
 
+// UAT Gap 2: `.a11y(id, role, label)` on the hero's clickable elements. Under
+// the `a11y-capture` feature it emits an AccessKit node + chains
+// `debug_selector`; in release it is an identity no-op (`AccessRole` resolves to
+// the feature-off stub enum, so this import compiles in both states).
+use crate::a11y::{A11yExt as _, AccessRole};
+
 /// Which hero variant to render. `Enriched` (first run only) adds the
 /// value-prop band + featured demo CTA above the base hero; `Plain` is the
 /// wired P3 hero with no band and no auto-popup.
@@ -58,6 +64,24 @@ pub fn should_auto_tour(first_run_done: bool) -> bool {
 /// band; `HeroMode::Plain` renders the base hero with no band.
 pub fn band_visible(mode: HeroMode) -> bool {
     matches!(mode, HeroMode::Enriched)
+}
+
+/// Stable `&'static str` id for a sample card (UAT Gap 2). `debug_bounds`
+/// (and `.a11y`'s click-id side-map) require `&'static str`, but the sample
+/// catalog is built at call time via [`crate::sample_data::entries`], so the
+/// card loop cannot just intern the runtime index. Instead each card's
+/// `SampleKind` discriminant maps to a fixed id: the exhaustive match is safe
+/// because the catalog currently has exactly one entry per variant (Iris is
+/// the only `BundledCsv`, Chinook the only `BundledSqlite`, NYC taxi the only
+/// `Remote`). If a future catalog adds a second entry of the same variant,
+/// this match must grow a finer discriminant (e.g. on `dest_filename`).
+fn sample_static_id(kind: &crate::sample_data::SampleKind) -> &'static str {
+    use crate::sample_data::SampleKind;
+    match kind {
+        SampleKind::BundledCsv { .. } => "hero-sample-iris",
+        SampleKind::BundledSqlite { .. } => "hero-sample-chinook",
+        SampleKind::Remote { .. } => "hero-sample-nyc-taxi",
+    }
 }
 
 /// View model for the empty-state hero. `recents_empty=true` shows the
@@ -127,15 +151,34 @@ impl EmptyState {
                         .flex()
                         .flex_row()
                         .items_center()
-                        .child(div().flex_grow().child(dat0_i18n::t("hero.tagline")))
+                        .child(
+                            // Content-only locator (release no-op): `.a11y_label`
+                            // emits a `Role::Label` AccessKit node under the
+                            // `a11y-capture` feature so the headless UAT can find
+                            // the tagline BY ITS TEXT (UAT Gap 2). It is NOT
+                            // clickable (no id / no debug_selector) — content
+                            // assertion only. Feature OFF → identity no-op.
+                            div()
+                                .flex_grow()
+                                .a11y_label(AccessRole::Label, dat0_i18n::t("hero.tagline"))
+                                .child(dat0_i18n::t("hero.tagline")),
+                        )
                         .child(
                             div()
                                 .id("hero-take-tour")
-                                // Test-only locator (release no-op): lets the
-                                // headless UAT find this button's painted bounds
-                                // via `VisualTestContext::debug_bounds` instead of
-                                // a fragile hard-coded pixel.
-                                .debug_selector(|| "hero-take-tour".into())
+                                // Test-only locator (release no-op): `.a11y` both
+                                // chains `debug_selector` (so the headless UAT can
+                                // find this button's painted bounds via
+                                // `VisualTestContext::debug_bounds` instead of a
+                                // fragile hard-coded pixel) AND, under the
+                                // `a11y-capture` feature, emits an AccessKit
+                                // Button node so kittest can locate it by label
+                                // (UAT Gap 2). Feature OFF → identity no-op.
+                                .a11y(
+                                    "hero-take-tour",
+                                    AccessRole::Button,
+                                    dat0_i18n::t("hero.take_tour"),
+                                )
                                 .child(dat0_i18n::t("hero.take_tour"))
                                 .on_click(take_tour_handler),
                         ),
@@ -198,6 +241,17 @@ impl EmptyState {
     /// Each clickable div is given a stable string ID — required by GPUI's
     /// `StatefulInteractiveElement` (which provides `on_click`) before an
     /// element participates in the hitbox/event system.
+    ///
+    /// UAT Gap 2: each card's clickable container carries a stable
+    /// `.a11y(static_id, AccessRole::Button, title)` (the dynamic
+    /// `hero-sample-{i}` id above is fine for `on_click`'s hitbox but
+    /// `debug_bounds`/`debug_selector` need a `&'static str` — see
+    /// [`sample_static_id`]) so a headless test can locate (and assert) a
+    /// specific card by role+title without a hard-coded pixel offset. The
+    /// title's text is already the Button node's label, so no separate
+    /// content-only Label node is emitted (that would duplicate the text and
+    /// make a role-agnostic `has_label(title)` panic on two matches).
+    /// Feature OFF (release) → identity no-op.
     fn sample_column(
         &self,
         cx: &mut gpui::Context<crate::window::WorkspaceShell>,
@@ -212,6 +266,7 @@ impl EmptyState {
             let title = entry.title;
             let subtitle = entry.subtitle;
             let id = gpui::SharedString::from(format!("hero-sample-{i}"));
+            let static_id = sample_static_id(&kind);
             let handler = cx.listener(move |this, _ev, _window, cx| {
                 this.open_sample_kind(kind.clone(), cx);
             });
@@ -220,6 +275,7 @@ impl EmptyState {
                     .id(id)
                     .flex()
                     .flex_col()
+                    .a11y(static_id, AccessRole::Button, title)
                     .child(div().child(title))
                     .child(div().child(subtitle))
                     .on_click(handler),
