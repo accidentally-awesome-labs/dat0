@@ -578,12 +578,15 @@ fn skip_click_dismisses_and_writes_flag(cx: &mut TestAppContext) {
 // 6. Hero sample button → real click drives the full async import to completion.
 // ----------------------------------------------------------------------------
 
-/// The first hero sample card ("Iris", id `hero-sample-0`) drives the production
-/// `open_sample_kind` → `cx.spawn(handle_drop → route_drop_outcomes)` flow to
-/// COMPLETION: the bundled CSV is extracted AND imported, leaving the `iris`
-/// table registered in the engine. (Pre-Gap-3 this test could only assert the
-/// synchronous CSV extraction because the async import's `spawn_blocking`
-/// panicked under the gpui test executor; the async harness now drives it home.)
+/// The first hero sample card ("Iris", on_click id `hero-sample-0`, a11y id
+/// `hero-sample-iris`) drives the production `open_sample_kind` →
+/// `cx.spawn(handle_drop → route_drop_outcomes)` flow to COMPLETION: the
+/// bundled CSV is extracted AND imported, leaving the `iris` table registered
+/// in the engine. (Pre-Gap-3 this test could only assert the synchronous CSV
+/// extraction because the async import's `spawn_blocking` panicked under the
+/// gpui test executor; the async harness now drives it home.) The click itself
+/// is located via the card's stable `.a11y` id (UAT Gap 2), not the former
+/// hard-coded `(1700, 40)` pixel offset.
 ///
 /// Drive strategy: `open_sample_kind` uses `cx.spawn(...).detach()`, so the
 /// Task cannot be captured for `block_test`. Instead we pump the gpui foreground
@@ -598,7 +601,7 @@ fn skip_click_dismisses_and_writes_flag(cx: &mut TestAppContext) {
 #[serial]
 fn hero_sample_click_imports_bundled_csv(cx: &mut TestAppContext) {
     use dat0_engine::QueryEngine as _;
-    use gpui::{Modifiers, point, px};
+    use gpui::Modifiers;
 
     let cfg = tempfile::tempdir().unwrap();
     let state = tempfile::tempdir().unwrap();
@@ -622,11 +625,23 @@ fn hero_sample_click_imports_bundled_csv(cx: &mut TestAppContext) {
     let iris_csv = state.path().join("samples").join("iris.csv");
     assert!(!iris_csv.exists(), "precondition: sample not yet extracted");
 
-    // Click the first sample card.
-    // NOTE: (1700, 40) is empirically tuned for the fixed 1920×1080 TestDisplay
-    // (first sample card at the top of the 280 px right column; deterministic
-    // on both platforms).
-    cx.simulate_click(point(px(1700.), px(40.)), Modifiers::none());
+    // Locate + click the REAL Iris sample card by its stable a11y id
+    // (`hero-sample-iris`), not the former hard-coded (1700, 40) pixel offset
+    // (UAT Gap 2). Content assertion first: the card's clickable container
+    // emits a Button-role AccessKit node labeled "Iris" (its title text also
+    // carries a content-only Label-role node with the same text, so a
+    // role-agnostic label lookup would be ambiguous — scope by role). Then
+    // resolve painted geometry via `debug_bounds`, which stays in lockstep
+    // with the AccessKit node because both are keyed by the same static id.
+    let snap = A11ySnapshot::capture(cx);
+    assert!(
+        snap.query_by_role(dat0_app::a11y::AccessRole::Button, "Iris"),
+        "hero-sample-iris must emit a Button-role AccessKit node labeled 'Iris'"
+    );
+    let bounds = cx
+        .debug_bounds("hero-sample-iris")
+        .expect("hero-sample-iris must have painted bounds resolvable by its static id");
+    cx.simulate_click(bounds.center(), Modifiers::none());
 
     // Sync side-effect is immediate (inside open_sample_kind before the spawn):
     // bundled CSV extracted to samples/iris.csv.

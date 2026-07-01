@@ -66,6 +66,24 @@ pub fn band_visible(mode: HeroMode) -> bool {
     matches!(mode, HeroMode::Enriched)
 }
 
+/// Stable `&'static str` id for a sample card (UAT Gap 2). `debug_bounds`
+/// (and `.a11y`'s click-id side-map) require `&'static str`, but the sample
+/// catalog is built at call time via [`crate::sample_data::entries`], so the
+/// card loop cannot just intern the runtime index. Instead each card's
+/// `SampleKind` discriminant maps to a fixed id: the exhaustive match is safe
+/// because the catalog currently has exactly one entry per variant (Iris is
+/// the only `BundledCsv`, Chinook the only `BundledSqlite`, NYC taxi the only
+/// `Remote`). If a future catalog adds a second entry of the same variant,
+/// this match must grow a finer discriminant (e.g. on `dest_filename`).
+fn sample_static_id(kind: &crate::sample_data::SampleKind) -> &'static str {
+    use crate::sample_data::SampleKind;
+    match kind {
+        SampleKind::BundledCsv { .. } => "hero-sample-iris",
+        SampleKind::BundledSqlite { .. } => "hero-sample-chinook",
+        SampleKind::Remote { .. } => "hero-sample-nyc-taxi",
+    }
+}
+
 /// View model for the empty-state hero. `recents_empty=true` shows the
 /// sample-data picker; `false` shows the recents list.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -223,6 +241,15 @@ impl EmptyState {
     /// Each clickable div is given a stable string ID — required by GPUI's
     /// `StatefulInteractiveElement` (which provides `on_click`) before an
     /// element participates in the hitbox/event system.
+    ///
+    /// UAT Gap 2: each card's clickable container ALSO carries a stable
+    /// `.a11y(static_id, AccessRole::Button, title)` (the dynamic
+    /// `hero-sample-{i}` id above is fine for `on_click`'s hitbox but
+    /// `debug_bounds`/`debug_selector` need a `&'static str` — see
+    /// [`sample_static_id`]), and the title text carries a content-only
+    /// `.a11y_label(AccessRole::Label, title)` so a headless test can locate
+    /// (and assert) a specific card without a hard-coded pixel offset.
+    /// Feature OFF (release) → both are identity no-ops.
     fn sample_column(
         &self,
         cx: &mut gpui::Context<crate::window::WorkspaceShell>,
@@ -237,6 +264,7 @@ impl EmptyState {
             let title = entry.title;
             let subtitle = entry.subtitle;
             let id = gpui::SharedString::from(format!("hero-sample-{i}"));
+            let static_id = sample_static_id(&kind);
             let handler = cx.listener(move |this, _ev, _window, cx| {
                 this.open_sample_kind(kind.clone(), cx);
             });
@@ -245,7 +273,8 @@ impl EmptyState {
                     .id(id)
                     .flex()
                     .flex_col()
-                    .child(div().child(title))
+                    .a11y(static_id, AccessRole::Button, title)
+                    .child(div().a11y_label(AccessRole::Label, title).child(title))
                     .child(div().child(subtitle))
                     .on_click(handler),
             );
