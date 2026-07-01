@@ -3,6 +3,7 @@
 //! `sections::all_sections()` and dispatches to per-section render methods.
 
 use super::sections;
+use crate::a11y::{A11yExt as _, AccessRole};
 use crate::settings::store::SettingsStore;
 
 /// Which right-dock panel to toggle in the focused workspace window.
@@ -67,6 +68,7 @@ impl SettingsPanel {
             .flex_col()
             .children(sections::all_sections().into_iter().map(|s| {
                 let id = s.id().to_string();
+                let static_id = s.id();
                 let active = id == sel;
                 div()
                     .id(gpui::SharedString::from(id.clone()))
@@ -75,6 +77,14 @@ impl SettingsPanel {
                     .py_1()
                     .when(active, |d| d.bg(gpui::rgba(0x3b82f622)))
                     .child(dat0_i18n::t(s.name_key()))
+                    // UAT settings-window slice (T0): `s.id()` is already
+                    // `&'static str` (the `SettingsSection::id()` contract), so
+                    // it doubles as both the on_click selection key AND the
+                    // `.a11y` click id — no `sample_static_id`-style mapping
+                    // needed (contrast `empty_state.rs::sample_column`, which
+                    // maps a *runtime* index to a static id). Feature OFF
+                    // (release) → identity no-op.
+                    .a11y(static_id, AccessRole::Button, dat0_i18n::t(s.name_key()))
                     .on_click(cx.listener(move |this, _ev, _w, cx| {
                         this.selected_section = id.clone();
                         cx.notify();
@@ -100,6 +110,10 @@ impl SettingsPanel {
             .py_1()
             .child(if on { "[x]" } else { "[ ]" })
             .child(dat0_i18n::t(label_key))
+            // UAT settings-window slice (T0): shared by telemetry/workspace/
+            // updates toggles, so annotating once here covers all three.
+            // Feature OFF (release) → identity no-op.
+            .a11y(id, AccessRole::Button, dat0_i18n::t(label_key))
             .on_click(cx.listener(move |this, _ev, _w, cx| {
                 let _ = set(&this.store, !on);
                 cx.notify();
@@ -178,9 +192,19 @@ impl SettingsPanel {
             .gap_2()
             .p_3()
             .child(dat0_i18n::t("settings.theme.placeholder"))
-            .child(
+            .child({
+                // UAT settings-window slice (T0): the cycle button's label is a
+                // dynamic `"{Theme}: {current}"` string, not a fixed i18n key
+                // (no `settings.theme.cycle` key exists in
+                // `crates/dat0-i18n/src/strings/en.json` — `dat0_i18n::t` would
+                // silently fall back to echoing the missing key, which is not
+                // a real assertable label). So `.a11y` mirrors the button's
+                // OWN `.label(...)` text exactly, rather than inventing a new
+                // i18n key. Feature OFF (release) → identity no-op.
+                let cycle_label = format!("{}: {}", dat0_i18n::t("settings.theme"), current);
                 Button::new("settings-theme-cycle")
-                    .label(format!("{}: {}", dat0_i18n::t("settings.theme"), current))
+                    .label(cycle_label.clone())
+                    .a11y("settings-theme-cycle", AccessRole::Button, cycle_label)
                     .on_click(cx.listener(|this, _ev, _w, cx| {
                         const ORDER: [&str; 3] = ["dark", "light", "high-contrast"];
                         let cur = this
@@ -192,8 +216,8 @@ impl SettingsPanel {
                         let _ = this.store.set("theme.id", next);
                         crate::theme::Theme::switch(cx, next);
                         cx.notify();
-                    })),
-            )
+                    }))
+            })
     }
 
     fn render_profile(&self, _cx: &mut gpui::Context<Self>) -> impl IntoElement {
@@ -297,15 +321,49 @@ impl SettingsPanel {
         });
     }
 
-    fn render_memory_budget(&self, _cx: &mut gpui::Context<Self>) -> impl IntoElement {
+    fn render_memory_budget(&self, cx: &mut gpui::Context<Self>) -> impl IntoElement {
+        // UAT settings-window slice (T0): content-only annotation of the
+        // input's CURRENT rendered value (not a click target — text inputs are
+        // driven by typing / `set_value`, not clicks). Lets a headless test
+        // assert the persisted value actually round-trips into the render,
+        // the same "content assertion" role the grid-cell / inspector
+        // `.a11y_label` annotations play elsewhere. `Input` (unlike `Button`)
+        // does NOT implement `InteractiveElement` (it derives `IntoElement`
+        // only — a plain `RenderOnce` struct), so `.a11y_label` cannot be
+        // chained onto it directly; wrap it in a `div()` instead, mirroring
+        // `empty_state.rs`'s tagline wrapper. Feature OFF (release) →
+        // identity no-op.
+        let budget_value = self.budget_input.read(cx).value().to_string();
         div()
             .flex()
             .flex_col()
             .gap_2()
             .p_3()
             .child(dat0_i18n::t("settings.memory_budget.placeholder"))
-            .child(Input::new(&self.budget_input))
+            .child(
+                div()
+                    .a11y_label(AccessRole::Label, budget_value)
+                    .child(Input::new(&self.budget_input)),
+            )
             .child(dat0_i18n::t("settings.memory_budget.footnote"))
+    }
+
+    /// Test-only: drive the budget input's value programmatically (UAT
+    /// settings-window slice T0 spike). `budget_input` is a private field —
+    /// production code never sets it directly (users type into it) — so this
+    /// accessor exists ONLY under `a11y-capture` to let the harness prove
+    /// `InputState::set_value` → `persist_inputs()` (below) round-trips
+    /// through a real render tick, exactly as typing would. Compiled out
+    /// entirely in release builds (no `a11y-capture` feature there).
+    #[cfg(feature = "a11y-capture")]
+    pub fn set_budget_input_value_for_test(
+        &mut self,
+        value: impl Into<gpui::SharedString>,
+        window: &mut Window,
+        cx: &mut gpui::Context<Self>,
+    ) {
+        let input = self.budget_input.clone();
+        input.update(cx, |input, cx| input.set_value(value, window, cx));
     }
 
     /// Toggle a right-dock panel in the focused workspace window (cross-window).
