@@ -94,6 +94,13 @@ impl A11ySnapshot {
     /// exactly equals `label`? Matches `Role::Label` nodes by their `value` and
     /// every other role by its `label` (the value-vs-label rule), so a single
     /// call finds any `.a11y` / `.a11y_label` text regardless of role.
+    ///
+    /// # Panics
+    /// - if **two or more** nodes match `label` (kittest's unique-match `query`
+    ///   panics on duplicates). Use [`Self::has_label_any`] /
+    ///   [`Self::count_label`] instead whenever the same text can appear on more
+    ///   than one node (e.g. repeated grid cell values — categories, booleans,
+    ///   small ints).
     pub fn has_label(&self, label: &str) -> bool {
         self.root().query_by_label(label).is_some()
     }
@@ -101,10 +108,33 @@ impl A11ySnapshot {
     /// Content assertion scoped to a role: is there a captured node with this
     /// `role` whose text exactly equals `label`? Disambiguates when the same
     /// string appears under different roles.
+    ///
+    /// # Panics
+    /// - if **two or more** nodes match `role` + `label` (kittest's unique-match
+    ///   `query` panics on duplicates). Use [`Self::count_label`] (or a
+    ///   role-scoped `query_all_by_role_and_label` on [`Self::root`]) when a
+    ///   role+label pair can repeat.
     pub fn query_by_role(&self, role: AccessRole, label: &str) -> bool {
         self.root()
             .query_by_role_and_label(role.to_accesskit(), label)
             .is_some()
+    }
+
+    /// Duplicate-tolerant content assertion: is there **at least one** captured
+    /// node whose text exactly equals `label`? Wraps kittest's
+    /// `query_all_by_label` (an iterator — never panics on duplicates), unlike
+    /// [`Self::has_label`] which wraps the unique-match `query`. This is the
+    /// method to use for grid cell values, which repeat across rows/columns.
+    pub fn has_label_any(&self, label: &str) -> bool {
+        self.count_label(label) > 0
+    }
+
+    /// How many captured nodes have text exactly equal to `label`. Wraps
+    /// `query_all_by_label().count()`, so it is safe for repeated values where
+    /// [`Self::has_label`] would panic. `0` means the value is absent (the
+    /// teeth-check form: assert a value NOT in the fixture yields `0`).
+    pub fn count_label(&self, label: &str) -> usize {
+        self.root().query_all_by_label(label).count()
     }
 
     /// Recover the static `.a11y` id for the single node matching `label`, or

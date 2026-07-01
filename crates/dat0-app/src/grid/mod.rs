@@ -19,6 +19,7 @@ use gpui::{
 };
 use gpui_component::table::{Column, TableDelegate, TableState};
 
+use crate::a11y::A11yExt as _;
 use renderers::{CellAlignment, type_badge};
 
 // ── Internal drag payload for column-header reorder (T6) ─────────────────────
@@ -579,7 +580,15 @@ impl TableDelegate for GridTableDelegate {
                     // literal string the user typed.
                     el = el.text_color(gpui::rgb(0x9ca3af));
                 }
-                el.child(display.text)
+                // UAT Gap 2 (test-only): emit the REAL cell value as a content-only
+                // AccessKit `Cell` node so the headless harness can assert *rendered*
+                // cell text. Cell ids are dynamic (`("td", cell_ix)`), so this is
+                // content-only (`.a11y_label`, not clickable) — the emitter maps
+                // `Cell` via `set_label`, which `query_all_by_label` reads. Compiles
+                // out (identity no-op) in release; the em-dash placeholder branch
+                // below is intentionally NOT annotated (it carries no real value).
+                el.a11y_label(crate::a11y::AccessRole::Cell, display.text.clone())
+                    .child(display.text)
             }
             // Page not yet cached (or out-of-range): placeholder for this cell.
             None => el.justify_start().child("—".to_string()),
