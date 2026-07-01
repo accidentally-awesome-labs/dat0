@@ -98,6 +98,21 @@ mockito = "1"
 # 2026-06-29 UAT-automation research. Text/serialized only; no pixel diffing.
 insta = "1"
 
+# UAT Gap 2 (AccessKit content-assertion): TEST-ONLY, feature-gated a11y tree
+# emission read by kittest. gpui =0.2.2 pulls NO accesskit → purely additive
+# (confirmed via `cargo tree -i accesskit`). accesskit/accesskit_consumer are
+# OPTIONAL deps of dat0-app behind the `a11y-capture` feature; kittest is a
+# dev-dep. kittest 0.3.0 is the newest release compatible with rust-version 1.85
+# (0.4.0 requires rustc 1.92). The accesskit versions MUST match the ones kittest
+# 0.3.0 consumes (accesskit 0.21, accesskit_consumer 0.30) — otherwise our
+# hand-built `TreeUpdate` is a different type than `kittest::State::new` expects
+# and the round-trip won't compile (Task-1 finding: the design's 0.24/0.35 pins
+# were for kittest 0.4, which needs rustc 1.92). Single accesskit copy per crate.
+# This does NOT close D-015 (production a11y).
+accesskit = "0.21"
+accesskit_consumer = "0.30"
+kittest = "0.3.0"
+
 # Bench
 criterion = { version = "0.5", features = ["html_reports", "async_tokio"] }
 

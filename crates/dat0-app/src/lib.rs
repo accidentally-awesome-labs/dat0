@@ -1,5 +1,11 @@
 //! dat0 desktop application library (internal API surface).
 
+// UAT Gap 2: re-export the i18n crate so the behavioral test harness can name
+// the exact rendered label (`dat0_app::dat0_i18n::t("hero.take_tour")`) it asks
+// the a11y tree for — keeping test assertions and render code on one source.
+pub use dat0_i18n;
+
+pub mod a11y;
 pub mod about;
 pub mod actions;
 pub mod ai;

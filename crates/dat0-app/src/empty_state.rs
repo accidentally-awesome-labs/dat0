@@ -30,6 +30,12 @@
 
 use gpui::{IntoElement, ParentElement, Styled, div, prelude::*, px};
 
+// UAT Gap 2: `.a11y(id, role, label)` on the hero's clickable elements. Under
+// the `a11y-capture` feature it emits an AccessKit node + chains
+// `debug_selector`; in release it is an identity no-op (`AccessRole` resolves to
+// the feature-off stub enum, so this import compiles in both states).
+use crate::a11y::{A11yExt as _, AccessRole};
+
 /// Which hero variant to render. `Enriched` (first run only) adds the
 /// value-prop band + featured demo CTA above the base hero; `Plain` is the
 /// wired P3 hero with no band and no auto-popup.
@@ -131,11 +137,19 @@ impl EmptyState {
                         .child(
                             div()
                                 .id("hero-take-tour")
-                                // Test-only locator (release no-op): lets the
-                                // headless UAT find this button's painted bounds
-                                // via `VisualTestContext::debug_bounds` instead of
-                                // a fragile hard-coded pixel.
-                                .debug_selector(|| "hero-take-tour".into())
+                                // Test-only locator (release no-op): `.a11y` both
+                                // chains `debug_selector` (so the headless UAT can
+                                // find this button's painted bounds via
+                                // `VisualTestContext::debug_bounds` instead of a
+                                // fragile hard-coded pixel) AND, under the
+                                // `a11y-capture` feature, emits an AccessKit
+                                // Button node so kittest can locate it by label
+                                // (UAT Gap 2). Feature OFF → identity no-op.
+                                .a11y(
+                                    "hero-take-tour",
+                                    AccessRole::Button,
+                                    dat0_i18n::t("hero.take_tour"),
+                                )
                                 .child(dat0_i18n::t("hero.take_tour"))
                                 .on_click(take_tour_handler),
                         ),
