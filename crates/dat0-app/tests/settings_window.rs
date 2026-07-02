@@ -558,3 +558,160 @@ fn profile_placeholder_resolves_as_a11y_content(cx: &mut gpui::TestAppContext) {
         "a fabricated placeholder string must never be found"
     );
 }
+
+// ----------------------------------------------------------------------------
+// (i) Theme cycle: click-by-STATIC-ID advances `theme.id` through the cycle
+// order and persists (Task 4).
+// ----------------------------------------------------------------------------
+
+/// Clicks `settings-theme-cycle` BY STATIC ID — `cx.debug_bounds(id)` +
+/// `cx.simulate_click(..)` directly, bypassing `A11ySnapshot::click(label)` —
+/// because the button's label is DYNAMIC (`"Theme: {current}"`, `panel.rs`
+/// `render_theme`): after the first click the label itself changes, so a
+/// label-based click on the second step would need to re-derive the new label
+/// just to hand it back to `click_id_for_label`, which only re-resolves to the
+/// same static id anyway. Clicking the id directly is both simpler and is the
+/// pattern this task's brief calls out explicitly (mirrors
+/// `onboarding_gpui.rs::hero_take_tour_button_opens_tour`'s direct
+/// `debug_bounds` + `simulate_click` use).
+///
+/// Also verifies `crate::theme::Theme::switch` (fired as a click side effect)
+/// does not panic when the settings window is mounted standalone (no
+/// `WorkspaceShell`/observers) — see the module-level note in the task report
+/// for the full finding.
+#[gpui::test]
+fn theme_cycle_advances_and_persists(cx: &mut gpui::TestAppContext) {
+    use gpui::Modifiers;
+
+    const ORDER: [&str; 3] = ["dark", "light", "high-contrast"];
+
+    let (_dir, path) = fresh_store_path();
+    let (_panel, vcx) = open_settings_window(cx, path.clone());
+
+    // Navigate to the Theme pane first — the cycle button only renders inside
+    // `render_theme`, and the default section is Profile.
+    let theme_row_label = dat0_i18n::t("settings.theme");
+    let snap = A11ySnapshot::capture(vcx);
+    snap.click(vcx, &theme_row_label);
+    vcx.run_until_parked();
+
+    let reload_theme = || {
+        SettingsStore::with_path(path.clone())
+            .get_string("theme.id")
+            .unwrap_or_else(|| "dark".into())
+    };
+
+    let before = reload_theme();
+    assert_eq!(before, ORDER[0], "fresh store must default theme.id=dark");
+
+    let click_cycle = |vcx: &mut VisualTestContext| {
+        let bounds = vcx
+            .debug_bounds("settings-theme-cycle")
+            .expect("settings-theme-cycle must have painted bounds in the theme pane");
+        vcx.simulate_click(bounds.center(), Modifiers::none());
+        vcx.run_until_parked();
+    };
+
+    click_cycle(vcx);
+    let after1 = reload_theme();
+    assert_eq!(
+        after1, ORDER[1],
+        "first click must advance theme.id from dark to light"
+    );
+    assert_ne!(
+        after1, before,
+        "theme.id must not stay on the original value"
+    );
+
+    // Teeth (2nd step, proves real cycling not a one-shot fluke): click again
+    // and confirm it advances a SECOND time, to the third order entry — not
+    // back to the start and not stuck on the same value.
+    click_cycle(vcx);
+    let after2 = reload_theme();
+    assert_eq!(
+        after2, ORDER[2],
+        "second click must advance theme.id from light to high-contrast"
+    );
+    assert_ne!(after2, after1, "theme.id must advance again, not repeat");
+    assert_ne!(
+        after2, before,
+        "theme.id must not have cycled back to the original value yet"
+    );
+}
+
+// ----------------------------------------------------------------------------
+// (j) Log-level cycle: click-by-STATIC-ID advances `log_level` through `LV`
+// and persists (Task 4).
+// ----------------------------------------------------------------------------
+
+/// Mirrors `theme_cycle_advances_and_persists`: `adv-log-level`'s label is
+/// ALSO dynamic (`"Log level: {level}"`, `panel.rs` `render_advanced`), so
+/// this clicks the static `.a11y("adv-log-level", ..)` id directly rather than
+/// by label.
+#[gpui::test]
+fn log_level_cycle_advances_and_persists(cx: &mut gpui::TestAppContext) {
+    use gpui::Modifiers;
+
+    // Mirrors `panel.rs::render_advanced`'s `const LV` cycle order exactly.
+    const LV: [&str; 4] = ["error", "warn", "info,dat0=debug", "debug"];
+
+    let (_dir, path) = fresh_store_path();
+    let (_panel, vcx) = open_settings_window(cx, path.clone());
+
+    // Navigate to the Advanced pane first — the button only renders inside
+    // `render_advanced`, and the default section is Profile.
+    let advanced_row_label = dat0_i18n::t("settings.advanced");
+    let snap = A11ySnapshot::capture(vcx);
+    snap.click(vcx, &advanced_row_label);
+    vcx.run_until_parked();
+
+    let reload_level = || {
+        SettingsStore::with_path(path.clone())
+            .load_or_default()
+            .expect("load settings")
+            .log_level
+    };
+
+    // `Settings::default().log_level` == "info,dat0=debug" == `LV[2]`
+    // (`schema.rs::default_log_level`).
+    let before = reload_level();
+    assert_eq!(
+        before, LV[2],
+        "fresh store must default log_level=info,dat0=debug"
+    );
+
+    let click_cycle = |vcx: &mut VisualTestContext| {
+        let bounds = vcx
+            .debug_bounds("adv-log-level")
+            .expect("adv-log-level must have painted bounds in the advanced pane");
+        vcx.simulate_click(bounds.center(), Modifiers::none());
+        vcx.run_until_parked();
+    };
+
+    click_cycle(vcx);
+    let after1 = reload_level();
+    assert_eq!(
+        after1, LV[3],
+        "first click must advance log_level from info,dat0=debug to debug"
+    );
+    assert_ne!(
+        after1, before,
+        "log_level must not stay on the original value"
+    );
+
+    // Teeth (2nd step): click again and confirm it advances a SECOND time,
+    // wrapping around to the FIRST order entry ("error") — proves this reads
+    // the real cyclic index logic, not a one-shot fluke, and exercises the
+    // wrap-around branch the first step alone never reaches.
+    click_cycle(vcx);
+    let after2 = reload_level();
+    assert_eq!(
+        after2, LV[0],
+        "second click must wrap log_level around from debug to error"
+    );
+    assert_ne!(after2, after1, "log_level must advance again, not repeat");
+    assert_ne!(
+        after2, before,
+        "log_level must not have cycled back to the original default yet"
+    );
+}

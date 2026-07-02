@@ -286,13 +286,18 @@ impl SettingsPanel {
                         }
                     }),
             )
-            .child(
+            .child({
+                // UAT settings-window slice (Task 4): mirrors the theme-cycle
+                // button's own convention (Task 0) — the `.a11y` label is the
+                // button's exact `.label(...)` string, not a separately
+                // resolved i18n key, because this label is DYNAMIC
+                // (`"{Log level}: {level}"`) and changes every click. Feature
+                // OFF (release) -> identity no-op.
+                let log_level_label =
+                    format!("{}: {}", dat0_i18n::t("settings.advanced.log_level"), level);
                 Button::new("adv-log-level")
-                    .label(format!(
-                        "{}: {}",
-                        dat0_i18n::t("settings.advanced.log_level"),
-                        level
-                    ))
+                    .label(log_level_label.clone())
+                    .a11y("adv-log-level", AccessRole::Button, log_level_label)
                     .on_click(cx.listener(|this, _e, _w, cx| {
                         const LV: [&str; 4] = ["error", "warn", "info,dat0=debug", "debug"];
                         let cur = this
@@ -303,8 +308,8 @@ impl SettingsPanel {
                         let i = LV.iter().position(|l| *l == cur).unwrap_or(2);
                         let _ = crate::settings::set_log_level(&this.store, LV[(i + 1) % LV.len()]);
                         cx.notify();
-                    })),
-            )
+                    }))
+            })
             .child(
                 Button::new("adv-reset")
                     .label(dat0_i18n::t("settings.advanced.reset"))
