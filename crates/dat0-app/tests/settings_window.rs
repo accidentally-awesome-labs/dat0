@@ -185,6 +185,115 @@ fn sidebar_click_switches_content_pane(cx: &mut gpui::TestAppContext) {
         !snap.has_label_any(&profile_placeholder),
         "profile pane content must not still be mounted after switching to theme"
     );
+
+    // Bidirectional: click back to "Profile" and confirm the theme control is
+    // gone again — proves the sidebar switch works both directions, not just
+    // forward (Task 1).
+    let profile_row_label = dat0_i18n::t("settings.profile");
+    let snap = A11ySnapshot::capture(vcx);
+    snap.click(vcx, &profile_row_label);
+    vcx.run_until_parked();
+
+    let snap = A11ySnapshot::capture(vcx);
+    assert!(
+        !snap.has_label_any(&cycle_label),
+        "theme control must not remain mounted after switching back to profile"
+    );
+}
+
+// ----------------------------------------------------------------------------
+// (f) All 9 section panes render on click (D-029) + version text (Task 1).
+// ----------------------------------------------------------------------------
+
+/// Clicks every sidebar row in turn and re-captures after each — a panic-free
+/// capture proves that pane's `Render` path ran to completion (D-029 "all 9
+/// sections render"). Most sections' *content* is annotated by LATER tasks
+/// (profile inputs -> T3, toggles -> T2, theme/log-level -> T4, MD/AI -> T6),
+/// so this test only asserts distinctive content where it is ALREADY
+/// annotated today: the theme-cycle button, the memory-budget content label,
+/// and the version text this task adds. For the rest, asserting the sidebar
+/// row's own label survives the switch is the render-succeeded proof.
+#[gpui::test]
+fn all_nine_sections_render_when_clicked(cx: &mut gpui::TestAppContext) {
+    let (_dir, path) = fresh_store_path();
+    let (_panel, vcx) = open_settings_window(cx, path);
+
+    for key in [
+        "settings.profile",
+        "settings.theme",
+        "settings.memory_budget",
+        "settings.motherduck",
+        "settings.ai",
+        "settings.telemetry",
+        "settings.workspace",
+        "settings.updates",
+        "settings.advanced",
+    ] {
+        let row_label = dat0_i18n::t(key);
+        let snap = A11ySnapshot::capture(vcx);
+        snap.click(vcx, &row_label);
+        vcx.run_until_parked();
+
+        // No panic above == the pane rendered. Where content is already
+        // annotated, assert it too.
+        let snap = A11ySnapshot::capture(vcx);
+        match key {
+            "settings.theme" => assert!(
+                snap.has_label_any(&theme_cycle_label_for("dark")),
+                "theme pane missing its cycle control after switching to it"
+            ),
+            "settings.memory_budget" => assert!(
+                snap.has_label_any("1024"),
+                "memory_budget pane missing its default budget content after switching to it"
+            ),
+            "settings.advanced" => assert!(
+                snap.has_label_contains("dat0"),
+                "advanced pane missing version text after switching to it"
+            ),
+            _ => assert!(
+                snap.has_label_any(&row_label),
+                "sidebar row {row_label} missing after switching to its own pane"
+            ),
+        }
+    }
+
+    // Teeth: a label that no pane ever renders must be absent at the end of
+    // the loop — proves these assertions read real rendered content rather
+    // than being tautologically true.
+    let snap = A11ySnapshot::capture(vcx);
+    assert!(
+        !snap.has_label_any("Nonexistent Pane Content Zzz"),
+        "an unrendered label must never be found"
+    );
+}
+
+// ----------------------------------------------------------------------------
+// (g) Advanced pane shows the version text (Task 1).
+// ----------------------------------------------------------------------------
+
+#[gpui::test]
+fn advanced_section_shows_version(cx: &mut gpui::TestAppContext) {
+    let (_dir, path) = fresh_store_path();
+    let (_panel, vcx) = open_settings_window(cx, path);
+
+    let advanced_row_label = dat0_i18n::t("settings.advanced");
+    let snap = A11ySnapshot::capture(vcx);
+    snap.click(vcx, &advanced_row_label);
+    vcx.run_until_parked();
+
+    let snap = A11ySnapshot::capture(vcx);
+    assert!(
+        snap.has_label_contains("dat0"),
+        "version text missing in advanced pane"
+    );
+
+    // Teeth: a version string that was never rendered must not be found —
+    // proves this assertion reads real content, not a tautology. Never
+    // assert the git SHA itself (non-deterministic across builds).
+    assert!(
+        !snap.has_label_contains("NOTAVERSION"),
+        "a fabricated version substring must never be found"
+    );
 }
 
 // ----------------------------------------------------------------------------

@@ -244,7 +244,17 @@ impl SettingsPanel {
             .flex_col()
             .gap_2()
             .p_3()
-            .child(format!("dat0 {} ({})", b.version, b.git_sha))
+            .child({
+                // UAT settings-window slice (Task 1): content-only annotation
+                // of the version line — reuses the exact same `format!`
+                // expression already rendered as the div's text, so the
+                // a11y label IS the visible content, never a second source
+                // of truth. Feature OFF (release) -> identity no-op.
+                let version_text = format!("dat0 {} ({})", b.version, b.git_sha);
+                div()
+                    .a11y_label(AccessRole::Label, version_text.clone())
+                    .child(version_text)
+            })
             .child(
                 Button::new("adv-open-logs")
                     .label(dat0_i18n::t("settings.advanced.open_logs"))
