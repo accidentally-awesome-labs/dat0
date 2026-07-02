@@ -226,7 +226,20 @@ impl SettingsPanel {
             .flex_col()
             .gap_2()
             .p_3()
-            .child(dat0_i18n::t("settings.profile.placeholder"))
+            .child({
+                // UAT settings-window slice (Task 3, D-029): content-only
+                // annotation of the section description — reuses the exact
+                // same resolved i18n string already rendered as the div's
+                // text, so the a11y label IS the visible content (proves the
+                // key actually RESOLVES rather than silently echoing back as
+                // a raw missing key). Mirrors the `render_advanced` version
+                // wrapper (Task 1) / `render_memory_budget` value wrapper
+                // (T0). Feature OFF (release) -> identity no-op.
+                let placeholder = dat0_i18n::t("settings.profile.placeholder");
+                div()
+                    .a11y_label(AccessRole::Label, placeholder.clone())
+                    .child(placeholder)
+            })
             .child(Input::new(&self.name_input))
             .child(Input::new(&self.email_input))
     }
@@ -373,6 +386,26 @@ impl SettingsPanel {
         cx: &mut gpui::Context<Self>,
     ) {
         let input = self.budget_input.clone();
+        input.update(cx, |input, cx| input.set_value(value, window, cx));
+    }
+
+    /// Test-only: drive the profile Name input's value programmatically (UAT
+    /// settings-window slice Task 3), mirroring
+    /// [`Self::set_budget_input_value_for_test`] above. `name_input` is a
+    /// private field — production code never sets it directly (users type
+    /// into it) — so this accessor exists ONLY under `a11y-capture` to let
+    /// the harness prove `InputState::set_value` -> `persist_inputs()` (below)
+    /// round-trips the Name field through a real render tick, exactly as
+    /// typing would. Compiled out entirely in release builds (no
+    /// `a11y-capture` feature there).
+    #[cfg(feature = "a11y-capture")]
+    pub fn set_name_input_value_for_test(
+        &mut self,
+        value: impl Into<gpui::SharedString>,
+        window: &mut Window,
+        cx: &mut gpui::Context<Self>,
+    ) {
+        let input = self.name_input.clone();
         input.update(cx, |input, cx| input.set_value(value, window, cx));
     }
 
