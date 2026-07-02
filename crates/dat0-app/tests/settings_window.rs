@@ -44,27 +44,52 @@
 //! ("theme", "tg-telemetry") as if they were the label argument.
 //!
 //! ## Hermeticity
-//! No `DAT0_CONFIG_DIR` / `#[serial]` needed here (unlike `a11y_content.rs` /
-//! `a11y_spike.rs`): `SettingsPanel::new` takes an explicit `SettingsStore`
-//! rather than reading `crate::platform::config_dir()` itself, and none of
-//! these tests touch the engine/session/tokio machinery those other suites
-//! need — each test owns an independent `tempfile::TempDir`, so tests may run
-//! in parallel safely.
+//! Most tests here need no `DAT0_CONFIG_DIR` / `#[serial]` (unlike
+//! `a11y_content.rs` / `a11y_spike.rs`): `SettingsPanel::new` takes an
+//! explicit `SettingsStore` rather than reading `crate::platform::config_dir()`
+//! itself, and none of these tests touch the engine/session/tokio machinery
+//! those other suites need — each test owns an independent
+//! `tempfile::TempDir`, so tests may run in parallel safely.
+//!
+//! The RESET tests are the one exception: `open_reset_confirm` (`panel.rs`)
+//! builds its own save-store from `crate::platform::config_dir()` rather than
+//! reusing the panel's injected `self.store`, so those tests use the same
+//! `set_config_dir` + `#[serial]` seam as `a11y_content.rs` to make
+//! `config_dir()` resolve to the same temp file the panel's own store uses —
+//! see [`set_config_dir`]'s doc comment for why.
 
 mod support;
 
 use std::cell::RefCell;
+use std::path::Path;
 use std::path::PathBuf;
 use std::rc::Rc;
 
 use gpui::{AppContext as _, Entity, TestAppContext, VisualTestContext};
 use gpui_component::{Root, WindowExt as _};
+use serial_test::serial;
 
 use dat0_app::settings::Settings;
 use dat0_app::settings::Telemetry;
 use dat0_app::settings::store::SettingsStore;
 use dat0_app::settings_ui::panel::SettingsPanel;
 use support::A11ySnapshot;
+
+/// Point `config_dir()` at `dir` for the rest of this (serial) test — mirrors
+/// `a11y_content.rs::set_config_dir`. `open_reset_confirm` (`panel.rs`) builds
+/// its OWN `SettingsStore` from `crate::platform::config_dir()` rather than
+/// reusing the panel's injected `self.store`; the reset tests below point
+/// `config_dir()` at the SAME directory backing the panel's own store so
+/// `self.store` and `open_reset_confirm`'s store are the same file on disk —
+/// otherwise the reset dialog's `on_ok` writes to a file the test never reads,
+/// which made the old gated-on-confirm assertion trivially true regardless of
+/// whether `on_ok` fired.
+fn set_config_dir(dir: &Path) {
+    // SAFETY: tests using this are `#[serial]`, so no other thread races this
+    // process-global write; each test sets it before doing anything that
+    // reads `config_dir()`.
+    unsafe { std::env::set_var("DAT0_CONFIG_DIR", dir) };
+}
 
 /// Open a real window whose root is a `gpui_component::Root` wrapping a fresh
 /// standalone [`SettingsPanel`] — mirrors `a11y_content.rs::open_sql_console_window`.
@@ -745,15 +770,24 @@ fn seeded_non_default_settings() -> Settings {
 /// Asserts the confirm `Dialog` opens via `has_active_dialog` — the same API
 /// `onboarding_gpui.rs::dialog_open` already uses for carousel presence.
 ///
+/// `#[serial]` + [`set_config_dir`]: the panel's own store and
+/// `open_reset_confirm`'s `config_dir()`-backed store must be the SAME file
+/// (see the module-level note on [`set_config_dir`]), so this test — like
+/// [`reset_confirm_gated_and_restores_defaults_on_confirm`] below — points
+/// `DAT0_CONFIG_DIR` at the same temp dir it mounts the panel's store over.
+///
 /// Teeth (brief Step 5): `has_active_dialog` is asserted `false` immediately
 /// before the click, so the `true` read after the click is bound to the click
 /// itself, not a tautology that some other path already left a dialog open.
 #[gpui::test]
+#[serial]
 fn reset_confirm_dialog_opens_from_non_default_state(cx: &mut gpui::TestAppContext) {
     use gpui::Modifiers;
     use std::time::Duration;
 
-    let (_dir, path) = fresh_store_path();
+    let dir = tempfile::tempdir().expect("tempdir");
+    set_config_dir(dir.path());
+    let path = dir.path().join("settings.toml");
     SettingsStore::with_path(path.clone())
         .save(&seeded_non_default_settings())
         .expect("seed non-default settings");
@@ -801,31 +835,44 @@ fn reset_confirm_dialog_opens_from_non_default_state(cx: &mut gpui::TestAppConte
     );
 }
 
-/// Path 2 (SHOULD, brief Step 3 attempt + documented fallback): the confirm
-/// dialog's OK button is gpui-component-INTERNAL code
+/// Path 2 (gated-on-confirm, now SOUND, + headline confirm→default coverage):
+/// the confirm dialog's OK button is gpui-component-INTERNAL code
 /// (`Button::new("ok")` in gpui-component's `dialog.rs:307`, pinned rev
-/// `0f0ab35`), not dat0 code — it never chains `.debug_selector` (confirmed
-/// by reading the vendored source at
+/// `0f0ab35`), not dat0 code — it never chains `.debug_selector` (confirmed by
+/// reading the vendored source at
 /// `~/.cargo/git/checkouts/gpui-component-*/0f0ab35/crates/ui/src/dialog.rs`,
 /// and independently by the fact `debug_bounds` only ever resolves ids that
 /// `.debug_selector` registered — see `gpui-0.2.2/src/elements/div.rs:1803`).
-/// So `.a11y` cannot be attached to it, and `vcx.debug_bounds("ok")` is
-/// expected to resolve to `None`. This test asserts that boundary explicitly
-/// (rather than silently skipping it) and then exercises the achievable half:
-/// with the dialog merely OPEN (not confirmed), the seeded non-default
-/// settings must still be on disk unchanged — proving `on_ok`'s
-/// `store.save(&Settings::default())` (`panel.rs:345`) has NOT fired just from
-/// opening the dialog, i.e. the reset really is gated on confirm. The `on_ok`
-/// closure body itself (a one-line `store.save` call) is a good candidate for
-/// a plain unit test in `panel.rs`/`schema.rs`, outside this a11y harness's
-/// reach (documented here rather than added, to keep this task's scope to the
-/// UAT harness).
+/// So `.a11y`/`debug_bounds("ok")` cannot reach it — but the dialog DOES bind
+/// a real keystroke to confirm: `KeyBinding::new("enter", Confirm { secondary:
+/// false }, Some("Dialog"))` (`dialog.rs:25`), and `Root::open_dialog` focuses
+/// the dialog's own `focus_handle` the moment it opens (`root.rs:94`/`130`),
+/// so the freshly-opened dialog already owns keyboard focus and
+/// `vcx.simulate_keystrokes("enter")` routes to it — verified empirically
+/// (this test failed with the confirm→default assertion below before this was
+/// confirmed working; see the Task-5 fix report for the RED/GREEN evidence).
+/// That lets this test drive the REAL `on_ok` closure end to end instead of
+/// stopping at the previously-documented harness boundary.
+///
+/// Superseding note: this replaces the old
+/// `reset_only_fires_on_confirm_not_on_dialog_open`, whose "gated on confirm"
+/// assertion was UNSOUND — it read a `tempfile` store the panel was mounted
+/// over, while `open_reset_confirm` (`panel.rs`) saves via
+/// `crate::platform::config_dir()`, a DIFFERENT file the test never read. That
+/// made the assertion trivially true regardless of whether `on_ok` fired, and
+/// left the headline "reset restores defaults" behavior with zero coverage.
+/// `#[serial]` + [`set_config_dir`] here make `config_dir()` and the panel's
+/// own store resolve to the exact same `settings.toml`, so every assertion
+/// below reads the ONE file `on_ok` actually writes.
 #[gpui::test]
-fn reset_only_fires_on_confirm_not_on_dialog_open(cx: &mut gpui::TestAppContext) {
+#[serial]
+fn reset_confirm_gated_and_restores_defaults_on_confirm(cx: &mut gpui::TestAppContext) {
     use gpui::Modifiers;
     use std::time::Duration;
 
-    let (_dir, path) = fresh_store_path();
+    let dir = tempfile::tempdir().expect("tempdir");
+    set_config_dir(dir.path());
+    let path = dir.path().join("settings.toml");
     SettingsStore::with_path(path.clone())
         .save(&seeded_non_default_settings())
         .expect("seed non-default settings");
@@ -852,20 +899,14 @@ fn reset_only_fires_on_confirm_not_on_dialog_open(cx: &mut gpui::TestAppContext)
     vcx.run_until_parked();
     assert!(
         vcx.update(|window, app| window.has_active_dialog(app)),
-        "confirm dialog must be open before the fallback assertions below"
+        "clicking adv-reset must open the confirm dialog"
     );
 
-    // Documented harness boundary: the internal OK button has no
-    // debug_selector-resolvable bounds.
-    assert!(
-        vcx.debug_bounds("ok").is_none(),
-        "gpui-component's internal dialog OK button is expected to have no \
-         debug_selector-resolvable bounds — if this now resolves (e.g. after \
-         a gpui-component bump adds one), upgrade this test to a real \
-         simulate_click + assert_eq!(reload(), Settings::default())"
-    );
-
-    // Fallback: dialog open but NOT confirmed -> settings must be untouched.
+    // Gated-on-confirm (SOUND this time): `path` — the file backing the
+    // panel's OWN store — and `config_dir()`'s store (what `open_reset_confirm`
+    // will `save` to on confirm) are now the SAME file, thanks to
+    // `set_config_dir(dir.path())` above. With the dialog merely open (no
+    // confirm yet), that file must still hold the seeded non-default value.
     let still_seeded = reload();
     assert_eq!(
         still_seeded, seeded,
@@ -880,6 +921,24 @@ fn reset_only_fires_on_confirm_not_on_dialog_open(cx: &mut gpui::TestAppContext)
         still_seeded,
         Settings::default(),
         "teeth: settings must still differ from defaults before any confirm"
+    );
+
+    // Fire the dialog's real `enter -> Confirm` keybinding — this is the
+    // headline behavior: `on_ok`'s `store.save(&Settings::default())`
+    // (`panel.rs:353`) actually running.
+    vcx.simulate_keystrokes("enter");
+    vcx.executor().advance_clock(Duration::from_secs(1));
+    vcx.run_until_parked();
+
+    assert_eq!(
+        reload(),
+        Settings::default(),
+        "confirming the reset dialog must restore Settings::default() — the \
+         headline 'Reset restores defaults' behavior"
+    );
+    assert!(
+        !vcx.update(|window, app| window.has_active_dialog(app)),
+        "confirming the reset dialog must close it"
     );
 }
 
