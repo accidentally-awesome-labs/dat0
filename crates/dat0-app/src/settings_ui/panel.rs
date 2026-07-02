@@ -3,6 +3,7 @@
 //! `sections::all_sections()` and dispatches to per-section render methods.
 
 use super::sections;
+use crate::a11y::{A11yExt as _, AccessRole};
 use crate::settings::store::SettingsStore;
 
 /// Which right-dock panel to toggle in the focused workspace window.
@@ -67,6 +68,7 @@ impl SettingsPanel {
             .flex_col()
             .children(sections::all_sections().into_iter().map(|s| {
                 let id = s.id().to_string();
+                let static_id = s.id();
                 let active = id == sel;
                 div()
                     .id(gpui::SharedString::from(id.clone()))
@@ -75,6 +77,14 @@ impl SettingsPanel {
                     .py_1()
                     .when(active, |d| d.bg(gpui::rgba(0x3b82f622)))
                     .child(dat0_i18n::t(s.name_key()))
+                    // UAT settings-window slice (T0): `s.id()` is already
+                    // `&'static str` (the `SettingsSection::id()` contract), so
+                    // it doubles as both the on_click selection key AND the
+                    // `.a11y` click id — no `sample_static_id`-style mapping
+                    // needed (contrast `empty_state.rs::sample_column`, which
+                    // maps a *runtime* index to a static id). Feature OFF
+                    // (release) → identity no-op.
+                    .a11y(static_id, AccessRole::Button, dat0_i18n::t(s.name_key()))
                     .on_click(cx.listener(move |this, _ev, _w, cx| {
                         this.selected_section = id.clone();
                         cx.notify();
@@ -100,6 +110,10 @@ impl SettingsPanel {
             .py_1()
             .child(if on { "[x]" } else { "[ ]" })
             .child(dat0_i18n::t(label_key))
+            // UAT settings-window slice (T0): shared by telemetry/workspace/
+            // updates toggles, so annotating once here covers all three.
+            // Feature OFF (release) → identity no-op.
+            .a11y(id, AccessRole::Button, dat0_i18n::t(label_key))
             .on_click(cx.listener(move |this, _ev, _w, cx| {
                 let _ = set(&this.store, !on);
                 cx.notify();
@@ -178,9 +192,19 @@ impl SettingsPanel {
             .gap_2()
             .p_3()
             .child(dat0_i18n::t("settings.theme.placeholder"))
-            .child(
+            .child({
+                // UAT settings-window slice (T0): the cycle button's label is a
+                // dynamic `"{Theme}: {current}"` string, not a fixed i18n key
+                // (no `settings.theme.cycle` key exists in
+                // `crates/dat0-i18n/src/strings/en.json` — `dat0_i18n::t` would
+                // silently fall back to echoing the missing key, which is not
+                // a real assertable label). So `.a11y` mirrors the button's
+                // OWN `.label(...)` text exactly, rather than inventing a new
+                // i18n key. Feature OFF (release) → identity no-op.
+                let cycle_label = format!("{}: {}", dat0_i18n::t("settings.theme"), current);
                 Button::new("settings-theme-cycle")
-                    .label(format!("{}: {}", dat0_i18n::t("settings.theme"), current))
+                    .label(cycle_label.clone())
+                    .a11y("settings-theme-cycle", AccessRole::Button, cycle_label)
                     .on_click(cx.listener(|this, _ev, _w, cx| {
                         const ORDER: [&str; 3] = ["dark", "light", "high-contrast"];
                         let cur = this
@@ -192,8 +216,8 @@ impl SettingsPanel {
                         let _ = this.store.set("theme.id", next);
                         crate::theme::Theme::switch(cx, next);
                         cx.notify();
-                    })),
-            )
+                    }))
+            })
     }
 
     fn render_profile(&self, _cx: &mut gpui::Context<Self>) -> impl IntoElement {
@@ -202,7 +226,20 @@ impl SettingsPanel {
             .flex_col()
             .gap_2()
             .p_3()
-            .child(dat0_i18n::t("settings.profile.placeholder"))
+            .child({
+                // UAT settings-window slice (Task 3, D-029): content-only
+                // annotation of the section description — reuses the exact
+                // same resolved i18n string already rendered as the div's
+                // text, so the a11y label IS the visible content (proves the
+                // key actually RESOLVES rather than silently echoing back as
+                // a raw missing key). Mirrors the `render_advanced` version
+                // wrapper (Task 1) / `render_memory_budget` value wrapper
+                // (T0). Feature OFF (release) -> identity no-op.
+                let placeholder = dat0_i18n::t("settings.profile.placeholder");
+                div()
+                    .a11y_label(AccessRole::Label, placeholder.clone())
+                    .child(placeholder)
+            })
             .child(Input::new(&self.name_input))
             .child(Input::new(&self.email_input))
     }
@@ -220,7 +257,17 @@ impl SettingsPanel {
             .flex_col()
             .gap_2()
             .p_3()
-            .child(format!("dat0 {} ({})", b.version, b.git_sha))
+            .child({
+                // UAT settings-window slice (Task 1): content-only annotation
+                // of the version line — reuses the exact same `format!`
+                // expression already rendered as the div's text, so the
+                // a11y label IS the visible content, never a second source
+                // of truth. Feature OFF (release) -> identity no-op.
+                let version_text = format!("dat0 {} ({})", b.version, b.git_sha);
+                div()
+                    .a11y_label(AccessRole::Label, version_text.clone())
+                    .child(version_text)
+            })
             .child(
                 Button::new("adv-open-logs")
                     .label(dat0_i18n::t("settings.advanced.open_logs"))
@@ -239,13 +286,18 @@ impl SettingsPanel {
                         }
                     }),
             )
-            .child(
+            .child({
+                // UAT settings-window slice (Task 4): mirrors the theme-cycle
+                // button's own convention (Task 0) — the `.a11y` label is the
+                // button's exact `.label(...)` string, not a separately
+                // resolved i18n key, because this label is DYNAMIC
+                // (`"{Log level}: {level}"`) and changes every click. Feature
+                // OFF (release) -> identity no-op.
+                let log_level_label =
+                    format!("{}: {}", dat0_i18n::t("settings.advanced.log_level"), level);
                 Button::new("adv-log-level")
-                    .label(format!(
-                        "{}: {}",
-                        dat0_i18n::t("settings.advanced.log_level"),
-                        level
-                    ))
+                    .label(log_level_label.clone())
+                    .a11y("adv-log-level", AccessRole::Button, log_level_label)
                     .on_click(cx.listener(|this, _e, _w, cx| {
                         const LV: [&str; 4] = ["error", "warn", "info,dat0=debug", "debug"];
                         let cur = this
@@ -256,16 +308,24 @@ impl SettingsPanel {
                         let i = LV.iter().position(|l| *l == cur).unwrap_or(2);
                         let _ = crate::settings::set_log_level(&this.store, LV[(i + 1) % LV.len()]);
                         cx.notify();
-                    })),
-            )
-            .child(
+                    }))
+            })
+            .child({
+                // UAT settings-window slice (Task 5): mirrors `adv-log-level`'s
+                // convention — the `.a11y` label is the button's exact static
+                // `.label(...)` i18n string (not dynamic here, unlike
+                // adv-log-level/theme-cycle). Lets a headless test resolve
+                // `debug_bounds("adv-reset")` and drive the confirm-dialog
+                // open path. Feature OFF (release) -> identity no-op.
+                let reset_label = dat0_i18n::t("settings.advanced.reset");
                 Button::new("adv-reset")
-                    .label(dat0_i18n::t("settings.advanced.reset"))
+                    .label(reset_label.clone())
+                    .a11y("adv-reset", AccessRole::Button, reset_label)
                     .ghost()
                     .on_click(cx.listener(|this, _e, window, cx| {
                         this.open_reset_confirm(window, cx);
-                    })),
-            )
+                    }))
+            })
     }
 
     fn open_reset_confirm(&self, window: &mut Window, cx: &mut gpui::Context<Self>) {
@@ -297,15 +357,69 @@ impl SettingsPanel {
         });
     }
 
-    fn render_memory_budget(&self, _cx: &mut gpui::Context<Self>) -> impl IntoElement {
+    fn render_memory_budget(&self, cx: &mut gpui::Context<Self>) -> impl IntoElement {
+        // UAT settings-window slice (T0): content-only annotation of the
+        // input's CURRENT rendered value (not a click target — text inputs are
+        // driven by typing / `set_value`, not clicks). Lets a headless test
+        // assert the persisted value actually round-trips into the render,
+        // the same "content assertion" role the grid-cell / inspector
+        // `.a11y_label` annotations play elsewhere. `Input` (unlike `Button`)
+        // does NOT implement `InteractiveElement` (it derives `IntoElement`
+        // only — a plain `RenderOnce` struct), so `.a11y_label` cannot be
+        // chained onto it directly; wrap it in a `div()` instead, mirroring
+        // `empty_state.rs`'s tagline wrapper. Feature OFF (release) →
+        // identity no-op.
+        let budget_value = self.budget_input.read(cx).value().to_string();
         div()
             .flex()
             .flex_col()
             .gap_2()
             .p_3()
             .child(dat0_i18n::t("settings.memory_budget.placeholder"))
-            .child(Input::new(&self.budget_input))
+            .child(
+                div()
+                    .a11y_label(AccessRole::Label, budget_value)
+                    .child(Input::new(&self.budget_input)),
+            )
             .child(dat0_i18n::t("settings.memory_budget.footnote"))
+    }
+
+    /// Test-only: drive the budget input's value programmatically (UAT
+    /// settings-window slice T0 spike). `budget_input` is a private field —
+    /// production code never sets it directly (users type into it) — so this
+    /// accessor exists ONLY under `a11y-capture` to let the harness prove
+    /// `InputState::set_value` → `persist_inputs()` (below) round-trips
+    /// through a real render tick, exactly as typing would. Compiled out
+    /// entirely in release builds (no `a11y-capture` feature there).
+    #[cfg(feature = "a11y-capture")]
+    pub fn set_budget_input_value_for_test(
+        &mut self,
+        value: impl Into<gpui::SharedString>,
+        window: &mut Window,
+        cx: &mut gpui::Context<Self>,
+    ) {
+        let input = self.budget_input.clone();
+        input.update(cx, |input, cx| input.set_value(value, window, cx));
+    }
+
+    /// Test-only: drive the profile Name input's value programmatically (UAT
+    /// settings-window slice Task 3), mirroring
+    /// [`Self::set_budget_input_value_for_test`] above. `name_input` is a
+    /// private field — production code never sets it directly (users type
+    /// into it) — so this accessor exists ONLY under `a11y-capture` to let
+    /// the harness prove `InputState::set_value` -> `persist_inputs()` (below)
+    /// round-trips the Name field through a real render tick, exactly as
+    /// typing would. Compiled out entirely in release builds (no
+    /// `a11y-capture` feature there).
+    #[cfg(feature = "a11y-capture")]
+    pub fn set_name_input_value_for_test(
+        &mut self,
+        value: impl Into<gpui::SharedString>,
+        window: &mut Window,
+        cx: &mut gpui::Context<Self>,
+    ) {
+        let input = self.name_input.clone();
+        input.update(cx, |input, cx| input.set_value(value, window, cx));
     }
 
     /// Toggle a right-dock panel in the focused workspace window (cross-window).
@@ -339,11 +453,17 @@ impl SettingsPanel {
             .gap_2()
             .p_3()
             .child(dat0_i18n::t("settings.motherduck.placeholder"))
-            .child(
+            .child({
+                // UAT settings-window slice (Task 6, final task): mirrors
+                // `adv-reset`'s convention — the `.a11y` label is the button's
+                // exact static `.label(...)` i18n string. Feature OFF
+                // (release) -> identity no-op.
+                let md_open_label = dat0_i18n::t("settings.motherduck.manage");
                 Button::new("md-open")
-                    .label(dat0_i18n::t("settings.motherduck.manage"))
-                    .on_click(|_e, _w, cx| Self::launch_dock(cx, DockKind::Connections)),
-            )
+                    .label(md_open_label.clone())
+                    .a11y("md-open", AccessRole::Button, md_open_label)
+                    .on_click(|_e, _w, cx| Self::launch_dock(cx, DockKind::Connections))
+            })
     }
 
     fn render_ai(&self) -> impl IntoElement {
@@ -354,11 +474,15 @@ impl SettingsPanel {
             .gap_2()
             .p_3()
             .child(dat0_i18n::t("settings.ai.placeholder"))
-            .child(
+            .child({
+                // UAT settings-window slice (Task 6, final task): mirrors
+                // `md-open` above. Feature OFF (release) -> identity no-op.
+                let ai_open_label = dat0_i18n::t("settings.ai.configure");
                 Button::new("ai-open")
-                    .label(dat0_i18n::t("settings.ai.configure"))
-                    .on_click(|_e, _w, cx| Self::launch_dock(cx, DockKind::Ai)),
-            )
+                    .label(ai_open_label.clone())
+                    .a11y("ai-open", AccessRole::Button, ai_open_label)
+                    .on_click(|_e, _w, cx| Self::launch_dock(cx, DockKind::Ai))
+            })
     }
 
     fn persist_inputs(&mut self, cx: &gpui::App) {
