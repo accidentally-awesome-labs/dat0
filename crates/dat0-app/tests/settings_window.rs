@@ -346,6 +346,103 @@ fn telemetry_toggle_click_persists(cx: &mut gpui::TestAppContext) {
 }
 
 // ----------------------------------------------------------------------------
+// (d2) Workspace toggle round-trips through the on-disk SettingsStore (Task 2).
+// ----------------------------------------------------------------------------
+
+#[gpui::test]
+fn workspace_toggle_click_persists(cx: &mut gpui::TestAppContext) {
+    let (_dir, path) = fresh_store_path();
+    let (_panel, vcx) = open_settings_window(cx, path.clone());
+
+    // Navigate to the Workspace pane first — the toggle only renders inside
+    // `render_workspace`, and the default section is Profile.
+    let workspace_row_label = dat0_i18n::t("settings.workspace");
+    let snap = A11ySnapshot::capture(vcx);
+    snap.click(vcx, &workspace_row_label);
+    vcx.run_until_parked();
+
+    let reload_flag = || {
+        SettingsStore::with_path(path.clone())
+            .load_or_default()
+            .expect("load settings")
+            .workspace
+            .treat_all_as_networked
+    };
+    let before = reload_flag();
+    assert!(
+        !before,
+        "fresh store must default treat_all_as_networked=false"
+    );
+
+    let toggle_label = dat0_i18n::t("settings.workspace.toggle");
+    let snap = A11ySnapshot::capture(vcx);
+    snap.click(vcx, &toggle_label);
+    vcx.run_until_parked();
+
+    let after = reload_flag();
+    assert_ne!(before, after, "workspace toggle did not persist");
+    assert!(after, "workspace toggle must flip to true on click");
+
+    // Teeth: click it again and confirm it flips back — proves the assertion
+    // above is reading real toggle state, not a one-shot fluke.
+    let snap = A11ySnapshot::capture(vcx);
+    snap.click(vcx, &toggle_label);
+    vcx.run_until_parked();
+    assert!(
+        !reload_flag(),
+        "a second click must flip treat_all_as_networked back to false"
+    );
+}
+
+// ----------------------------------------------------------------------------
+// (d3) Updates toggle round-trips through the on-disk SettingsStore (Task 2).
+// ----------------------------------------------------------------------------
+
+#[gpui::test]
+fn updates_toggle_click_persists(cx: &mut gpui::TestAppContext) {
+    let (_dir, path) = fresh_store_path();
+    let (_panel, vcx) = open_settings_window(cx, path.clone());
+
+    // Navigate to the Updates pane first — the toggle only renders inside
+    // `render_updates`, and the default section is Profile.
+    let updates_row_label = dat0_i18n::t("settings.updates");
+    let snap = A11ySnapshot::capture(vcx);
+    snap.click(vcx, &updates_row_label);
+    vcx.run_until_parked();
+
+    let reload_flag = || {
+        SettingsStore::with_path(path.clone())
+            .load_or_default()
+            .expect("load settings")
+            .update_auto_check
+    };
+    // Unlike telemetry/workspace, `update_auto_check` DEFAULTS TO TRUE
+    // (schema.rs `default_true` / P10a-2 T6) — the launch-time update check
+    // is opt-out, not opt-in.
+    let before = reload_flag();
+    assert!(before, "fresh store must default update_auto_check=true");
+
+    let toggle_label = dat0_i18n::t("settings.updates.toggle");
+    let snap = A11ySnapshot::capture(vcx);
+    snap.click(vcx, &toggle_label);
+    vcx.run_until_parked();
+
+    let after = reload_flag();
+    assert_ne!(before, after, "updates toggle did not persist");
+    assert!(!after, "updates toggle must flip to false on click");
+
+    // Teeth: click it again and confirm it flips back — proves the assertion
+    // above is reading real toggle state, not a one-shot fluke.
+    let snap = A11ySnapshot::capture(vcx);
+    snap.click(vcx, &toggle_label);
+    vcx.run_until_parked();
+    assert!(
+        reload_flag(),
+        "a second click must flip update_auto_check back to true"
+    );
+}
+
+// ----------------------------------------------------------------------------
 // (e) The input path: `InputState::set_value` -> persist_inputs() on render.
 // ----------------------------------------------------------------------------
 
