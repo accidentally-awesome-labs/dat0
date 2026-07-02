@@ -882,3 +882,113 @@ fn reset_only_fires_on_confirm_not_on_dialog_open(cx: &mut gpui::TestAppContext)
         "teeth: settings must still differ from defaults before any confirm"
     );
 }
+
+// ----------------------------------------------------------------------------
+// (l) MotherDuck / AI panes: `md-open` / `ai-open` buttons render and are
+// clickable without panicking (Task 6, final task of this slice).
+// ----------------------------------------------------------------------------
+
+/// `md-open` (`panel.rs::render_motherduck`) and `ai-open`
+/// (`panel.rs::render_ai`) both call `SettingsPanel::launch_dock`, which
+/// reaches into `crate::window_registry::focused_workspace_weak()` to toggle a
+/// dock in the (separate) `WorkspaceShell` window. This standalone settings
+/// window (see [`open_settings_window`]/module doc "Mount pattern") has no
+/// `WorkspaceShell` mounted, so `focused_workspace_weak()` returns `None` and
+/// `launch_dock` early-returns after a `tracing::warn!` — a documented,
+/// intentional no-op in this harness (see the task brief: "Do NOT assert a
+/// dock opens"). These two tests prove the buttons render with their real
+/// labels and that clicking them is safe (no panic, window still renders) —
+/// they do NOT assert any dock/shell side effect, which is out of reach from
+/// this window.
+#[gpui::test]
+fn motherduck_open_button_renders_and_is_clickable_without_panic(cx: &mut gpui::TestAppContext) {
+    use gpui::Modifiers;
+
+    let (_dir, path) = fresh_store_path();
+    let (_panel, vcx) = open_settings_window(cx, path);
+
+    // Navigate to the MotherDuck pane first — `md-open` only renders inside
+    // `render_motherduck`, and the default section is Profile.
+    let motherduck_row_label = dat0_i18n::t("settings.motherduck");
+    let snap = A11ySnapshot::capture(vcx);
+    snap.click(vcx, &motherduck_row_label);
+    vcx.run_until_parked();
+
+    let md_open_label = dat0_i18n::t("settings.motherduck.manage");
+    let snap = A11ySnapshot::capture(vcx);
+    assert!(
+        snap.has_label_any(&md_open_label),
+        "md-open button must render its real label ({md_open_label:?}) in the \
+         MotherDuck pane"
+    );
+
+    // Teeth: a fabricated label must not be found — proves the assertion
+    // above is bound to real rendered content, not a tautology.
+    assert!(
+        !snap.has_label_any("Nonexistent MotherDuck Button Zzz"),
+        "a label the MotherDuck pane never rendered must not be found"
+    );
+
+    let bounds = vcx
+        .debug_bounds("md-open")
+        .expect("md-open must have painted bounds in the MotherDuck pane");
+    vcx.simulate_click(bounds.center(), Modifiers::none());
+    vcx.run_until_parked();
+
+    // No panic occurred (the `launch_dock` no-op path above is documented,
+    // not asserted) — prove the window is still alive and rendering by
+    // re-capturing content and confirming the pane's own label is still
+    // present.
+    let snap_after = A11ySnapshot::capture(vcx);
+    assert!(
+        snap_after.has_label_any(&md_open_label),
+        "window must still render md-open's label after the click (no panic, \
+         no crash)"
+    );
+}
+
+/// Mirrors `motherduck_open_button_renders_and_is_clickable_without_panic` for
+/// the AI pane's `ai-open` button (`panel.rs::render_ai` ->
+/// `launch_dock(cx, DockKind::Ai)`).
+#[gpui::test]
+fn ai_open_button_renders_and_is_clickable_without_panic(cx: &mut gpui::TestAppContext) {
+    use gpui::Modifiers;
+
+    let (_dir, path) = fresh_store_path();
+    let (_panel, vcx) = open_settings_window(cx, path);
+
+    // Navigate to the AI pane first — `ai-open` only renders inside
+    // `render_ai`, and the default section is Profile.
+    let ai_row_label = dat0_i18n::t("settings.ai");
+    let snap = A11ySnapshot::capture(vcx);
+    snap.click(vcx, &ai_row_label);
+    vcx.run_until_parked();
+
+    let ai_open_label = dat0_i18n::t("settings.ai.configure");
+    let snap = A11ySnapshot::capture(vcx);
+    assert!(
+        snap.has_label_any(&ai_open_label),
+        "ai-open button must render its real label ({ai_open_label:?}) in the \
+         AI pane"
+    );
+
+    // Teeth: a fabricated label must not be found.
+    assert!(
+        !snap.has_label_any("Nonexistent AI Button Zzz"),
+        "a label the AI pane never rendered must not be found"
+    );
+
+    let bounds = vcx
+        .debug_bounds("ai-open")
+        .expect("ai-open must have painted bounds in the AI pane");
+    vcx.simulate_click(bounds.center(), Modifiers::none());
+    vcx.run_until_parked();
+
+    // No panic — window still renders ai-open's label after the click.
+    let snap_after = A11ySnapshot::capture(vcx);
+    assert!(
+        snap_after.has_label_any(&ai_open_label),
+        "window must still render ai-open's label after the click (no panic, \
+         no crash)"
+    );
+}

@@ -453,11 +453,17 @@ impl SettingsPanel {
             .gap_2()
             .p_3()
             .child(dat0_i18n::t("settings.motherduck.placeholder"))
-            .child(
+            .child({
+                // UAT settings-window slice (Task 6, final task): mirrors
+                // `adv-reset`'s convention — the `.a11y` label is the button's
+                // exact static `.label(...)` i18n string. Feature OFF
+                // (release) -> identity no-op.
+                let md_open_label = dat0_i18n::t("settings.motherduck.manage");
                 Button::new("md-open")
-                    .label(dat0_i18n::t("settings.motherduck.manage"))
-                    .on_click(|_e, _w, cx| Self::launch_dock(cx, DockKind::Connections)),
-            )
+                    .label(md_open_label.clone())
+                    .a11y("md-open", AccessRole::Button, md_open_label)
+                    .on_click(|_e, _w, cx| Self::launch_dock(cx, DockKind::Connections))
+            })
     }
 
     fn render_ai(&self) -> impl IntoElement {
@@ -468,11 +474,15 @@ impl SettingsPanel {
             .gap_2()
             .p_3()
             .child(dat0_i18n::t("settings.ai.placeholder"))
-            .child(
+            .child({
+                // UAT settings-window slice (Task 6, final task): mirrors
+                // `md-open` above. Feature OFF (release) -> identity no-op.
+                let ai_open_label = dat0_i18n::t("settings.ai.configure");
                 Button::new("ai-open")
-                    .label(dat0_i18n::t("settings.ai.configure"))
-                    .on_click(|_e, _w, cx| Self::launch_dock(cx, DockKind::Ai)),
-            )
+                    .label(ai_open_label.clone())
+                    .a11y("ai-open", AccessRole::Button, ai_open_label)
+                    .on_click(|_e, _w, cx| Self::launch_dock(cx, DockKind::Ai))
+            })
     }
 
     fn persist_inputs(&mut self, cx: &gpui::App) {
