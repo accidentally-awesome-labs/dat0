@@ -58,8 +58,10 @@ use std::path::PathBuf;
 use std::rc::Rc;
 
 use gpui::{AppContext as _, Entity, TestAppContext, VisualTestContext};
-use gpui_component::Root;
+use gpui_component::{Root, WindowExt as _};
 
+use dat0_app::settings::Settings;
+use dat0_app::settings::Telemetry;
 use dat0_app::settings::store::SettingsStore;
 use dat0_app::settings_ui::panel::SettingsPanel;
 use support::A11ySnapshot;
@@ -713,5 +715,170 @@ fn log_level_cycle_advances_and_persists(cx: &mut gpui::TestAppContext) {
     assert_ne!(
         after2, before,
         "log_level must not have cycled back to the original default yet"
+    );
+}
+
+// ----------------------------------------------------------------------------
+// (k) Reset-confirm dialog: opens from a non-default state, and only actually
+// resets on confirm — not merely from being opened (Task 5).
+// ----------------------------------------------------------------------------
+
+/// A `Settings` value that differs from `Settings::default()` in exactly one
+/// field (`telemetry.crash_submission_enabled`). Built by flipping a field on
+/// the real default rather than hand-writing a `Settings` literal, so every
+/// OTHER field stays whatever `Settings::default()` already produces — the
+/// post-reset equality assertions below stay a clean `assert_eq!`/`assert_ne!`
+/// against `Settings::default()` rather than a field-by-field reconstruction
+/// that could silently drift from the real struct shape.
+fn seeded_non_default_settings() -> Settings {
+    Settings {
+        telemetry: Telemetry {
+            crash_submission_enabled: true,
+        },
+        ..Settings::default()
+    }
+}
+
+/// Path 1 (MUST, brief Step 1/4): pre-seed the on-disk store with a
+/// non-default `Settings`, mount the panel over it, navigate to Advanced, and
+/// click `adv-reset` (now annotated `.a11y("adv-reset", ..)` in `panel.rs`).
+/// Asserts the confirm `Dialog` opens via `has_active_dialog` — the same API
+/// `onboarding_gpui.rs::dialog_open` already uses for carousel presence.
+///
+/// Teeth (brief Step 5): `has_active_dialog` is asserted `false` immediately
+/// before the click, so the `true` read after the click is bound to the click
+/// itself, not a tautology that some other path already left a dialog open.
+#[gpui::test]
+fn reset_confirm_dialog_opens_from_non_default_state(cx: &mut gpui::TestAppContext) {
+    use gpui::Modifiers;
+    use std::time::Duration;
+
+    let (_dir, path) = fresh_store_path();
+    SettingsStore::with_path(path.clone())
+        .save(&seeded_non_default_settings())
+        .expect("seed non-default settings");
+
+    let (_panel, vcx) = open_settings_window(cx, path.clone());
+
+    // Navigate to the Advanced pane first — `adv-reset` only renders inside
+    // `render_advanced`, and the default section is Profile.
+    let advanced_row_label = dat0_i18n::t("settings.advanced");
+    let snap = A11ySnapshot::capture(vcx);
+    snap.click(vcx, &advanced_row_label);
+    vcx.run_until_parked();
+
+    // Sanity: the seed actually took (confirms the pre-seed path itself, not
+    // just the dialog mechanics below).
+    let seeded = SettingsStore::with_path(path.clone())
+        .load_or_default()
+        .expect("load settings");
+    assert_ne!(
+        seeded,
+        Settings::default(),
+        "sanity: seeded settings must differ from Settings::default()"
+    );
+
+    // Teeth: no dialog is open before the click.
+    assert!(
+        !vcx.update(|window, app| window.has_active_dialog(app)),
+        "no dialog must be open before adv-reset is clicked"
+    );
+
+    let bounds = vcx
+        .debug_bounds("adv-reset")
+        .expect("adv-reset must have painted bounds in the advanced pane");
+    vcx.simulate_click(bounds.center(), Modifiers::none());
+
+    // Load-bearing: settle the dialog's open animation before asserting
+    // presence — mirrors `onboarding_gpui.rs:554,759`. Skipping this leaves
+    // state unsettled and the assertion below flaky.
+    vcx.executor().advance_clock(Duration::from_secs(1));
+    vcx.run_until_parked();
+
+    assert!(
+        vcx.update(|window, app| window.has_active_dialog(app)),
+        "clicking adv-reset must open the confirm dialog"
+    );
+}
+
+/// Path 2 (SHOULD, brief Step 3 attempt + documented fallback): the confirm
+/// dialog's OK button is gpui-component-INTERNAL code
+/// (`Button::new("ok")` in gpui-component's `dialog.rs:307`, pinned rev
+/// `0f0ab35`), not dat0 code — it never chains `.debug_selector` (confirmed
+/// by reading the vendored source at
+/// `~/.cargo/git/checkouts/gpui-component-*/0f0ab35/crates/ui/src/dialog.rs`,
+/// and independently by the fact `debug_bounds` only ever resolves ids that
+/// `.debug_selector` registered — see `gpui-0.2.2/src/elements/div.rs:1803`).
+/// So `.a11y` cannot be attached to it, and `vcx.debug_bounds("ok")` is
+/// expected to resolve to `None`. This test asserts that boundary explicitly
+/// (rather than silently skipping it) and then exercises the achievable half:
+/// with the dialog merely OPEN (not confirmed), the seeded non-default
+/// settings must still be on disk unchanged — proving `on_ok`'s
+/// `store.save(&Settings::default())` (`panel.rs:345`) has NOT fired just from
+/// opening the dialog, i.e. the reset really is gated on confirm. The `on_ok`
+/// closure body itself (a one-line `store.save` call) is a good candidate for
+/// a plain unit test in `panel.rs`/`schema.rs`, outside this a11y harness's
+/// reach (documented here rather than added, to keep this task's scope to the
+/// UAT harness).
+#[gpui::test]
+fn reset_only_fires_on_confirm_not_on_dialog_open(cx: &mut gpui::TestAppContext) {
+    use gpui::Modifiers;
+    use std::time::Duration;
+
+    let (_dir, path) = fresh_store_path();
+    SettingsStore::with_path(path.clone())
+        .save(&seeded_non_default_settings())
+        .expect("seed non-default settings");
+
+    let (_panel, vcx) = open_settings_window(cx, path.clone());
+
+    let advanced_row_label = dat0_i18n::t("settings.advanced");
+    let snap = A11ySnapshot::capture(vcx);
+    snap.click(vcx, &advanced_row_label);
+    vcx.run_until_parked();
+
+    let reload = || {
+        SettingsStore::with_path(path.clone())
+            .load_or_default()
+            .expect("load settings")
+    };
+    let seeded = reload();
+
+    let bounds = vcx
+        .debug_bounds("adv-reset")
+        .expect("adv-reset must have painted bounds in the advanced pane");
+    vcx.simulate_click(bounds.center(), Modifiers::none());
+    vcx.executor().advance_clock(Duration::from_secs(1));
+    vcx.run_until_parked();
+    assert!(
+        vcx.update(|window, app| window.has_active_dialog(app)),
+        "confirm dialog must be open before the fallback assertions below"
+    );
+
+    // Documented harness boundary: the internal OK button has no
+    // debug_selector-resolvable bounds.
+    assert!(
+        vcx.debug_bounds("ok").is_none(),
+        "gpui-component's internal dialog OK button is expected to have no \
+         debug_selector-resolvable bounds — if this now resolves (e.g. after \
+         a gpui-component bump adds one), upgrade this test to a real \
+         simulate_click + assert_eq!(reload(), Settings::default())"
+    );
+
+    // Fallback: dialog open but NOT confirmed -> settings must be untouched.
+    let still_seeded = reload();
+    assert_eq!(
+        still_seeded, seeded,
+        "settings must be unchanged while the confirm dialog is merely open, \
+         not yet confirmed"
+    );
+
+    // Teeth: the still-seeded value must remain non-default — proves the
+    // assertion above is reading real seeded state, not a tautology that
+    // would also pass if the seed itself had silently failed.
+    assert_ne!(
+        still_seeded,
+        Settings::default(),
+        "teeth: settings must still differ from defaults before any confirm"
     );
 }

@@ -310,14 +310,22 @@ impl SettingsPanel {
                         cx.notify();
                     }))
             })
-            .child(
+            .child({
+                // UAT settings-window slice (Task 5): mirrors `adv-log-level`'s
+                // convention — the `.a11y` label is the button's exact static
+                // `.label(...)` i18n string (not dynamic here, unlike
+                // adv-log-level/theme-cycle). Lets a headless test resolve
+                // `debug_bounds("adv-reset")` and drive the confirm-dialog
+                // open path. Feature OFF (release) -> identity no-op.
+                let reset_label = dat0_i18n::t("settings.advanced.reset");
                 Button::new("adv-reset")
-                    .label(dat0_i18n::t("settings.advanced.reset"))
+                    .label(reset_label.clone())
+                    .a11y("adv-reset", AccessRole::Button, reset_label)
                     .ghost()
                     .on_click(cx.listener(|this, _e, window, cx| {
                         this.open_reset_confirm(window, cx);
-                    })),
-            )
+                    }))
+            })
     }
 
     fn open_reset_confirm(&self, window: &mut Window, cx: &mut gpui::Context<Self>) {
