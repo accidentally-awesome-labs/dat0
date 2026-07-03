@@ -111,3 +111,84 @@ fn spike_about_dialog_opens_captures_content_and_dismisses(cx: &mut TestAppConte
     vcx.run_until_parked();
     assert!(!dialog_open(vcx), "(d) enter must dismiss the About alert");
 }
+
+// ----------------------------------------------------------------------------
+// Task 1 — About box content (up-to-date + newer-release variants).
+// ----------------------------------------------------------------------------
+
+/// The up-to-date About box shows version + Apache-2.0 + the NOTICE line + the
+/// "latest version" line, and NOT the "update available" line. Dismiss via
+/// `enter` (alert OK is harmless `|_,_,_| true`).
+#[gpui::test]
+fn about_up_to_date_content(cx: &mut TestAppContext) {
+    let vcx = open_dialog_host(cx);
+    vcx.run_until_parked();
+
+    vcx.cx
+        .update(|app| dat0_app::about::present_for_test(app, None));
+    vcx.executor().advance_clock(Duration::from_secs(1));
+    vcx.run_until_parked();
+    assert!(dialog_open(vcx), "About dialog must be open");
+
+    let snap = A11ySnapshot::capture(vcx);
+    assert!(
+        snap.has_label_contains(BuildInfo::current().version),
+        "About must show the crate version"
+    );
+    assert!(
+        snap.has_label_contains("Apache-2.0"),
+        "About must show the Apache-2.0 license id"
+    );
+    assert!(
+        snap.has_label_contains(&dat0_i18n::t("about.acknowledgements")),
+        "About must show the NOTICE acknowledgements line"
+    );
+    assert!(
+        snap.has_label_contains(&dat0_i18n::t("about.update.current")),
+        "up-to-date About must show the 'latest version' line"
+    );
+    // Teeth: the newer-release nudge line must be ABSENT in the up-to-date box.
+    assert!(
+        !snap.has_label_contains(&dat0_i18n::t("about.update.available")),
+        "up-to-date About must NOT show the 'update available' nudge"
+    );
+
+    vcx.simulate_keystrokes("enter");
+    vcx.run_until_parked();
+    assert!(!dialog_open(vcx), "enter must dismiss the About alert");
+}
+
+/// The newer-release About box shows the "update available" line + the tag, and
+/// NOT the "latest version" line. Dismiss via `escape` (Cancel) — NEVER `enter`,
+/// whose OK is Download (opens the browser via `platform::open_url`).
+#[gpui::test]
+fn about_newer_release_content(cx: &mut TestAppContext) {
+    let vcx = open_dialog_host(cx);
+    vcx.run_until_parked();
+
+    vcx.cx
+        .update(|app| dat0_app::about::present_for_test(app, Some("0.2.0".to_string())));
+    vcx.executor().advance_clock(Duration::from_secs(1));
+    vcx.run_until_parked();
+    assert!(dialog_open(vcx), "About dialog must be open");
+
+    let snap = A11ySnapshot::capture(vcx);
+    assert!(
+        snap.has_label_contains(&dat0_i18n::t("about.update.available")),
+        "newer-release About must show the 'update available' line"
+    );
+    assert!(
+        snap.has_label_contains("0.2.0"),
+        "newer-release About must show the newer tag"
+    );
+    // Teeth: the up-to-date line must be ABSENT in the newer-release box.
+    assert!(
+        !snap.has_label_contains(&dat0_i18n::t("about.update.current")),
+        "newer-release About must NOT show the 'latest version' line"
+    );
+
+    // Dismiss via Cancel (escape) — must NOT fire the Download on_ok.
+    vcx.simulate_keystrokes("escape");
+    vcx.run_until_parked();
+    assert!(!dialog_open(vcx), "escape must dismiss the newer-release About");
+}
