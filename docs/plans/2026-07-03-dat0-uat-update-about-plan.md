@@ -157,18 +157,23 @@ use gpui_component::{Root, WindowExt as _};
 use dat0_app::about::build_info::BuildInfo;
 use support::A11ySnapshot;
 
-/// A trivial placeholder view so the window has a `gpui_component::Root` root
-/// (required for `window.open_dialog` / `has_active_dialog`). It renders nothing
-/// of its own (no `.a11y_label`), so a captured a11y frame contains ONLY the
-/// dialog's own content nodes.
+/// A minimal host view that mounts gpui-component's DIALOG overlay layer (via
+/// `Root::render_dialog_layer`) but nothing of its own. This layer is
+/// LOAD-BEARING: `Root::render` paints ONLY `self.view`, so a host that does not
+/// itself paint the dialog layer leaves `open_dialog` setting `active_*` state
+/// while painting NOTHING — the dialog subtree (and thus its `.a11y_label`
+/// content push) never renders, so `A11ySnapshot::capture` sees zero nodes even
+/// though `has_active_dialog` is true. Production mirrors this exactly
+/// (`window.rs:6566-6573`, `settings_ui/panel.rs:540`). We mount only the dialog
+/// layer (not sheets), so the captured a11y frame is the dialog's own content.
 struct DialogHost;
 impl gpui::Render for DialogHost {
     fn render(
         &mut self,
-        _window: &mut gpui::Window,
-        _cx: &mut gpui::Context<Self>,
+        window: &mut gpui::Window,
+        cx: &mut gpui::Context<Self>,
     ) -> impl gpui::IntoElement {
-        gpui::div()
+        gpui::div().children(Root::render_dialog_layer(window, cx))
     }
 }
 
