@@ -147,7 +147,7 @@ fn show_error_banner(cx: &mut App, is_manual: bool, msg: &str) {
 
 /// Present the "Update available" prompt with Install & Restart / Later.
 fn show_update_prompt(cx: &mut App, update: crate::update::AvailableUpdate) {
-    use gpui::{AnyView, ParentElement as _, Window};
+    use gpui::{AnyView, ParentElement as _, Window, div};
     use gpui_component::WindowExt as _;
     use gpui_component::dialog::{Dialog, DialogButtonProps};
 
@@ -164,7 +164,16 @@ fn show_update_prompt(cx: &mut App, update: crate::update::AvailableUpdate) {
                 let artifact_for_ok = artifact.clone();
                 dialog
                     .title(title.clone())
-                    .child(dat0_i18n::t("update.downloading")) // placeholder body
+                    // Test-only content seam: carry the "Update available:
+                    // {version}" line (which otherwise lives only in the
+                    // a11y-invisible title) as an `.a11y_label` node so the
+                    // headless UAT can assert the version. Identity no-op in
+                    // release; the visible "downloading…" placeholder is unchanged.
+                    .child(
+                        div()
+                            .child(dat0_i18n::t("update.downloading"))
+                            .a11y_label(AccessRole::Label, title.clone()),
+                    )
                     .confirm()
                     .button_props(
                         DialogButtonProps::default()
@@ -354,4 +363,9 @@ pub fn show_up_to_date_for_test(cx: &mut App, is_manual: bool) {
 #[cfg(feature = "a11y-capture")]
 pub fn show_error_banner_for_test(cx: &mut App, is_manual: bool, msg: &str) {
     show_error_banner(cx, is_manual, msg);
+}
+
+#[cfg(feature = "a11y-capture")]
+pub fn show_update_prompt_for_test(cx: &mut App, update: crate::update::AvailableUpdate) {
+    show_update_prompt(cx, update);
 }

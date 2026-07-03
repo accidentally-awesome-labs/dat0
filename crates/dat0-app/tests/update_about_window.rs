@@ -317,3 +317,60 @@ fn update_error_background_silent(cx: &mut TestAppContext) {
         "background error must stay silent (no dialog)"
     );
 }
+
+// ----------------------------------------------------------------------------
+// Task 4 — update-available prompt (content + safe "Later" dismissal).
+// ----------------------------------------------------------------------------
+
+/// Build a fake `AvailableUpdate` with NO network — `ArtifactEntry`'s fields are
+/// pub and its URL is never fetched here (the prompt's Install & Restart `on_ok`
+/// is never fired; we dismiss via "Later"/escape).
+fn fake_available_update(version: &str) -> dat0_app::update::AvailableUpdate {
+    dat0_app::update::AvailableUpdate {
+        version: version.to_string(),
+        artifact: dat0_app::update::manifest::ArtifactEntry {
+            url: "https://example.invalid/dat0.tar.gz".to_string(),
+            sha256: "00".repeat(32),
+            size: 0,
+        },
+    }
+}
+
+/// The "Update available {version}" prompt opens with the version content, and
+/// dismisses safely via "Later" (escape → `on_cancel`). NEVER fires Install &
+/// Restart (`enter`), whose `on_ok` spawns the real installer.
+#[gpui::test]
+fn update_available_prompt_content_and_later_dismiss(cx: &mut TestAppContext) {
+    let vcx = open_dialog_host(cx);
+    vcx.run_until_parked();
+    assert!(!dialog_open(vcx), "clean baseline");
+
+    vcx.cx.update(|app| {
+        dat0_app::update::ui::show_update_prompt_for_test(app, fake_available_update("0.2.0"))
+    });
+    vcx.executor().advance_clock(Duration::from_secs(1));
+    vcx.run_until_parked();
+    assert!(dialog_open(vcx), "update-available prompt must open");
+
+    let snap = A11ySnapshot::capture(vcx);
+    assert!(
+        snap.has_label_contains(&dat0_i18n::t("update.available")),
+        "prompt must show the 'Update available' line"
+    );
+    assert!(
+        snap.has_label_contains("0.2.0"),
+        "prompt must show the available version"
+    );
+
+    // Dismiss via "Later" (escape → Cancel → harmless on_cancel). Must NOT press
+    // enter (that fires Install & Restart → spawns the installer).
+    vcx.simulate_keystrokes("escape");
+    vcx.run_until_parked();
+    assert!(
+        !dialog_open(vcx),
+        "'Later' (escape) must dismiss the prompt without installing"
+    );
+
+    // The window survived (no panic / no relaunch) — a fresh capture still works.
+    let _ = A11ySnapshot::capture(vcx);
+}
