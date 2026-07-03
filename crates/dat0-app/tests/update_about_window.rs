@@ -79,7 +79,10 @@ fn dialog_open(cx: &mut VisualTestContext) -> bool {
 fn spike_about_dialog_opens_captures_content_and_dismisses(cx: &mut TestAppContext) {
     let vcx = open_dialog_host(cx);
     vcx.run_until_parked();
-    assert!(!dialog_open(vcx), "(a) clean baseline: no dialog before open");
+    assert!(
+        !dialog_open(vcx),
+        "(a) clean baseline: no dialog before open"
+    );
 
     // (b) Open the About box (up-to-date variant) from a plain App context —
     // `present` re-enters the active window itself, so it must NOT be nested in
@@ -190,7 +193,10 @@ fn about_newer_release_content(cx: &mut TestAppContext) {
     // Dismiss via Cancel (escape) — must NOT fire the Download on_ok.
     vcx.simulate_keystrokes("escape");
     vcx.run_until_parked();
-    assert!(!dialog_open(vcx), "escape must dismiss the newer-release About");
+    assert!(
+        !dialog_open(vcx),
+        "escape must dismiss the newer-release About"
+    );
 }
 
 // ----------------------------------------------------------------------------
@@ -275,9 +281,8 @@ fn update_error_manual_shows(cx: &mut TestAppContext) {
     let vcx = open_dialog_host(cx);
     vcx.run_until_parked();
 
-    vcx.cx.update(|app| {
-        dat0_app::update::ui::show_error_banner_for_test(app, true, "network down")
-    });
+    vcx.cx
+        .update(|app| dat0_app::update::ui::show_error_banner_for_test(app, true, "network down"));
     vcx.executor().advance_clock(Duration::from_secs(1));
     vcx.run_until_parked();
     assert!(dialog_open(vcx), "manual error must open a dialog");
@@ -306,9 +311,8 @@ fn update_error_background_silent(cx: &mut TestAppContext) {
     vcx.run_until_parked();
     assert!(!dialog_open(vcx), "clean baseline");
 
-    vcx.cx.update(|app| {
-        dat0_app::update::ui::show_error_banner_for_test(app, false, "network down")
-    });
+    vcx.cx
+        .update(|app| dat0_app::update::ui::show_error_banner_for_test(app, false, "network down"));
     vcx.executor().advance_clock(Duration::from_secs(1));
     vcx.run_until_parked();
 

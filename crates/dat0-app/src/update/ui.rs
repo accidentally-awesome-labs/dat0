@@ -313,6 +313,30 @@ fn post_nudge() {
     }
 }
 
+/// Test-only shims: drive the main-thread render helpers directly (bypassing the
+/// off-thread `run_update_flow`/`perform_install`) so the a11y harness can assert
+/// each dialog's content, the `is_manual` gating, and dismissal. Feature-gated →
+/// zero release footprint.
+#[cfg(feature = "a11y-capture")]
+pub fn show_alert_dialog_for_test(cx: &mut App, title: String) {
+    show_alert_dialog(cx, title);
+}
+
+#[cfg(feature = "a11y-capture")]
+pub fn show_up_to_date_for_test(cx: &mut App, is_manual: bool) {
+    show_up_to_date(cx, is_manual);
+}
+
+#[cfg(feature = "a11y-capture")]
+pub fn show_error_banner_for_test(cx: &mut App, is_manual: bool, msg: &str) {
+    show_error_banner(cx, is_manual, msg);
+}
+
+#[cfg(feature = "a11y-capture")]
+pub fn show_update_prompt_for_test(cx: &mut App, update: crate::update::AvailableUpdate) {
+    show_update_prompt(cx, update);
+}
+
 // ---------------------------------------------------------------------------
 // Unit tests — pure helpers only (GPUI flow is UAT-owed)
 // ---------------------------------------------------------------------------
@@ -344,28 +368,4 @@ mod tests {
     fn prompt_action_not_writable_yields_nudge() {
         assert_eq!(prompt_action_for(false), InstallPath::Nudge);
     }
-}
-
-/// Test-only shims: drive the main-thread render helpers directly (bypassing the
-/// off-thread `run_update_flow`/`perform_install`) so the a11y harness can assert
-/// each dialog's content, the `is_manual` gating, and dismissal. Feature-gated →
-/// zero release footprint.
-#[cfg(feature = "a11y-capture")]
-pub fn show_alert_dialog_for_test(cx: &mut App, title: String) {
-    show_alert_dialog(cx, title);
-}
-
-#[cfg(feature = "a11y-capture")]
-pub fn show_up_to_date_for_test(cx: &mut App, is_manual: bool) {
-    show_up_to_date(cx, is_manual);
-}
-
-#[cfg(feature = "a11y-capture")]
-pub fn show_error_banner_for_test(cx: &mut App, is_manual: bool, msg: &str) {
-    show_error_banner(cx, is_manual, msg);
-}
-
-#[cfg(feature = "a11y-capture")]
-pub fn show_update_prompt_for_test(cx: &mut App, update: crate::update::AvailableUpdate) {
-    show_update_prompt(cx, update);
 }
