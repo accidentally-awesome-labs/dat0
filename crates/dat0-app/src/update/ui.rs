@@ -350,3 +350,8 @@ pub fn show_alert_dialog_for_test(cx: &mut App, title: String) {
 pub fn show_up_to_date_for_test(cx: &mut App, is_manual: bool) {
     show_up_to_date(cx, is_manual);
 }
+
+#[cfg(feature = "a11y-capture")]
+pub fn show_error_banner_for_test(cx: &mut App, is_manual: bool, msg: &str) {
+    show_error_banner(cx, is_manual, msg);
+}

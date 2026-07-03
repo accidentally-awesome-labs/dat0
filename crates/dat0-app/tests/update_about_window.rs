@@ -263,3 +263,57 @@ fn update_up_to_date_background_silent(cx: &mut TestAppContext) {
         "background up-to-date must stay silent (no dialog)"
     );
 }
+
+// ----------------------------------------------------------------------------
+// Task 3 — update error dialog (manual shows / background silent).
+// ----------------------------------------------------------------------------
+
+/// Manual path: a failed check shows the "Update failed: {msg}" alert with both
+/// the failure label and the underlying message.
+#[gpui::test]
+fn update_error_manual_shows(cx: &mut TestAppContext) {
+    let vcx = open_dialog_host(cx);
+    vcx.run_until_parked();
+
+    vcx.cx.update(|app| {
+        dat0_app::update::ui::show_error_banner_for_test(app, true, "network down")
+    });
+    vcx.executor().advance_clock(Duration::from_secs(1));
+    vcx.run_until_parked();
+    assert!(dialog_open(vcx), "manual error must open a dialog");
+
+    let snap = A11ySnapshot::capture(vcx);
+    assert!(
+        snap.has_label_contains(&dat0_i18n::t("update.failed")),
+        "manual error must show the 'Update failed' label"
+    );
+    assert!(
+        snap.has_label_contains("network down"),
+        "manual error must show the underlying message"
+    );
+
+    vcx.simulate_keystrokes("enter");
+    vcx.run_until_parked();
+    assert!(!dialog_open(vcx), "enter must dismiss the error alert");
+}
+
+/// Background path: a failed launch-check stays SILENT — no dialog.
+/// (Teeth: `update_error_manual_shows` proves the same helper DOES open when
+/// `is_manual=true`.)
+#[gpui::test]
+fn update_error_background_silent(cx: &mut TestAppContext) {
+    let vcx = open_dialog_host(cx);
+    vcx.run_until_parked();
+    assert!(!dialog_open(vcx), "clean baseline");
+
+    vcx.cx.update(|app| {
+        dat0_app::update::ui::show_error_banner_for_test(app, false, "network down")
+    });
+    vcx.executor().advance_clock(Duration::from_secs(1));
+    vcx.run_until_parked();
+
+    assert!(
+        !dialog_open(vcx),
+        "background error must stay silent (no dialog)"
+    );
+}
