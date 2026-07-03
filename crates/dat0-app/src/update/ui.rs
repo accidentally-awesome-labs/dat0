@@ -9,6 +9,8 @@
 
 use gpui::App;
 
+use crate::a11y::{A11yExt as _, AccessRole};
+
 // ---------------------------------------------------------------------------
 // Pure helpers (TDD-gated)
 // ---------------------------------------------------------------------------
@@ -187,7 +189,7 @@ fn show_update_prompt(cx: &mut App, update: crate::update::AvailableUpdate) {
 
 /// Show a simple alert dialog (single OK button).
 fn show_alert_dialog(cx: &mut App, title: String) {
-    use gpui::{AnyView, Window};
+    use gpui::{AnyView, ParentElement as _, Window, div};
     use gpui_component::WindowExt as _;
     use gpui_component::dialog::Dialog;
 
@@ -196,6 +198,13 @@ fn show_alert_dialog(cx: &mut App, title: String) {
             window.open_dialog(cx, move |dialog: Dialog, _w, _cx| {
                 dialog
                     .title(title.clone())
+                    // Test-only content seam: an inert child that emits the
+                    // title text as an `.a11y_label` node so the headless UAT
+                    // harness can read it. Covers `checking` / `up_to_date` /
+                    // `failed` (all route through `show_alert_dialog`). Identity
+                    // no-op in release. `has_active_dialog` already asserts
+                    // presence; this makes the CONTENT assertable.
+                    .child(div().a11y_label(AccessRole::Label, title.clone()))
                     .alert()
                     .on_ok(|_ev, _w, _cx| true)
             });
@@ -326,4 +335,18 @@ mod tests {
     fn prompt_action_not_writable_yields_nudge() {
         assert_eq!(prompt_action_for(false), InstallPath::Nudge);
     }
+}
+
+/// Test-only shims: drive the main-thread render helpers directly (bypassing the
+/// off-thread `run_update_flow`/`perform_install`) so the a11y harness can assert
+/// each dialog's content, the `is_manual` gating, and dismissal. Feature-gated →
+/// zero release footprint.
+#[cfg(feature = "a11y-capture")]
+pub fn show_alert_dialog_for_test(cx: &mut App, title: String) {
+    show_alert_dialog(cx, title);
+}
+
+#[cfg(feature = "a11y-capture")]
+pub fn show_up_to_date_for_test(cx: &mut App, is_manual: bool) {
+    show_up_to_date(cx, is_manual);
 }

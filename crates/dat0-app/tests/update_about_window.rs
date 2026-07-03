@@ -192,3 +192,74 @@ fn about_newer_release_content(cx: &mut TestAppContext) {
     vcx.run_until_parked();
     assert!(!dialog_open(vcx), "escape must dismiss the newer-release About");
 }
+
+// ----------------------------------------------------------------------------
+// Task 2 — update "checking…" + "up to date" (manual shows / background silent).
+// ----------------------------------------------------------------------------
+
+/// The manual-path "checking…" alert opens with its text and dismisses on enter.
+#[gpui::test]
+fn update_checking_alert_content(cx: &mut TestAppContext) {
+    let vcx = open_dialog_host(cx);
+    vcx.run_until_parked();
+
+    vcx.cx.update(|app| {
+        dat0_app::update::ui::show_alert_dialog_for_test(app, dat0_i18n::t("update.checking"))
+    });
+    vcx.executor().advance_clock(Duration::from_secs(1));
+    vcx.run_until_parked();
+    assert!(dialog_open(vcx), "checking alert must be open");
+
+    let snap = A11ySnapshot::capture(vcx);
+    assert!(
+        snap.has_label_contains(&dat0_i18n::t("update.checking")),
+        "checking alert must show its text"
+    );
+
+    vcx.simulate_keystrokes("enter");
+    vcx.run_until_parked();
+    assert!(!dialog_open(vcx), "enter must dismiss the checking alert");
+}
+
+/// Manual path (`is_manual=true`): "up to date" alert is SHOWN with its text.
+#[gpui::test]
+fn update_up_to_date_manual_shows(cx: &mut TestAppContext) {
+    let vcx = open_dialog_host(cx);
+    vcx.run_until_parked();
+
+    vcx.cx
+        .update(|app| dat0_app::update::ui::show_up_to_date_for_test(app, true));
+    vcx.executor().advance_clock(Duration::from_secs(1));
+    vcx.run_until_parked();
+    assert!(dialog_open(vcx), "manual up-to-date must open a dialog");
+
+    let snap = A11ySnapshot::capture(vcx);
+    assert!(
+        snap.has_label_contains(&dat0_i18n::t("update.up_to_date")),
+        "manual up-to-date must show its text"
+    );
+
+    vcx.simulate_keystrokes("enter");
+    vcx.run_until_parked();
+    assert!(!dialog_open(vcx), "enter must dismiss the up-to-date alert");
+}
+
+/// Background path (`is_manual=false`): "up to date" is SILENT — no dialog.
+/// (Teeth: `update_up_to_date_manual_shows` proves the same helper DOES open a
+/// dialog when `is_manual=true`, so this negative is meaningful, not vacuous.)
+#[gpui::test]
+fn update_up_to_date_background_silent(cx: &mut TestAppContext) {
+    let vcx = open_dialog_host(cx);
+    vcx.run_until_parked();
+    assert!(!dialog_open(vcx), "clean baseline");
+
+    vcx.cx
+        .update(|app| dat0_app::update::ui::show_up_to_date_for_test(app, false));
+    vcx.executor().advance_clock(Duration::from_secs(1));
+    vcx.run_until_parked();
+
+    assert!(
+        !dialog_open(vcx),
+        "background up-to-date must stay silent (no dialog)"
+    );
+}
