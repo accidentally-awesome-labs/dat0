@@ -424,11 +424,13 @@ git commit -s -m "test(harness): save-chart toast + persist + guards (T2)"
 ## Task 3: Lineage render + click-reopen + spec-restore
 
 **Files:**
+- Modify: `crates/dat0-app/src/inspector/panel.rs` — `chain_row` a11y seam (see Step 0; corrects a plan assumption)
 - Test: `crates/dat0-app/tests/chart_uat_window.rs` (add tests)
 
 **Interfaces:**
-- Consumes: `seed_catalog_for_test`, `seed_lineage_target_for_test`, `chart_visible_for_test`, `chart_spec_for_test` (T0); `A11ySnapshot::{has_label_contains, click}` (`support/mod.rs:148,175`); `session.set_charts(...)` (`session/mod.rs:622`); `dat0_engine::TableInfo` (fields confirmed in T0).
-- Chart lineage nodes render at `inspector/panel.rs:266` (📊 + name `.a11y_label(Label, …)`); the `on_click` routes to `open_saved_chart` at `inspector/panel.rs:286`.
+- Consumes: `seed_catalog_for_test`, `seed_lineage_target_for_test`, `chart_visible_for_test`, `chart_spec_for_test`, `open_saved_chart_for_test` (T0); `A11ySnapshot::{has_label_contains, click}` (`support/mod.rs:148,175`); `session.set_charts(...)` (`session/mod.rs:622`); `dat0_engine::TableInfo` (fields confirmed in T0).
+- ⚠️ **Plan assumption corrected:** `chain_row` (`inspector/panel.rs:261-291`) — the lineage descendant rows where the chart node appears — currently renders its text as a **plain `.child(SharedString)` with NO `.a11y_label`**, and its `.id()` is dynamic (`format!("lineage-{depth}-{label}")`, not a static a11y id). (The `.a11y_label`s at `inspector/panel.rs:87-122` are on *other* rows: header/target/usedby — not the chain rows.) So the chart node is neither content-capturable nor clickable-by-`A11ySnapshot::click`, which requires a clickable `.a11y(static_id, …)` node with painted bounds (`support/mod.rs:175-183` panics on a content-only `.a11y_label`). Step 0 adds the seam. The `on_click` → `open_saved_chart` routing IS wired at `inspector/panel.rs:285-288`.
+- `.a11y`/`.a11y_label` are `#[cfg(not(feature="a11y-capture"))]` identity no-ops → the `chain_row` seam is **truly release-inert (zero new layout nodes, no visual change)**, unlike the `charts/panel.rs` seam-row div. **No additional human glance owed for this seam.**
 
 Build a `SavedChart` with a **fixed** id/`saved_at` (not `Uuid::now_v7`/`now_unix_millis`) via a small local helper so tests are deterministic:
 
@@ -468,6 +470,26 @@ fn tbl(name: &str) -> dat0_engine::TableInfo {
 ```
 
 The lineage closure matches on the bare `name` only, so `origin`/`columns` are irrelevant to chart-descendant attachment.
+
+- [ ] **Step 0: Seam `chain_row` so the chart node is content-capturable AND clickable**
+
+In `crates/dat0-app/src/inspector/panel.rs`, add the a11y import near the top if not present (`use crate::a11y::{A11yExt as _, AccessRole};` — check the existing imports; `A11yExt`/`AccessRole` are already used elsewhere in this file for the header/target rows, so the import likely exists). Then in `chain_row`, after the `row` is built (and after the `if let Some(name) = step.open_name` block that wires `on_click`), annotate the row: chart rows get a **clickable** `.a11y` with a static id (a test seeds exactly one chart → no id collision; feature-gated → no release id at all); every other row gets a content-only `.a11y_label`. Replace the trailing `row` return:
+
+```rust
+    // UAT seam (release no-op; identity under `a11y-capture` off — adds NO
+    // layout node). The chart node needs a clickable static-id node so the
+    // headless harness can click-to-reopen (A11ySnapshot::click requires a
+    // `.a11y(id,…)` node, not a content-only `.a11y_label`); a test seeds a
+    // single chart so the static id is unique. `step.label` (the bare node
+    // name, e.g. the chart name) is the asserted content — not the composed
+    // glyph/edge `text`.
+    match step.kind {
+        NodeKind::Chart => row.a11y("lineage-chart-node", AccessRole::Label, step.label.clone()),
+        _ => row.a11y_label(AccessRole::Label, step.label.clone()),
+    }
+```
+
+(Delete the bare `row` that was the function's last expression — this `match` becomes the return value. Confirm `.a11y(id, role, label)`'s signature in `src/a11y/mod.rs`: `id: &'static str`, and that for a `Stateful<Div>` it chains a `debug_selector` so `cx.debug_bounds("lineage-chart-node")` resolves. If `.a11y` needs the element to already be interactive, note that `chain_row` returns `Stateful<Div>` and chart rows also carry `.on_click`, so it is interactive.)
 
 - [ ] **Step 1: Write the lineage-render test**
 
@@ -552,7 +574,7 @@ Expected: both PASS. If the lineage node does not render, verify `closure("sales
 - [ ] **Step 4: Controller gate + commit**
 
 ```bash
-git add crates/dat0-app/tests/chart_uat_window.rs
+git add crates/dat0-app/src/inspector/panel.rs crates/dat0-app/tests/chart_uat_window.rs
 git commit -s -m "test(harness): lineage chart-node render + click-reopen restores spec (T3)"
 ```
 
