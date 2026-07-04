@@ -97,6 +97,47 @@ fn init_components(cx: &mut TestAppContext) {
     cx.update(gpui_component::init);
 }
 
+/// A tokio runtime kept alive for the whole test so the foreground-polled
+/// `cx.spawn` futures can call `tokio::task::spawn_blocking` (the engine and
+/// file-import paths are built on it). Mirrors production `run_app`
+/// (window.rs:1308/1377), which holds `runtime.enter()` for all of
+/// `Application::run`. The caller MUST bind `enter()`'s guard to a `_guard`
+/// held to end-of-test, and the harness MUST outlive every spawned task.
+/// Copied verbatim from `tests/onboarding_gpui.rs:94-124` — T2 needs it because
+/// `save_named_chart` ends by calling `refresh_catalog`, which `tokio::spawn`s.
+struct AsyncHarness {
+    rt: tokio::runtime::Runtime,
+}
+
+impl AsyncHarness {
+    fn enter(&self) -> tokio::runtime::EnterGuard<'_> {
+        self.rt.enter()
+    }
+    #[allow(dead_code)] // parity with the copied onboarding_gpui.rs harness; unused by T2's tests
+    fn block_on<F: std::future::Future>(&self, f: F) -> F::Output {
+        self.rt.block_on(f)
+    }
+}
+
+/// Build the async harness and call `cx.executor().allow_parking()` so an
+/// engine-backed import can be driven to completion via `block_test` on a
+/// captured `Task`.
+///
+/// NOTE: `allow_parking` does NOT make `run_until_parked` wait for the
+/// cross-thread `spawn_blocking` to re-enqueue — `run_until_parked` ticks the
+/// foreground queue and returns the instant the task parks on the JoinHandle,
+/// regardless of parking mode. See `engine_backed_async_flow_completes_in_harness`
+/// for the verified mechanism, and drive engine flows with
+/// `cx.executor().block_test(task)`, not `run_until_parked`.
+fn enter_async_harness(cx: &mut TestAppContext) -> AsyncHarness {
+    let rt = tokio::runtime::Builder::new_multi_thread()
+        .enable_all()
+        .build()
+        .expect("tokio runtime");
+    cx.executor().allow_parking();
+    AsyncHarness { rt }
+}
+
 #[gpui::test]
 #[serial]
 fn spike_bound_chart_renders_spec_content(cx: &mut TestAppContext) {
@@ -196,4 +237,118 @@ fn chart_panel_renders_scatter_axes(cx: &mut TestAppContext) {
         snap.has_label("x") && snap.has_label("y"),
         "axis seams rendered"
     );
+}
+
+// UAT (Charts save/persist/lineage slice) T2: save → toast + persist + guards.
+//
+// `save_named_chart` (window.rs:4277) pushes an info banner onto the
+// process-global `error_ux::banner::PENDING` queue, upserts the chart into the
+// session's persisted list, then calls `refresh_catalog` (`tokio::spawn`) and
+// `maybe_prompt_save_workspace` (in-memory guard, no I/O, no dialog — see
+// window.rs:2338). Because `PENDING` is a process-global static shared by every
+// serial test in this binary (and by `tests/onboarding_gpui.rs`'s own banner
+// pushes, if run in the same process), each save test drains it at entry.
+
+#[gpui::test]
+#[serial]
+fn save_chart_shows_toast_and_persists(cx: &mut TestAppContext) {
+    let _ = dat0_app::error_ux::banner::drain_pending(); // clear cross-test PENDING
+    init_components(cx);
+
+    let tmp = tempfile::tempdir().unwrap();
+    set_config_dir(&tmp.path().join("cfg"));
+    let harness = enter_async_harness(cx); // save_named_chart → refresh_catalog spawns
+    let _g = harness.enter();
+    let session = build_empty_session(&tmp.path().join("state"));
+    let (shell, vcx) = open_shell_window(cx, session.clone());
+
+    vcx.cx.update(|app| {
+        shell.update(app, |ws, cx| {
+            ws.chart_bind_for_test(
+                "\"sales\"".into(),
+                vec![
+                    ("region".into(), "VARCHAR".into()),
+                    ("amt".into(), "DOUBLE".into()),
+                ],
+            );
+            ws.chart_set_axes_for_test(
+                ChartType::Bar,
+                Some("region".into()),
+                Some("amt".into()),
+                String::new(),
+            );
+            ws.save_named_chart_for_test("Q1 sales".into(), cx);
+        });
+    });
+    vcx.executor().advance_clock(Duration::from_secs(1));
+    vcx.run_until_parked();
+
+    // Persisted into the session.
+    {
+        let s = session.lock();
+        assert_eq!(s.charts().len(), 1, "one saved chart");
+        assert_eq!(s.charts()[0].name, "Q1 sales");
+        assert_eq!(s.charts()[0].spec.chart_type, ChartType::Bar);
+        assert_eq!(s.charts()[0].spec.y.as_deref(), Some("amt"));
+    }
+    // Toast rendered.
+    let snap = A11ySnapshot::capture(vcx);
+    assert!(
+        snap.query_by_role(dat0_app::a11y::AccessRole::Alert, "Chart saved"),
+        "Chart saved alert rendered"
+    );
+}
+
+#[gpui::test]
+#[serial]
+fn save_chart_empty_name_is_noop(cx: &mut TestAppContext) {
+    let _ = dat0_app::error_ux::banner::drain_pending();
+    init_components(cx);
+
+    let tmp = tempfile::tempdir().unwrap();
+    set_config_dir(&tmp.path().join("cfg"));
+    let harness = enter_async_harness(cx);
+    let _g = harness.enter();
+    let session = build_empty_session(&tmp.path().join("state"));
+    let (shell, vcx) = open_shell_window(cx, session.clone());
+
+    vcx.cx.update(|app| {
+        shell.update(app, |ws, cx| {
+            ws.chart_bind_for_test("\"sales\"".into(), vec![("amt".into(), "DOUBLE".into())]);
+            ws.save_named_chart_for_test("   ".into(), cx); // whitespace → guard at window.rs:4278
+        });
+    });
+    vcx.executor().advance_clock(Duration::from_secs(1));
+    vcx.run_until_parked();
+
+    assert_eq!(
+        session.lock().charts().len(),
+        0,
+        "whitespace name saves nothing"
+    );
+}
+
+#[gpui::test]
+#[serial]
+fn save_chart_without_source_is_noop(cx: &mut TestAppContext) {
+    let _ = dat0_app::error_ux::banner::drain_pending();
+    init_components(cx);
+
+    let tmp = tempfile::tempdir().unwrap();
+    set_config_dir(&tmp.path().join("cfg"));
+    let harness = enter_async_harness(cx);
+    let _g = harness.enter();
+    let session = build_empty_session(&tmp.path().join("state"));
+    let (shell, vcx) = open_shell_window(cx, session.clone());
+
+    vcx.cx.update(|app| {
+        shell.update(app, |ws, cx| {
+            // No bind → chart_panel.source is None → guard at window.rs:4284.
+            ws.save_named_chart_for_test("orphan".into(), cx);
+        });
+    });
+    vcx.executor().advance_clock(Duration::from_secs(1));
+    vcx.run_until_parked();
+
+    assert_eq!(session.lock().charts().len(), 0, "no source saves nothing");
 }
