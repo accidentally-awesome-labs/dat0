@@ -138,6 +138,49 @@ fn enter_async_harness(cx: &mut TestAppContext) -> AsyncHarness {
     AsyncHarness { rt }
 }
 
+// UAT (Charts save/persist/lineage slice) T3: lineage-node render + click-reopen.
+
+/// Build a deterministic `SavedChart` — a **fixed** id/`saved_at` (never
+/// `Uuid::now_v7`/`now_unix_millis`) so the lineage-chart tests are
+/// reproducible. `source` is the already-quoted engine source (e.g.
+/// `"\"sales\""`), matching how `chart_panel.spec.source`/`SavedChart::spec`
+/// stores it elsewhere in this file.
+fn seeded_chart(
+    name: &str,
+    source: &str,
+    chart_type: ChartType,
+    x: &str,
+    y: &str,
+) -> dat0_app::session::charts::SavedChart {
+    dat0_app::session::charts::SavedChart {
+        id: uuid::Uuid::from_u128(0x0000_0000_0000_0000_0000_0000_0000_0001),
+        name: name.into(),
+        spec: dat0_engine::chart_spec::ChartSpec {
+            chart_type,
+            source: source.into(),
+            x: Some(x.into()),
+            y: Some(y.into()),
+            group: None,
+            color: None,
+            title: String::new(),
+        },
+        saved_at: 1_700_000_000_000,
+    }
+}
+
+/// A minimal injected-catalog `TableInfo` (fields per `dat0-engine/src/types.rs:117`).
+/// The lineage closure matches on the bare `name` only, so `origin`/`columns`
+/// are irrelevant to chart-descendant attachment.
+fn tbl(name: &str) -> dat0_engine::TableInfo {
+    dat0_engine::TableInfo {
+        name: name.into(),
+        schema: "main".into(),
+        columns: vec![],
+        row_count_estimate: None,
+        origin: dat0_engine::TableOrigin::File(std::path::PathBuf::from("/data/sales.csv")),
+    }
+}
+
 #[gpui::test]
 #[serial]
 fn spike_bound_chart_renders_spec_content(cx: &mut TestAppContext) {
@@ -351,4 +394,99 @@ fn save_chart_without_source_is_noop(cx: &mut TestAppContext) {
     vcx.run_until_parked();
 
     assert_eq!(session.lock().charts().len(), 0, "no source saves nothing");
+}
+
+#[gpui::test]
+#[serial]
+fn saved_chart_appears_as_lineage_node(cx: &mut TestAppContext) {
+    init_components(cx);
+
+    let tmp = tempfile::tempdir().unwrap();
+    set_config_dir(&tmp.path().join("cfg"));
+    let session = build_empty_session(&tmp.path().join("state"));
+    // Seed the session with a chart rooted on table "sales".
+    session
+        .lock()
+        .set_charts(vec![seeded_chart(
+            "Region totals",
+            "\"sales\"",
+            ChartType::Bar,
+            "region",
+            "amt",
+        )])
+        .unwrap();
+    let (shell, vcx) = open_shell_window(cx, session);
+
+    vcx.cx.update(|app| {
+        shell.update(app, |ws, cx| {
+            // Inject a catalog containing "sales" so closure("sales") exists, then
+            // target it → recompute_lineage attaches the chart as a descendant.
+            ws.seed_catalog_for_test(vec![tbl("sales")]);
+            ws.seed_lineage_target_for_test("sales".into(), cx);
+        });
+    });
+    vcx.executor().advance_clock(Duration::from_secs(1));
+    vcx.run_until_parked();
+
+    let snap = A11ySnapshot::capture(vcx);
+    assert!(
+        snap.has_label_contains("Region totals"),
+        "chart node rendered in lineage"
+    );
+}
+
+#[gpui::test]
+#[serial]
+fn click_lineage_chart_reopens_panel_with_restored_spec(cx: &mut TestAppContext) {
+    init_components(cx);
+
+    let tmp = tempfile::tempdir().unwrap();
+    set_config_dir(&tmp.path().join("cfg"));
+    let harness = enter_async_harness(cx); // open_saved_chart → show_chart_with_spec tokio::spawn
+    let _g = harness.enter();
+    let session = build_empty_session(&tmp.path().join("state"));
+    session
+        .lock()
+        .set_charts(vec![seeded_chart(
+            "Region totals",
+            "\"sales\"",
+            ChartType::Scatter,
+            "region",
+            "amt",
+        )])
+        .unwrap();
+    let (shell, vcx) = open_shell_window(cx, session);
+
+    vcx.cx.update(|app| {
+        shell.update(app, |ws, cx| {
+            ws.seed_catalog_for_test(vec![tbl("sales")]);
+            ws.seed_lineage_target_for_test("sales".into(), cx);
+        });
+    });
+    vcx.executor().advance_clock(Duration::from_secs(1));
+    vcx.run_until_parked();
+
+    // Real click on the rendered chart node → routes to open_saved_chart.
+    let snap = A11ySnapshot::capture(vcx);
+    snap.click(vcx, "Region totals");
+    vcx.executor().advance_clock(Duration::from_secs(1));
+    vcx.run_until_parked();
+
+    // Panel reopened with the persisted spec (verbatim, not blanked).
+    let (visible, spec) = vcx.cx.update(|app| {
+        shell.update(app, |ws, _cx| {
+            (ws.chart_visible_for_test(), ws.chart_spec_for_test())
+        })
+    });
+    assert!(visible, "chart panel reopened");
+    assert_eq!(spec.chart_type, ChartType::Scatter, "restored type");
+    assert_eq!(spec.x.as_deref(), Some("region"));
+    assert_eq!(spec.y.as_deref(), Some("amt"));
+
+    // And the restored spec is visible in the rendered panel via the seams.
+    let snap2 = A11ySnapshot::capture(vcx);
+    assert!(
+        snap2.has_label_contains("Scatter"),
+        "restored type rendered"
+    );
 }

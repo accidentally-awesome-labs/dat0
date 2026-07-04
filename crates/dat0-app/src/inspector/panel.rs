@@ -287,7 +287,18 @@ fn chain_row(step: &ChainStep, cx: &mut Context<WorkspaceShell>) -> gpui::Statef
                 _ => ws.open_table_tab(name.clone(), window, cx),
             }));
     }
-    row
+
+    // UAT seam (release no-op; identity under `a11y-capture` off — adds NO
+    // layout node). The chart node needs a clickable static-id node so the
+    // headless harness can click-to-reopen (A11ySnapshot::click requires a
+    // `.a11y(id,…)` node, not a content-only `.a11y_label`); a test seeds a
+    // single chart so the static id is unique. `step.label` (the bare node
+    // name, e.g. the chart name) is the asserted content — not the composed
+    // glyph/edge `text`.
+    match step.kind {
+        NodeKind::Chart => row.a11y("lineage-chart-node", AccessRole::Label, step.label.clone()),
+        _ => row.a11y_label(AccessRole::Label, step.label.clone()),
+    }
 }
 
 #[cfg(test)]
