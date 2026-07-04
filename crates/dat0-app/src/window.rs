@@ -1864,19 +1864,24 @@ pub fn run_app(lock: AppLock, initial_paths: Vec<PathBuf>, main_loop: MainLoop) 
                     .map(|s| s.telemetry.crash_submission_enabled)
                     .unwrap_or(false);
 
-                    let prior = crate::telemetry::crash::prior_crash_detected(&dir);
-                    if crate::telemetry::report_logic::should_prompt(prior, opt_in) {
-                        if let Some(staged) = crate::telemetry::crash::read_staged(&dir) {
+                    // Gate composition lives in the pure `resolve_relaunch_action`
+                    // seam (unit-tested in report_logic.rs, including the opt-out
+                    // discard guarantee); this closure only reads `opt_in` above
+                    // and dispatches the resulting action.
+                    use crate::telemetry::report_logic::{RelaunchAction, ReportKind};
+                    match crate::telemetry::report_logic::resolve_relaunch_action(&dir, opt_in) {
+                        RelaunchAction::ShowCrash(staged) => {
                             tracing::info!(
                                 "run_app: prior crash detected with staged payload; \
                                  opening crash report dialog"
                             );
                             crate::view::crash_report::open_report(
                                 cx,
-                                crate::telemetry::report_logic::ReportKind::Crash(staged),
+                                ReportKind::Crash(staged),
                                 dir.clone(),
                             );
-                        } else {
+                        }
+                        RelaunchAction::DiscardMarkerOnly => {
                             // Marker survived but no panic payload (SIGKILL /
                             // native crash).  Discard the bare marker; the
                             // minimal-report path is a v1.x / UAT-only feature.
@@ -1886,13 +1891,15 @@ pub fn run_app(lock: AppLock, initial_paths: Vec<PathBuf>, main_loop: MainLoop) 
                             );
                             crate::telemetry::crash::clear_staged(&dir);
                         }
-                    } else if !opt_in {
-                        // Opt-out: discard any staged data unconditionally.
-                        // MUST NOT prompt or transmit anything.
-                        crate::telemetry::crash::clear_staged(&dir);
-                        tracing::debug!(
-                            "run_app: crash_submission_enabled=false; staged data discarded"
-                        );
+                        RelaunchAction::DiscardOptOut => {
+                            // Opt-out: discard any staged data unconditionally.
+                            // MUST NOT prompt or transmit anything.
+                            crate::telemetry::crash::clear_staged(&dir);
+                            tracing::debug!(
+                                "run_app: crash_submission_enabled=false; staged data discarded"
+                            );
+                        }
+                        RelaunchAction::Nothing => {}
                     }
                 }
             });
