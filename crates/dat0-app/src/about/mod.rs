@@ -12,7 +12,9 @@ pub mod build_info;
 
 use build_info::BuildInfo;
 
-use gpui::{AnyView, App, ParentElement as _, Window};
+use gpui::{AnyView, App, ParentElement as _, Window, div};
+
+use crate::a11y::{A11yExt as _, AccessRole};
 use gpui_component::WindowExt as _;
 use gpui_component::dialog::{Dialog, DialogButtonProps};
 
@@ -79,7 +81,16 @@ fn present(cx: &mut App, newer: Option<String>) {
     if let Some(handle) = cx.active_window() {
         let _ = handle.update(cx, move |_root: AnyView, window: &mut Window, cx| {
             window.open_dialog(cx, move |dialog: Dialog, _w, _cx| {
-                let dialog = dialog.title(title.clone()).child(body.clone());
+                // Test-only content seam: wrap the body text in `.a11y_label`
+                // so the headless UAT harness (`A11ySnapshot::capture`) can read
+                // the rendered dialog content by its text. Identity no-op in
+                // release (the `div` is an inert single child; `.a11y_label`
+                // compiles away without the `a11y-capture` feature).
+                let dialog = dialog.title(title.clone()).child(
+                    div()
+                        .child(body.clone())
+                        .a11y_label(AccessRole::Label, body.clone()),
+                );
                 match newer {
                     // Newer release: confirm() = Cancel + OK; relabel OK "Download"
                     // and open the human Releases page on confirm.
@@ -101,4 +112,12 @@ fn present(cx: &mut App, newer: Option<String>) {
     } else {
         tracing::warn!("about::open: no active window; cannot show modal");
     }
+}
+
+/// Test-only: drive `present` directly (bypassing the off-thread release check
+/// in [`open`]) so the a11y harness can assert the dialog's content and
+/// dismissal. Feature-gated → zero release footprint.
+#[cfg(feature = "a11y-capture")]
+pub fn present_for_test(cx: &mut App, newer: Option<String>) {
+    present(cx, newer);
 }
