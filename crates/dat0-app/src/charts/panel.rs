@@ -1,9 +1,12 @@
 //! Chart panel: state + pure axis helpers + GPUI render. The pure parts
 //! (`visible_axes`, `column_options`) carry the tests; the GPUI render is UAT-gated.
 
+use crate::a11y::{A11yExt as _, AccessRole};
 use crate::charts::data::PlotTable;
 use crate::charts::spec::{AxisRole, ChartSpec, ChartType, is_numeric};
-use gpui::{ImageSource, IntoElement, ParentElement, RenderImage, Styled, div, img, px};
+use gpui::{
+    ImageSource, IntoElement, ParentElement, RenderImage, SharedString, Styled, div, img, px,
+};
 use std::sync::Arc;
 
 /// Which axis roles to show for a type (delegates to ChartType::axes).
@@ -75,6 +78,21 @@ impl Default for ChartPanel {
     }
 }
 
+/// Localised display name for a chart type (used by the content seam so the
+/// headless UAT can assert the *rendered* type). Keys already exist in en.json.
+pub(crate) fn chart_type_label(t: ChartType) -> SharedString {
+    let key = match t {
+        ChartType::Bar => "chart.type.bar",
+        ChartType::Line => "chart.type.line",
+        ChartType::Area => "chart.type.area",
+        ChartType::Scatter => "chart.type.scatter",
+        ChartType::Histogram => "chart.type.histogram",
+        ChartType::BoxPlot => "chart.type.boxplot",
+        ChartType::Heatmap => "chart.type.heatmap",
+    };
+    dat0_i18n::t(key).into()
+}
+
 /// Render the chart image area from a prepared RenderImage (or a hint/error).
 /// Toolbar widgets (Selects/Buttons) are composed in window.rs where the
 /// Entity<SelectState> + listeners live; this renders the body.
@@ -101,7 +119,26 @@ pub fn render_chart_body(
             .child(dat0_i18n::t("chart.panel.empty"))
             .into_any_element()
     };
-    div().flex().flex_col().gap_2().child(body)
+    // Content seams (release no-op; emit AccessKit Label nodes only under the
+    // `a11y-capture` feature) so the headless UAT can assert the *rendered*
+    // spec — type, axis picks, title — without inspecting pixels (Gap 1 stays
+    // human). Inert single-purpose divs → a real layout node, hence a human
+    // visual glance is owed on the Charts dock (mirrors the Settings wrappers).
+    let s = &panel.spec;
+    let seams = div()
+        .flex()
+        .gap_1()
+        .child(div().a11y_label(AccessRole::Label, chart_type_label(s.chart_type)))
+        .child(div().a11y_label(
+            AccessRole::Label,
+            SharedString::from(s.x.clone().unwrap_or_default()),
+        ))
+        .child(div().a11y_label(
+            AccessRole::Label,
+            SharedString::from(s.y.clone().unwrap_or_default()),
+        ))
+        .child(div().a11y_label(AccessRole::Label, SharedString::from(s.title.clone())));
+    div().flex().flex_col().gap_2().child(seams).child(body)
 }
 
 #[cfg(test)]

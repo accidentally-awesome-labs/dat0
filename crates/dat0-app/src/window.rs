@@ -6574,6 +6574,59 @@ impl Render for WorkspaceShell {
     }
 }
 
+// UAT (Charts save/persist/lineage slice) T0: test-only shims exposing the
+// `pub(crate)` chart/inspector/catalog state needed by `tests/chart_uat_window.rs`
+// (an integration-test crate, so it cannot see `pub(crate)` fields directly).
+// Identity-gated behind `a11y-capture` — zero surface in release builds.
+// Placed BEFORE any `#[cfg(test)] mod` in this file: clippy's
+// `items-after-test-module` (under `-D warnings`) rejects items that follow a
+// test module.
+#[cfg(feature = "a11y-capture")]
+impl WorkspaceShell {
+    pub fn chart_bind_for_test(&mut self, source: String, cols: Vec<(String, String)>) {
+        self.chart_panel.bind(source, cols);
+        self.chart_panel_visible = true;
+    }
+    pub fn chart_set_axes_for_test(
+        &mut self,
+        chart_type: crate::charts::spec::ChartType,
+        x: Option<String>,
+        y: Option<String>,
+        title: String,
+    ) {
+        self.chart_panel.spec.chart_type = chart_type;
+        self.chart_panel.spec.x = x;
+        self.chart_panel.spec.y = y;
+        self.chart_panel.spec.title = title;
+    }
+    pub fn chart_visible_for_test(&self) -> bool {
+        self.chart_panel_visible
+    }
+    pub fn chart_spec_for_test(&self) -> crate::charts::spec::ChartSpec {
+        self.chart_panel.spec.clone()
+    }
+    pub fn save_named_chart_for_test(&mut self, name: String, cx: &mut Context<Self>) {
+        self.save_named_chart(name, cx);
+    }
+    pub fn seed_catalog_for_test(&mut self, tables: Vec<dat0_engine::TableInfo>) {
+        self.catalog_tables = tables;
+    }
+    pub fn seed_lineage_target_for_test(&mut self, name: String, cx: &mut Context<Self>) {
+        self.inspector.set_target(name);
+        self.recompute_lineage();
+        self.inspector_panel_visible = true;
+        cx.notify();
+    }
+    pub fn open_saved_chart_for_test(
+        &mut self,
+        name: String,
+        window: &mut gpui::Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.open_saved_chart(name, window, cx);
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::{bare_table_name, paths_from_open_urls};
