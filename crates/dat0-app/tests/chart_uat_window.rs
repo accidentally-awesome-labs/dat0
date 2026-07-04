@@ -133,3 +133,67 @@ fn spike_bound_chart_renders_spec_content(cx: &mut TestAppContext) {
     assert!(snap.has_label("amt"), "y-axis seam rendered");
     assert!(snap.has_label("Sales by region"), "title seam rendered");
 }
+
+#[gpui::test]
+#[serial]
+fn chart_panel_empty_state_renders_hint(cx: &mut TestAppContext) {
+    init_components(cx);
+
+    let tmp = tempfile::tempdir().unwrap();
+    set_config_dir(&tmp.path().join("cfg"));
+    let session = build_empty_session(&tmp.path().join("state"));
+    let (shell, vcx) = open_shell_window(cx, session);
+
+    // Visible panel, but no columns/axes bound → empty hint renders.
+    vcx.cx.update(|app| {
+        shell.update(app, |ws, _cx| {
+            ws.chart_bind_for_test("\"t\"".into(), vec![]);
+        });
+    });
+    vcx.executor().advance_clock(Duration::from_secs(1));
+    vcx.run_until_parked();
+
+    let snap = A11ySnapshot::capture(vcx);
+    assert!(
+        snap.has_label_contains("Select columns"),
+        "empty-state hint rendered (chart.panel.empty)"
+    );
+}
+
+#[gpui::test]
+#[serial]
+fn chart_panel_renders_scatter_axes(cx: &mut TestAppContext) {
+    init_components(cx);
+
+    let tmp = tempfile::tempdir().unwrap();
+    set_config_dir(&tmp.path().join("cfg"));
+    let session = build_empty_session(&tmp.path().join("state"));
+    let (shell, vcx) = open_shell_window(cx, session);
+
+    vcx.cx.update(|app| {
+        shell.update(app, |ws, _cx| {
+            ws.chart_bind_for_test(
+                "\"m\"".into(),
+                vec![("x".into(), "DOUBLE".into()), ("y".into(), "DOUBLE".into())],
+            );
+            ws.chart_set_axes_for_test(
+                ChartType::Scatter,
+                Some("x".into()),
+                Some("y".into()),
+                String::new(),
+            );
+        });
+    });
+    vcx.executor().advance_clock(Duration::from_secs(1));
+    vcx.run_until_parked();
+
+    let snap = A11ySnapshot::capture(vcx);
+    assert!(
+        snap.has_label_contains("Scatter"),
+        "scatter type seam rendered"
+    );
+    assert!(
+        snap.has_label("x") && snap.has_label("y"),
+        "axis seams rendered"
+    );
+}
