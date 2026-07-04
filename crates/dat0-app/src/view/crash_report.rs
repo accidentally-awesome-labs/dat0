@@ -9,6 +9,13 @@
 
 use crate::telemetry::report_logic::{ReportKind, dialog_body_key, dialog_title_key};
 use crate::telemetry::{self, crash};
+// Content seam for the headless UAT harness (`A11ySnapshot::capture`): the plain
+// `.child(body)` text is AccessKit-invisible, so under `a11y-capture` the body is
+// wrapped in a `div` carrying an `.a11y_label`. `cfg`-SELECTED (not an
+// unconditional wrapper) so the release element tree is byte-identical to the
+// pre-seam markup — no inert wrapper ships, no human visual glance owed.
+#[cfg(feature = "a11y-capture")]
+use crate::a11y::{A11yExt as _, AccessRole};
 use gpui::{AnyView, App, AppContext as _, ParentElement as _, Window};
 use gpui_component::WindowExt as _;
 use gpui_component::dialog::{Dialog, DialogButtonProps};
@@ -51,9 +58,18 @@ pub fn open_report(cx: &mut App, kind: ReportKind, data_dir: PathBuf) {
                 let data_dir_cancel = data_dir.clone();
                 let note_c = note.clone(); // for on_ok read; note is also used by-ref below
 
+                let dialog = dialog.title(title.clone());
+                // Body child: plain text in release, an `.a11y_label`-carrying
+                // `div` (same body string, same render condition) in test builds.
+                #[cfg(feature = "a11y-capture")]
+                let dialog = dialog.child(
+                    gpui::div()
+                        .child(body.clone())
+                        .a11y_label(AccessRole::Label, body.clone()),
+                );
+                #[cfg(not(feature = "a11y-capture"))]
+                let dialog = dialog.child(body.clone());
                 dialog
-                    .title(title.clone())
-                    .child(body.clone())
                     .child(Input::new(&note)) // borrows the closure-owned note entity
                     .confirm()
                     .button_props(DialogButtonProps::default().ok_text(send.clone()))

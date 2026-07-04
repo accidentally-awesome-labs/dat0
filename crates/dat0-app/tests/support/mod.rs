@@ -24,7 +24,8 @@
 //! so per-binary unused-helper warnings are expected and intentional.
 #![allow(dead_code)]
 
-use gpui::VisualTestContext;
+use gpui::{AppContext as _, ParentElement as _, TestAppContext, VisualTestContext};
+use gpui_component::{Root, WindowExt as _};
 use kittest::{AccessKitNode, NodeT, Queryable as _, State};
 
 use dat0_app::a11y::AccessRole;
@@ -181,4 +182,51 @@ impl A11ySnapshot {
             .expect("clicked node must have painted bounds resolvable by its id");
         cx.simulate_click(bounds.center(), gpui::Modifiers::none());
     }
+}
+
+// ----------------------------------------------------------------------------
+// App-level dialog host (shared by the Update/About and Crash-report slices).
+//
+// Hoisted from `tests/update_about_window.rs` so both suites reuse ONE copy of
+// the minimal window that mounts gpui-component's dialog overlay layer.
+// ----------------------------------------------------------------------------
+
+/// A minimal host view that mounts gpui-component's DIALOG overlay layer (via
+/// `Root::render_dialog_layer`) but nothing of its own. LOAD-BEARING: `Root::render`
+/// paints ONLY `self.view`, so a host that does not itself paint the dialog layer
+/// leaves `open_dialog` setting `active_*` state while painting NOTHING — the
+/// dialog subtree (and its `.a11y_label` content push) never renders, so
+/// `A11ySnapshot::capture` sees zero nodes even though `has_active_dialog` is true.
+/// Production mirrors this (window.rs:6573, settings_ui/panel.rs:540). We mount
+/// only the dialog layer (not sheets), so the captured frame is the dialog's own
+/// content.
+struct DialogHost;
+impl gpui::Render for DialogHost {
+    fn render(
+        &mut self,
+        window: &mut gpui::Window,
+        cx: &mut gpui::Context<Self>,
+    ) -> impl gpui::IntoElement {
+        gpui::div().children(Root::render_dialog_layer(window, cx))
+    }
+}
+
+/// Open a real, ACTIVATED window whose root is a `gpui_component::Root` wrapping
+/// a `DialogHost` — mirrors `onboarding_gpui::open_shell_window`. Activation
+/// makes `cx.active_window()` (which App-level `open_dialog` callers rely on)
+/// resolve to it.
+pub fn open_dialog_host(cx: &mut TestAppContext) -> &mut VisualTestContext {
+    // Required before any gpui-component widget (Dialog) is built.
+    cx.update(gpui_component::init);
+    let (_root, vcx) = cx.add_window_view(|window, cx| {
+        window.activate_window();
+        let host = cx.new(|_| DialogHost);
+        Root::new(host, window, cx)
+    });
+    vcx
+}
+
+/// True iff a dialog is currently on the window's `Root` stack.
+pub fn dialog_open(cx: &mut VisualTestContext) -> bool {
+    cx.update(|window, app| window.has_active_dialog(app))
 }
