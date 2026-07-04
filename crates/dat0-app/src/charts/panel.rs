@@ -81,16 +81,7 @@ impl Default for ChartPanel {
 /// Localised display name for a chart type (used by the content seam so the
 /// headless UAT can assert the *rendered* type). Keys already exist in en.json.
 pub(crate) fn chart_type_label(t: ChartType) -> SharedString {
-    let key = match t {
-        ChartType::Bar => "chart.type.bar",
-        ChartType::Line => "chart.type.line",
-        ChartType::Area => "chart.type.area",
-        ChartType::Scatter => "chart.type.scatter",
-        ChartType::Histogram => "chart.type.histogram",
-        ChartType::BoxPlot => "chart.type.boxplot",
-        ChartType::Heatmap => "chart.type.heatmap",
-    };
-    dat0_i18n::t(key).into()
+    dat0_i18n::t(t.label_key()).into()
 }
 
 /// Render the chart image area from a prepared RenderImage (or a hint/error).
