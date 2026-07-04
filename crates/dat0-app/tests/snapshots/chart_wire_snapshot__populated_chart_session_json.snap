@@ -1,0 +1,36 @@
+---
+source: crates/dat0-app/tests/chart_wire_snapshot.rs
+expression: json
+---
+{
+  "schema_version": 9,
+  "tabs": [],
+  "active_tab": null,
+  "sql_tabs": [],
+  "active_sql_tab": null,
+  "query_history": [],
+  "saved_queries": [],
+  "charts": [
+    {
+      "id": "00000000-0000-0000-0000-000000000001",
+      "name": "Monthly totals",
+      "spec": {
+        "chart_type": "bar",
+        "source": "\"sales\"",
+        "x": "month",
+        "y": "total",
+        "group": null,
+        "color": null,
+        "title": "Monthly totals"
+      },
+      "saved_at": 1700000000000
+    }
+  ],
+  "attachments": [],
+  "ui": {
+    "catalog_panel_visible": false,
+    "inspector_panel_visible": false,
+    "catalog_expanded": [],
+    "catalog_selection": null
+  }
+}
