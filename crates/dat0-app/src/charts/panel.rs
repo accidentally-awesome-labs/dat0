@@ -104,25 +104,22 @@ pub fn render_chart_body(
             .h(px(logical.1))
             .into_any_element()
     } else {
+        let hint = dat0_i18n::t("chart.panel.empty");
         div()
             .p_4()
             .text_color(gpui::rgb(0x888888))
-            .child(dat0_i18n::t("chart.panel.empty"))
+            .child(hint.clone())
+            .a11y_label(AccessRole::Label, hint)
             .into_any_element()
     };
     // Content seams (release no-op; emit AccessKit Label nodes only under the
     // `a11y-capture` feature) so the headless UAT can assert the *rendered*
-    // spec — type, axis picks, title, and empty-state hint — without inspecting
-    // pixels (Gap 1 stays human). Inert single-purpose divs → a real layout node,
-    // hence a human visual glance is owed on the Charts dock (mirrors the Settings
+    // spec — type, axis picks, and title — without inspecting pixels (Gap 1
+    // stays human). Inert single-purpose divs → a real layout node, hence a
+    // human visual glance is owed on the Charts dock (mirrors the Settings
     // wrappers).
     let s = &panel.spec;
-    let empty_hint = if panel.data.is_none() && panel.error.is_none() {
-        Some(div().a11y_label(AccessRole::Label, dat0_i18n::t("chart.panel.empty")))
-    } else {
-        None
-    };
-    let mut seams_builder = div()
+    let seams = div()
         .flex()
         .gap_1()
         .child(div().a11y_label(AccessRole::Label, chart_type_label(s.chart_type)))
@@ -135,10 +132,6 @@ pub fn render_chart_body(
             SharedString::from(s.y.clone().unwrap_or_default()),
         ))
         .child(div().a11y_label(AccessRole::Label, SharedString::from(s.title.clone())));
-    if let Some(hint) = empty_hint {
-        seams_builder = seams_builder.child(hint);
-    }
-    let seams = seams_builder;
     div().flex().flex_col().gap_2().child(seams).child(body)
 }
 
