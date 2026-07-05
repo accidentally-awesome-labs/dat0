@@ -8,6 +8,7 @@
 //! function of the supplied `tree`; the live tree is rebuilt by
 //! `WorkspaceShell::refresh_catalog` whenever the catalog could change.
 
+use crate::a11y::A11yExt as _;
 use crate::window::WorkspaceShell;
 use gpui::prelude::*;
 use gpui::{Context, SharedString, div};
@@ -45,11 +46,12 @@ pub fn render_catalog(
         .child(div().child(SharedString::from(dat0_i18n::t("catalog.title"))));
 
     for (label, id, nodes) in &sections {
-        let mut section = div()
-            .flex()
-            .flex_col()
-            .gap_1()
-            .child(div().child(SharedString::from(section_label(label, nodes.len()))));
+        let header = section_label(label, nodes.len());
+        let mut section = div().flex().flex_col().gap_1().child(
+            div()
+                .a11y_label(crate::a11y::AccessRole::Label, header.clone())
+                .child(SharedString::from(header)),
+        );
         for node in nodes.iter() {
             section = section.child(catalog_row(id, &node.name, cx));
         }
@@ -78,6 +80,7 @@ fn catalog_row(
         .cursor_pointer()
         .hover(|s| s.bg(gpui::rgba(0x80808022)))
         .child(SharedString::from(name.clone()))
+        .a11y_label(crate::a11y::AccessRole::Label, name.clone())
         .on_click(cx.listener(move |ws, _ev, window, cx| {
             ws.open_table_tab(name.clone(), window, cx);
         }))
