@@ -106,6 +106,7 @@ pub fn render_connections(
             .flex()
             .flex_col()
             .gap_1()
+            .a11y_label(crate::a11y::AccessRole::Label, msg.clone())
             // The localized error message carried by the status.
             .child(SharedString::from(msg.clone()))
             .child(action_button(

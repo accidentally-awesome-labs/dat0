@@ -259,3 +259,37 @@ fn test_result_renders_connected(cx: &mut TestAppContext) {
         "test-result message renders"
     );
 }
+
+#[gpui::test]
+#[serial]
+fn error_arm_hides_test_shows_retry(cx: &mut TestAppContext) {
+    init_components(cx);
+    let tmp = tempfile::tempdir().unwrap();
+    set_config_dir(&tmp.path().join("cfg"));
+    let session = build_empty_session(&tmp.path().join("state"));
+    let (shell, vcx) = open_shell_window(cx, session);
+
+    vcx.cx.update(|app| {
+        shell.update(app, |ws, _cx| {
+            let mgr = ws.open_connections_for_test();
+            mgr.set_md_status(ConnectionStatus::Error("Auth failed".into()));
+        });
+    });
+    vcx.executor().advance_clock(Duration::from_secs(1));
+    vcx.run_until_parked();
+
+    let snap = A11ySnapshot::capture(vcx);
+    assert!(snap.has_label("Retry"), "Error arm shows Retry");
+    assert!(
+        snap.has_label("Auth failed"),
+        "Error arm shows the error message"
+    );
+    assert!(
+        !snap.has_label("Test connection"),
+        "teeth: Test button absent in Error arm"
+    );
+    assert!(
+        !snap.has_label("Disconnect"),
+        "teeth: Disconnect absent in Error arm"
+    );
+}
