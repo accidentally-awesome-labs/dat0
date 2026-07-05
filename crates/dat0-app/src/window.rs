@@ -6618,6 +6618,40 @@ impl WorkspaceShell {
     pub fn seed_catalog_for_test(&mut self, tables: Vec<dat0_engine::TableInfo>) {
         self.catalog_tables = tables;
     }
+    /// Build the catalog tree DIRECTLY from seeded fakes and show the catalog dock.
+    /// Bypasses `refresh_catalog`'s off-thread `get_tables` (window.rs:2999), which
+    /// would clobber the fakes with the empty test engine's real (empty) tables.
+    /// Seed an `md:`-origin `TableInfo` to populate the "Cloud" group.
+    pub fn seed_catalog_tree_for_test(&mut self, tables: Vec<dat0_engine::TableInfo>) {
+        self.catalog_tree = crate::catalog::CatalogTree::build(&tables);
+        self.catalog_panel_visible = true;
+    }
+    /// Show the Connections dock and hand back the `ConnectionManager` so the test
+    /// can drive `set_md_status` / `set_md_test_result` / `set_md_databases` (all
+    /// already `pub`). No live connection, token, or keychain touched.
+    pub fn open_connections_for_test(&mut self) -> &mut crate::connections::ConnectionManager {
+        self.connections_panel_visible = true;
+        &mut self.connections
+    }
+    /// Build + show the SQL console, then seed the timing chip's elapsed + routing
+    /// so the chip renders its routing suffix without a real query run. The console
+    /// is lazily built by `toggle_sql_console` (needs `&mut Window`); `set_last_elapsed`
+    /// (sql_console.rs:340) sets `last_elapsed_ms` + `last_routing`, which is all the
+    /// chip's render gate `(running == false, Some(ms))` needs.
+    pub fn seed_routing_chip_for_test(
+        &mut self,
+        ms: u64,
+        routing: crate::connections::routing::Routing,
+        window: &mut gpui::Window,
+        cx: &mut Context<Self>,
+    ) {
+        if !self.sql_console_visible {
+            self.toggle_sql_console(window, cx);
+        }
+        if let Some(console) = self.sql_console.clone() {
+            console.update(cx, |c, cx| c.set_last_elapsed(ms, routing, cx));
+        }
+    }
     pub fn seed_lineage_target_for_test(&mut self, name: String, cx: &mut Context<Self>) {
         self.inspector.set_target(name);
         self.recompute_lineage();

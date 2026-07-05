@@ -11,6 +11,7 @@
 //! plumbing to keep alive. The render reads `manager` and nothing else, so it
 //! stays a pure function of the manager's state.
 
+use crate::a11y::A11yExt as _;
 use crate::connections::{AttachmentKind, ConnectionManager, ConnectionStatus};
 use crate::window::WorkspaceShell;
 use gpui::prelude::*;
@@ -105,6 +106,7 @@ pub fn render_connections(
             .flex()
             .flex_col()
             .gap_1()
+            .a11y_label(crate::a11y::AccessRole::Label, msg.clone())
             // The localized error message carried by the status.
             .child(SharedString::from(msg.clone()))
             .child(action_button(
@@ -121,7 +123,12 @@ pub fn render_connections(
     let mut md_databases = div().flex().flex_col().gap_1();
     if matches!(status, ConnectionStatus::Connected) {
         for name in manager.md_databases() {
-            md_databases = md_databases.child(div().pl_4().child(SharedString::from(name.clone())));
+            md_databases = md_databases.child(
+                div()
+                    .pl_4()
+                    .a11y_label(crate::a11y::AccessRole::Label, name.clone())
+                    .child(SharedString::from(name.clone())),
+            );
         }
     }
 
@@ -137,7 +144,11 @@ pub fn render_connections(
     // Transient Test-connection result (design §3.1); only appended when one is pending,
     // so the parent gap_2 does not leave a phantom 8 px gap when there is no message.
     let md_section = match manager.md_test_result() {
-        Some(msg) => md_section.child(div().child(SharedString::from(msg.to_string()))),
+        Some(msg) => md_section.child(
+            div()
+                .a11y_label(crate::a11y::AccessRole::Label, msg.to_string())
+                .child(SharedString::from(msg.to_string())),
+        ),
         None => md_section,
     };
 
@@ -200,13 +211,15 @@ fn action_button(
     ev: ConnectionsEvent,
     cx: &mut Context<WorkspaceShell>,
 ) -> gpui::Stateful<gpui::Div> {
+    let label = label.into();
     div()
         .id(id)
         .px_2()
         .py_1()
         .border_1()
         .cursor_pointer()
-        .child(label.into())
+        .a11y_label(crate::a11y::AccessRole::Label, label.to_string())
+        .child(label)
         .on_click(cx.listener(move |ws, _ev, window, cx| {
             ws.handle_connections_event(ev.clone(), window, cx);
         }))
