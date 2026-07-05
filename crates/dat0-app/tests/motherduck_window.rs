@@ -258,6 +258,12 @@ fn test_result_renders_connected(cx: &mut TestAppContext) {
         snap.has_label("Connection OK"),
         "test-result message renders"
     );
+    // Teeth: the bare "Connect" button (Disconnected/Error arms only, exact label
+    // — "Disconnect" does not match) is absent in the Connected arm.
+    assert!(
+        !snap.has_label("Connect"),
+        "teeth: Connect button absent in Connected arm"
+    );
 }
 
 #[gpui::test]
