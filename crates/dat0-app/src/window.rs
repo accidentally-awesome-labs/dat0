@@ -2045,6 +2045,10 @@ pub struct WorkspaceShell {
     /// fine-grained cell focus; this shell-level handle is sufficient for
     /// T11's keyboard map + selection navigation.
     focus_handle: FocusHandle,
+    /// Stable per-hero-button focus handles, keyed by the button's static id.
+    /// Created once and reused across renders (the transient `EmptyState` must NOT
+    /// own these — it is rebuilt every frame).
+    hero_focus: std::collections::HashMap<&'static str, gpui::FocusHandle>,
     /// PipelineBar expanded/collapsed toggle state (P4c T9). The expanded
     /// timeline view is T10 — this stub stores the toggle flag so the `⌄`
     /// button can flip it and be rendered correctly on the next frame.
@@ -2249,6 +2253,7 @@ impl WorkspaceShell {
             copied_range: None,
             column_view: Vec::new(),
             focus_handle: cx.focus_handle(),
+            hero_focus: std::collections::HashMap::new(),
             header_rename: None,
             header_rename_sub: None,
             pipeline_bar_state: crate::view::pipeline_bar::PipelineBarState::default(),
@@ -5869,6 +5874,17 @@ impl WorkspaceShell {
     pub fn child_widget_type_name() -> &'static str {
         std::any::type_name::<Table<GridTableDelegate>>()
     }
+
+    /// Get (lazily creating, once) the stable focus handle for hero button `id`.
+    /// Handles live on the persistent `WorkspaceShell` (not the transient
+    /// `EmptyState`, which is rebuilt every render), so a focused hero control
+    /// keeps focus across the harness's forced re-render (Slice 6).
+    fn hero_focus_handle(&mut self, id: &'static str, cx: &mut gpui::App) -> gpui::FocusHandle {
+        self.hero_focus
+            .entry(id)
+            .or_insert_with(|| cx.focus_handle())
+            .clone()
+    }
 }
 
 /// Inclusive bounding rectangle `(r0, c0, r1, c1)` over a set of `(row, col)`
@@ -6074,7 +6090,23 @@ impl Render for WorkspaceShell {
                     }
                 }
 
-                EmptyState::new(recents_empty, first_run_done).render(cx)
+                // Pre-register the stable per-hero-button focus handles on the
+                // persistent shell, then hand them down to the transient
+                // `EmptyState` (which must NOT mint focus handles — it is rebuilt
+                // every frame, so a fresh handle each render would lose focus on
+                // the harness's forced re-render). Slice 6.
+                let hero_ids: [&'static str; 3] =
+                    ["hero-take-tour", "hero-open-demo", "hero-open-file-samples"];
+                let mut map = std::collections::HashMap::new();
+                for id in hero_ids {
+                    map.insert(id, self.hero_focus_handle(id, cx));
+                }
+                for entry in crate::sample_data::entries() {
+                    let id = crate::empty_state::sample_static_id(&entry.kind);
+                    map.insert(id, self.hero_focus_handle(id, cx));
+                }
+                let hero = crate::empty_state::HeroHandles { map };
+                EmptyState::new(recents_empty, first_run_done).render(&hero, cx)
             }
         };
 

@@ -23,6 +23,57 @@
 //! needed for v1. If a future surface re-renders child views more than once per
 //! forced frame and duplicates appear, reintroduce the generation counter.
 
+use gpui::{App, FocusHandle, InteractiveElement, KeyDownEvent, Styled as _, Window};
+
+/// Focus-ring hue — matches the grid active-cell ring (`grid/mod.rs:566`).
+const FOCUS_RING: u32 = 0x3b82f6;
+
+/// Production a11y: turn an interactive `div` into a real keyboard control —
+/// a tab stop that takes focus, activates on Enter/Space, and paints a focus
+/// ring. Ships in release (this is a genuine a11y fix, not a test no-op). Under
+/// `a11y-capture` it also records `fh → id` into the oracle side-map so a
+/// headless test can name the focused element (see [`focused_label`]).
+///
+/// Named `focus_stop` (not `focusable`) to avoid clashing with gpui's
+/// `StatefulInteractiveElement::focusable(self)`.
+pub trait FocusStopExt: InteractiveElement + Sized {
+    fn focus_stop(
+        self,
+        id: &'static str,
+        fh: &FocusHandle,
+        tab_index: isize,
+        on_activate: impl Fn(&KeyDownEvent, &mut Window, &mut App) + 'static,
+    ) -> Self {
+        // The tab-stop/tab-index metadata lives on the FocusHandle, NOT the
+        // element: when an explicit handle is tracked (`track_focus`), gpui's
+        // paint pass does NOT copy the element-level `.tab_index()` onto it (that
+        // copy only happens for an auto-created handle — div.rs:1584). A plain
+        // `cx.focus_handle()` defaults to `tab_stop: false`, so it would be
+        // painted but never reached by `focus_next`. Configure the handle the way
+        // gpui-component's `Button` does (`fh.tab_index(..).tab_stop(true)`); the
+        // builders mutate the shared `FocusRef` keyed by id, so the clone stays in
+        // lockstep with the stored handle the oracle joins on.
+        let fh = fh.clone().tab_index(tab_index).tab_stop(true);
+        record_focus_id(&fh, id);
+        self.track_focus(&fh)
+            .on_key_down(move |ev, window, app| {
+                if matches!(ev.keystroke.key.as_str(), "enter" | "space") {
+                    on_activate(ev, window, app);
+                }
+            })
+            .focus(|s| s.border_2().border_color(gpui::rgb(FOCUS_RING)))
+    }
+}
+impl<T: InteractiveElement + Sized> FocusStopExt for T {}
+
+#[cfg(feature = "a11y-capture")]
+fn record_focus_id(fh: &FocusHandle, id: &'static str) {
+    capture::record_focus(fh.clone(), id);
+}
+#[cfg(not(feature = "a11y-capture"))]
+#[inline]
+fn record_focus_id(_fh: &FocusHandle, _id: &'static str) {}
+
 #[cfg(feature = "a11y-capture")]
 mod capture {
     use accesskit::{Node, NodeId, Role, Tree, TreeUpdate};
@@ -66,11 +117,35 @@ mod capture {
 
     thread_local! {
         static FRAME: RefCell<Vec<Captured>> = const { RefCell::new(Vec::new()) };
+        static FOCUS: RefCell<Vec<(gpui::FocusHandle, &'static str)>> = const { RefCell::new(Vec::new()) };
+    }
+
+    pub fn record_focus(fh: gpui::FocusHandle, id: &'static str) {
+        FOCUS.with(|f| f.borrow_mut().push((fh, id)));
+    }
+
+    /// The label of the element the window currently focuses, resolved through the
+    /// focus side-map (`fh.is_focused` → static id) joined to the FRAME node with
+    /// that `click_id`. Independent of kittest's focus support — pure local join.
+    pub fn focused_label(window: &gpui::Window) -> Option<String> {
+        let id = FOCUS.with(|f| {
+            f.borrow()
+                .iter()
+                .find(|(fh, _)| fh.is_focused(window))
+                .map(|(_, id)| *id)
+        })?;
+        FRAME.with(|f| {
+            f.borrow()
+                .iter()
+                .find(|c| c.click_id == Some(id))
+                .map(|c| c.text.clone())
+        })
     }
 
     /// Clear the collector. Called by the harness before forcing a render.
     pub fn reset() {
         FRAME.with(|f| f.borrow_mut().clear());
+        FOCUS.with(|f| f.borrow_mut().clear());
     }
 
     fn push(role: AccessRole, text: String, click_id: Option<&'static str>) {
@@ -161,7 +236,7 @@ mod capture {
 }
 
 #[cfg(feature = "a11y-capture")]
-pub use capture::{A11yCapture, A11yExt, AccessRole, reset, take_tree_update};
+pub use capture::{A11yCapture, A11yExt, AccessRole, focused_label, reset, take_tree_update};
 
 // Release / no-capture stubs: identity helper, no accesskit, no debug_selector.
 #[cfg(not(feature = "a11y-capture"))]

@@ -34,7 +34,7 @@ use gpui::{IntoElement, ParentElement, Styled, div, prelude::*, px};
 // the `a11y-capture` feature it emits an AccessKit node + chains
 // `debug_selector`; in release it is an identity no-op (`AccessRole` resolves to
 // the feature-off stub enum, so this import compiles in both states).
-use crate::a11y::{A11yExt as _, AccessRole};
+use crate::a11y::{A11yExt as _, AccessRole, FocusStopExt as _};
 
 /// Which hero variant to render. `Enriched` (first run only) adds the
 /// value-prop band + featured demo CTA above the base hero; `Plain` is the
@@ -75,12 +75,26 @@ pub fn band_visible(mode: HeroMode) -> bool {
 /// the only `BundledCsv`, Chinook the only `BundledSqlite`, NYC taxi the only
 /// `Remote`). If a future catalog adds a second entry of the same variant,
 /// this match must grow a finer discriminant (e.g. on `dest_filename`).
-fn sample_static_id(kind: &crate::sample_data::SampleKind) -> &'static str {
+pub(crate) fn sample_static_id(kind: &crate::sample_data::SampleKind) -> &'static str {
     use crate::sample_data::SampleKind;
     match kind {
         SampleKind::BundledCsv { .. } => "hero-sample-iris",
         SampleKind::BundledSqlite { .. } => "hero-sample-chinook",
         SampleKind::Remote { .. } => "hero-sample-nyc-taxi",
+    }
+}
+
+/// Stable hero-button focus handles, passed down from the persistent
+/// `WorkspaceShell` (the `EmptyState` is transient — it must not mint handles).
+/// Slice 6: keyboard-nav / focus reachability.
+pub struct HeroHandles {
+    pub map: std::collections::HashMap<&'static str, gpui::FocusHandle>,
+}
+impl HeroHandles {
+    pub fn get(&self, id: &'static str) -> &gpui::FocusHandle {
+        self.map
+            .get(id)
+            .expect("hero handle pre-registered in WorkspaceShell::render")
     }
 }
 
@@ -120,6 +134,7 @@ impl EmptyState {
     /// use `cx.listener(...)` to reach the shell's action helpers directly.
     pub fn render(
         &self,
+        hero: &HeroHandles,
         cx: &mut gpui::Context<crate::window::WorkspaceShell>,
     ) -> gpui::AnyElement {
         let mode = hero_mode(self.first_run_done);
@@ -135,7 +150,13 @@ impl EmptyState {
             // `onboarding::open` re-enters the taken window and silently
             // no-ops. The deferred dispatcher hop runs it from a plain App
             // context after the frame (the auto-show mechanism).
+            // Single source of truth for "activate the tour" — both the mouse
+            // `on_click` and the keyboard `on_key_down` twin (Slice 6) call the
+            // same `crate::onboarding::open_deferred`, so they cannot drift.
             let take_tour_handler = cx.listener(|_this, _ev, _window, cx| {
+                crate::onboarding::open_deferred(cx);
+            });
+            let take_tour_key = cx.listener(|_this, _ev: &gpui::KeyDownEvent, _window, cx| {
                 crate::onboarding::open_deferred(cx);
             });
             let open_demo_handler = cx.listener(|_this, _ev, _window, cx| {
@@ -166,6 +187,19 @@ impl EmptyState {
                         .child(
                             div()
                                 .id("hero-take-tour")
+                                // Slice 6 (keyboard-nav): make this hero button a
+                                // real keyboard control — a Tab stop (via `Root`'s
+                                // focus_next) that takes focus, activates on
+                                // Enter/Space, and paints a focus ring. Ships in
+                                // release (genuine a11y fix). The stable focus
+                                // handle lives on the persistent `WorkspaceShell`
+                                // (passed in `hero`), NOT this transient view.
+                                .focus_stop(
+                                    "hero-take-tour",
+                                    hero.get("hero-take-tour"),
+                                    0,
+                                    take_tour_key,
+                                )
                                 // Test-only locator (release no-op): `.a11y` both
                                 // chains `debug_selector` (so the headless UAT can
                                 // find this button's painted bounds via
