@@ -122,7 +122,12 @@ pub fn render_connections(
     let mut md_databases = div().flex().flex_col().gap_1();
     if matches!(status, ConnectionStatus::Connected) {
         for name in manager.md_databases() {
-            md_databases = md_databases.child(div().pl_4().child(SharedString::from(name.clone())));
+            md_databases = md_databases.child(
+                div()
+                    .pl_4()
+                    .a11y_label(crate::a11y::AccessRole::Label, name.clone())
+                    .child(SharedString::from(name.clone())),
+            );
         }
     }
 

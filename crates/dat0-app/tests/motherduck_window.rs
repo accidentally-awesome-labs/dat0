@@ -219,3 +219,43 @@ fn routing_chip_shows_md_not_local(cx: &mut TestAppContext) {
         "teeth: not the local suffix"
     );
 }
+
+#[gpui::test]
+#[serial]
+fn test_result_renders_connected(cx: &mut TestAppContext) {
+    init_components(cx);
+    let tmp = tempfile::tempdir().unwrap();
+    set_config_dir(&tmp.path().join("cfg"));
+    let session = build_empty_session(&tmp.path().join("state"));
+    let (shell, vcx) = open_shell_window(cx, session);
+
+    vcx.cx.update(|app| {
+        shell.update(app, |ws, _cx| {
+            let mgr = ws.open_connections_for_test();
+            mgr.set_md_status(ConnectionStatus::Connected); // keeps md_databases
+            mgr.set_md_databases(vec!["sample_data".into()]);
+            mgr.set_md_test_result("Connection OK".into());
+        });
+    });
+    vcx.executor().advance_clock(Duration::from_secs(1));
+    vcx.run_until_parked();
+
+    let snap = A11ySnapshot::capture(vcx);
+    assert!(
+        snap.has_label("Disconnect"),
+        "Connected arm shows Disconnect"
+    );
+    assert!(
+        snap.has_label("Test connection"),
+        "Connected arm shows Test"
+    );
+    assert!(snap.has_label("Forget token"), "Connected arm shows Forget");
+    assert!(
+        snap.has_label("sample_data"),
+        "attached db name renders under Connected"
+    );
+    assert!(
+        snap.has_label("Connection OK"),
+        "test-result message renders"
+    );
+}
