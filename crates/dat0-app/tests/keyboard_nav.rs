@@ -385,12 +385,16 @@ fn hero_tab_cycle_visits_every_button(cx: &mut TestAppContext) {
 /// real production completion (an imported table) rather than stopping at
 /// the synchronous half of the flow.
 ///
-/// Both `install_state_root` (or `open_demo_workspace` early-returns) and
-/// `install_window_registry` (or `spawn_workspace_window` early-returns) are
-/// required preconditions — without them the click/Enter would silently
-/// no-op past the unpack, which is why the registry-length assertion below is
-/// the meaningful teeth: it can only go from 0 to 1 if the ENTIRE chain
-/// (unpack → recover_workspace → open_window) ran to completion.
+/// `install_window_registry` (or `spawn_workspace_window` early-returns) is a
+/// required precondition — without it the click/Enter would silently no-op
+/// past the unpack, which is why the registry-length assertion below is the
+/// meaningful teeth: it can only go from 0 to 1 if the ENTIRE chain (unpack →
+/// recover_workspace → open_window) ran to completion. `install_state_root`
+/// is also called here, but it is not a hard precondition in the same way:
+/// if unset, `open_demo_workspace` falls back to the system temp dir
+/// (`window.rs:719-721`) rather than early-returning — less deterministic
+/// (a shared, uncleaned directory), which is why `install_state_root` is
+/// still called here for hermeticity.
 #[gpui::test]
 #[serial]
 fn hero_enter_activates_open_demo(cx: &mut TestAppContext) {
