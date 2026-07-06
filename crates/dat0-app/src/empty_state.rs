@@ -141,7 +141,7 @@ impl EmptyState {
 
         if band_visible(mode) {
             let right_col: gpui::AnyElement = if self.recents_empty {
-                self.sample_column(cx)
+                self.sample_column(hero, cx)
             } else {
                 self.recents_column(cx)
             };
@@ -159,7 +159,16 @@ impl EmptyState {
             let take_tour_key = cx.listener(|_this, _ev: &gpui::KeyDownEvent, _window, cx| {
                 crate::onboarding::open_deferred(cx);
             });
+            // Slice 6: `hero-open-demo`'s keyboard twin. Unlike take-tour this
+            // does NOT need the dispatcher hop — `open_demo_workspace` opens a
+            // brand-new window (not a dialog on the ALREADY-taken active
+            // window), so the re-entrancy hazard that forces `open_deferred`
+            // does not apply here. Both handlers call the SAME production fn
+            // so mouse and keyboard cannot drift.
             let open_demo_handler = cx.listener(|_this, _ev, _window, cx| {
+                crate::window::open_demo_workspace(cx);
+            });
+            let open_demo_key = cx.listener(|_this, _ev: &gpui::KeyDownEvent, _window, cx| {
                 crate::window::open_demo_workspace(cx);
             });
             div()
@@ -226,6 +235,19 @@ impl EmptyState {
                         .child(
                             div()
                                 .id("hero-open-demo")
+                                // Slice 6: real Tab stop + Enter/Space activation,
+                                // same pattern as `hero-take-tour` above.
+                                .focus_stop(
+                                    "hero-open-demo",
+                                    hero.get("hero-open-demo"),
+                                    0,
+                                    open_demo_key,
+                                )
+                                .a11y(
+                                    "hero-open-demo",
+                                    AccessRole::Button,
+                                    dat0_i18n::t("hero.demo.cta"),
+                                )
                                 .child(dat0_i18n::t("hero.demo.cta"))
                                 .on_click(open_demo_handler),
                         ),
@@ -246,7 +268,7 @@ impl EmptyState {
                 .into_any_element()
         } else {
             let right_col: gpui::AnyElement = if self.recents_empty {
-                self.sample_column(cx)
+                self.sample_column(hero, cx)
             } else {
                 self.recents_column(cx)
             };
@@ -288,6 +310,7 @@ impl EmptyState {
     /// Feature OFF (release) → identity no-op.
     fn sample_column(
         &self,
+        hero: &HeroHandles,
         cx: &mut gpui::Context<crate::window::WorkspaceShell>,
     ) -> gpui::AnyElement {
         let mut col = div()
@@ -301,14 +324,23 @@ impl EmptyState {
             let subtitle = entry.subtitle;
             let id = gpui::SharedString::from(format!("hero-sample-{i}"));
             let static_id = sample_static_id(&kind);
+            // Slice 6: a second clone feeds the keyboard twin below — `kind`
+            // itself is moved into `handler`'s closure exactly as before.
+            let kind_for_key = kind.clone();
             let handler = cx.listener(move |this, _ev, _window, cx| {
                 this.open_sample_kind(kind.clone(), cx);
+            });
+            let key_handler = cx.listener(move |this, _ev: &gpui::KeyDownEvent, _window, cx| {
+                this.open_sample_kind(kind_for_key.clone(), cx);
             });
             col = col.child(
                 div()
                     .id(id)
                     .flex()
                     .flex_col()
+                    // Slice 6: real Tab stop + Enter/Space activation, same
+                    // static id the `.a11y` node below (and the oracle) uses.
+                    .focus_stop(static_id, hero.get(static_id), 0, key_handler)
                     .a11y(static_id, AccessRole::Button, title)
                     .child(div().child(title))
                     .child(div().child(subtitle))
@@ -319,9 +351,25 @@ impl EmptyState {
         let open_handler = cx.listener(|this, _ev, _window, cx| {
             this.open_file_picker(cx);
         });
+        let open_key_handler = cx.listener(|this, _ev: &gpui::KeyDownEvent, _window, cx| {
+            this.open_file_picker(cx);
+        });
         col.child(
             div()
                 .id("hero-open-file-samples")
+                // Slice 6: real Tab stop + Enter/Space activation, same
+                // pattern as the sample cards above.
+                .focus_stop(
+                    "hero-open-file-samples",
+                    hero.get("hero-open-file-samples"),
+                    0,
+                    open_key_handler,
+                )
+                .a11y(
+                    "hero-open-file-samples",
+                    AccessRole::Button,
+                    dat0_i18n::t("hero.open_file"),
+                )
                 .child(dat0_i18n::t("hero.open_file"))
                 .on_click(open_handler),
         )
