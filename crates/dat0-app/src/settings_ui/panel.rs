@@ -279,7 +279,7 @@ impl SettingsPanel {
                     .a11y_label(AccessRole::Label, placeholder.clone())
                     .child(placeholder)
             })
-            .child(
+            .child({
                 // Slice 6 (keyboard-nav): a `debug_selector`-only wrapper (no
                 // `.a11y` node — `Input` already renders its own text content,
                 // and this div wraps geometry only) so the keyboard-nav
@@ -287,15 +287,20 @@ impl SettingsPanel {
                 // `VisualTestContext::debug_bounds` to seed a real focus
                 // baseline. `Input` (unlike `Button`) does NOT implement
                 // `InteractiveElement` (see the T0 note above `render_memory_budget`),
-                // so the selector must live on a wrapping div. `debug_selector`
-                // is gpui's own API and is already a no-op outside test/
-                // `test-support` builds (`elements/div.rs`), so this is safe
-                // to call unconditionally, same as every other `.a11y`/
-                // `.focus_stop` call in this file.
-                div()
+                // so the selector must live on a wrapping div. Unlike the
+                // `.a11y`/`.focus_stop` calls in this file, `debug_selector`
+                // has no release-mode purpose at all, so it is cfg-gated
+                // behind `a11y-capture` (same idiom as the crash-report body
+                // wrapper in `view/crash_report.rs`) to keep the release
+                // Name-input child byte-identical to a plain `Input::new`.
+                #[cfg(feature = "a11y-capture")]
+                let name_child = div()
                     .debug_selector(|| "settings-name-input".to_string())
-                    .child(Input::new(&self.name_input)),
-            )
+                    .child(Input::new(&self.name_input));
+                #[cfg(not(feature = "a11y-capture"))]
+                let name_child = Input::new(&self.name_input);
+                name_child
+            })
             .child(Input::new(&self.email_input))
     }
 
