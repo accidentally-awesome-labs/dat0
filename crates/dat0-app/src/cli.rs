@@ -49,6 +49,15 @@ pub enum PackageCmd {
     /// (not in `VERBS`, not in the clap builder). Recognised only by the
     /// early-return path in [`parse`].
     TelemetryTest,
+    /// Hidden debug-only trigger: `dat0 __crash-test <dir>`.
+    ///
+    /// Arms the real crash guard against `<dir>`, then deliberately panics with
+    /// a fake-PII message so an out-of-process test can assert the staged,
+    /// redacted `last-crash.json`. `#[cfg(debug_assertions)]` → NEVER compiled
+    /// into a release binary. Recognised only by the early-return path in
+    /// [`parse`]; never in `VERBS`, never in `--help`.
+    #[cfg(debug_assertions)]
+    CrashTest { dir: Option<PathBuf> },
 }
 
 /// The set of recognized package subcommand verbs.
@@ -69,6 +78,14 @@ pub fn parse(args: &[String]) -> Option<PackageCmd> {
     // --help but is recognised here before the verb gate.
     if verb == "__telemetry-test" {
         return Some(PackageCmd::TelemetryTest);
+    }
+    // Hidden debug-only crash trigger — same early-return discipline as
+    // `__telemetry-test`, but compiled out of release builds entirely.
+    #[cfg(debug_assertions)]
+    if verb == "__crash-test" {
+        return Some(PackageCmd::CrashTest {
+            dir: args.get(2).map(PathBuf::from),
+        });
     }
     if !VERBS.contains(&verb.as_str()) {
         return None;
@@ -217,6 +234,27 @@ pub fn run(cmd: PackageCmd) -> i32 {
         println!("sent test event");
         return 0;
     }
+    // Hidden debug-only crash trigger. Arms the REAL crash guard (the exact
+    // assembly main.rs uses at boot), models an abnormal exit, and panics — so
+    // `tests/crash_e2e.rs` can spawn this binary and assert the staged sentinel.
+    #[cfg(debug_assertions)]
+    if let PackageCmd::CrashTest { dir } = &cmd {
+        let dir = match dir {
+            Some(d) => d.clone(),
+            None => {
+                eprintln!("usage: dat0 __crash-test <dir>");
+                return 2;
+            }
+        };
+        let guard = crate::boot::CrashGuard::arm(&dir).expect("arm crash guard");
+        // Model an abnormal exit: the guard's Drop (clear_running) must NOT run,
+        // exactly as a real crash (release `panic = "abort"` skips destructors).
+        // `forget` keeps `running.marker` on disk in BOTH the dev-profile unwind
+        // (the test) and the release-profile abort.
+        std::mem::forget(guard);
+        // Fake-PII payload → proves end-to-end redaction through the real hook.
+        panic!("dat0 __crash-test sentinel /Users/secretuser/private.csv");
+    }
     let rt = match tokio::runtime::Runtime::new() {
         Ok(rt) => rt,
         Err(e) => {
@@ -294,6 +332,12 @@ pub async fn run_async(cmd: PackageCmd) -> i32 {
         // runtime is built; it can never reach this async dispatch path.
         PackageCmd::TelemetryTest => {
             unreachable!("TelemetryTest is handled in run() before the runtime")
+        }
+        // CrashTest is handled synchronously in `run()` before the runtime and
+        // diverges (panics); it can never reach this async dispatch.
+        #[cfg(debug_assertions)]
+        PackageCmd::CrashTest { .. } => {
+            unreachable!("CrashTest is handled in run() before the runtime")
         }
     }
 }
@@ -660,6 +704,17 @@ mod tests {
                 a: PathBuf::from("/a.dat0"),
                 b: PathBuf::from("/b.dat0"),
                 json: true,
+            }
+        );
+    }
+
+    #[test]
+    fn crash_test_verb_parses_with_dir() {
+        let cmd = parse(&argv(&["dat0", "__crash-test", "/tmp/x"])).unwrap();
+        assert_eq!(
+            cmd,
+            PackageCmd::CrashTest {
+                dir: Some(PathBuf::from("/tmp/x")),
             }
         );
     }
