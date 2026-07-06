@@ -16,11 +16,13 @@ use dat0_app::telemetry::crash;
 #[test]
 fn real_panic_stages_redacted_sentinel() {
     let dir = tempfile::tempdir().unwrap();
-    // Separate tempdir to absorb the child's `AppContext::boot()` side effects
-    // (config/data dirs, settings load, settings-watcher thread, sqlite-scanner
-    // bootstrap) so the test never touches the real dev/CI dirs and boots with
-    // deterministic default settings. `dir` (the argv) stays the sole crash
-    // assertion target and must not be conflated with this.
+    // Separate tempdir to contain the child's `AppContext::boot()` dir side
+    // effects (config/data dirs, settings load + watcher thread, the
+    // sqlite-scanner bootstrap DB) so the test never touches the real dev/CI
+    // dirs and boots with deterministic default settings. (DuckDB's own
+    // extension cache at `~/.duckdb/extensions/` is process-global and NOT
+    // redirected by these env vars — but it is orthogonal to the crash
+    // sentinel.) `dir` (the argv) stays the sole crash assertion target.
     let scratch = tempfile::tempdir().unwrap();
     let out = Command::new(env!("CARGO_BIN_EXE_dat0"))
         .arg("__crash-test")

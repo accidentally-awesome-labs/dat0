@@ -708,6 +708,9 @@ mod tests {
         );
     }
 
+    // Gated to match the `#[cfg(debug_assertions)]` `CrashTest` variant it
+    // references — without this, `cargo test --release` fails to compile.
+    #[cfg(debug_assertions)]
     #[test]
     fn crash_test_verb_parses_with_dir() {
         let cmd = parse(&argv(&["dat0", "__crash-test", "/tmp/x"])).unwrap();
