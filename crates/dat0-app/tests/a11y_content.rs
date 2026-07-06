@@ -434,6 +434,8 @@ fn inspector_renders_field_content(cx: &mut TestAppContext) {
     let snap = A11ySnapshot {
         state: kittest::State::new(cap.update),
         click_ids: cap.click_ids,
+        // No window in these content-only tests → nothing focused.
+        focused: None,
     };
 
     // Overview line: brittle to reconstruct exactly in general (row/col
@@ -666,6 +668,8 @@ fn banner_renders_title_and_body_content(cx: &mut TestAppContext) {
     let snap = A11ySnapshot {
         state: kittest::State::new(cap.update),
         click_ids: cap.click_ids,
+        // No window in these content-only tests → nothing focused.
+        focused: None,
     };
 
     // Title → `Alert` node (always rendered). `query_by_role` disambiguates by

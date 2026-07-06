@@ -65,6 +65,9 @@ pub struct A11ySnapshot {
     /// `click_ids[i]` is the static `.a11y(id, …)` id for `NodeId(i as u64 + 1)`,
     /// or `None` for a content-only `.a11y_label(…)` node.
     pub click_ids: Vec<Option<&'static str>>,
+    /// Label of the element focused at capture time (via the focus oracle), or
+    /// `None` if nothing focusable is focused.
+    pub focused: Option<String>,
 }
 
 impl A11ySnapshot {
@@ -77,11 +80,18 @@ impl A11ySnapshot {
         dat0_app::a11y::reset();
         cx.update(|window, _app| window.refresh());
         cx.run_until_parked();
+        let focused = cx.update(|window, _app| dat0_app::a11y::focused_label(window));
         let cap = dat0_app::a11y::take_tree_update();
         Self {
             state: State::new(cap.update),
             click_ids: cap.click_ids,
+            focused,
         }
+    }
+
+    /// The label of the element focused at capture time.
+    pub fn focused_label(&self) -> Option<&str> {
+        self.focused.as_deref()
     }
 
     /// The synthetic root wrapped as a queryable [`KNode`]. Queries descend from
@@ -182,6 +192,23 @@ impl A11ySnapshot {
             .expect("clicked node must have painted bounds resolvable by its id");
         cx.simulate_click(bounds.center(), gpui::Modifiers::none());
     }
+}
+
+// ----------------------------------------------------------------------------
+// Keyboard-nav combinators (Slice 6). Tab routing is provided by gpui-component
+// `Root` (binds "tab"→`focus_next` / "shift-tab"→`focus_prev`), already mounted
+// on every dat0 test window via `gpui_component::init`.
+// ----------------------------------------------------------------------------
+
+/// Press Tab (routes through gpui-component `Root`'s Tab binding → `focus_next`).
+/// Recapture afterward to read the new focus.
+pub fn press_tab(cx: &mut VisualTestContext) {
+    cx.simulate_keystrokes("tab");
+}
+
+/// Press Shift-Tab (→ `focus_prev`).
+pub fn press_shift_tab(cx: &mut VisualTestContext) {
+    cx.simulate_keystrokes("shift-tab");
 }
 
 // ----------------------------------------------------------------------------

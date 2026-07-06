@@ -34,7 +34,7 @@ use gpui::{IntoElement, ParentElement, Styled, div, prelude::*, px};
 // the `a11y-capture` feature it emits an AccessKit node + chains
 // `debug_selector`; in release it is an identity no-op (`AccessRole` resolves to
 // the feature-off stub enum, so this import compiles in both states).
-use crate::a11y::{A11yExt as _, AccessRole};
+use crate::a11y::{A11yExt as _, AccessRole, FocusStopExt as _};
 
 /// Which hero variant to render. `Enriched` (first run only) adds the
 /// value-prop band + featured demo CTA above the base hero; `Plain` is the
@@ -75,12 +75,26 @@ pub fn band_visible(mode: HeroMode) -> bool {
 /// the only `BundledCsv`, Chinook the only `BundledSqlite`, NYC taxi the only
 /// `Remote`). If a future catalog adds a second entry of the same variant,
 /// this match must grow a finer discriminant (e.g. on `dest_filename`).
-fn sample_static_id(kind: &crate::sample_data::SampleKind) -> &'static str {
+pub(crate) fn sample_static_id(kind: &crate::sample_data::SampleKind) -> &'static str {
     use crate::sample_data::SampleKind;
     match kind {
         SampleKind::BundledCsv { .. } => "hero-sample-iris",
         SampleKind::BundledSqlite { .. } => "hero-sample-chinook",
         SampleKind::Remote { .. } => "hero-sample-nyc-taxi",
+    }
+}
+
+/// Stable hero-button focus handles, passed down from the persistent
+/// `WorkspaceShell` (the `EmptyState` is transient — it must not mint handles).
+/// Slice 6: keyboard-nav / focus reachability.
+pub struct HeroHandles {
+    pub map: std::collections::HashMap<&'static str, gpui::FocusHandle>,
+}
+impl HeroHandles {
+    pub fn get(&self, id: &'static str) -> &gpui::FocusHandle {
+        self.map
+            .get(id)
+            .expect("hero handle pre-registered in WorkspaceShell::render")
     }
 }
 
@@ -120,25 +134,41 @@ impl EmptyState {
     /// use `cx.listener(...)` to reach the shell's action helpers directly.
     pub fn render(
         &self,
+        hero: &HeroHandles,
         cx: &mut gpui::Context<crate::window::WorkspaceShell>,
     ) -> gpui::AnyElement {
         let mode = hero_mode(self.first_run_done);
 
         if band_visible(mode) {
             let right_col: gpui::AnyElement = if self.recents_empty {
-                self.sample_column(cx)
+                self.sample_column(hero, cx)
             } else {
-                self.recents_column(cx)
+                self.recents_column(hero, cx)
             };
             // `open_deferred` (not `open`): this click handler fires inside a
             // `window.update` of the active window, where a synchronous
             // `onboarding::open` re-enters the taken window and silently
             // no-ops. The deferred dispatcher hop runs it from a plain App
             // context after the frame (the auto-show mechanism).
+            // Single source of truth for "activate the tour" — both the mouse
+            // `on_click` and the keyboard `on_key_down` twin (Slice 6) call the
+            // same `crate::onboarding::open_deferred`, so they cannot drift.
             let take_tour_handler = cx.listener(|_this, _ev, _window, cx| {
                 crate::onboarding::open_deferred(cx);
             });
+            let take_tour_key = cx.listener(|_this, _ev: &gpui::KeyDownEvent, _window, cx| {
+                crate::onboarding::open_deferred(cx);
+            });
+            // Slice 6: `hero-open-demo`'s keyboard twin. Unlike take-tour this
+            // does NOT need the dispatcher hop — `open_demo_workspace` opens a
+            // brand-new window (not a dialog on the ALREADY-taken active
+            // window), so the re-entrancy hazard that forces `open_deferred`
+            // does not apply here. Both handlers call the SAME production fn
+            // so mouse and keyboard cannot drift.
             let open_demo_handler = cx.listener(|_this, _ev, _window, cx| {
+                crate::window::open_demo_workspace(cx);
+            });
+            let open_demo_key = cx.listener(|_this, _ev: &gpui::KeyDownEvent, _window, cx| {
                 crate::window::open_demo_workspace(cx);
             });
             div()
@@ -166,6 +196,19 @@ impl EmptyState {
                         .child(
                             div()
                                 .id("hero-take-tour")
+                                // Slice 6 (keyboard-nav): make this hero button a
+                                // real keyboard control — a Tab stop (via `Root`'s
+                                // focus_next) that takes focus, activates on
+                                // Enter/Space, and paints a focus ring. Ships in
+                                // release (genuine a11y fix). The stable focus
+                                // handle lives on the persistent `WorkspaceShell`
+                                // (passed in `hero`), NOT this transient view.
+                                .focus_stop(
+                                    "hero-take-tour",
+                                    hero.get("hero-take-tour"),
+                                    0,
+                                    take_tour_key,
+                                )
                                 // Test-only locator (release no-op): `.a11y` both
                                 // chains `debug_selector` (so the headless UAT can
                                 // find this button's painted bounds via
@@ -192,6 +235,19 @@ impl EmptyState {
                         .child(
                             div()
                                 .id("hero-open-demo")
+                                // Slice 6: real Tab stop + Enter/Space activation,
+                                // same pattern as `hero-take-tour` above.
+                                .focus_stop(
+                                    "hero-open-demo",
+                                    hero.get("hero-open-demo"),
+                                    0,
+                                    open_demo_key,
+                                )
+                                .a11y(
+                                    "hero-open-demo",
+                                    AccessRole::Button,
+                                    dat0_i18n::t("hero.demo.cta"),
+                                )
                                 .child(dat0_i18n::t("hero.demo.cta"))
                                 .on_click(open_demo_handler),
                         ),
@@ -212,9 +268,9 @@ impl EmptyState {
                 .into_any_element()
         } else {
             let right_col: gpui::AnyElement = if self.recents_empty {
-                self.sample_column(cx)
+                self.sample_column(hero, cx)
             } else {
-                self.recents_column(cx)
+                self.recents_column(hero, cx)
             };
             div()
                 .size_full()
@@ -254,6 +310,7 @@ impl EmptyState {
     /// Feature OFF (release) → identity no-op.
     fn sample_column(
         &self,
+        hero: &HeroHandles,
         cx: &mut gpui::Context<crate::window::WorkspaceShell>,
     ) -> gpui::AnyElement {
         let mut col = div()
@@ -267,14 +324,23 @@ impl EmptyState {
             let subtitle = entry.subtitle;
             let id = gpui::SharedString::from(format!("hero-sample-{i}"));
             let static_id = sample_static_id(&kind);
+            // Slice 6: a second clone feeds the keyboard twin below — `kind`
+            // itself is moved into `handler`'s closure exactly as before.
+            let kind_for_key = kind.clone();
             let handler = cx.listener(move |this, _ev, _window, cx| {
                 this.open_sample_kind(kind.clone(), cx);
+            });
+            let key_handler = cx.listener(move |this, _ev: &gpui::KeyDownEvent, _window, cx| {
+                this.open_sample_kind(kind_for_key.clone(), cx);
             });
             col = col.child(
                 div()
                     .id(id)
                     .flex()
                     .flex_col()
+                    // Slice 6: real Tab stop + Enter/Space activation, same
+                    // static id the `.a11y` node below (and the oracle) uses.
+                    .focus_stop(static_id, hero.get(static_id), 0, key_handler)
                     .a11y(static_id, AccessRole::Button, title)
                     .child(div().child(title))
                     .child(div().child(subtitle))
@@ -285,9 +351,25 @@ impl EmptyState {
         let open_handler = cx.listener(|this, _ev, _window, cx| {
             this.open_file_picker(cx);
         });
+        let open_key_handler = cx.listener(|this, _ev: &gpui::KeyDownEvent, _window, cx| {
+            this.open_file_picker(cx);
+        });
         col.child(
             div()
                 .id("hero-open-file-samples")
+                // Slice 6: real Tab stop + Enter/Space activation, same
+                // pattern as the sample cards above.
+                .focus_stop(
+                    "hero-open-file-samples",
+                    hero.get("hero-open-file-samples"),
+                    0,
+                    open_key_handler,
+                )
+                .a11y(
+                    "hero-open-file-samples",
+                    AccessRole::Button,
+                    dat0_i18n::t("hero.open_file"),
+                )
                 .child(dat0_i18n::t("hero.open_file"))
                 .on_click(open_handler),
         )
@@ -296,8 +378,14 @@ impl EmptyState {
 
     /// Right column when recents exist: a clickable list of recent paths,
     /// then "Open file…".
+    ///
+    /// Slice 6 Task 1b: the fixed-id "Open file…" button (`hero-open-file-recents`)
+    /// is wired to a real Tab stop, the same pattern `sample_column` uses for
+    /// `hero-open-file-samples`. The dynamic `hero-recent-{i}` list rows are
+    /// intentionally left un-wired (out of scope for this task).
     fn recents_column(
         &self,
+        hero: &HeroHandles,
         cx: &mut gpui::Context<crate::window::WorkspaceShell>,
     ) -> gpui::AnyElement {
         let recent_entries: Vec<crate::recents::RecentEntry> =
@@ -326,9 +414,25 @@ impl EmptyState {
         let open_handler = cx.listener(|this, _ev, _window, cx| {
             this.open_file_picker(cx);
         });
+        let open_key_handler = cx.listener(|this, _ev: &gpui::KeyDownEvent, _window, cx| {
+            this.open_file_picker(cx);
+        });
         col.child(
             div()
                 .id("hero-open-file-recents")
+                // Slice 6 Task 1b: real Tab stop + Enter/Space activation, same
+                // pattern as `hero-open-file-samples` in `sample_column`.
+                .focus_stop(
+                    "hero-open-file-recents",
+                    hero.get("hero-open-file-recents"),
+                    0,
+                    open_key_handler,
+                )
+                .a11y(
+                    "hero-open-file-recents",
+                    AccessRole::Button,
+                    dat0_i18n::t("hero.open_file"),
+                )
                 .child(dat0_i18n::t("hero.open_file"))
                 .on_click(open_handler),
         )
