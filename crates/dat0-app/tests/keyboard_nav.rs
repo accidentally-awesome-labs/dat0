@@ -24,6 +24,7 @@ use std::path::PathBuf;
 use std::rc::Rc;
 use std::sync::Arc;
 use std::sync::OnceLock;
+use std::time::Duration;
 
 use gpui::{AppContext as _, Entity, TestAppContext, VisualTestContext};
 use gpui_component::{Root, WindowExt as _};
@@ -32,11 +33,14 @@ use serial_test::serial;
 
 use support::{A11ySnapshot, press_shift_tab, press_tab};
 
+use dat0_app::grid::GridDataSource;
+use dat0_app::grid::selection::CellCoord;
 use dat0_app::main_bridge::{MainLoop, MainThreadDispatcher};
 use dat0_app::session::Session;
 use dat0_app::settings::store::SettingsStore;
 use dat0_app::settings_ui::panel::SettingsPanel;
 use dat0_app::window::WorkspaceShell;
+use dat0_engine::QueryEngine as _;
 
 const BUDGET: u64 = 128 * 1024 * 1024;
 
@@ -74,6 +78,12 @@ struct AsyncHarness {
 impl AsyncHarness {
     fn enter(&self) -> tokio::runtime::EnterGuard<'_> {
         self.rt.enter()
+    }
+    /// Block on a future using the harness's own runtime (Task 3: needed to
+    /// resolve `engine.get_tables()` / `GridDataSource::new` the same way
+    /// `tests/a11y_content.rs`'s `AsyncHarness::block_on` does).
+    fn block_on<F: std::future::Future>(&self, f: F) -> F::Output {
+        self.rt.block_on(f)
     }
 }
 
@@ -882,4 +892,243 @@ fn settings_other_toggles_reachable_and_operable(cx: &mut gpui::TestAppContext) 
         "Space on the focused updates toggle (after the click already flipped \
          it once) must flip it back to its original value"
     );
+}
+
+// ----------------------------------------------------------------------------
+// Task 3 — Grid Tab-reachability + arrow-nav via SelectionModel.
+// ----------------------------------------------------------------------------
+//
+// The grid does NOT drive cell navigation through the gpui tab-focus chain
+// the way the hero buttons / Settings DIY toggles do (Tasks 0-2 above).
+// Instead: Tab must reach the grid SHELL — the ONE `track_focus` handle on
+// the `#workspace-shell` root div — and from there ARROW keys drive the
+// `SelectionModel` via `grid/keymap.rs` (`key_from_event` -> `apply_key`),
+// entirely independent of gpui focus. The grid's visible ring
+// (`GridTableDelegate::render_td`'s `is_active` cell) tracks
+// `SelectionModel::active()`, not `window.focused()`. So this test asserts
+// arrow-nav via `grid_active_cell_for_test()` (the `SelectionModel`), not the
+// `A11ySnapshot` focus oracle Tasks 0-2 use (grid cells are `.a11y_label`
+// content nodes, not focusable — there is nothing for that oracle to name
+// here).
+//
+// ## Why this test calls `window.focus_next()` directly instead of only
+// `press_tab` (empirically derived — read before changing this test)
+//
+// Every hero/Settings test above establishes a baseline with a REAL click
+// before ever pressing Tab, because gpui-component `Root`'s "tab" binding
+// only dispatches once SOMETHING in the window is already focused (T0's
+// finding, `focus_shell_neutrally`'s doc comment). In the grid's minimal
+// mounted scene there is no OTHER focusable element to click that is NOT
+// the shell itself — every click bubbles (nothing intercepts propagation)
+// to `#workspace-shell`'s own `on_click(click_to_focus)`, which calls
+// `self.focus_handle.focus(window)` DIRECTLY. That direct-focus path
+// predates this task (T11) and is unaffected by `tab_stop`/`tab_index`, so
+// a click-then-Tab-then-arrow flow passes identically whether or not the
+// shell is a registered tab stop — verified empirically by temporarily
+// forcing `tab_stop(false)` and re-running: click+Tab+Down still moved the
+// active cell. That flow therefore cannot serve as this task's RED/GREEN
+// proof; it is exercised separately below as a realistic-UX regression
+// guard instead.
+//
+// The property Task 3 actually changes is `Window::focus_next()`'s tab-order
+// walk (`TabStopMap::next`): with NOTHING focused, `next(None)` returns the
+// first REGISTERED tab stop, or `None` if no node has `tab_stop == true`
+// anywhere in the frame (verified by reading `gpui-0.2.2/src/tab_stop.rs`).
+// Before this task neither the shell (`track_focus`'d, `tab_stop` never
+// set) nor gpui-component `Table`'s own internal handle (also `tab_stop:
+// false` by construction) satisfies that, so `focus_next()` is a genuine
+// no-op from a clean window — confirmed empirically: forcing
+// `tab_stop(false)` and calling `window.focus_next()` from a freshly
+// dialog-flushed, nothing-focused window left `window.focused()` at `None`
+// and a subsequent Down keystroke left the active cell at its starting
+// `(0, 0)`. `window.focus_next()` is exactly the function
+// `gpui_component::Root::on_action_tab` invokes for a real "tab" keystroke
+// once dispatch reaches it (`root.rs`); calling it directly here tests the
+// SAME production mechanism the fix touches, while sidestepping the
+// separate, pre-existing, already-documented "Root dispatch needs a prior
+// focus" precondition — an orthogonal harness/gpui-component limitation
+// this task neither introduces nor is responsible for fixing.
+
+/// Import `a,b\n1,2\n3,4\n5,6\n` via the production `handle_drop` flow (the
+/// Slice-3/5 grid-seeding recipe, copied from
+/// `tests/a11y_content.rs::grid_renders_cell_values_as_a11y_cells`), mount it
+/// as the active grid, and settle the PD-018 page-0 prefetch so the
+/// `SelectionModel` is a real, non-empty (3 rows x 2 cols) grid — enough rows
+/// for two separate "down" presses to each move the active cell by one row
+/// without clamping at the bottom edge.
+#[gpui::test]
+#[serial]
+fn grid_tab_reach_then_arrow_moves_active_cell(cx: &mut TestAppContext) {
+    let cfg = tempfile::tempdir().unwrap();
+    let state = tempfile::tempdir().unwrap();
+    set_config_dir(cfg.path());
+
+    ensure_dispatcher();
+    let harness = enter_async_harness(cx);
+    let _guard = harness.enter(); // held to end-of-test
+    init_components(cx);
+    drain_dispatcher(cx); // clear any stale queued closure (no window yet → no-op)
+
+    let session = build_empty_session_in(&harness, state.path());
+
+    let csv = state.path().join("cells.csv");
+    std::fs::write(&csv, "a,b\n1,2\n3,4\n5,6\n").unwrap();
+
+    let (shell, cx) = open_shell_window(cx, Arc::clone(&session));
+    cx.run_until_parked();
+
+    // MUST flush + close the first-run auto-show tour dialog before doing
+    // anything else — exactly the T0/T1 baseline dance above. Skipping this
+    // was an earlier iteration's bug: `Root::open_dialog` mints a FRESH focus
+    // handle and calls `.focus(window)` on it immediately, which silently
+    // steals + traps focus (a CHILD of `#workspace-shell`, since the dialog
+    // layer is chained onto the same root div) and confounds every
+    // `window.focused()` probe below with the dialog's own handle instead of
+    // whatever the test is actually trying to observe.
+    drain_dispatcher(cx);
+    cx.run_until_parked();
+    assert!(
+        dialog_open(cx),
+        "sanity: first-run auto-show opened a dialog"
+    );
+    cx.update(|window, app| window.close_dialog(app));
+    cx.run_until_parked();
+    assert!(!dialog_open(cx), "baseline: auto-show dialog closed");
+
+    // Import via the production `handle_drop` flow, driven to completion with
+    // `block_test` (Gap-3 fallback) so the cross-thread `spawn_blocking` wake
+    // is awaited and the table is actually registered.
+    let sess = Arc::clone(&session);
+    let csv2 = csv.clone();
+    let task = cx.cx.spawn(async move |_app| {
+        let _ = dat0_app::file_drop::handle_drop(vec![csv2], sess).await;
+    });
+    cx.executor().block_test(task);
+
+    let engine = session.lock().engine.clone();
+    let tables = harness
+        .block_on(async { engine.get_tables().await })
+        .expect("get_tables");
+    let table_name = tables
+        .iter()
+        .map(|t| t.name.clone())
+        .next()
+        .expect("the CSV import must register exactly one table");
+    let ds = harness
+        .block_on(async { GridDataSource::new(Arc::clone(&engine), table_name).await })
+        .expect("GridDataSource::new");
+    let ds = Arc::new(ds);
+
+    // Mount it as the active grid view (mirrors `route_drop_outcomes`'s
+    // `set_data_source` + `notify`).
+    let ds_for_mount = Arc::clone(&ds);
+    shell.update(cx, |view, cx| {
+        view.set_data_source(ds_for_mount);
+        cx.notify();
+    });
+
+    // Pump the foreground queue + drain the dispatcher until page 0 is
+    // resident in the grid LRU (PD-018) — until then `render_td` paints the
+    // em-dash placeholder for every cell, which is irrelevant to selection
+    // movement, but settling here also gives the lazily-built
+    // `SelectionModel` (constructed once `rows > 0 && cols > 0` on the same
+    // render, `window.rs`) time to exist before we read it.
+    let mut page_ready = false;
+    for _ in 0..100 {
+        cx.run_until_parked();
+        drain_dispatcher(cx);
+        cx.run_until_parked();
+        if ds.cell_render(0, 0).is_some() {
+            page_ready = true;
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(20));
+    }
+    assert!(
+        page_ready,
+        "page 0 must load into the grid LRU before the grid can be interacted with"
+    );
+
+    // ── Clean baseline: nothing focused, active cell at its fresh origin ────
+    assert!(
+        cx.update(|window, app| window.focused(app).is_none()),
+        "clean baseline: nothing should be focused yet (dialog flushed, no click)"
+    );
+    let before: CellCoord = shell.update(cx, |ws, _cx| ws.grid_active_cell_for_test());
+    assert_eq!(
+        before,
+        CellCoord { row: 0, col: 0 },
+        "sanity: a freshly-mounted SelectionModel starts at the origin cell"
+    );
+
+    // ── Core RED/GREEN proof: Tab-reachability via the registered tab stop ──
+    //
+    // RED (pre-fix, verified manually by forcing `tab_stop(false)`):
+    // `focus_next()` leaves `window.focused()` at `None` and the following
+    // Down keystroke leaves `before` unchanged — Tab genuinely does not
+    // reach the grid, so the arrow has nothing to drive.
+    //
+    // GREEN (post-fix, this assertion): `focus_next()` finds the shell as
+    // the (only, but now genuinely registered) tab stop, focus becomes
+    // `Some`, and the dispatch path for the following Down keystroke now
+    // includes `#workspace-shell`'s `on_key_down(key_handler)` — the active
+    // cell advances exactly one row.
+    cx.update(|window, _app| window.focus_next());
+    cx.run_until_parked();
+    assert!(
+        cx.update(|window, app| window.focused(app).is_some()),
+        "Tab (focus_next) must reach the grid shell now that it is a \
+         registered tab stop — before this task's fix, the shell's \
+         `track_focus`'d handle had no `tab_stop`/`tab_index` set on it, so \
+         `focus_next()` found nothing and this stayed `None`"
+    );
+
+    cx.simulate_keystrokes("down");
+    cx.run_until_parked();
+    let after: CellCoord = shell.update(cx, |ws, _cx| ws.grid_active_cell_for_test());
+    assert_ne!(
+        before, after,
+        "arrow key did not move the grid active cell — Tab must not have \
+         actually reached the grid's own dispatch subtree"
+    );
+    assert_eq!(after.row, before.row + 1, "Down should advance one row");
+
+    // ── Realistic-UX regression guard: a real click, then a real "tab" ──────
+    // keystroke, then another arrow press. `#workspace-shell`'s own
+    // `on_click(click_to_focus)` (pre-dating this task) already focuses the
+    // shell directly on any unhandled click, independent of `tab_stop` — so
+    // this flow is NOT itself a RED/GREEN proof (confirmed empirically: it
+    // passes even with `tab_stop(false)` forced). It IS a genuine guard that
+    // the Task 3 wiring does not regress the ordinary mouse-then-keyboard
+    // path: a real "tab" keystroke, now satisfying the Root-dispatch
+    // precondition (something is already focused, from the click), must not
+    // knock focus OFF the grid, and the arrow must still drive the
+    // `SelectionModel` afterward.
+    let win_bounds = cx.update(|window, _app| window.bounds());
+    cx.simulate_click(win_bounds.center(), gpui::Modifiers::none());
+    cx.run_until_parked();
+    assert!(
+        cx.update(|window, app| window.focused(app).is_some()),
+        "a click into the grid must focus something (precondition for Tab)"
+    );
+
+    press_tab(cx);
+    cx.run_until_parked();
+    assert!(
+        cx.update(|window, app| window.focused(app).is_some()),
+        "a real Tab keystroke must not un-focus the grid shell — the shell \
+         is the sole registered tab stop here, so Tab should cycle back onto \
+         it rather than dropping focus"
+    );
+
+    cx.simulate_keystrokes("down");
+    cx.run_until_parked();
+    let after2: CellCoord = shell.update(cx, |ws, _cx| ws.grid_active_cell_for_test());
+    assert_eq!(
+        after2.row,
+        after.row + 1,
+        "arrow-nav must still work after a real click + real Tab keystroke"
+    );
+
+    drop(state);
 }

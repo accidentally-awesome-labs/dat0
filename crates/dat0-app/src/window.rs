@@ -6119,6 +6119,19 @@ impl Render for WorkspaceShell {
             }
         };
 
+        // Slice 6 Task 3: is a REAL grid mounted this frame (as opposed to the
+        // "Loading grid…" placeholder or the empty-state hero)? Mirrors the
+        // `body` match's own "real Table mount" guard above exactly, so the
+        // shell only becomes Tab-reachable while there is actually a grid to
+        // navigate into — the empty-state hero has its OWN tab stops (Tasks
+        // 1/1b), and turning the shell root into an extra, unlabeled tab stop
+        // while the hero is showing would insert an unexpected stop into
+        // `hero_tab_cycle_visits_every_button`'s asserted DOM-order cycle.
+        let grid_visible = matches!(
+            (self.data_source.as_ref(), self.table_state.as_ref()),
+            (Some(ds), Some(_)) if !ds.is_empty()
+        );
+
         // Funnel-click filter popover overlay (T0 / PD-016). Anchored top-right
         // while open; the entity drives its own Apply/Cancel/Clear buttons,
         // whose `Outcome` routes back via the stored subscription. A later P4b
@@ -6454,13 +6467,37 @@ impl Render for WorkspaceShell {
                     .into_any_element()
             });
 
+        // Slice 6 Task 3: make the shell root a genuine Tab stop, but ONLY
+        // while `grid_visible` (real a11y fix — Tab must reach the grid so
+        // the arrow keys below have somewhere to land; must NOT apply while
+        // the empty-state hero is showing, per the module note above).
+        //
+        // Tab-index/tab-stop metadata MUST be set on the HANDLE itself, not
+        // the element: `track_focus` marks this an EXPLICIT tracked handle,
+        // and gpui's paint pass only copies an element's `.tab_index()` onto
+        // an AUTO-created handle (div.rs `tracked_focus_handle.is_none()`
+        // guard) — never onto one already supplied via `track_focus`. See
+        // `a11y/mod.rs`'s `FocusStopExt` doc comment for the same T0 finding.
+        // `tab_stop`/`tab_index` write into the handle's shared `FocusRef`
+        // (keyed by `FocusId`), so any clone of `self.focus_handle` observes
+        // the same update — explicitly setting `tab_stop(grid_visible)` on
+        // EVERY render (rather than only ever setting it `true`) keeps the
+        // flag correct if a workspace is later closed back to the hero
+        // within the same window (data source cleared → `grid_visible`
+        // flips back to `false`).
+        let shell_focus_handle = self
+            .focus_handle
+            .clone()
+            .tab_index(0)
+            .tab_stop(grid_visible);
+
         div()
             .id("workspace-shell")
             .size_full()
             .flex()
             .flex_col()
             .relative()
-            .track_focus(&self.focus_handle)
+            .track_focus(&shell_focus_handle)
             // ── SQL Console actions (P5a T11) ─────────────────────────────────
             // View-scoped (not global `cx.on_action`) because these reach `self`
             // and three of them need a `&mut Window` (which the global App-level
@@ -6706,6 +6743,19 @@ impl WorkspaceShell {
         cx: &mut Context<Self>,
     ) {
         self.open_saved_chart(name, window, cx);
+    }
+    /// Slice 6 Task 3: the grid's live active cell, read straight off the
+    /// shell's own `SelectionModel` — there is no separate `GridView` entity;
+    /// `selection` lives directly on `WorkspaceShell` (see the field above),
+    /// lazily built once a non-empty data source is mounted (`render`).
+    pub fn grid_active_cell_for_test(&self) -> crate::grid::selection::CellCoord {
+        self.selection
+            .as_ref()
+            .expect(
+                "grid_active_cell_for_test called with no SelectionModel mounted \
+                 (no non-empty data source bound yet?)",
+            )
+            .active()
     }
 }
 
