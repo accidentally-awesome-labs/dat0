@@ -3,7 +3,7 @@
 //! `sections::all_sections()` and dispatches to per-section render methods.
 
 use super::sections;
-use crate::a11y::{A11yExt as _, AccessRole};
+use crate::a11y::{A11yExt as _, AccessRole, FocusStopExt as _};
 use crate::settings::store::SettingsStore;
 
 /// Which right-dock panel to toggle in the focused workspace window.
@@ -26,6 +26,13 @@ pub struct SettingsPanel {
     last_name: String,
     last_email: String,
     last_budget: String,
+    /// Slice 6 (keyboard-nav): stable focus handles for the 3 DIY `toggle_row`
+    /// controls (`tg-telemetry`/`tg-workspace`/`tg-updates`), keyed by their
+    /// own static id and minted once (lazily) on the persistent
+    /// `SettingsPanel` entity — mirrors `WorkspaceShell::hero_focus`
+    /// (`empty_state.rs::HeroHandles`). A per-render handle would lose focus
+    /// identity across the harness's forced `A11ySnapshot::capture` re-render.
+    toggle_focus: std::collections::HashMap<&'static str, gpui::FocusHandle>,
 }
 
 impl SettingsPanel {
@@ -57,6 +64,7 @@ impl SettingsPanel {
             last_name: name0,
             last_email: email0,
             last_budget: mb0,
+            toggle_focus: std::collections::HashMap::new(),
         }
     }
 
@@ -93,13 +101,28 @@ impl SettingsPanel {
     }
 
     fn toggle_row(
-        &self,
+        &mut self,
         id: &'static str,
         label_key: &'static str,
         on: bool,
         cx: &mut gpui::Context<Self>,
         set: fn(&SettingsStore, bool) -> anyhow::Result<()>,
     ) -> impl IntoElement {
+        // Slice 6 (keyboard-nav): stable handle keyed by this toggle's own
+        // static id, lazily minted once and reused across renders (self and
+        // cx are separate parameters, so this borrows disjoint fields — same
+        // shape as `WorkspaceShell::hero_focus_handle`).
+        let fh = self
+            .toggle_focus
+            .entry(id)
+            .or_insert_with(|| cx.focus_handle())
+            .clone();
+        // DRY (Task 2 brief resolution): `flip_toggle` is the ONE place the
+        // toggle-body logic lives — both the mouse `on_click` and the
+        // keyboard `on_key_down` twin below call it, so they cannot drift.
+        let key_activate = cx.listener(move |this, _ev: &gpui::KeyDownEvent, _w, cx| {
+            this.flip_toggle(set, on, cx);
+        });
         div()
             .id(id)
             .cursor_pointer()
@@ -110,17 +133,33 @@ impl SettingsPanel {
             .py_1()
             .child(if on { "[x]" } else { "[ ]" })
             .child(dat0_i18n::t(label_key))
+            // Slice 6: real Tab stop + Enter/Space activation on the stable
+            // handle above. Ships unconditionally (genuine a11y fix).
+            .focus_stop(id, &fh, 0, key_activate)
             // UAT settings-window slice (T0): shared by telemetry/workspace/
             // updates toggles, so annotating once here covers all three.
             // Feature OFF (release) → identity no-op.
             .a11y(id, AccessRole::Button, dat0_i18n::t(label_key))
             .on_click(cx.listener(move |this, _ev, _w, cx| {
-                let _ = set(&this.store, !on);
-                cx.notify();
+                this.flip_toggle(set, on, cx);
             }))
     }
 
-    fn render_telemetry(&self, cx: &mut gpui::Context<Self>) -> impl IntoElement {
+    /// Single source of truth for a DIY toggle row's activation body — flips
+    /// the setting via `set` and notifies. Called by BOTH `toggle_row`'s
+    /// mouse `on_click` and its keyboard `on_key_down` twin (Slice 6), so the
+    /// two input paths cannot drift apart.
+    fn flip_toggle(
+        &mut self,
+        set: fn(&SettingsStore, bool) -> anyhow::Result<()>,
+        on: bool,
+        cx: &mut gpui::Context<Self>,
+    ) {
+        let _ = set(&self.store, !on);
+        cx.notify();
+    }
+
+    fn render_telemetry(&mut self, cx: &mut gpui::Context<Self>) -> impl IntoElement {
         use gpui_component::button::Button;
         let on = self
             .store
@@ -150,7 +189,7 @@ impl SettingsPanel {
             )
     }
 
-    fn render_workspace(&self, cx: &mut gpui::Context<Self>) -> impl IntoElement {
+    fn render_workspace(&mut self, cx: &mut gpui::Context<Self>) -> impl IntoElement {
         let on = self
             .store
             .load_or_default()
@@ -165,7 +204,7 @@ impl SettingsPanel {
         ))
     }
 
-    fn render_updates(&self, cx: &mut gpui::Context<Self>) -> impl IntoElement {
+    fn render_updates(&mut self, cx: &mut gpui::Context<Self>) -> impl IntoElement {
         let on = self
             .store
             .load_or_default()
@@ -240,7 +279,23 @@ impl SettingsPanel {
                     .a11y_label(AccessRole::Label, placeholder.clone())
                     .child(placeholder)
             })
-            .child(Input::new(&self.name_input))
+            .child(
+                // Slice 6 (keyboard-nav): a `debug_selector`-only wrapper (no
+                // `.a11y` node — `Input` already renders its own text content,
+                // and this div wraps geometry only) so the keyboard-nav
+                // harness can resolve the Name input's painted bounds via
+                // `VisualTestContext::debug_bounds` to seed a real focus
+                // baseline. `Input` (unlike `Button`) does NOT implement
+                // `InteractiveElement` (see the T0 note above `render_memory_budget`),
+                // so the selector must live on a wrapping div. `debug_selector`
+                // is gpui's own API and is already a no-op outside test/
+                // `test-support` builds (`elements/div.rs`), so this is safe
+                // to call unconditionally, same as every other `.a11y`/
+                // `.focus_stop` call in this file.
+                div()
+                    .debug_selector(|| "settings-name-input".to_string())
+                    .child(Input::new(&self.name_input)),
+            )
             .child(Input::new(&self.email_input))
     }
 

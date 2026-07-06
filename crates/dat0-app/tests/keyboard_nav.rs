@@ -20,6 +20,7 @@ mod support;
 
 use std::cell::RefCell;
 use std::path::Path;
+use std::path::PathBuf;
 use std::rc::Rc;
 use std::sync::Arc;
 use std::sync::OnceLock;
@@ -29,10 +30,12 @@ use gpui_component::{Root, WindowExt as _};
 use parking_lot::Mutex;
 use serial_test::serial;
 
-use support::{A11ySnapshot, press_tab};
+use support::{A11ySnapshot, press_shift_tab, press_tab};
 
 use dat0_app::main_bridge::{MainLoop, MainThreadDispatcher};
 use dat0_app::session::Session;
+use dat0_app::settings::store::SettingsStore;
+use dat0_app::settings_ui::panel::SettingsPanel;
 use dat0_app::window::WorkspaceShell;
 
 const BUDGET: u64 = 128 * 1024 * 1024;
@@ -448,4 +451,345 @@ fn hero_enter_activates_open_demo(cx: &mut TestAppContext) {
     );
 
     drop(state);
+}
+
+// ----------------------------------------------------------------------------
+// T2 — Settings DIY toggle rows keyboard-operable + reachability tests.
+// ----------------------------------------------------------------------------
+//
+// Mount helper + `fresh_store_path` copied from `tests/settings_window.rs`
+// (per-binary-copy convention, same as the hero machinery above). Unlike the
+// hero tests, these do NOT need `DAT0_CONFIG_DIR`/`#[serial]`: `toggle_row`'s
+// `set` functions (`set_crash_submission_enabled` etc.) operate on the
+// `SettingsStore` INJECTED into `SettingsPanel::new` (built directly from
+// `fresh_store_path`'s tempdir path), not on `crate::platform::config_dir()`.
+// `settings_window.rs`'s own module doc makes the same point: only the
+// `adv-reset` tests need the `config_dir()` seam, because `open_reset_confirm`
+// is the one path that builds its own store from `config_dir()` rather than
+// reusing `self.store`. So these tests use independent tempdirs and can run
+// unserialized, exactly like `telemetry_toggle_click_persists` in that file.
+
+/// Open a real, ACTIVATED window whose root is a `gpui_component::Root`
+/// wrapping a fresh standalone [`SettingsPanel`] — mirrors
+/// `settings_window.rs::open_settings_window`.
+fn open_settings_panel(
+    cx: &mut TestAppContext,
+    settings_path: PathBuf,
+) -> (Entity<SettingsPanel>, &mut VisualTestContext) {
+    cx.update(gpui_component::init);
+    let slot: Rc<RefCell<Option<Entity<SettingsPanel>>>> = Rc::new(RefCell::new(None));
+    let slot2 = slot.clone();
+    let (_root, vcx) = cx.add_window_view(move |window, cx| {
+        window.activate_window();
+        let store = SettingsStore::with_path(settings_path.clone());
+        let panel = cx.new(|c| SettingsPanel::new(store, window, c));
+        *slot2.borrow_mut() = Some(panel.clone());
+        Root::new(panel, window, cx)
+    });
+    let panel = slot.borrow().clone().expect("panel captured");
+    (panel, vcx)
+}
+
+/// A fresh backing store path for one test — mirrors
+/// `settings_window.rs::fresh_store_path`.
+fn fresh_store_path() -> (tempfile::TempDir, PathBuf) {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let path = dir.path().join("settings.toml");
+    (dir, path)
+}
+
+/// Reload the on-disk `crash_submission_enabled` flag from `path` — mirrors
+/// `settings_window.rs::telemetry_toggle_click_persists`'s inline
+/// `reload_flag` closure, hoisted to a named fn since two tests below need it.
+fn telemetry_enabled(path: &Path) -> bool {
+    SettingsStore::with_path(path.to_path_buf())
+        .load_or_default()
+        .expect("load settings")
+        .telemetry
+        .crash_submission_enabled
+}
+
+// ## Why there is no `focus_shell_neutrally`-style baseline click here
+//
+// The hero suite establishes a keyboard-focus baseline by clicking a NEUTRAL
+// spot that lands on `WorkspaceShell`'s own root `track_focus` handle (see
+// `focus_shell_neutrally` above) before Tab can route at all — this file's T0
+// spike found that gpui-component `Root`'s "tab" binding only dispatches when
+// SOMETHING inside the window subtree is already focused (confirmed again
+// below: a stale/absent `window.focus` both fall back to
+// `dispatch_tree.root_node_id()`, which sits ABOVE the `Root`-key-context
+// node, so neither state reaches the "Root" context's Tab binding).
+// `SettingsPanel` has no equivalent root-level click-to-focus of its own
+// (unlike `WorkspaceShell`), so a DIFFERENT baseline is needed here — and
+// empirically, two further gpui-component facts rule out the obvious options:
+//
+// 1. Focus does NOT survive a section switch. `window.focused(app).is_some()`
+//    stays trivially `true` after navigating away from whatever was focused
+//    (the STALE `FocusId` is still registered globally), but that stale id is
+//    no longer part of the newly-rendered frame's dispatch tree, so it hits
+//    the SAME `root_node_id()` fallback as a totally blank window — Tab
+//    silently no-ops. So a baseline established in one section (e.g. an
+//    `Input` in Profile) cannot carry over to prove reachability in Telemetry.
+// 2. gpui-component `Button` explicitly suppresses click-to-focus:
+//    `on_mouse_down` calls `window.prevent_default()` ("Avoid focus on mouse
+//    down" — `gpui-component/ui/src/button/button.rs`). So EVERY button in
+//    this panel (Learn More, the Advanced pane's 4 buttons, MD/AI opens) is a
+//    real Tab stop but can NEVER be click-focused — ruling out "click a safe
+//    Button in the target pane" as a baseline.
+//
+// The only elements in the WHOLE panel a mouse click can focus are: the two
+// Profile `Input`s, and — now — the 3 DIY toggle rows themselves (`focus_stop`
+// chains `.track_focus`, which does NOT call `prevent_default`). Given (1),
+// the baseline must be established INSIDE the SAME section as the assertion.
+// So each test below establishes its baseline by clicking the toggle under
+// test — this does focus it directly, but the reachability proof is NOT the
+// click: it is the subsequent Shift-Tab (moves away, landing on the section's
+// other tab stop) followed by a forward Tab (which must land BACK on the
+// toggle) — a genuine round trip through gpui-component `Root`'s real "tab"/
+// "shift-tab" keybindings and `Window::focus_next`/`focus_prev`, exactly the
+// mechanism a keyboard-only user relies on, without ever touching a
+// side-effecting control (Learn More's `on_click` shells out to
+// `crate::platform::open_url` — confirmed by reading `render_telemetry` — so
+// it is deliberately never clicked by this harness).
+
+/// Task 2 (Step 1/failing -> Step 4/passing): a genuine Tab round trip reaches
+/// the telemetry DIY toggle, and Space flips it — proving both keyboard
+/// reachability AND operability in one flow.
+#[gpui::test]
+fn settings_toggle_keyboard_reachable_and_operable(cx: &mut gpui::TestAppContext) {
+    use gpui::Modifiers;
+
+    let (_dir, path) = fresh_store_path();
+    let (_panel, vcx) = open_settings_panel(cx, path.clone());
+
+    // Navigate to Telemetry — `tg-telemetry` only renders inside
+    // `render_telemetry`, and the default section is Profile.
+    let telemetry_row_label = dat0_i18n::t("settings.telemetry");
+    let snap = A11ySnapshot::capture(vcx);
+    snap.click(vcx, &telemetry_row_label);
+    vcx.run_until_parked();
+
+    let toggle_label = dat0_i18n::t("settings.telemetry.toggle");
+    let before = telemetry_enabled(&path);
+
+    // Establish the in-frame focus baseline by clicking the toggle itself
+    // (see the module note above for why this is unavoidable) — this ALSO
+    // flips it once, which the operability assertions below account for.
+    let bounds = vcx
+        .debug_bounds("tg-telemetry")
+        .expect("tg-telemetry must have painted bounds in the Telemetry pane");
+    vcx.simulate_click(bounds.center(), Modifiers::none());
+    vcx.run_until_parked();
+    let snap = A11ySnapshot::capture(vcx);
+    assert_eq!(
+        snap.focused_label(),
+        Some(toggle_label.as_str()),
+        "clicking the telemetry toggle must focus it (precondition for the Tab \
+         round trip below)"
+    );
+    assert_ne!(
+        telemetry_enabled(&path),
+        before,
+        "sanity: clicking the toggle must flip it (same on_click as the mouse path)"
+    );
+
+    // Shift-Tab moves focus AWAY from the toggle (to the pane's only other tab
+    // stop, "Learn More" — a gpui-component `Button`, invisible to the oracle,
+    // so `focused_label()` reads `None` here; the meaningful assertion is that
+    // it is no longer the toggle's label).
+    press_shift_tab(vcx);
+    let snap = A11ySnapshot::capture(vcx);
+    assert_ne!(
+        snap.focused_label(),
+        Some(toggle_label.as_str()),
+        "Shift-Tab must move focus away from the telemetry toggle"
+    );
+
+    // Forward Tab must land BACK on the toggle — the reachability proof this
+    // task requires: a real "tab" keystroke, dispatched through
+    // gpui-component `Root`'s real keybinding, reaches the DIY toggle.
+    press_tab(vcx);
+    let snap = A11ySnapshot::capture(vcx);
+    assert_eq!(
+        snap.focused_label(),
+        Some(toggle_label.as_str()),
+        "Tab did not bring focus back to the telemetry DIY toggle"
+    );
+
+    // Operability: Space on the now-refocused toggle flips it again.
+    vcx.simulate_keystrokes("space");
+    vcx.run_until_parked();
+    assert_eq!(
+        telemetry_enabled(&path),
+        before,
+        "Space on the focused telemetry toggle did not flip it back"
+    );
+
+    // Teeth: flip it again and confirm it moves once more — proves the
+    // assertion above reads real toggle state, not a one-shot fluke.
+    vcx.simulate_keystrokes("space");
+    vcx.run_until_parked();
+    assert_ne!(
+        telemetry_enabled(&path),
+        before,
+        "a second Space press must flip the telemetry toggle again"
+    );
+}
+
+/// Task 2 (Step 5, adjusted per empirical finding — see the module note
+/// above): reachability for the Settings window's OTHER focusable controls.
+///
+/// `gpui_component::input::Input`'s `FocusHandle` is internal to the widget —
+/// it is never passed through `.focus_stop`/recorded in the oracle's
+/// side-map (`a11y/mod.rs`'s `record_focus_id` side-map), so
+/// `A11ySnapshot::focused_label()` returns `None` whenever an `Input` holds
+/// focus. Confirmed non-vacuously below: `window.focused(app)` DOES change
+/// across the two Tab presses (real focus movement is happening — Name then
+/// Email, the Profile pane's first two tab stops), while `focused_label()`
+/// stays `None` throughout — the oracle is blind to `Input` focus, but Tab
+/// itself is genuinely moving it. A bare `is_none()` assertion alone would be
+/// vacuous (it would also pass if Tab silently did nothing); pairing it with
+/// the real `window.focused()` identity check makes it a real test of the
+/// documented limitation, not a tautology.
+///
+/// The brief's fallback ("assert Tab reaches the Reset button") is NOT
+/// reachable via this harness: every gpui-component `Button` in this panel
+/// (`adv-reset` included) suppresses click-to-focus (see the module note), so
+/// there is no way to establish an in-frame baseline in the Advanced pane
+/// without clicking a Button first — and a stale baseline from another
+/// section does not carry over (also documented above). So this test instead
+/// proves the OTHER two DIY toggles (`tg-workspace`, `tg-updates`) are
+/// keyboard-operable via the SAME `focus_stop` wiring as telemetry, closing
+/// out per-instance coverage of all 3 `toggle_row` call sites (the telemetry
+/// test above already proves the shared `focus_stop`/`Root` Tab-routing
+/// mechanism end to end, including the round trip; these two reuse that same
+/// code path, so a click-then-Space check is sufficient here without
+/// repeating the full round trip 3 times).
+#[gpui::test]
+fn settings_other_toggles_reachable_and_operable(cx: &mut gpui::TestAppContext) {
+    use gpui::Modifiers;
+
+    let (_dir, path) = fresh_store_path();
+    let (_panel, vcx) = open_settings_panel(cx, path.clone());
+
+    // Confirm the Input-invisibility limitation empirically, non-vacuously.
+    // Establish a real baseline by clicking the Name input directly (Profile
+    // is the default section; Name/Email are its only two tab stops, and
+    // unlike the toggle tests above there is no OTHER click-focusable,
+    // non-Button element in this pane to seed focus from instead — Input is
+    // the thing under test here).
+    let name_bounds = vcx
+        .debug_bounds("settings-name-input")
+        .expect("settings-name-input must have painted bounds in the default Profile pane");
+    vcx.simulate_click(name_bounds.center(), Modifiers::none());
+    vcx.run_until_parked();
+    let mut prior_focus = vcx.update(|window, app| window.focused(app));
+    assert!(
+        prior_focus.is_some(),
+        "clicking the Name input must establish window focus"
+    );
+    let snap = A11ySnapshot::capture(vcx);
+    assert!(
+        snap.focused_label().is_none(),
+        "gpui-component Input focus must be invisible to the oracle \
+         (documented limitation) — if this ever becomes visible, replace \
+         this test with a direct Input-label reachability assertion"
+    );
+
+    // Now Tab across Name -> Email (and back), checking real focus movement
+    // (`window.focused()` changes) while `focused_label()` stays `None`
+    // throughout — proves Tab IS moving focus, the oracle just cannot name
+    // an `Input`.
+    let mut moved = false;
+    for _ in 0..2 {
+        press_tab(vcx);
+        let snap = A11ySnapshot::capture(vcx);
+        let now_focus = vcx.update(|window, app| window.focused(app));
+        assert!(
+            snap.focused_label().is_none(),
+            "gpui-component Input focus must be invisible to the oracle \
+             (documented limitation) — if this ever becomes visible, replace \
+             this test with a direct Input-label reachability assertion"
+        );
+        if now_focus != prior_focus {
+            moved = true;
+        }
+        prior_focus = now_focus;
+    }
+    assert!(
+        moved,
+        "sanity: Tab must genuinely move window focus across the two Profile \
+         Inputs even though the oracle cannot name either — otherwise the \
+         `is_none()` checks above would be vacuously true"
+    );
+
+    // Workspace toggle: click-focus + Space-flip round trip.
+    let workspace_row_label = dat0_i18n::t("settings.workspace");
+    let snap = A11ySnapshot::capture(vcx);
+    snap.click(vcx, &workspace_row_label);
+    vcx.run_until_parked();
+
+    let workspace_toggle_label = dat0_i18n::t("settings.workspace.toggle");
+    let ws_before = SettingsStore::with_path(path.clone())
+        .load_or_default()
+        .expect("load settings")
+        .workspace
+        .treat_all_as_networked;
+    let bounds = vcx
+        .debug_bounds("tg-workspace")
+        .expect("tg-workspace must have painted bounds in the Workspace pane");
+    vcx.simulate_click(bounds.center(), Modifiers::none());
+    vcx.run_until_parked();
+    let snap = A11ySnapshot::capture(vcx);
+    assert_eq!(
+        snap.focused_label(),
+        Some(workspace_toggle_label.as_str()),
+        "clicking the workspace toggle must focus it"
+    );
+    vcx.simulate_keystrokes("space");
+    vcx.run_until_parked();
+    let ws_after_two_flips = SettingsStore::with_path(path.clone())
+        .load_or_default()
+        .expect("load settings")
+        .workspace
+        .treat_all_as_networked;
+    assert_eq!(
+        ws_after_two_flips, ws_before,
+        "Space on the focused workspace toggle (after the click already \
+         flipped it once) must flip it back to its original value"
+    );
+
+    // Updates toggle: same round trip.
+    let updates_row_label = dat0_i18n::t("settings.updates");
+    let snap = A11ySnapshot::capture(vcx);
+    snap.click(vcx, &updates_row_label);
+    vcx.run_until_parked();
+
+    let updates_toggle_label = dat0_i18n::t("settings.updates.toggle");
+    let up_before = SettingsStore::with_path(path.clone())
+        .load_or_default()
+        .expect("load settings")
+        .update_auto_check;
+    let bounds = vcx
+        .debug_bounds("tg-updates")
+        .expect("tg-updates must have painted bounds in the Updates pane");
+    vcx.simulate_click(bounds.center(), Modifiers::none());
+    vcx.run_until_parked();
+    let snap = A11ySnapshot::capture(vcx);
+    assert_eq!(
+        snap.focused_label(),
+        Some(updates_toggle_label.as_str()),
+        "clicking the updates toggle must focus it"
+    );
+    vcx.simulate_keystrokes("space");
+    vcx.run_until_parked();
+    let up_after_two_flips = SettingsStore::with_path(path.clone())
+        .load_or_default()
+        .expect("load settings")
+        .update_auto_check;
+    assert_eq!(
+        up_after_two_flips, up_before,
+        "Space on the focused updates toggle (after the click already flipped \
+         it once) must flip it back to its original value"
+    );
 }
