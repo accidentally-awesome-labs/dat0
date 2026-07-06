@@ -16,9 +16,17 @@ use dat0_app::telemetry::crash;
 #[test]
 fn real_panic_stages_redacted_sentinel() {
     let dir = tempfile::tempdir().unwrap();
+    // Separate tempdir to absorb the child's `AppContext::boot()` side effects
+    // (config/data dirs, settings load, settings-watcher thread, sqlite-scanner
+    // bootstrap) so the test never touches the real dev/CI dirs and boots with
+    // deterministic default settings. `dir` (the argv) stays the sole crash
+    // assertion target and must not be conflated with this.
+    let scratch = tempfile::tempdir().unwrap();
     let out = Command::new(env!("CARGO_BIN_EXE_dat0"))
         .arg("__crash-test")
         .arg(dir.path())
+        .env("DAT0_CONFIG_DIR", scratch.path())
+        .env("XDG_DATA_HOME", scratch.path())
         .output()
         .expect("spawn dat0 __crash-test");
 
@@ -30,8 +38,28 @@ fn real_panic_stages_redacted_sentinel() {
     );
 
     // WRITE PATH: the real hook staged last-crash.json.
+    let staged = crash::read_staged(dir.path())
+        .expect("last-crash.json present + parseable after a real panic");
+
+    // END-TO-END REDACTION through the real binary + real hook: the marker
+    // survives, the fake-PII path does not.
     assert!(
-        crash::read_staged(dir.path()).is_some(),
-        "last-crash.json must be present + parseable after a real panic"
+        staged.message.contains("dat0 __crash-test sentinel"),
+        "panic marker preserved: {}",
+        staged.message
+    );
+    assert!(
+        !staged.message.contains("/Users/secretuser"),
+        "absolute path must be redacted end-to-end: {}",
+        staged.message
+    );
+    assert!(!staged.backtrace.is_empty(), "backtrace captured");
+    assert_eq!(staged.version, env!("CARGO_PKG_VERSION"));
+
+    // The marker survived the abnormal exit (mem::forget → no clear_running) —
+    // the exact precondition Slice 4's seeded-sentinel relaunch test assumes.
+    assert!(
+        crash::prior_crash_detected(dir.path()),
+        "running.marker survives an abnormal exit"
     );
 }
