@@ -6094,9 +6094,18 @@ impl Render for WorkspaceShell {
                 // persistent shell, then hand them down to the transient
                 // `EmptyState` (which must NOT mint focus handles — it is rebuilt
                 // every frame, so a fresh handle each render would lose focus on
-                // the harness's forced re-render). Slice 6.
-                let hero_ids: [&'static str; 3] =
-                    ["hero-take-tour", "hero-open-demo", "hero-open-file-samples"];
+                // the harness's forced re-render). Slice 6. Registering all four
+                // fixed ids unconditionally is fine — `HeroHandles::get` is only
+                // invoked by whichever branch actually renders (`sample_column`
+                // looks up `hero-open-file-samples`, `recents_column` looks up
+                // `hero-open-file-recents`; only one of the two ever runs per
+                // frame), so both branches always find their handles pre-registered.
+                let hero_ids: [&'static str; 4] = [
+                    "hero-take-tour",
+                    "hero-open-demo",
+                    "hero-open-file-samples",
+                    "hero-open-file-recents",
+                ];
                 let mut map = std::collections::HashMap::new();
                 for id in hero_ids {
                     map.insert(id, self.hero_focus_handle(id, cx));

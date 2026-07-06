@@ -454,6 +454,96 @@ fn hero_enter_activates_open_demo(cx: &mut TestAppContext) {
 }
 
 // ----------------------------------------------------------------------------
+// Task 1b — `hero-open-file-recents` reachability (returning users, recents
+// branch). User-approved scope addition mirroring exactly how Task 1 wired
+// the sibling `hero-open-file-samples` button in `sample_column`.
+// ----------------------------------------------------------------------------
+
+/// Seed one recent entry into `cfg`'s `recents.json` via the production
+/// `Recents::push` API (not a hand-written JSON literal) — mirrors how a real
+/// "open a file" action populates the file, and exercises the same on-disk
+/// shape `window.rs`'s `recents_empty` check and `recents_column`'s own read
+/// both rely on. The path need not exist: `recents_column` only renders the
+/// entry's `Display`ed path as a label — nothing in this test clicks the row
+/// or reads the file from disk.
+fn seed_one_recent(cfg: &Path) {
+    let mut recents = dat0_app::recents::Recents::with_path(cfg.join("recents.json"));
+    recents
+        .push(dat0_app::recents::RecentEntry::Workspace {
+            path: cfg.join("some-workspace.dat0"),
+        })
+        .expect("seed one recent entry into recents.json");
+}
+
+/// Task 1b: the "Open file…" button shown to RETURNING users
+/// (`hero-open-file-recents`, rendered by `recents_column` once recents are
+/// non-empty) is a real Tab stop, wired with the same `focus_stop` + `.a11y`
+/// pattern Task 1 used for `hero-open-file-samples` in `sample_column`.
+///
+/// Seeding one recent entry flips `recents_empty` to `false`, so
+/// `EmptyState::render` takes the `recents_column` branch instead of
+/// `sample_column` — in that branch `hero-open-file-samples` does not render
+/// at all, so the "Open file…" label captured by the oracle is unambiguous
+/// (there is exactly one node with `hero.open_file`'s text on this frame).
+/// The fresh config dir still leaves `first_run_done` unset, so the enriched
+/// band (and its first-run auto-show) still paints — `recents_empty` and
+/// `first_run_done` are independent switches — so this test follows the same
+/// auto-show flush/close baseline dance as T0/T1 before walking Tab.
+#[gpui::test]
+#[serial]
+fn hero_open_file_recents_reachable(cx: &mut TestAppContext) {
+    let cfg = tempfile::tempdir().unwrap();
+    let state = tempfile::tempdir().unwrap();
+    set_config_dir(cfg.path());
+    seed_one_recent(cfg.path());
+
+    ensure_dispatcher();
+    init_components(cx);
+    drain_dispatcher(cx); // clear any stale queued closure (no window yet → no-op)
+
+    let session = build_empty_session(state.path());
+    let (_shell, cx) = open_shell_window(cx, session);
+    cx.run_until_parked();
+
+    // First-run render posted the auto-show onto the dispatcher; flush it so a
+    // dialog is up, then close it so focus is not trapped in the overlay
+    // (mirrors T0's / T1's baseline — recents_empty does not suppress this).
+    drain_dispatcher(cx);
+    cx.run_until_parked();
+    assert!(
+        dialog_open(cx),
+        "sanity: first-run auto-show opened a dialog"
+    );
+    cx.update(|window, app| window.close_dialog(app));
+    cx.run_until_parked();
+    assert!(!dialog_open(cx), "baseline: auto-show dialog closed");
+
+    focus_shell_neutrally(cx);
+
+    let want = dat0_app::dat0_i18n::t("hero.open_file");
+    let mut reached = false;
+    let mut steps = 0;
+    for _ in 0..40 {
+        press_tab(cx);
+        steps += 1;
+        let snap = A11ySnapshot::capture(cx);
+        if snap.focused_label() == Some(want.as_str()) {
+            reached = true;
+            break;
+        }
+    }
+    assert!(
+        reached,
+        "Tab did not reach hero-open-file-recents (or the focus oracle failed \
+         to name it) within 40 Tab presses — is recents_empty actually false, \
+         and is the button wired with `focus_stop` + `.a11y`?"
+    );
+    eprintln!("hero_open_file_recents_reachable: reached after {steps} Tab press(es)");
+
+    drop(state);
+}
+
+// ----------------------------------------------------------------------------
 // T2 — Settings DIY toggle rows keyboard-operable + reachability tests.
 // ----------------------------------------------------------------------------
 //

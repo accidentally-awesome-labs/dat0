@@ -143,7 +143,7 @@ impl EmptyState {
             let right_col: gpui::AnyElement = if self.recents_empty {
                 self.sample_column(hero, cx)
             } else {
-                self.recents_column(cx)
+                self.recents_column(hero, cx)
             };
             // `open_deferred` (not `open`): this click handler fires inside a
             // `window.update` of the active window, where a synchronous
@@ -270,7 +270,7 @@ impl EmptyState {
             let right_col: gpui::AnyElement = if self.recents_empty {
                 self.sample_column(hero, cx)
             } else {
-                self.recents_column(cx)
+                self.recents_column(hero, cx)
             };
             div()
                 .size_full()
@@ -378,8 +378,14 @@ impl EmptyState {
 
     /// Right column when recents exist: a clickable list of recent paths,
     /// then "Open file…".
+    ///
+    /// Slice 6 Task 1b: the fixed-id "Open file…" button (`hero-open-file-recents`)
+    /// is wired to a real Tab stop, the same pattern `sample_column` uses for
+    /// `hero-open-file-samples`. The dynamic `hero-recent-{i}` list rows are
+    /// intentionally left un-wired (out of scope for this task).
     fn recents_column(
         &self,
+        hero: &HeroHandles,
         cx: &mut gpui::Context<crate::window::WorkspaceShell>,
     ) -> gpui::AnyElement {
         let recent_entries: Vec<crate::recents::RecentEntry> =
@@ -408,9 +414,25 @@ impl EmptyState {
         let open_handler = cx.listener(|this, _ev, _window, cx| {
             this.open_file_picker(cx);
         });
+        let open_key_handler = cx.listener(|this, _ev: &gpui::KeyDownEvent, _window, cx| {
+            this.open_file_picker(cx);
+        });
         col.child(
             div()
                 .id("hero-open-file-recents")
+                // Slice 6 Task 1b: real Tab stop + Enter/Space activation, same
+                // pattern as `hero-open-file-samples` in `sample_column`.
+                .focus_stop(
+                    "hero-open-file-recents",
+                    hero.get("hero-open-file-recents"),
+                    0,
+                    open_key_handler,
+                )
+                .a11y(
+                    "hero-open-file-recents",
+                    AccessRole::Button,
+                    dat0_i18n::t("hero.open_file"),
+                )
                 .child(dat0_i18n::t("hero.open_file"))
                 .on_click(open_handler),
         )
