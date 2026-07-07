@@ -26,7 +26,8 @@
 use gpui::{App, FocusHandle, InteractiveElement, KeyDownEvent, Styled as _, Window};
 
 /// Focus-ring hue — matches the grid active-cell ring (`grid/mod.rs:566`).
-const FOCUS_RING: u32 = 0x3b82f6;
+/// `pub` so the recents list can paint its active-row ring in the same hue.
+pub const FOCUS_RING: u32 = 0x3b82f6;
 
 /// Production a11y: turn an interactive `div` into a real keyboard control —
 /// a tab stop that takes focus, activates on Enter/Space, and paints a focus

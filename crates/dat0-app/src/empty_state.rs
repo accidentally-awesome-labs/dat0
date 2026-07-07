@@ -104,13 +104,17 @@ impl HeroHandles {
 pub struct EmptyState {
     pub recents_empty: bool,
     pub first_run_done: bool,
+    /// Active-row index for the recents list (from `WorkspaceShell.recents_active`).
+    /// Drives the active-row ring; the arrow handler mutates the shell field.
+    pub recents_active: usize,
 }
 
 impl EmptyState {
-    pub fn new(recents_empty: bool, first_run_done: bool) -> Self {
+    pub fn new(recents_empty: bool, first_run_done: bool, recents_active: usize) -> Self {
         Self {
             recents_empty,
             first_run_done,
+            recents_active,
         }
     }
 
@@ -396,10 +400,50 @@ impl EmptyState {
             } else {
                 vec![]
             };
+        let len = recent_entries.len();
+        // Clamp the persisted index to the current list (a recent may have been
+        // removed since the last nav) so the active-row ring never points off
+        // the end. `recents_column` only renders when the list is non-empty
+        // (`recents_empty == false`), so `len >= 1` here; the guard is defensive.
+        let active = self.recents_active.min(len.saturating_sub(1));
 
-        let mut col = div()
+        // Enter/Space activate: open whichever row the active-index selects, via
+        // the SAME `open_recent_entry` path a row's `on_click` uses (mouse and
+        // keyboard cannot drift — Slice-6 rule). `focus_stop` wires this to
+        // Enter/Space internally.
+        let entries_for_enter = recent_entries.clone();
+        let activate = cx.listener(move |this, _ev: &gpui::KeyDownEvent, _window, cx| {
+            if let Some(entry) = active_recent(&entries_for_enter, this.recents_active) {
+                this.open_recent_entry(entry, cx);
+            }
+        });
+        // ↑/↓ move the active-index. This is a SECOND `on_key_down` chained after
+        // `focus_stop` (gpui pushes key-down listeners, so both fire); `len` is
+        // captured for the down-clamp.
+        let arrows = cx.listener(move |this, ev: &gpui::KeyDownEvent, _window, cx| {
+            match ev.keystroke.key.as_str() {
+                "down" => {
+                    this.recents_active = (this.recents_active + 1).min(len.saturating_sub(1))
+                }
+                "up" => this.recents_active = this.recents_active.saturating_sub(1),
+                _ => return,
+            }
+            cx.notify();
+        });
+
+        // The list is ONE tab stop (`focus_stop` on this container); arrows move
+        // within it. The `.a11y` twin carries the SAME "recents-list" id so the
+        // focus oracle can name the focused list by its label text.
+        let mut list = div()
             .flex()
             .flex_col()
+            .focus_stop("recents-list", hero.get("recents-list"), 0, activate)
+            .on_key_down(arrows)
+            .a11y(
+                "recents-list",
+                AccessRole::Button,
+                dat0_i18n::t("hero.recent_label"),
+            )
             .child(div().child(dat0_i18n::t("hero.recent_label")));
 
         for (i, entry) in recent_entries.into_iter().enumerate() {
@@ -408,36 +452,58 @@ impl EmptyState {
             let handler = cx.listener(move |this, _ev, _window, cx| {
                 this.open_recent_entry(entry.clone(), cx);
             });
-            col = col.child(div().id(id).child(label).on_click(handler));
+            let mut row = div().id(id).child(label).on_click(handler);
+            if i == active {
+                row = row
+                    .border_2()
+                    .border_color(gpui::rgb(crate::a11y::FOCUS_RING));
+            }
+            list = list.child(row);
         }
 
+        // The "Open file…" button remains a SEPARATE tab stop after the list
+        // (unchanged from Slice 6, moved below the list container).
         let open_handler = cx.listener(|this, _ev, _window, cx| {
             this.open_file_picker(cx);
         });
         let open_key_handler = cx.listener(|this, _ev: &gpui::KeyDownEvent, _window, cx| {
             this.open_file_picker(cx);
         });
-        col.child(
-            div()
-                .id("hero-open-file-recents")
-                // Slice 6 Task 1b: real Tab stop + Enter/Space activation, same
-                // pattern as `hero-open-file-samples` in `sample_column`.
-                .focus_stop(
-                    "hero-open-file-recents",
-                    hero.get("hero-open-file-recents"),
-                    0,
-                    open_key_handler,
-                )
-                .a11y(
-                    "hero-open-file-recents",
-                    AccessRole::Button,
-                    dat0_i18n::t("hero.open_file"),
-                )
-                .child(dat0_i18n::t("hero.open_file"))
-                .on_click(open_handler),
-        )
-        .into_any_element()
+        let open_button = div()
+            .id("hero-open-file-recents")
+            .focus_stop(
+                "hero-open-file-recents",
+                hero.get("hero-open-file-recents"),
+                0,
+                open_key_handler,
+            )
+            .a11y(
+                "hero-open-file-recents",
+                AccessRole::Button,
+                dat0_i18n::t("hero.open_file"),
+            )
+            .child(dat0_i18n::t("hero.open_file"))
+            .on_click(open_handler);
+
+        div()
+            .flex()
+            .flex_col()
+            .child(list)
+            .child(open_button)
+            .into_any_element()
     }
+}
+
+/// The recent entry the active-index currently selects, or `None` if the list
+/// is empty or the index is out of range. Pure — the unit-testable core of the
+/// recents-list keyboard activation (mirrors Slice-4's `resolve_relaunch_action`
+/// pure seam). The heavy file-open (`WorkspaceShell::open_recent_entry`) is NOT
+/// exercised here.
+fn active_recent(
+    entries: &[crate::recents::RecentEntry],
+    active: usize,
+) -> Option<crate::recents::RecentEntry> {
+    entries.get(active).cloned()
 }
 
 #[cfg(test)]
@@ -446,9 +512,9 @@ mod tests {
 
     #[test]
     fn empty_state_can_be_constructed() {
-        let e = EmptyState::new(true, false);
+        let e = EmptyState::new(true, false, 0);
         assert!(e.recents_empty);
-        let e2 = EmptyState::new(false, true);
+        let e2 = EmptyState::new(false, true, 0);
         assert!(!e2.recents_empty);
     }
 
