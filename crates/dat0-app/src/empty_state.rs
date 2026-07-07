@@ -410,10 +410,13 @@ impl EmptyState {
         // Enter/Space activate: open whichever row the active-index selects, via
         // the SAME `open_recent_entry` path a row's `on_click` uses (mouse and
         // keyboard cannot drift — Slice-6 rule). `focus_stop` wires this to
-        // Enter/Space internally.
+        // Enter/Space internally. We select with the clamped `active` (a Copy
+        // `usize`, captured by the `move` closure) — the SAME index the ring
+        // paints — so activation and the ring share one clamp site and can never
+        // disagree even if a future list-shrink path is added.
         let entries_for_enter = recent_entries.clone();
         let activate = cx.listener(move |this, _ev: &gpui::KeyDownEvent, _window, cx| {
-            if let Some(entry) = active_recent(&entries_for_enter, this.recents_active) {
+            if let Some(entry) = active_recent(&entries_for_enter, active) {
                 this.open_recent_entry(entry, cx);
             }
         });
