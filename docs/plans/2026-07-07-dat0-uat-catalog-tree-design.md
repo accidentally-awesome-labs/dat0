@@ -52,9 +52,18 @@ its matching children, except an alias-match keeps all children.
 
 ### 2. Session v10 (`session/mod.rs`, `session/migrate.rs`)
 
+- **Planning-recon amendment:** `SessionUiState` already carries two
+  forward-looking v8 fields for exactly this feature — `catalog_expanded:
+  Vec<String>` + `catalog_selection: Option<String>` — persisted empty since
+  P6a and **never read by any prod code**. Their polarity is wrong for the
+  chosen default (expanded-set ⇒ absent-from-list = collapsed ⇒ new attaches
+  would default collapsed). v10 therefore **REPLACES both dead fields** with
+  the new one; serde silently drops the old keys on load (only tests ever
+  wrote them non-empty).
 - New UI-state field **`catalog_collapsed: Vec<String>`** (attach aliases),
   `#[serde(default)]` — empty = all expanded (today's visual behavior
-  preserved on fresh/migrated sessions).
+  preserved on fresh/migrated sessions). Written sorted (deterministic wire
+  format for the insta snapshot).
 - `SESSION_n` 9→10 with an **explicit literal migration arm** in `migrate.rs`
   (the file's own rule: literal version arms, never `n if n == SESSION_n`).
   v9→v10 is a pure default-fill.
@@ -215,7 +224,14 @@ container twin. Zero new deps expected (D-015 stays open).
   break, fix the semantics (count = top-level nodes) or update Slice-5
   assertions consciously — never silently.
 - **R4 — session v10 churn.** Migration arm + wire snapshots + any test fixture
-  writing `"n": 9`. `rg '"n": *9'` across tests; update deliberately.
+  writing `"schema_version": 9`. Known sites (recon 2026-07-07): session
+  `mod.rs` tests `v7_file_loads_as_v8_with_default_ui` +
+  `ui_round_trips_through_persist_and_recover`; `tests/session_migration.rs`
+  `v7_file_migrates_to_v8_with_default_ui` (asserts `== 9` literally) +
+  `v8_roundtrips_ui` (asserts the dead fields round-trip — becomes "old keys
+  dropped, defaults apply") + the `session_json_wire_format` insta snapshot
+  fixture (constructs `SessionUiState` with both dead fields). Update
+  deliberately, never silently.
 - **R5 — Enter-on-leaf drivability.** `open_table_tab` does off-thread engine
   work via the dispatcher (warns "catalog stale" without one). T0 probes
   whether the test-engine path is graceful (Slice-3 reopen precedent: tokio
