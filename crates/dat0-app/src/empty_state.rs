@@ -542,6 +542,26 @@ mod tests {
         );
     }
 
+    #[test]
+    fn active_recent_selects_in_range_and_none_otherwise() {
+        use crate::recents::RecentEntry;
+        let entries = vec![
+            RecentEntry::Package {
+                path: std::path::PathBuf::from("/a"),
+            },
+            RecentEntry::Workspace {
+                path: std::path::PathBuf::from("/b"),
+            },
+        ];
+        assert_eq!(super::active_recent(&entries, 0), Some(entries[0].clone()));
+        assert_eq!(super::active_recent(&entries, 1), Some(entries[1].clone()));
+        // Out of range → None (guards against a stale index outrunning the list).
+        assert_eq!(super::active_recent(&entries, 2), None);
+        // Empty list → None (the recents_column isn't even rendered, but the
+        // pure seam must still be total).
+        assert_eq!(super::active_recent(&[], 0), None);
+    }
+
     /// Structural guard: the hero wires exactly 3 sample buttons.  If
     /// `sample_data::entries()` changes count or kind-order, the render
     /// code in `sample_column` will dispatch wrong actions — catch it here.

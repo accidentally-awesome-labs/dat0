@@ -6101,7 +6101,7 @@ impl Render for WorkspaceShell {
                 // persistent shell, then hand them down to the transient
                 // `EmptyState` (which must NOT mint focus handles — it is rebuilt
                 // every frame, so a fresh handle each render would lose focus on
-                // the harness's forced re-render). Slice 6. Registering all four
+                // the harness's forced re-render). Slice 6. Registering all five
                 // fixed ids unconditionally is fine — `HeroHandles::get` is only
                 // invoked by whichever branch actually renders (`sample_column`
                 // looks up `hero-open-file-samples`, `recents_column` looks up

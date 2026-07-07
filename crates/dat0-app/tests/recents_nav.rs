@@ -190,3 +190,57 @@ fn t0_recents_list_tab_and_arrow(cx: &mut TestAppContext) {
 
     drop(state);
 }
+
+/// Arrow nav moves the active-index and clamps at both ends. Seeds 2 recents
+/// (indices 0..=1); Up at 0 stays 0, Down past the last row stays at len-1.
+#[gpui::test]
+#[serial]
+fn recents_arrows_move_and_clamp(cx: &mut TestAppContext) {
+    let cfg = tempfile::tempdir().unwrap();
+    let state = tempfile::tempdir().unwrap();
+    set_config_dir(cfg.path());
+    seed_recents(cfg.path(), 2);
+
+    init_components(cx);
+    let session = build_empty_session(state.path());
+    let (shell, vcx) = open_shell_window(cx, session);
+    vcx.run_until_parked();
+    focus_shell_neutrally(vcx);
+    tab_to_recents_list(vcx);
+
+    // Up at the top is a no-op (saturating).
+    vcx.simulate_keystrokes("up");
+    vcx.run_until_parked();
+    assert_eq!(
+        shell.update(vcx, |ws, _cx| ws.recents_active_for_test()),
+        0,
+        "Up at index 0 clamps to 0"
+    );
+
+    // Down moves to the last row, then clamps there.
+    vcx.simulate_keystrokes("down");
+    vcx.run_until_parked();
+    assert_eq!(
+        shell.update(vcx, |ws, _cx| ws.recents_active_for_test()),
+        1,
+        "Down moves to index 1"
+    );
+    vcx.simulate_keystrokes("down");
+    vcx.run_until_parked();
+    assert_eq!(
+        shell.update(vcx, |ws, _cx| ws.recents_active_for_test()),
+        1,
+        "Down at the last row clamps to len-1"
+    );
+
+    // Up returns toward the top.
+    vcx.simulate_keystrokes("up");
+    vcx.run_until_parked();
+    assert_eq!(
+        shell.update(vcx, |ws, _cx| ws.recents_active_for_test()),
+        0,
+        "Up returns to index 0"
+    );
+
+    drop(state);
+}
