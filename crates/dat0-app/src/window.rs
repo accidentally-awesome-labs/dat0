@@ -2049,6 +2049,12 @@ pub struct WorkspaceShell {
     /// Created once and reused across renders (the transient `EmptyState` must NOT
     /// own these — it is rebuilt every frame).
     hero_focus: std::collections::HashMap<&'static str, gpui::FocusHandle>,
+    /// Active-row index for keyboard nav of the Home-hero recents list. Held on
+    /// the persistent shell because the transient `EmptyState` is rebuilt every
+    /// frame; clamped to the recents length at render. Slice: recents-nav.
+    /// `pub(crate)`: `empty_state::recents_column` (a sibling module) mutates
+    /// this directly from its arrow-key `cx.listener` closure.
+    pub(crate) recents_active: usize,
     /// PipelineBar expanded/collapsed toggle state (P4c T9). The expanded
     /// timeline view is T10 — this stub stores the toggle flag so the `⌄`
     /// button can flip it and be rendered correctly on the next frame.
@@ -2254,6 +2260,7 @@ impl WorkspaceShell {
             column_view: Vec::new(),
             focus_handle: cx.focus_handle(),
             hero_focus: std::collections::HashMap::new(),
+            recents_active: 0,
             header_rename: None,
             header_rename_sub: None,
             pipeline_bar_state: crate::view::pipeline_bar::PipelineBarState::default(),
@@ -6094,17 +6101,18 @@ impl Render for WorkspaceShell {
                 // persistent shell, then hand them down to the transient
                 // `EmptyState` (which must NOT mint focus handles — it is rebuilt
                 // every frame, so a fresh handle each render would lose focus on
-                // the harness's forced re-render). Slice 6. Registering all four
+                // the harness's forced re-render). Slice 6. Registering all five
                 // fixed ids unconditionally is fine — `HeroHandles::get` is only
                 // invoked by whichever branch actually renders (`sample_column`
                 // looks up `hero-open-file-samples`, `recents_column` looks up
                 // `hero-open-file-recents`; only one of the two ever runs per
                 // frame), so both branches always find their handles pre-registered.
-                let hero_ids: [&'static str; 4] = [
+                let hero_ids: [&'static str; 5] = [
                     "hero-take-tour",
                     "hero-open-demo",
                     "hero-open-file-samples",
                     "hero-open-file-recents",
+                    "recents-list",
                 ];
                 let mut map = std::collections::HashMap::new();
                 for id in hero_ids {
@@ -6115,7 +6123,8 @@ impl Render for WorkspaceShell {
                     map.insert(id, self.hero_focus_handle(id, cx));
                 }
                 let hero = crate::empty_state::HeroHandles { map };
-                EmptyState::new(recents_empty, first_run_done).render(&hero, cx)
+                EmptyState::new(recents_empty, first_run_done, self.recents_active)
+                    .render(&hero, cx)
             }
         };
 
@@ -6756,6 +6765,11 @@ impl WorkspaceShell {
                  (no non-empty data source bound yet?)",
             )
             .active()
+    }
+    /// Test oracle for recents-list arrow nav (mirrors `grid_active_cell_for_test`).
+    #[cfg(feature = "a11y-capture")]
+    pub fn recents_active_for_test(&self) -> usize {
+        self.recents_active
     }
 }
 
