@@ -1,7 +1,7 @@
-//! UAT "catalog-tree" slice — Task 1 (T0) HARD GATE.
+//! UAT "catalog-tree" slice — T0 HARD GATE + the Task-6 behavioral suite.
 //!
-//! This is the load-bearing spike. It proves, in ONE windowed `#[gpui::test]`,
-//! the risks the whole slice rests on:
+//! `t0_catalog_tab_and_arrow` is the load-bearing spike. It proves, in ONE
+//! windowed `#[gpui::test]`, the risks the whole slice rests on:
 //!   R6: Tab reaches the catalog container's `focus_stop` (the oracle names it
 //!       by its label text);
 //!   R1: a chained `on_key_down` (pushed after `focus_stop`'s own) receives
@@ -23,7 +23,7 @@
 mod support;
 
 use std::cell::RefCell;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::rc::Rc;
 use std::sync::Arc;
 
@@ -133,10 +133,6 @@ fn md_tbl(name: &str) -> dat0_engine::TableInfo {
         },
     }
 }
-// Not yet called by the T0 gate — Tasks 3-4 seed the sqlite-attached Sources
-// shape (attach-parents depth-2). Kept per the brief; allow mirrors the
-// shared-helper precedent in `tests/support/mod.rs`.
-#[allow(dead_code)]
 fn sqlite_tbl(name: &str) -> dat0_engine::TableInfo {
     dat0_engine::TableInfo {
         name: name.into(),
@@ -157,6 +153,31 @@ fn file_tbl(name: &str) -> dat0_engine::TableInfo {
         row_count_estimate: None,
         origin: dat0_engine::TableOrigin::File(std::path::PathBuf::from("/data/local.csv")),
     }
+}
+
+/// Seed the depth-2 tree every Task-6 test walks (3 top-level nodes → 6 visible
+/// rows expanded).
+///
+/// Visible rows, paint order (sections: Sources sorted [local_sales, sq],
+/// Cloud, Tables, Derived):
+///   0 L0:local_sales   (Sources — file leaf; "local_sales" < "sq")
+///   1 P :sq            (Sources — sqlite attach parent)
+///   2 L1:alpha
+///   3 L1:zeta
+///   4 P :sample_data   (Cloud — md attach parent)
+///   5 L1:md_events
+fn seed_tree(shell: &Entity<WorkspaceShell>, vcx: &mut VisualTestContext) {
+    vcx.cx.update(|app| {
+        shell.update(app, |ws, _cx| {
+            ws.seed_catalog_tree_for_test(vec![
+                sqlite_tbl("alpha"),
+                sqlite_tbl("zeta"),
+                md_tbl("md_events"),
+                file_tbl("local_sales"),
+            ]);
+        });
+    });
+    vcx.run_until_parked();
 }
 
 /// Tab from the neutral shell focus until the catalog container is the focused
@@ -222,5 +243,230 @@ fn t0_catalog_tab_and_arrow(cx: &mut TestAppContext) {
         "Down must move the catalog active-index to 1 (R1 hard gate)"
     );
 
+    drop(state);
+}
+
+// ----------------------------------------------------------------------------
+// Task 6 — the behavioral UAT suite over the seeded depth-2 tree.
+// ----------------------------------------------------------------------------
+
+#[gpui::test]
+#[serial]
+fn arrows_walk_visible_rows_and_clamp(cx: &mut TestAppContext) {
+    let cfg = tempfile::tempdir().unwrap();
+    let state = tempfile::tempdir().unwrap();
+    set_config_dir(cfg.path());
+    init_components(cx);
+    let session = build_empty_session(state.path());
+    let (shell, vcx) = open_shell_window(cx, session);
+    vcx.run_until_parked();
+    seed_tree(&shell, vcx);
+    focus_shell_neutrally(vcx);
+    tab_to_catalog(vcx);
+
+    let active = |vcx: &mut VisualTestContext, shell: &Entity<WorkspaceShell>| {
+        shell.update(vcx, |ws, _cx| ws.catalog_active_for_test())
+    };
+    assert_eq!(active(vcx, &shell), 0);
+    vcx.simulate_keystrokes("up"); // clamp at top
+    vcx.run_until_parked();
+    assert_eq!(active(vcx, &shell), 0, "Up at row 0 clamps");
+    for _ in 0..7 {
+        vcx.simulate_keystrokes("down"); // 6 rows: 5 moves + 2 clamped
+    }
+    vcx.run_until_parked();
+    assert_eq!(
+        active(vcx, &shell),
+        5,
+        "Down clamps at the last visible row"
+    );
+    drop(state);
+}
+
+#[gpui::test]
+#[serial]
+fn left_jumps_to_parent_then_collapses_children_vanish(cx: &mut TestAppContext) {
+    let cfg = tempfile::tempdir().unwrap();
+    let state = tempfile::tempdir().unwrap();
+    set_config_dir(cfg.path());
+    init_components(cx);
+    let session = build_empty_session(state.path());
+    let (shell, vcx) = open_shell_window(cx, session);
+    vcx.run_until_parked();
+    seed_tree(&shell, vcx);
+    focus_shell_neutrally(vcx);
+    tab_to_catalog(vcx);
+
+    // Walk to row 3 (child "zeta" of parent "sq").
+    for _ in 0..3 {
+        vcx.simulate_keystrokes("down");
+    }
+    vcx.run_until_parked();
+    assert_eq!(shell.update(vcx, |ws, _cx| ws.catalog_active_for_test()), 3);
+
+    // ← on a child jumps to ITS parent (row 1), not any earlier row.
+    vcx.simulate_keystrokes("left");
+    vcx.run_until_parked();
+    assert_eq!(
+        shell.update(vcx, |ws, _cx| ws.catalog_active_for_test()),
+        1,
+        "Left on a child moves to its parent"
+    );
+
+    // Expanded children are painted before the collapse…
+    let snap = A11ySnapshot::capture(vcx);
+    assert!(snap.has_label("alpha"), "child renders while expanded");
+    assert!(snap.has_label("zeta"));
+
+    // ← on the (expanded) parent collapses it: children VANISH from the a11y
+    // tree (absence teeth — render-conditioned seams, R2).
+    vcx.simulate_keystrokes("left");
+    vcx.run_until_parked();
+    let snap = A11ySnapshot::capture(vcx);
+    assert!(
+        !snap.has_label("alpha") && !snap.has_label("zeta"),
+        "collapsed children must not render"
+    );
+    assert!(
+        snap.has_label("md_events"),
+        "the OTHER parent's children are untouched"
+    );
+    assert_eq!(
+        shell.update(vcx, |ws, _cx| ws.catalog_collapsed_for_test()),
+        vec!["sq".to_string()]
+    );
+
+    // → on the collapsed parent re-expands; children return.
+    vcx.simulate_keystrokes("right");
+    vcx.run_until_parked();
+    let snap = A11ySnapshot::capture(vcx);
+    assert!(snap.has_label("alpha"), "right re-expands the parent");
+    assert!(
+        shell
+            .update(vcx, |ws, _cx| ws.catalog_collapsed_for_test())
+            .is_empty()
+    );
+    drop(state);
+}
+
+#[gpui::test]
+#[serial]
+fn enter_on_parent_toggles_collapse(cx: &mut TestAppContext) {
+    let cfg = tempfile::tempdir().unwrap();
+    let state = tempfile::tempdir().unwrap();
+    set_config_dir(cfg.path());
+    init_components(cx);
+    let session = build_empty_session(state.path());
+    let (shell, vcx) = open_shell_window(cx, session);
+    vcx.run_until_parked();
+    seed_tree(&shell, vcx);
+    focus_shell_neutrally(vcx);
+    tab_to_catalog(vcx);
+
+    vcx.simulate_keystrokes("down"); // row 1 = parent "sq"
+    vcx.run_until_parked();
+    vcx.simulate_keystrokes("enter"); // focus_stop activate → Toggle
+    vcx.run_until_parked();
+    assert_eq!(
+        shell.update(vcx, |ws, _cx| ws.catalog_collapsed_for_test()),
+        vec!["sq".to_string()],
+        "Enter on an expanded parent collapses it"
+    );
+    let snap = A11ySnapshot::capture(vcx);
+    assert!(
+        !snap.has_label("alpha"),
+        "children vanish on Enter-collapse"
+    );
+    drop(state);
+}
+
+/// Locate the session.json `Session::new` created under `state_root`. It lives
+/// at `state_root/scratch/<uuid>/session.json` (session/mod.rs:228 joins
+/// "scratch" + a fresh UUID), so scan the `scratch/` children.
+fn find_session_json(state_root: &Path) -> PathBuf {
+    let scratch = state_root.join("scratch");
+    for entry in std::fs::read_dir(&scratch).expect("read scratch root") {
+        let p = entry.expect("dir entry").path();
+        if p.is_dir() && p.join("session.json").exists() {
+            return p.join("session.json");
+        }
+    }
+    panic!("no session.json under {scratch:?}");
+}
+
+#[gpui::test]
+#[serial]
+fn collapse_state_persists_to_session_json(cx: &mut TestAppContext) {
+    let cfg = tempfile::tempdir().unwrap();
+    let state = tempfile::tempdir().unwrap();
+    set_config_dir(cfg.path());
+    init_components(cx);
+    let session = build_empty_session(state.path());
+    let (shell, vcx) = open_shell_window(cx, session);
+    vcx.run_until_parked();
+    seed_tree(&shell, vcx);
+    focus_shell_neutrally(vcx);
+    tab_to_catalog(vcx);
+
+    // Toggle via the production single-source method `toggle_catalog_parent`
+    // (mouse + kbd both route here); it calls persist_dock_ui → session.json.
+    // It is `pub(crate)` (invisible to an integration test), so drive it
+    // through the keyboard path: Down×4 → row 4 (parent "sample_data"), Enter.
+    for _ in 0..4 {
+        vcx.simulate_keystrokes("down");
+    }
+    vcx.run_until_parked();
+    vcx.simulate_keystrokes("enter");
+    vcx.run_until_parked();
+    assert_eq!(
+        shell.update(vcx, |ws, _cx| ws.catalog_collapsed_for_test()),
+        vec!["sample_data".to_string()],
+        "Enter on the Cloud parent must collapse it before we probe the disk"
+    );
+
+    let raw = std::fs::read_to_string(find_session_json(state.path())).expect("session.json");
+    assert!(
+        raw.contains(r#""catalog_collapsed""#) && raw.contains(r#""sample_data""#),
+        "collapsed alias must be persisted in the session ui block; got: {raw}"
+    );
+    drop(state);
+}
+
+// R5 probe OUTCOME (run once, 2026-07-11): `enter_on_leaf_reaches_open_table_tab_gracefully`
+// PANICKED — Enter on a leaf routes to `open_table_tab`, whose `tokio::spawn`
+// (window.rs:2946) aborts with "there is no reactor running" because the test
+// holds no entered tokio runtime (production enters one for the whole
+// `Application::run` closure; `build_empty_session`'s runtime is dropped on
+// return). Per the sanctioned brief outcome the test is DELETED: Enter-on-leaf
+// stays human; the `Open` arm is unit-covered in catalog/nav.rs
+// (`enter_toggles_parents_and_opens_leaves`) — recents precedent.
+
+/// The catalog container is a tab stop ONLY while the panel is visible (the
+/// focus_stop lives inside the `catalog_panel_visible.then(..)` render branch).
+/// With no seed (panel hidden), a bounded Tab walk must never land on it —
+/// this guards the hero/settings Tab sequences other suites assert.
+#[gpui::test]
+#[serial]
+fn hidden_panel_is_not_a_tab_stop(cx: &mut TestAppContext) {
+    let cfg = tempfile::tempdir().unwrap();
+    let state = tempfile::tempdir().unwrap();
+    set_config_dir(cfg.path());
+    init_components(cx);
+    let session = build_empty_session(state.path());
+    let (_shell, vcx) = open_shell_window(cx, session);
+    vcx.run_until_parked();
+    // NO seed_catalog_tree_for_test → catalog_panel_visible stays false.
+    focus_shell_neutrally(vcx);
+
+    let title = dat0_i18n::t("catalog.title");
+    for _ in 0..20 {
+        press_tab(vcx);
+        let snap = A11ySnapshot::capture(vcx);
+        assert_ne!(
+            snap.focused_label(),
+            Some(title.as_str()),
+            "hidden catalog panel must not be Tab-reachable"
+        );
+    }
     drop(state);
 }
