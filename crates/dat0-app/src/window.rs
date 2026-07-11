@@ -2045,7 +2045,8 @@ pub struct WorkspaceShell {
     /// fine-grained cell focus; this shell-level handle is sufficient for
     /// T11's keyboard map + selection navigation.
     focus_handle: FocusHandle,
-    /// Stable per-hero-button focus handles, keyed by the button's static id.
+    /// Stable focus handles keyed by static id — hero buttons AND dock-panel
+    /// containers (e.g. the `catalog-tree` panel).
     /// Created once and reused across renders (the transient `EmptyState` must NOT
     /// own these — it is rebuilt every frame).
     hero_focus: std::collections::HashMap<&'static str, gpui::FocusHandle>,

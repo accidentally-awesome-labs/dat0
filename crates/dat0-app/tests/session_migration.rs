@@ -520,8 +520,8 @@ fn v7_file_migrates_to_v8_with_default_ui() {
 #[test]
 fn v8_loads_dropping_dead_tree_ui() {
     // A v8 document carrying the dead forward-looking tree keys still loads
-    // (via migrate_v8_to_v9 → migrate_v9_to_v10 semantics: serde drops the
-    // unknown keys), preserving the dock visibility.
+    // (via migrate_v8_to_v9, the `8 =>` dispatch arm: serde ignores the
+    // unknown fields, so the dead keys drop), preserving the dock visibility.
     let raw = r#"{"schema_version":8,"tabs":[],"active_tab":null,"sql_tabs":[],"active_sql_tab":null,
         "query_history":[],"saved_queries":[],"attachments":[],
         "ui":{"catalog_panel_visible":true,"inspector_panel_visible":true,

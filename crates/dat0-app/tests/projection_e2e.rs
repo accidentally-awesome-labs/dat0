@@ -369,7 +369,7 @@ async fn projection_filter_export_remove_undo_restore() {
     let restored = migrate::load(&session_json).unwrap();
     assert_eq!(
         restored.schema_version, SESSION_SCHEMA_VERSION,
-        "reloaded schema_version must be the current schema (9)"
+        "reloaded schema_version must be the current schema (10)"
     );
     assert_eq!(restored.tabs.len(), 1);
     assert_eq!(

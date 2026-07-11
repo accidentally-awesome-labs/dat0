@@ -99,6 +99,11 @@ pub fn render_catalog(
         root = root.child(section);
     }
 
+    debug_assert!(
+        iter.next().is_none(),
+        "visible_rows section order drifted from render_catalog's section list"
+    );
+
     root.into_any_element()
 }
 

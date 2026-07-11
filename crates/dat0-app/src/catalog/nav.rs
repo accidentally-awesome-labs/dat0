@@ -243,6 +243,15 @@ mod tests {
     }
 
     #[test]
+    fn left_on_collapsed_parent_is_none() {
+        let collapsed: HashSet<String> = ["sq".to_string()].into();
+        let rows = visible_rows(&tree(), &collapsed);
+        // row 0 is the collapsed "sq" parent; ARIA: a collapsed parent has no
+        // parent to jump to.
+        assert_eq!(tree_nav(&rows, 0, "left"), NavAction::None);
+    }
+
+    #[test]
     fn enter_toggles_parents_and_opens_leaves() {
         let rows = visible_rows(&tree(), &HashSet::new());
         assert_eq!(tree_nav(&rows, 0, "enter"), NavAction::Toggle("sq".into()));
