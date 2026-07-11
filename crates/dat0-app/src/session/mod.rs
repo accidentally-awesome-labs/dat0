@@ -56,7 +56,13 @@ use queries::{HistoryEntry, SavedQuery};
 ///
 /// v8 → v9 (P9a-2) adds `charts` (persisted saved charts). Purely additive: v8
 /// files default `charts` to an empty vec.
-pub const SESSION_SCHEMA_VERSION: u32 = 9;
+///
+/// v9 → v10 (catalog-tree slice) RESHAPES `ui`: the never-read v8
+/// forward-looking fields (`catalog_expanded` / `catalog_selection`) are
+/// REPLACED by `catalog_collapsed` (serde-defaulted empty = all expanded).
+/// Serde silently drops the old keys on load; prod only ever wrote them at
+/// their empty defaults, so no data is migrated.
+pub const SESSION_SCHEMA_VERSION: u32 = 10;
 
 /// A single tab within a scratch session.
 ///
@@ -89,23 +95,24 @@ pub struct SqlTabState {
     pub sql: String,
 }
 
-/// Persisted catalog/inspector UI state (v8+, P6a). Additive: a v7 file lacks
-/// the enclosing `ui` field, so the whole struct serde-defaults to
-/// all-collapsed / both-docks-hidden.
+/// Persisted catalog/inspector UI state (v8+, P6a; reshaped v10, catalog-tree
+/// slice). Additive: a v7 file lacks the enclosing `ui` field, so the whole
+/// struct serde-defaults to both-docks-hidden / all-expanded.
 ///
-/// `catalog_expanded` / `catalog_selection` are forward-looking — the T7
-/// catalog dock currently renders flat (no expand/collapse/selection UI), so
-/// they persist as empty / `None` for now.
+/// v10 REPLACED the never-read v8 forward-looking fields (`catalog_expanded`,
+/// `catalog_selection`) with `catalog_collapsed`: the panel defaults to
+/// expanded, so the persisted set is the COLLAPSED attach aliases (empty =
+/// all expanded; absent-in-file = all expanded). Old keys in v8/v9 files are
+/// silently dropped by serde on load (prod only ever wrote them empty).
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
 pub struct SessionUiState {
     #[serde(default)]
     pub catalog_panel_visible: bool,
     #[serde(default)]
     pub inspector_panel_visible: bool,
+    /// Collapsed attach-parent aliases, sorted (deterministic wire format).
     #[serde(default)]
-    pub catalog_expanded: Vec<String>, // expanded node names
-    #[serde(default)]
-    pub catalog_selection: Option<String>,
+    pub catalog_collapsed: Vec<String>,
 }
 
 // ---------------------------------------------------------------------------
@@ -860,7 +867,7 @@ mod tests {
         });
         let state: super::SessionState = serde_json::from_value(v7).unwrap();
         assert!(!state.ui.catalog_panel_visible, "default dock hidden");
-        assert!(state.ui.catalog_expanded.is_empty());
+        assert!(state.ui.catalog_collapsed.is_empty());
     }
 
     #[test]
@@ -1009,9 +1016,9 @@ mod tests {
 
     #[tokio::test]
     async fn ui_round_trips_through_persist_and_recover() {
-        // Dock/tree UI state (P6a v8) must survive a restart — set_ui persists it,
-        // recover reads it back verbatim (all four fields, incl. the forward-looking
-        // catalog_expanded/catalog_selection).
+        // Dock/tree UI state (P6a v8, reshaped v10) must survive a restart —
+        // set_ui persists it, recover reads it back verbatim (all three fields,
+        // incl. the v10 catalog_collapsed set).
         let root = tempfile::tempdir().expect("tempdir");
 
         let scratch_dir = {
@@ -1025,8 +1032,7 @@ mod tests {
             sess.set_ui(SessionUiState {
                 catalog_panel_visible: true,
                 inspector_panel_visible: true,
-                catalog_expanded: vec!["orders".into(), "sales".into()],
-                catalog_selection: Some("orders".into()),
+                catalog_collapsed: vec!["sq".into(), "warehouse".into()],
             })
             .expect("set_ui");
 
@@ -1045,10 +1051,9 @@ mod tests {
             "inspector dock visibility survived"
         );
         assert_eq!(
-            ui.catalog_expanded,
-            vec!["orders".to_string(), "sales".to_string()]
+            ui.catalog_collapsed,
+            vec!["sq".to_string(), "warehouse".to_string()]
         );
-        assert_eq!(ui.catalog_selection.as_deref(), Some("orders"));
     }
 
     #[tokio::test]

@@ -4,7 +4,8 @@
 //! console tabs `sql_tabs` + `active_sql_tab`, P5a) → v6 (additive query stores
 //! `query_history` + `saved_queries`, P5b) → v7 (additive `attachments`, P5c) →
 //! v8 (additive `ui` catalog/inspector dock + tree state, P6a) → v9 (additive
-//! `charts` saved charts, P9a-2).
+//! `charts` saved charts, P9a-2) → v10 (`ui` reshaped: `catalog_collapsed`
+//! replaces the dead v8 tree fields, catalog-tree slice).
 //!
 //! Migration is load-and-write-back (eager): a successful migration is
 //! immediately followed by the caller's `Session::persist` call to land the
@@ -197,8 +198,9 @@ pub fn load_str(raw: &str) -> Result<SessionState, SessionLoadError> {
         6 => migrate_v6_to_v7(raw),
         7 => migrate_v7_to_v8(raw),
         8 => migrate_v8_to_v9(raw),
-        9 => {
-            // Forward-incompat guard: a NEWER dat0 (writing the same v9 schema)
+        9 => migrate_v9_to_v10(raw),
+        10 => {
+            // Forward-incompat guard: a NEWER dat0 (writing the same v10 schema)
             // may have introduced a transform variant this build doesn't know.
             // Scan the current-version document's transform stacks and map any
             // unknown TOP-LEVEL `kind` to the forward-incompat banner path BEFORE
@@ -217,7 +219,7 @@ pub fn load_str(raw: &str) -> Result<SessionState, SessionLoadError> {
             Ok(state)
         }
         // When SESSION_SCHEMA_VERSION advances, add: N => migrate_vN_to_v(N+1)(raw)
-        // and make the new current-version (now 9) arm above the "load as-is"
+        // and make the new current-version (now 10) arm above the "load as-is"
         // target.
         n => Err(SessionLoadError::UnsupportedVersion(n)),
     }
@@ -332,8 +334,8 @@ fn migrate_v6_to_v7(raw: &str) -> Result<SessionState, SessionLoadError> {
 ///
 /// v8 adds `ui` (catalog/inspector dock + tree state); additive,
 /// serde-defaulted: a v7 file lacks the `ui` field, so `#[serde(default)]`
-/// fills it with `SessionUiState::default()` (both docks hidden, no expanded
-/// nodes, no selection). Re-parse + stamp the version.
+/// fills it with `SessionUiState::default()` (both docks hidden; since v10 an
+/// empty collapse set = all expanded). Re-parse + stamp the version.
 fn migrate_v7_to_v8(raw: &str) -> Result<SessionState, SessionLoadError> {
     let mut state: SessionState = serde_json::from_str(raw)?;
     state.schema_version = SESSION_SCHEMA_VERSION;
@@ -351,6 +353,19 @@ fn migrate_v8_to_v9(raw: &str) -> Result<SessionState, SessionLoadError> {
     Ok(state)
 }
 
+/// Migrate a raw v9 JSON string to a v10 `SessionState`.
+///
+/// v10 reshapes `ui`: the never-read forward-looking `catalog_expanded` /
+/// `catalog_selection` (v8) are REPLACED by `catalog_collapsed`
+/// (serde-defaulted empty = all expanded). Serde silently drops the old keys
+/// on parse — prod only ever wrote them at their empty defaults, so no data
+/// is migrated. Re-parse + stamp the version.
+fn migrate_v9_to_v10(raw: &str) -> Result<SessionState, SessionLoadError> {
+    let mut state: SessionState = serde_json::from_str(raw)?;
+    state.schema_version = SESSION_SCHEMA_VERSION;
+    Ok(state)
+}
+
 #[cfg(test)]
 mod tests {
     #[test]
@@ -360,5 +375,20 @@ mod tests {
         let state = super::load_str(v8).expect("v8 migrates");
         assert_eq!(state.schema_version, super::SESSION_SCHEMA_VERSION);
         assert!(state.charts.is_empty());
+    }
+
+    #[test]
+    fn v9_session_migrates_to_v10_dropping_dead_ui_fields() {
+        // A v9 document carrying the dead v8 forward-looking ui keys.
+        let v9 = r#"{"schema_version":9,"tabs":[],
+            "ui":{"catalog_panel_visible":true,
+                  "catalog_expanded":["orders"],"catalog_selection":"orders"}}"#;
+        let state = super::load_str(v9).expect("v9 migrates");
+        assert_eq!(state.schema_version, super::SESSION_SCHEMA_VERSION);
+        assert!(state.ui.catalog_panel_visible, "known ui keys survive");
+        assert!(
+            state.ui.catalog_collapsed.is_empty(),
+            "new field defaults empty; dead keys dropped"
+        );
     }
 }

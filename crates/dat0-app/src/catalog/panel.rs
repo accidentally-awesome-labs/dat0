@@ -1,17 +1,23 @@
-//! Catalog left-dock panel (P6a §4). Renders the pure [`CatalogTree`](crate::catalog::CatalogTree)
-//! as four sections (Sources / Cloud / Tables / Derived); each node is a clickable row
-//! that opens that table into the main grid via [`WorkspaceShell::open_table_tab`].
+//! Catalog left-dock panel (P6a §4, hierarchy since the catalog-tree slice).
+//! Renders the pure [`CatalogTree`](crate::catalog::CatalogTree) as four
+//! sections (Sources / Cloud / Tables / Derived); attach parents paint a
+//! chevron row whose children indent beneath, and every table row is clickable
+//! (opens into the main grid via [`WorkspaceShell::open_table_tab`]).
 //!
 //! Like [`crate::connections::panel`], this is a *free function* — not a GPUI
 //! `Render`/`EventEmitter` entity — so every row's `on_click` can reach
 //! `WorkspaceShell` directly via `cx.listener(|ws, …| …)`. The render is a pure
-//! function of the supplied `tree`; the live tree is rebuilt by
-//! `WorkspaceShell::refresh_catalog` whenever the catalog could change.
+//! function of the supplied `tree` + collapse/nav state; the live tree is
+//! rebuilt by `WorkspaceShell::refresh_catalog` whenever the catalog could
+//! change.
 
 use crate::a11y::A11yExt as _;
+use crate::a11y::FocusStopExt as _;
+use crate::catalog::nav::{RowKind, visible_rows};
 use crate::window::WorkspaceShell;
 use gpui::prelude::*;
 use gpui::{Context, SharedString, div};
+use std::collections::HashSet;
 
 /// A section header label, e.g. `section_label("Tables", 3) == "Tables (3)"`.
 /// The section titles ("Sources"/"Tables"/"Derived") are structural group names,
@@ -20,60 +26,134 @@ pub(crate) fn section_label(name: &str, n: usize) -> String {
     format!("{name} ({n})")
 }
 
-/// Render the catalog dock from the current tree. Called from
-/// `WorkspaceShell::render`. A pure function of `tree` — the only state read is
-/// `tree.sources` / `tree.cloud` / `tree.tables` / `tree.derived`.
+/// Render the catalog dock from the current tree + collapse/nav state. Called
+/// from `WorkspaceShell::render`. The row list comes from the pure
+/// [`visible_rows`] flatten — the SAME Vec the keyboard handlers use, so the
+/// paint order and the nav index cannot drift.
 pub fn render_catalog(
     tree: &crate::catalog::CatalogTree,
+    collapsed: &HashSet<String>,
+    active: usize,
+    fh: &gpui::FocusHandle,
     cx: &mut Context<WorkspaceShell>,
 ) -> gpui::AnyElement {
-    // (display label, stable id for ElementIds, nodes).
-    // Structural section names ("Sources"/"Tables"/"Derived") are English literals;
-    // Cloud is i18n'd but uses a stable id "Cloud" for locale-independent GPUI
-    // ElementIds (prevents click/hover cross-talk across sections).
-    let sections: [(String, &str, &Vec<crate::catalog::CatalogNode>); 4] = [
-        ("Sources".to_string(), "Sources", &tree.sources),
-        (dat0_i18n::t("catalog.cloud"), "Cloud", &tree.cloud),
-        ("Tables".to_string(), "Tables", &tree.tables),
-        ("Derived".to_string(), "Derived", &tree.derived),
-    ];
+    let rows = visible_rows(tree, collapsed);
+    let active = active.min(rows.len().saturating_sub(1));
+
+    // ↑/↓/←/→: a SECOND on_key_down chained after focus_stop's own (gpui
+    // pushes key-down listeners; both fire — T0-proven on this surface).
+    let arrows = cx.listener(|ws, ev: &gpui::KeyDownEvent, window, cx| {
+        if matches!(ev.keystroke.key.as_str(), "up" | "down" | "left" | "right") {
+            let key = ev.keystroke.key.clone();
+            ws.catalog_nav_key(&key, window, cx);
+        }
+    });
+    // Enter/Space (focus_stop routes only those two here).
+    let activate = cx.listener(|ws, ev: &gpui::KeyDownEvent, window, cx| {
+        let key = ev.keystroke.key.clone();
+        ws.catalog_nav_key(&key, window, cx);
+    });
 
     let mut root = div()
         .flex()
         .flex_col()
         .gap_2()
         .p_2()
+        .focus_stop("catalog-tree", fh, 0, activate)
+        .on_key_down(arrows)
+        .a11y(
+            "catalog-tree",
+            crate::a11y::AccessRole::Button,
+            dat0_i18n::t("catalog.title"),
+        )
         .child(div().child(SharedString::from(dat0_i18n::t("catalog.title"))));
 
-    for (label, id, nodes) in &sections {
-        let header = section_label(label, nodes.len());
+    // Header `(n)` = TOP-LEVEL node count (an attach = 1 parent), collapse-
+    // independent — keeps the Slice-5 "Cloud (1)" teeth semantics.
+    let sections: [(String, &'static str, usize); 4] = [
+        ("Sources".to_string(), "Sources", tree.sources.len()),
+        (dat0_i18n::t("catalog.cloud"), "Cloud", tree.cloud.len()),
+        ("Tables".to_string(), "Tables", tree.tables.len()),
+        ("Derived".to_string(), "Derived", tree.derived.len()),
+    ];
+
+    let mut iter = rows.iter().enumerate().peekable();
+    for (label, id, n) in sections {
+        let header = section_label(&label, n);
         let mut section = div().flex().flex_col().gap_1().child(
             div()
                 .a11y_label(crate::a11y::AccessRole::Label, header.clone())
                 .child(SharedString::from(header)),
         );
-        for node in nodes.iter() {
-            section = section.child(catalog_row(id, &node.name, cx));
+        while iter.peek().is_some_and(|(_, r)| r.section == id) {
+            let (i, row) = iter.next().expect("peeked");
+            section = section.child(match &row.kind {
+                RowKind::Parent {
+                    alias,
+                    expanded,
+                    n_children,
+                } => parent_row(id, alias, *expanded, *n_children, i == active, cx),
+                RowKind::Leaf { name, depth } => catalog_row(id, name, *depth, i == active, cx),
+            });
         }
         root = root.child(section);
     }
 
+    debug_assert!(
+        iter.next().is_none(),
+        "visible_rows section order drifted from render_catalog's section list"
+    );
+
     root.into_any_element()
 }
 
-/// A clickable catalog row that opens `name` into the main grid. Mirrors the
-/// `action_button` idiom in [`crate::connections::panel`]
-/// (`div().id(..).cursor_pointer().on_click(cx.listener(..))`).
+/// An attach-parent row: chevron + alias + child count. Click toggles
+/// expand/collapse via `toggle_catalog_parent` — the SAME method the keyboard
+/// Toggle arm calls (single source of truth).
+fn parent_row(
+    section: &str,
+    alias: &str,
+    expanded: bool,
+    n_children: usize,
+    is_active: bool,
+    cx: &mut Context<WorkspaceShell>,
+) -> gpui::Stateful<gpui::Div> {
+    let chev = if expanded { "▾" } else { "▸" };
+    let text = format!("{chev} {alias} ({n_children})");
+    let alias_owned = alias.to_string();
+    // `attach-` infix: a parent id can never collide with a same-named table
+    // row id within the section.
+    let mut row = div()
+        .id(SharedString::from(format!("cat-{section}-attach-{alias}")))
+        .px_2()
+        .py_1()
+        .cursor_pointer()
+        .hover(|s| s.bg(gpui::rgba(0x80808022)))
+        .child(SharedString::from(text.clone()))
+        .a11y_label(crate::a11y::AccessRole::Label, text)
+        .on_click(cx.listener(move |ws, _ev, _window, cx| {
+            ws.toggle_catalog_parent(alias_owned.clone(), cx);
+        }));
+    if is_active {
+        row = row
+            .border_2()
+            .border_color(gpui::rgb(crate::a11y::FOCUS_RING));
+    }
+    row
+}
+
+/// A clickable table row that opens `name` into the main grid. `depth == 1`
+/// (child of an attach parent) indents. Active row paints the nav ring
+/// (decoupled from gpui focus — grid `is_active` idiom).
 fn catalog_row(
     section: &str,
     name: &str,
+    depth: u8,
+    is_active: bool,
     cx: &mut Context<WorkspaceShell>,
 ) -> gpui::Stateful<gpui::Div> {
     let name = name.to_string();
-    // ElementId must be unique within the render pass: a table name can recur
-    // across sections (e.g. an attached `events` and a local derived `events`),
-    // so the section qualifies the id to avoid GPUI click/hover cross-talk.
-    div()
+    let mut row = div()
         .id(SharedString::from(format!("cat-{section}-{name}")))
         .px_2()
         .py_1()
@@ -83,7 +163,16 @@ fn catalog_row(
         .a11y_label(crate::a11y::AccessRole::Label, name.clone())
         .on_click(cx.listener(move |ws, _ev, window, cx| {
             ws.open_table_tab(name.clone(), window, cx);
-        }))
+        }));
+    if depth == 1 {
+        row = row.pl_4();
+    }
+    if is_active {
+        row = row
+            .border_2()
+            .border_color(gpui::rgb(crate::a11y::FOCUS_RING));
+    }
+    row
 }
 
 #[cfg(test)]

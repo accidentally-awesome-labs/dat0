@@ -230,7 +230,7 @@ fn v2_round_trip_through_serialization() {
 }
 
 /// Session::recover eagerly calls persist() after loading, so a v1 file is
-/// rewritten as the current schema (v9) on the first open — no subsequent
+/// rewritten as the current schema (v10) on the first open — no subsequent
 /// mutation required.
 #[tokio::test]
 async fn recover_eagerly_writes_back_current_version_on_first_open() {
@@ -254,12 +254,12 @@ async fn recover_eagerly_writes_back_current_version_on_first_open() {
         .await
         .expect("Session::recover should succeed on a v1 file");
 
-    // The on-disk file must now be the current schema (v9) without any further
+    // The on-disk file must now be the current schema (v10) without any further
     // persist() call.
     let after = fs::read_to_string(&session_path).unwrap();
     assert!(
-        after.contains("\"schema_version\": 9") || after.contains("\"schema_version\":9"),
-        "post-recover file should be current schema (v9), got: {}",
+        after.contains("\"schema_version\": 10") || after.contains("\"schema_version\":10"),
+        "post-recover file should be current schema (v10), got: {}",
         &after[..after.len().min(300)]
     );
 }
@@ -505,7 +505,7 @@ fn v7_file_migrates_to_v8_with_default_ui() {
         "query_history":[],"saved_queries":[],"attachments":[]}"#;
     let state = migrate::load_str(raw).expect("v7 should migrate to current");
     assert_eq!(state.schema_version, SESSION_SCHEMA_VERSION);
-    assert_eq!(state.schema_version, 9);
+    assert_eq!(state.schema_version, 10);
     assert!(
         !state.ui.catalog_panel_visible,
         "v7 -> v8: catalog dock defaults hidden"
@@ -514,14 +514,14 @@ fn v7_file_migrates_to_v8_with_default_ui() {
         !state.ui.inspector_panel_visible,
         "v7 -> v8: inspector dock defaults hidden"
     );
-    assert!(state.ui.catalog_expanded.is_empty());
-    assert!(state.ui.catalog_selection.is_none());
+    assert!(state.ui.catalog_collapsed.is_empty());
 }
 
 #[test]
-fn v8_roundtrips_ui() {
-    // A v8 document with `ui` loads as-is via the current-version arm, preserving
-    // the dock visibility + tree state verbatim.
+fn v8_loads_dropping_dead_tree_ui() {
+    // A v8 document carrying the dead forward-looking tree keys still loads
+    // (via migrate_v8_to_v9, the `8 =>` dispatch arm: serde ignores the
+    // unknown fields, so the dead keys drop), preserving the dock visibility.
     let raw = r#"{"schema_version":8,"tabs":[],"active_tab":null,"sql_tabs":[],"active_sql_tab":null,
         "query_history":[],"saved_queries":[],"attachments":[],
         "ui":{"catalog_panel_visible":true,"inspector_panel_visible":true,
@@ -530,8 +530,9 @@ fn v8_roundtrips_ui() {
     assert_eq!(state.schema_version, SESSION_SCHEMA_VERSION);
     assert!(state.ui.catalog_panel_visible);
     assert!(state.ui.inspector_panel_visible);
-    assert_eq!(state.ui.catalog_expanded, vec!["orders", "customers"]);
-    assert_eq!(state.ui.catalog_selection.as_deref(), Some("orders"));
+    // v10: the v8 forward-looking keys are dead — dropped on load, replaced by
+    // the (defaulted) collapse set.
+    assert!(state.ui.catalog_collapsed.is_empty());
 }
 
 // ---------------------------------------------------------------------------
@@ -540,7 +541,7 @@ fn v8_roundtrips_ui() {
 
 /// PROOF SLICE for the "do-now" UAT-automation tier (research 2026-06-29), 3rd
 /// target: the `session.json` on-disk contract — the surface most exposed to
-/// silent migration/format drift (it has churned v1→v9).
+/// silent migration/format drift (it has churned v1→v10).
 ///
 /// The migration tests above assert individual fields survive a load; this one
 /// gates the ENTIRE serialized document for a representative populated session,
@@ -634,8 +635,7 @@ fn session_json_wire_format_is_snapshot_gated() {
         ui: SessionUiState {
             catalog_panel_visible: true,
             inspector_panel_visible: false,
-            catalog_expanded: vec!["main".into()],
-            catalog_selection: Some("orders".into()),
+            catalog_collapsed: vec!["local".into()],
         },
     };
 

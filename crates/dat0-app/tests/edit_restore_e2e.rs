@@ -169,10 +169,10 @@ async fn edit_delete_filter_round_trip_through_v3_session() {
     // The on-disk file must declare the current schema version.
     let raw = std::fs::read_to_string(&session_json).unwrap();
     assert!(
-        raw.contains("\"schema_version\": 9") || raw.contains("\"schema_version\":9"),
-        "session.json must declare schema_version 9"
+        raw.contains("\"schema_version\": 10") || raw.contains("\"schema_version\":10"),
+        "session.json must declare schema_version 10"
     );
-    assert_eq!(SESSION_SCHEMA_VERSION, 9, "current schema must be v9");
+    assert_eq!(SESSION_SCHEMA_VERSION, 10, "current schema must be v10");
 
     // --- Phase 4: simulate crash + reload via migrate::load ---
     drop(vm);

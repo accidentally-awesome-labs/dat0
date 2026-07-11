@@ -2045,7 +2045,8 @@ pub struct WorkspaceShell {
     /// fine-grained cell focus; this shell-level handle is sufficient for
     /// T11's keyboard map + selection navigation.
     focus_handle: FocusHandle,
-    /// Stable per-hero-button focus handles, keyed by the button's static id.
+    /// Stable focus handles keyed by static id — hero buttons AND dock-panel
+    /// containers (e.g. the `catalog-tree` panel).
     /// Created once and reused across renders (the transient `EmptyState` must NOT
     /// own these — it is rebuilt every frame).
     hero_focus: std::collections::HashMap<&'static str, gpui::FocusHandle>,
@@ -2055,6 +2056,17 @@ pub struct WorkspaceShell {
     /// `pub(crate)`: `empty_state::recents_column` (a sibling module) mutates
     /// this directly from its arrow-key `cx.listener` closure.
     pub(crate) recents_active: usize,
+    /// Active-row index for keyboard nav of the Catalog panel (catalog-tree
+    /// slice). Held on the persistent shell (the panel render is a free fn,
+    /// rebuilt every frame); clamped to the visible-row count at each use.
+    /// `pub(crate)`: `catalog::panel` (a sibling module) reaches it from
+    /// `cx.listener` closures.
+    pub(crate) catalog_active: usize,
+    /// Collapsed attach-parent aliases in the Catalog panel (catalog-tree
+    /// slice). Empty = all expanded. Mirrored to session v10
+    /// `SessionUiState.catalog_collapsed` (restored in the ctor, written back
+    /// by `persist_dock_ui` on every toggle).
+    pub(crate) catalog_collapsed: std::collections::HashSet<String>,
     /// PipelineBar expanded/collapsed toggle state (P4c T9). The expanded
     /// timeline view is T10 — this stub stores the toggle flag so the `⌄`
     /// button can flip it and be rendered correctly on the next frame.
@@ -2280,6 +2292,8 @@ impl WorkspaceShell {
             connections: Default::default(),
             connections_panel_visible: false,
             catalog_panel_visible: ui.catalog_panel_visible,
+            catalog_active: 0,
+            catalog_collapsed: ui.catalog_collapsed.iter().cloned().collect(),
             catalog_tree: crate::catalog::CatalogTree::default(),
             catalog_tables: Vec::new(),
             sql_parents: Default::default(),
@@ -3024,6 +3038,52 @@ impl WorkspaceShell {
                 tracing::warn!("refresh_catalog: no MainThreadDispatcher installed; catalog stale");
             }
         });
+    }
+
+    /// Apply one keyboard-nav key to the Catalog panel: flatten the current
+    /// tree, clamp the active index (SINGLE clamp site — ring, arrows and
+    /// Enter all use this same index), then act on the pure `tree_nav`
+    /// transition. Both the container's `focus_stop` activate (enter/space)
+    /// and the chained arrow handler route here (single source of truth).
+    pub(crate) fn catalog_nav_key(
+        &mut self,
+        key: &str,
+        window: &mut gpui::Window,
+        cx: &mut gpui::Context<Self>,
+    ) {
+        let rows = crate::catalog::nav::visible_rows(&self.catalog_tree, &self.catalog_collapsed);
+        if rows.is_empty() {
+            return;
+        }
+        let active = self.catalog_active.min(rows.len() - 1);
+        self.catalog_active = active;
+        match crate::catalog::nav::tree_nav(&rows, active, key) {
+            crate::catalog::nav::NavAction::Move(i) => {
+                self.catalog_active = i;
+                cx.notify();
+            }
+            crate::catalog::nav::NavAction::Toggle(alias) => {
+                self.toggle_catalog_parent(alias, cx);
+            }
+            crate::catalog::nav::NavAction::Open(name) => {
+                self.open_table_tab(name, window, cx);
+            }
+            crate::catalog::nav::NavAction::None => {}
+        }
+    }
+
+    /// Flip an attach parent's expand/collapse state. Single source of truth —
+    /// the parent row's mouse `on_click` AND the keyboard Toggle arm both call
+    /// this (mouse and keyboard cannot drift). Clamps the active index against
+    /// the post-toggle row count so a collapse can never dangle the ring.
+    pub(crate) fn toggle_catalog_parent(&mut self, alias: String, cx: &mut gpui::Context<Self>) {
+        if !self.catalog_collapsed.remove(&alias) {
+            self.catalog_collapsed.insert(alias);
+        }
+        let rows = crate::catalog::nav::visible_rows(&self.catalog_tree, &self.catalog_collapsed);
+        self.catalog_active = self.catalog_active.min(rows.len().saturating_sub(1));
+        self.persist_dock_ui();
+        cx.notify();
     }
 
     /// Point the Inspector at `name` and load its profile (P6a T9). If the
@@ -3926,17 +3986,16 @@ impl WorkspaceShell {
         }
     }
 
-    /// Persist the catalog/inspector dock UI state to `session.json` (P6a T13,
-    /// session v8 `ui`). Builds a [`crate::session::SessionUiState`] from the
-    /// current shell visibility flags and writes it through the session. The
-    /// `catalog_expanded` / `catalog_selection` fields stay at their defaults
-    /// (empty / `None`) because the T7 catalog dock renders flat — there is no
-    /// expand/collapse/selection UI to read from yet.
+    /// Persist the catalog/inspector dock UI state to `session.json` (P6a T13;
+    /// v10 adds the catalog collapse set). Sorted for a deterministic wire
+    /// format (the insta snapshot gates it).
     pub(crate) fn persist_dock_ui(&self) {
+        let mut catalog_collapsed: Vec<String> = self.catalog_collapsed.iter().cloned().collect();
+        catalog_collapsed.sort();
         let ui = crate::session::SessionUiState {
             catalog_panel_visible: self.catalog_panel_visible,
             inspector_panel_visible: self.inspector_panel_visible,
-            ..Default::default()
+            catalog_collapsed,
         };
         if let Err(e) = self.session.lock().set_ui(ui) {
             tracing::warn!(error = %e, "persist_dock_ui: set_ui failed");
@@ -6500,6 +6559,11 @@ impl Render for WorkspaceShell {
             .tab_index(0)
             .tab_stop(grid_visible);
 
+        // Catalog-tree slice: the panel container's stable focus handle (one
+        // tab stop for the whole panel). Hoisted here — `hero_focus_handle`
+        // needs `&mut self`, unavailable inside the `.children(..)` closures.
+        let catalog_fh = self.hero_focus_handle("catalog-tree", cx);
+
         div()
             .id("workspace-shell")
             .size_full()
@@ -6607,6 +6671,9 @@ impl Render for WorkspaceShell {
                             .border_r_1()
                             .child(crate::catalog::panel::render_catalog(
                                 &self.catalog_tree,
+                                &self.catalog_collapsed,
+                                self.catalog_active,
+                                &catalog_fh,
                                 cx,
                             ))
                     }))
@@ -6704,6 +6771,14 @@ impl WorkspaceShell {
     }
     pub fn seed_catalog_for_test(&mut self, tables: Vec<dat0_engine::TableInfo>) {
         self.catalog_tables = tables;
+    }
+    pub fn catalog_active_for_test(&self) -> usize {
+        self.catalog_active
+    }
+    pub fn catalog_collapsed_for_test(&self) -> Vec<String> {
+        let mut v: Vec<String> = self.catalog_collapsed.iter().cloned().collect();
+        v.sort();
+        v
     }
     /// Build the catalog tree DIRECTLY from seeded fakes and show the catalog dock.
     /// Bypasses `refresh_catalog`'s off-thread `get_tables` (window.rs:2999), which

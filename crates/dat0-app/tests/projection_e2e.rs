@@ -369,7 +369,7 @@ async fn projection_filter_export_remove_undo_restore() {
     let restored = migrate::load(&session_json).unwrap();
     assert_eq!(
         restored.schema_version, SESSION_SCHEMA_VERSION,
-        "reloaded schema_version must be the current schema (9)"
+        "reloaded schema_version must be the current schema (10)"
     );
     assert_eq!(restored.tabs.len(), 1);
     assert_eq!(
@@ -412,11 +412,11 @@ async fn projection_filter_export_remove_undo_restore() {
         "restored data view still yields the single amt==100 row"
     );
 
-    // On-disk session.json declares the current schema (v9).
+    // On-disk session.json declares the current schema (v10).
     let raw = std::fs::read_to_string(&session_json).unwrap();
     assert!(
-        raw.contains("\"schema_version\": 9") || raw.contains("\"schema_version\":9"),
-        "session.json must declare schema_version 9"
+        raw.contains("\"schema_version\": 10") || raw.contains("\"schema_version\":10"),
+        "session.json must declare schema_version 10"
     );
 
     engine.close().await.unwrap();

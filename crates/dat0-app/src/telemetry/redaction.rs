@@ -39,7 +39,7 @@ pub fn redact_event(mut event: Event<'static>) -> Option<Event<'static>> {
     if let Some(msg) = event.message.take() {
         event.message = Some(redact_text(&msg));
     }
-    for (_k, v) in event.extra.iter_mut() {
+    for v in event.extra.values_mut() {
         if let sentry::protocol::Value::String(s) = v {
             *s = redact_text(s);
         }
