@@ -2061,6 +2061,10 @@ pub struct WorkspaceShell {
     /// `pub(crate)`: `catalog::panel` (a sibling module) reaches it from
     /// `cx.listener` closures.
     pub(crate) catalog_active: usize,
+    /// Collapsed attach-parent aliases in the Catalog panel (catalog-tree
+    /// slice). Empty = all expanded. Mirrored to session v10
+    /// `SessionUiState.catalog_collapsed` (Task 5 wires persistence).
+    pub(crate) catalog_collapsed: std::collections::HashSet<String>,
     /// PipelineBar expanded/collapsed toggle state (P4c T9). The expanded
     /// timeline view is T10 — this stub stores the toggle flag so the `⌄`
     /// button can flip it and be rendered correctly on the next frame.
@@ -2287,6 +2291,7 @@ impl WorkspaceShell {
             connections_panel_visible: false,
             catalog_panel_visible: ui.catalog_panel_visible,
             catalog_active: 0,
+            catalog_collapsed: std::collections::HashSet::new(),
             catalog_tree: crate::catalog::CatalogTree::default(),
             catalog_tables: Vec::new(),
             sql_parents: Default::default(),
@@ -3031,6 +3036,51 @@ impl WorkspaceShell {
                 tracing::warn!("refresh_catalog: no MainThreadDispatcher installed; catalog stale");
             }
         });
+    }
+
+    /// Apply one keyboard-nav key to the Catalog panel: flatten the current
+    /// tree, clamp the active index (SINGLE clamp site — ring, arrows and
+    /// Enter all use this same index), then act on the pure `tree_nav`
+    /// transition. Both the container's `focus_stop` activate (enter/space)
+    /// and the chained arrow handler route here (single source of truth).
+    pub(crate) fn catalog_nav_key(
+        &mut self,
+        key: &str,
+        window: &mut gpui::Window,
+        cx: &mut gpui::Context<Self>,
+    ) {
+        let rows = crate::catalog::nav::visible_rows(&self.catalog_tree, &self.catalog_collapsed);
+        if rows.is_empty() {
+            return;
+        }
+        let active = self.catalog_active.min(rows.len() - 1);
+        self.catalog_active = active;
+        match crate::catalog::nav::tree_nav(&rows, active, key) {
+            crate::catalog::nav::NavAction::Move(i) => {
+                self.catalog_active = i;
+                cx.notify();
+            }
+            crate::catalog::nav::NavAction::Toggle(alias) => {
+                self.toggle_catalog_parent(alias, cx);
+            }
+            crate::catalog::nav::NavAction::Open(name) => {
+                self.open_table_tab(name, window, cx);
+            }
+            crate::catalog::nav::NavAction::None => {}
+        }
+    }
+
+    /// Flip an attach parent's expand/collapse state. Single source of truth —
+    /// the parent row's mouse `on_click` AND the keyboard Toggle arm both call
+    /// this (mouse and keyboard cannot drift). Clamps the active index against
+    /// the post-toggle row count so a collapse can never dangle the ring.
+    pub(crate) fn toggle_catalog_parent(&mut self, alias: String, cx: &mut gpui::Context<Self>) {
+        if !self.catalog_collapsed.remove(&alias) {
+            self.catalog_collapsed.insert(alias);
+        }
+        let rows = crate::catalog::nav::visible_rows(&self.catalog_tree, &self.catalog_collapsed);
+        self.catalog_active = self.catalog_active.min(rows.len().saturating_sub(1));
+        cx.notify();
     }
 
     /// Point the Inspector at `name` and load its profile (P6a T9). If the
@@ -6619,6 +6669,7 @@ impl Render for WorkspaceShell {
                             .border_r_1()
                             .child(crate::catalog::panel::render_catalog(
                                 &self.catalog_tree,
+                                &self.catalog_collapsed,
                                 self.catalog_active,
                                 &catalog_fh,
                                 cx,
@@ -6721,6 +6772,11 @@ impl WorkspaceShell {
     }
     pub fn catalog_active_for_test(&self) -> usize {
         self.catalog_active
+    }
+    pub fn catalog_collapsed_for_test(&self) -> Vec<String> {
+        let mut v: Vec<String> = self.catalog_collapsed.iter().cloned().collect();
+        v.sort();
+        v
     }
     /// Build the catalog tree DIRECTLY from seeded fakes and show the catalog dock.
     /// Bypasses `refresh_catalog`'s off-thread `get_tables` (window.rs:2999), which
