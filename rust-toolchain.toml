@@ -1,4 +1,12 @@
+# Pinned (not floating "stable") so a rustc/clippy release can't silently change
+# CI or local behavior. This is the single source of truth for the version cargo
+# runs; the CI workflows install the SAME version via `dtolnay/rust-toolchain@1.97.0`
+# (both must match, or a component/version mismatch can occur).
+#
+# To bump: change `channel` here AND every `dtolnay/rust-toolchain@<ver>` ref in
+# .github/workflows/*.yml to the new version, in one PR — so any new lint or
+# behavior change lands reviewably instead of reddening main out of the blue.
 [toolchain]
-channel = "stable"
+channel = "1.97.0"
 components = ["rustfmt", "clippy"]
 profile = "minimal"
