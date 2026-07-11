@@ -9,6 +9,7 @@
 //! `WorkspaceShell::refresh_catalog` whenever the catalog could change.
 
 use crate::a11y::A11yExt as _;
+use crate::a11y::FocusStopExt as _;
 use crate::window::WorkspaceShell;
 use gpui::prelude::*;
 use gpui::{Context, SharedString, div};
@@ -25,6 +26,8 @@ pub(crate) fn section_label(name: &str, n: usize) -> String {
 /// `tree.sources` / `tree.cloud` / `tree.tables` / `tree.derived`.
 pub fn render_catalog(
     tree: &crate::catalog::CatalogTree,
+    active: usize,
+    fh: &gpui::FocusHandle,
     cx: &mut Context<WorkspaceShell>,
 ) -> gpui::AnyElement {
     // (display label, stable id for ElementIds, nodes).
@@ -38,11 +41,37 @@ pub fn render_catalog(
         ("Derived".to_string(), "Derived", &tree.derived),
     ];
 
+    // T0 skeleton: flat row count; Task 4 swaps this for `visible_rows`.
+    let row_count = tree.sources.len() + tree.cloud.len() + tree.tables.len() + tree.derived.len();
+    let _active = active.min(row_count.saturating_sub(1));
+
+    // ↑/↓ move the active-index: a SECOND `on_key_down` chained after
+    // `focus_stop`'s own (gpui pushes key-down listeners; both fire —
+    // recents R1, re-proven here for THIS surface).
+    let arrows = cx.listener(move |ws, ev: &gpui::KeyDownEvent, _window, cx| {
+        match ev.keystroke.key.as_str() {
+            "down" => ws.catalog_active = (ws.catalog_active + 1).min(row_count.saturating_sub(1)),
+            "up" => ws.catalog_active = ws.catalog_active.saturating_sub(1),
+            _ => return,
+        }
+        cx.notify();
+    });
+    // T0 skeleton activate: no-op body (Task 4 routes Enter/Space through
+    // `catalog_nav_key`). `focus_stop` still needs a handler to wire.
+    let activate = cx.listener(|_ws, _ev: &gpui::KeyDownEvent, _window, _cx| {});
+
     let mut root = div()
         .flex()
         .flex_col()
         .gap_2()
         .p_2()
+        .focus_stop("catalog-tree", fh, 0, activate)
+        .on_key_down(arrows)
+        .a11y(
+            "catalog-tree",
+            crate::a11y::AccessRole::Button,
+            dat0_i18n::t("catalog.title"),
+        )
         .child(div().child(SharedString::from(dat0_i18n::t("catalog.title"))));
 
     for (label, id, nodes) in &sections {

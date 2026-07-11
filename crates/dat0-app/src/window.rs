@@ -2055,6 +2055,12 @@ pub struct WorkspaceShell {
     /// `pub(crate)`: `empty_state::recents_column` (a sibling module) mutates
     /// this directly from its arrow-key `cx.listener` closure.
     pub(crate) recents_active: usize,
+    /// Active-row index for keyboard nav of the Catalog panel (catalog-tree
+    /// slice). Held on the persistent shell (the panel render is a free fn,
+    /// rebuilt every frame); clamped to the visible-row count at each use.
+    /// `pub(crate)`: `catalog::panel` (a sibling module) reaches it from
+    /// `cx.listener` closures.
+    pub(crate) catalog_active: usize,
     /// PipelineBar expanded/collapsed toggle state (P4c T9). The expanded
     /// timeline view is T10 — this stub stores the toggle flag so the `⌄`
     /// button can flip it and be rendered correctly on the next frame.
@@ -2280,6 +2286,7 @@ impl WorkspaceShell {
             connections: Default::default(),
             connections_panel_visible: false,
             catalog_panel_visible: ui.catalog_panel_visible,
+            catalog_active: 0,
             catalog_tree: crate::catalog::CatalogTree::default(),
             catalog_tables: Vec::new(),
             sql_parents: Default::default(),
@@ -6500,6 +6507,11 @@ impl Render for WorkspaceShell {
             .tab_index(0)
             .tab_stop(grid_visible);
 
+        // Catalog-tree slice: the panel container's stable focus handle (one
+        // tab stop for the whole panel). Hoisted here — `hero_focus_handle`
+        // needs `&mut self`, unavailable inside the `.children(..)` closures.
+        let catalog_fh = self.hero_focus_handle("catalog-tree", cx);
+
         div()
             .id("workspace-shell")
             .size_full()
@@ -6607,6 +6619,8 @@ impl Render for WorkspaceShell {
                             .border_r_1()
                             .child(crate::catalog::panel::render_catalog(
                                 &self.catalog_tree,
+                                self.catalog_active,
+                                &catalog_fh,
                                 cx,
                             ))
                     }))
@@ -6704,6 +6718,9 @@ impl WorkspaceShell {
     }
     pub fn seed_catalog_for_test(&mut self, tables: Vec<dat0_engine::TableInfo>) {
         self.catalog_tables = tables;
+    }
+    pub fn catalog_active_for_test(&self) -> usize {
+        self.catalog_active
     }
     /// Build the catalog tree DIRECTLY from seeded fakes and show the catalog dock.
     /// Bypasses `refresh_catalog`'s off-thread `get_tables` (window.rs:2999), which
