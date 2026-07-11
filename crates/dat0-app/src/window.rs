@@ -2063,7 +2063,8 @@ pub struct WorkspaceShell {
     pub(crate) catalog_active: usize,
     /// Collapsed attach-parent aliases in the Catalog panel (catalog-tree
     /// slice). Empty = all expanded. Mirrored to session v10
-    /// `SessionUiState.catalog_collapsed` (Task 5 wires persistence).
+    /// `SessionUiState.catalog_collapsed` (restored in the ctor, written back
+    /// by `persist_dock_ui` on every toggle).
     pub(crate) catalog_collapsed: std::collections::HashSet<String>,
     /// PipelineBar expanded/collapsed toggle state (P4c T9). The expanded
     /// timeline view is T10 — this stub stores the toggle flag so the `⌄`
@@ -2291,7 +2292,7 @@ impl WorkspaceShell {
             connections_panel_visible: false,
             catalog_panel_visible: ui.catalog_panel_visible,
             catalog_active: 0,
-            catalog_collapsed: std::collections::HashSet::new(),
+            catalog_collapsed: ui.catalog_collapsed.iter().cloned().collect(),
             catalog_tree: crate::catalog::CatalogTree::default(),
             catalog_tables: Vec::new(),
             sql_parents: Default::default(),
@@ -3080,6 +3081,7 @@ impl WorkspaceShell {
         }
         let rows = crate::catalog::nav::visible_rows(&self.catalog_tree, &self.catalog_collapsed);
         self.catalog_active = self.catalog_active.min(rows.len().saturating_sub(1));
+        self.persist_dock_ui();
         cx.notify();
     }
 
@@ -3983,17 +3985,16 @@ impl WorkspaceShell {
         }
     }
 
-    /// Persist the catalog/inspector dock UI state to `session.json` (P6a T13,
-    /// session v8 `ui`). Builds a [`crate::session::SessionUiState`] from the
-    /// current shell visibility flags and writes it through the session. The
-    /// `catalog_expanded` / `catalog_selection` fields stay at their defaults
-    /// (empty / `None`) because the T7 catalog dock renders flat — there is no
-    /// expand/collapse/selection UI to read from yet.
+    /// Persist the catalog/inspector dock UI state to `session.json` (P6a T13;
+    /// v10 adds the catalog collapse set). Sorted for a deterministic wire
+    /// format (the insta snapshot gates it).
     pub(crate) fn persist_dock_ui(&self) {
+        let mut catalog_collapsed: Vec<String> = self.catalog_collapsed.iter().cloned().collect();
+        catalog_collapsed.sort();
         let ui = crate::session::SessionUiState {
             catalog_panel_visible: self.catalog_panel_visible,
             inspector_panel_visible: self.inspector_panel_visible,
-            ..Default::default()
+            catalog_collapsed,
         };
         if let Err(e) = self.session.lock().set_ui(ui) {
             tracing::warn!(error = %e, "persist_dock_ui: set_ui failed");

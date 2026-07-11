@@ -273,11 +273,11 @@ async fn full_loop_persist_then_restore() {
     );
 
     // --- Phase 7: verify the on-disk session.json declares the current schema
-    // (v9) with correct content ---
+    // (v10) with correct content ---
     let raw = std::fs::read_to_string(&session_json).unwrap();
     assert!(
-        raw.contains("\"schema_version\": 9") || raw.contains("\"schema_version\":9"),
-        "session.json must declare the current schema_version (9)"
+        raw.contains("\"schema_version\": 10") || raw.contains("\"schema_version\":10"),
+        "session.json must declare the current schema_version (10)"
     );
     assert!(
         raw.contains("\"eq\"") || raw.contains("eq"),

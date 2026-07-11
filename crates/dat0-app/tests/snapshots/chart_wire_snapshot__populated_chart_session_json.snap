@@ -3,7 +3,7 @@ source: crates/dat0-app/tests/chart_wire_snapshot.rs
 expression: json
 ---
 {
-  "schema_version": 9,
+  "schema_version": 10,
   "tabs": [],
   "active_tab": null,
   "sql_tabs": [],
@@ -30,7 +30,6 @@ expression: json
   "ui": {
     "catalog_panel_visible": false,
     "inspector_panel_visible": false,
-    "catalog_expanded": [],
-    "catalog_selection": null
+    "catalog_collapsed": []
   }
 }
