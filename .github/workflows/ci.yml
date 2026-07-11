@@ -15,7 +15,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@1.97.0
         with: { components: rustfmt }
       - run: cargo fmt --all -- --check
 
@@ -23,7 +23,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@1.97.0
         with: { components: clippy }
       - run: cargo clippy --workspace --all-targets -- -D warnings
 
@@ -69,7 +69,7 @@ jobs:
           haskell: true
           large-packages: true
           swap-storage: true
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@1.97.0
         with:
           targets: ${{ matrix.target.triple }}
       # apt + dbus-launch steps are skipped on self-hosted runners. Those

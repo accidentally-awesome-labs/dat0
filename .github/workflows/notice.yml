@@ -18,7 +18,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@1.97.0
       - name: Install cargo-about
         # cargo-about >=0.9 ships the binary behind the `cli` feature; without
         # `--features=cli` the install completes but produces no executable.
