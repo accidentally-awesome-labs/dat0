@@ -13,6 +13,7 @@
 //! stored in `AiSettings`/settings.toml, and never logged. The handler writes it
 //! straight to the keychain via `ai::key_store::KeychainKeyStore`.
 
+use crate::a11y::{A11yExt as _, AccessRole, FocusStopExt as _};
 use crate::ai::Provider;
 use crate::window::WorkspaceShell;
 use gpui::prelude::*;
@@ -91,7 +92,11 @@ fn provider_label(provider: Option<Provider>) -> SharedString {
 /// Render the AI panel from the current draft state. Called from
 /// `WorkspaceShell::render`. A pure function of `panel` — mirrors
 /// `render_connections`.
-pub fn render_ai_panel(panel: &AiPanel, cx: &mut Context<WorkspaceShell>) -> gpui::AnyElement {
+pub fn render_ai_panel(
+    panel: &AiPanel,
+    handles: &crate::empty_state::HeroHandles,
+    cx: &mut Context<WorkspaceShell>,
+) -> gpui::AnyElement {
     // ── Enable toggle ──────────────────────────────────────────────────────
     let enabled_label = if panel.enabled {
         dat0_i18n::t("ai.enabled.on")
@@ -102,6 +107,7 @@ pub fn render_ai_panel(panel: &AiPanel, cx: &mut Context<WorkspaceShell>) -> gpu
         "ai-toggle-enabled",
         enabled_label,
         AiPanelEvent::ToggleEnabled,
+        handles.get("ai-toggle-enabled"),
         cx,
     );
 
@@ -118,6 +124,7 @@ pub fn render_ai_panel(panel: &AiPanel, cx: &mut Context<WorkspaceShell>) -> gpu
         "ai-provider-cycle",
         provider_label(panel.provider),
         AiPanelEvent::SelectProvider(next_provider),
+        handles.get("ai-provider-cycle"),
         cx,
     );
 
@@ -141,6 +148,7 @@ pub fn render_ai_panel(panel: &AiPanel, cx: &mut Context<WorkspaceShell>) -> gpu
             // Empty string sentinel: the handler opens the entry prompt and
             // re-dispatches SetKey with the real value on Confirm.
             AiPanelEvent::SetKey(String::new()),
+            handles.get("ai-key-set"),
             cx,
         ));
     if panel.key_set {
@@ -148,6 +156,7 @@ pub fn render_ai_panel(panel: &AiPanel, cx: &mut Context<WorkspaceShell>) -> gpu
             "ai-key-forget",
             dat0_i18n::t("ai.key.forget"),
             AiPanelEvent::ForgetKey,
+            handles.get("ai-key-forget"),
             cx,
         ));
     }
@@ -175,6 +184,7 @@ pub fn render_ai_panel(panel: &AiPanel, cx: &mut Context<WorkspaceShell>) -> gpu
             dat0_i18n::t("ai.model.set_button"),
             // Empty sentinel: the handler opens the entry prompt and re-dispatches.
             AiPanelEvent::SetModel(String::new()),
+            handles.get("ai-model-set"),
             cx,
         ));
 
@@ -188,6 +198,7 @@ pub fn render_ai_panel(panel: &AiPanel, cx: &mut Context<WorkspaceShell>) -> gpu
         "ai-toggle-advanced",
         advanced_label,
         AiPanelEvent::ToggleAdvancedOverride,
+        handles.get("ai-toggle-advanced"),
         cx,
     );
 
@@ -200,6 +211,7 @@ pub fn render_ai_panel(panel: &AiPanel, cx: &mut Context<WorkspaceShell>) -> gpu
         "ai-toggle-sample-rows",
         sample_label,
         AiPanelEvent::ToggleIncludeSampleRows,
+        handles.get("ai-toggle-sample-rows"),
         cx,
     );
 
@@ -208,6 +220,7 @@ pub fn render_ai_panel(panel: &AiPanel, cx: &mut Context<WorkspaceShell>) -> gpu
         "ai-test-connection",
         dat0_i18n::t("ai.test"),
         AiPanelEvent::TestConnection,
+        handles.get("ai-test-connection"),
         cx,
     );
 
@@ -234,25 +247,36 @@ pub fn render_ai_panel(panel: &AiPanel, cx: &mut Context<WorkspaceShell>) -> gpu
     panel_div.into_any_element()
 }
 
-/// A clickable panel button that dispatches `ev` to the shell handler. Mirrors
-/// `connections::panel::action_button` exactly (same `cx.listener` → shell
-/// handler dispatch idiom).
+/// A clickable, keyboard-operable panel button that dispatches `ev` to the shell
+/// handler. `focus_stop` makes it a real Tab stop with Enter/Space activation +
+/// focus ring (ships in release); the `.a11y` twin (same `id`) is the oracle's
+/// label source and a release no-op. The Enter/Space handler calls the SAME
+/// `handle_ai_panel_event` the `on_click` does, so keyboard and mouse cannot drift.
 fn action_button(
-    id: impl Into<gpui::ElementId>,
+    id: &'static str,
     label: impl Into<SharedString>,
     ev: AiPanelEvent,
+    fh: &gpui::FocusHandle,
     cx: &mut Context<WorkspaceShell>,
 ) -> gpui::Stateful<gpui::Div> {
+    let label: SharedString = label.into();
+    let ev_key = ev.clone();
+    let click = cx.listener(move |ws, _ev, window, cx| {
+        ws.handle_ai_panel_event(ev.clone(), window, cx);
+    });
+    let key = cx.listener(move |ws, _ev: &gpui::KeyDownEvent, window, cx| {
+        ws.handle_ai_panel_event(ev_key.clone(), window, cx);
+    });
     div()
         .id(id)
         .px_2()
         .py_1()
         .border_1()
         .cursor_pointer()
-        .child(label.into())
-        .on_click(cx.listener(move |ws, _ev, window, cx| {
-            ws.handle_ai_panel_event(ev.clone(), window, cx);
-        }))
+        .focus_stop(id, fh, 0, key)
+        .a11y(id, AccessRole::Button, label.to_string())
+        .child(label)
+        .on_click(click)
 }
 
 #[cfg(test)]

@@ -28,7 +28,7 @@ use gpui_component::input::{Input, InputState};
 use gpui_component::spinner::Spinner;
 use gpui_component::table::{Table, TableState};
 
-use crate::a11y::A11yExt as _;
+use crate::a11y::{A11yExt as _, AccessRole, FocusStopExt as _};
 use crate::grid::{GridDataSource, GridTableDelegate};
 use crate::query::{ResultTarget, SqlTabMeta};
 use crate::window::WorkspaceShell;
@@ -175,6 +175,15 @@ pub struct SqlConsole {
     /// shell on AI config changes and on console creation. Gates the NL→SQL chip
     /// and the Explain button.
     pub(crate) ai_ready: bool,
+    /// Stable focus handle for the NL→SQL chip (AI-config-nav slice). Minted once
+    /// here so the chip is a stable Tab stop across re-renders.
+    pub(crate) nl2sql_focus: gpui::FocusHandle,
+    /// Stable focus handle for the Explain button (AI-config-nav slice).
+    /// Wired to `sql-explain`'s `focus_stop` in Task 2 — until then the field is
+    /// only written (minted in `new`), so allow dead_code to keep `-D warnings`
+    /// green (Task 2 removes this allow when it reads the handle).
+    #[allow(dead_code)]
+    pub(crate) explain_focus: gpui::FocusHandle,
 }
 
 /// Install the autocomplete provider on a freshly-built tab editor (P5b T2).
@@ -298,6 +307,8 @@ impl SqlConsole {
             nl_preview: None,
             explain: None,
             ai_ready: false,
+            nl2sql_focus: cx.focus_handle(),
+            explain_focus: cx.focus_handle(),
         }
     }
 
@@ -1012,9 +1023,20 @@ impl Render for SqlConsole {
                                     .when(enabled, |d| d.cursor_pointer())
                                     .child(SharedString::from(dat0_i18n::t("sql.nl2sql.chip")));
                                 if enabled {
-                                    chip.on_click(cx.listener(|_console, _ev, _window, cx| {
-                                        cx.emit(SqlConsoleEvent::OpenNl2SqlPrompt);
-                                    }))
+                                    let key = cx.listener(
+                                        |_console, _ev: &gpui::KeyDownEvent, _window, cx| {
+                                            cx.emit(SqlConsoleEvent::OpenNl2SqlPrompt);
+                                        },
+                                    );
+                                    chip.focus_stop("nl2sql-chip", &self.nl2sql_focus, 0, key)
+                                        .a11y(
+                                            "nl2sql-chip",
+                                            AccessRole::Button,
+                                            dat0_i18n::t("sql.nl2sql.chip"),
+                                        )
+                                        .on_click(cx.listener(|_console, _ev, _window, cx| {
+                                            cx.emit(SqlConsoleEvent::OpenNl2SqlPrompt);
+                                        }))
                                 } else {
                                     chip
                                 }
