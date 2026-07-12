@@ -247,3 +247,145 @@ fn t0_ai_nav_gate(cx: &mut TestAppContext) {
 
     drop(state);
 }
+
+// ─── Task 1: AI-dock reachability suite ─────────────────────────────────────
+// Breadth over the dock Task 0 wired: all 7 always-rendered buttons are Tab
+// stops in paint order, the conditional `ai-key-forget` joins them when
+// `key_set`, and none of them are Tab stops while the dock is closed. These
+// tests never open the SQL console, so (per the catalog_nav.rs precedent) no
+// ambient tokio runtime is needed.
+
+/// Seed the AI dock open (`seed_ai_panel_for_test` also sets
+/// `ai_panel_visible`) with a known draft in the given `key_set` state.
+fn seed_ai_dock(shell: &Entity<WorkspaceShell>, vcx: &mut VisualTestContext, key_set: bool) {
+    vcx.cx.update(|app| {
+        shell.update(app, |ws, _cx| {
+            ws.seed_ai_panel_for_test(AiPanel {
+                provider: Some(Provider::Anthropic),
+                key_set,
+                model: String::new(),
+                enabled: false,
+                advanced_override: false,
+                include_sample_rows: false,
+                test_result: None,
+            });
+        });
+    });
+    vcx.run_until_parked();
+}
+
+/// Collect the labels Tab visits, in order, up to `n` hops (stops early on repeat).
+fn tab_labels(vcx: &mut VisualTestContext, n: usize) -> Vec<String> {
+    let mut seen = Vec::new();
+    for _ in 0..n {
+        press_tab(vcx);
+        if let Some(l) = A11ySnapshot::capture(vcx).focused_label() {
+            let l = l.to_string();
+            if seen.last() != Some(&l) {
+                seen.push(l);
+            }
+        }
+    }
+    seen
+}
+
+/// Local mirror of the PRIVATE `ai/panel.rs::provider_label` so the tests can
+/// name the provider button's label. If the format drifts, update BOTH.
+fn provider_label_text(p: Option<Provider>) -> String {
+    match p {
+        Some(p) => format!(
+            "{}: {}",
+            dat0_i18n::t("ai.provider"),
+            dat0_i18n::t(&format!("ai.provider.{}", p.id()))
+        ),
+        None => dat0_i18n::t("ai.provider.unset"),
+    }
+}
+
+#[gpui::test]
+#[serial]
+fn ai_dock_seven_buttons_reachable_in_paint_order(cx: &mut TestAppContext) {
+    let cfg = tempfile::tempdir().unwrap();
+    let state = tempfile::tempdir().unwrap();
+    set_config_dir(cfg.path());
+    init_components(cx);
+    let session = build_empty_session(state.path());
+    let (shell, vcx) = open_shell_window(cx, session);
+    vcx.run_until_parked();
+    seed_ai_dock(&shell, vcx, false);
+    focus_shell_neutrally(vcx);
+
+    let want = [
+        dat0_i18n::t("ai.enabled.off"),
+        provider_label_text(Some(Provider::Anthropic)),
+        dat0_i18n::t("ai.key.set_button"),
+        dat0_i18n::t("ai.model.set_button"),
+        dat0_i18n::t("ai.advanced.off"),
+        dat0_i18n::t("ai.sample_rows.off"),
+        dat0_i18n::t("ai.test"),
+    ];
+    let seen = tab_labels(vcx, 40);
+    for label in &want {
+        assert!(
+            seen.contains(label),
+            "Tab never reached AI button {label:?}; visited {seen:?}"
+        );
+    }
+    // Order: each expected label appears, and in the paint sequence above.
+    let idxs: Vec<usize> = want
+        .iter()
+        .map(|l| seen.iter().position(|s| s == l).expect("present"))
+        .collect();
+    assert!(
+        idxs.windows(2).all(|w| w[0] < w[1]),
+        "AI buttons must be Tab-visited in paint order; got {seen:?}"
+    );
+    drop(state);
+}
+
+#[gpui::test]
+#[serial]
+fn ai_key_forget_is_reachable_when_key_set(cx: &mut TestAppContext) {
+    let cfg = tempfile::tempdir().unwrap();
+    let state = tempfile::tempdir().unwrap();
+    set_config_dir(cfg.path());
+    init_components(cx);
+    let session = build_empty_session(state.path());
+    let (shell, vcx) = open_shell_window(cx, session);
+    vcx.run_until_parked();
+    seed_ai_dock(&shell, vcx, true); // key_set → ai-key-forget renders
+    focus_shell_neutrally(vcx);
+
+    let forget = dat0_i18n::t("ai.key.forget");
+    assert!(
+        A11ySnapshot::capture(vcx).has_label(&forget),
+        "ai-key-forget must render when key_set"
+    );
+    let seen = tab_labels(vcx, 40);
+    assert!(
+        seen.contains(&forget),
+        "ai-key-forget must be Tab-reachable when key_set; visited {seen:?}"
+    );
+    drop(state);
+}
+
+#[gpui::test]
+#[serial]
+fn ai_dock_not_a_tab_stop_when_closed(cx: &mut TestAppContext) {
+    let cfg = tempfile::tempdir().unwrap();
+    let state = tempfile::tempdir().unwrap();
+    set_config_dir(cfg.path());
+    init_components(cx);
+    let session = build_empty_session(state.path());
+    let (_shell, vcx) = open_shell_window(cx, session);
+    vcx.run_until_parked();
+    // Do NOT open the dock (ai_panel_visible stays false).
+    focus_shell_neutrally(vcx);
+    let enabled_label = dat0_i18n::t("ai.enabled.off");
+    let seen = tab_labels(vcx, 40);
+    assert!(
+        !seen.contains(&enabled_label),
+        "no AI button may be a Tab stop while the dock is closed; visited {seen:?}"
+    );
+    drop(state);
+}
