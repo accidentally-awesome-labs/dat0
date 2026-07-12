@@ -38,7 +38,7 @@ use support::{A11ySnapshot, press_tab};
 use dat0_app::ai::Provider;
 use dat0_app::ai::panel::AiPanel;
 use dat0_app::session::Session;
-use dat0_app::view::sql_console::SqlConsoleEvent;
+use dat0_app::view::sql_console::{SqlConsole, SqlConsoleEvent};
 use dat0_app::window::WorkspaceShell;
 
 const BUDGET: u64 = 128 * 1024 * 1024;
@@ -386,6 +386,110 @@ fn ai_dock_not_a_tab_stop_when_closed(cx: &mut TestAppContext) {
     assert!(
         !seen.contains(&enabled_label),
         "no AI button may be a Tab stop while the dock is closed; visited {seen:?}"
+    );
+    drop(state);
+}
+
+// ─── Task 2: SQL-Console AI-trigger suite ───────────────────────────────────
+// Breadth over the console triggers: both `nl2sql-chip` (Task 0) and
+// `sql-explain` (Task 2) are Tab-reachable when `ai_ready`, and Enter on the
+// focused Explain button emits `SqlConsoleEvent::Explain`. The shell's
+// downstream `spawn_ai_explain` early-returns on `provider == None` (this
+// suite never seeds the AI panel), so the emit is headless-safe — observed via
+// an `App::subscribe` that fires before the (no-op) downstream handler.
+
+/// Open the console ready and subscribe to its events. Returns (console, log).
+fn open_console_with_log(
+    shell: &Entity<WorkspaceShell>,
+    vcx: &mut VisualTestContext,
+) -> (Entity<SqlConsole>, Rc<RefCell<Vec<SqlConsoleEvent>>>) {
+    let console = vcx.update(|window, app| {
+        shell.update(app, |ws, cx| ws.open_console_ready_for_test(window, cx))
+    });
+    vcx.run_until_parked();
+    let log: Rc<RefCell<Vec<SqlConsoleEvent>>> = Rc::new(RefCell::new(Vec::new()));
+    let log2 = log.clone();
+    // NOTE: the returned Subscription is intentionally leaked for the test's life
+    // via mem::forget so it keeps firing (the test process is short-lived).
+    let sub = vcx.cx.update(|app| {
+        app.subscribe(&console, move |_c, ev: &SqlConsoleEvent, _app| {
+            log2.borrow_mut().push(ev.clone());
+        })
+    });
+    std::mem::forget(sub);
+    vcx.run_until_parked(); // flush the deferred subscription activation
+    (console, log)
+}
+
+#[gpui::test]
+#[serial]
+fn console_ai_triggers_reachable(cx: &mut TestAppContext) {
+    let cfg = tempfile::tempdir().unwrap();
+    let state = tempfile::tempdir().unwrap();
+    set_config_dir(cfg.path());
+    init_components(cx);
+    // Console-open `tokio::spawn`s (`refresh_completion_snapshot`) → ambient
+    // runtime for the whole test, entered BEFORE the window opens (T0 idiom).
+    let harness = enter_async_harness(cx);
+    let _g = harness.enter();
+    let session = build_empty_session(state.path());
+    let (shell, vcx) = open_shell_window(cx, session);
+    vcx.run_until_parked();
+    let (_console, _log) = open_console_with_log(&shell, vcx);
+
+    let chip = dat0_i18n::t("sql.nl2sql.chip");
+    let explain = dat0_i18n::t("sql.explain.button");
+    let snap = A11ySnapshot::capture(vcx);
+    assert!(snap.has_label(&chip), "chip twin renders when ai_ready");
+    assert!(
+        snap.has_label(&explain),
+        "explain twin renders when ai_ready"
+    );
+
+    // Establish keyboard focus before walking Tab (nothing is focused in a
+    // fresh window; T0 only tabbed after the same neutral click).
+    focus_shell_neutrally(vcx);
+    let seen = tab_labels(vcx, 40);
+    assert!(
+        seen.contains(&chip),
+        "nl2sql-chip Tab-reachable; visited {seen:?}"
+    );
+    assert!(
+        seen.contains(&explain),
+        "sql-explain Tab-reachable; visited {seen:?}"
+    );
+    drop(state);
+}
+
+#[gpui::test]
+#[serial]
+fn enter_on_explain_emits_explain(cx: &mut TestAppContext) {
+    let cfg = tempfile::tempdir().unwrap();
+    let state = tempfile::tempdir().unwrap();
+    set_config_dir(cfg.path());
+    init_components(cx);
+    // Console-open `tokio::spawn`s (`refresh_completion_snapshot`) → ambient
+    // runtime for the whole test, entered BEFORE the window opens (T0 idiom).
+    let harness = enter_async_harness(cx);
+    let _g = harness.enter();
+    let session = build_empty_session(state.path());
+    let (shell, vcx) = open_shell_window(cx, session);
+    vcx.run_until_parked();
+    let (_console, log) = open_console_with_log(&shell, vcx);
+
+    let explain = dat0_i18n::t("sql.explain.button");
+    // Establish keyboard focus before walking Tab (nothing is focused in a
+    // fresh window; T0 only tabbed after the same neutral click).
+    focus_shell_neutrally(vcx);
+    tab_until(vcx, &explain);
+    vcx.simulate_keystrokes("enter");
+    vcx.run_until_parked();
+    assert!(
+        log.borrow()
+            .iter()
+            .any(|e| matches!(e, SqlConsoleEvent::Explain)),
+        "Enter on sql-explain must emit Explain; got {:?}",
+        log.borrow()
     );
     drop(state);
 }

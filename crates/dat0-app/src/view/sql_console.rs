@@ -178,11 +178,8 @@ pub struct SqlConsole {
     /// Stable focus handle for the NL→SQL chip (AI-config-nav slice). Minted once
     /// here so the chip is a stable Tab stop across re-renders.
     pub(crate) nl2sql_focus: gpui::FocusHandle,
-    /// Stable focus handle for the Explain button (AI-config-nav slice).
-    /// Wired to `sql-explain`'s `focus_stop` in Task 2 — until then the field is
-    /// only written (minted in `new`), so allow dead_code to keep `-D warnings`
-    /// green (Task 2 removes this allow when it reads the handle).
-    #[allow(dead_code)]
+    /// Stable focus handle for the Explain button (AI-config-nav slice). Minted
+    /// once here so the button is a stable Tab stop across re-renders.
     pub(crate) explain_focus: gpui::FocusHandle,
 }
 
@@ -1055,9 +1052,20 @@ impl Render for SqlConsole {
                                     .when(enabled, |d| d.cursor_pointer())
                                     .child(SharedString::from(dat0_i18n::t("sql.explain.button")));
                                 if enabled {
-                                    btn.on_click(cx.listener(|_console, _ev, _window, cx| {
-                                        cx.emit(SqlConsoleEvent::Explain);
-                                    }))
+                                    let key = cx.listener(
+                                        |_console, _ev: &gpui::KeyDownEvent, _window, cx| {
+                                            cx.emit(SqlConsoleEvent::Explain);
+                                        },
+                                    );
+                                    btn.focus_stop("sql-explain", &self.explain_focus, 0, key)
+                                        .a11y(
+                                            "sql-explain",
+                                            AccessRole::Button,
+                                            dat0_i18n::t("sql.explain.button"),
+                                        )
+                                        .on_click(cx.listener(|_console, _ev, _window, cx| {
+                                            cx.emit(SqlConsoleEvent::Explain);
+                                        }))
                                 } else {
                                     btn
                                 }
