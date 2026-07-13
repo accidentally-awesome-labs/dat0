@@ -178,6 +178,17 @@ jobs:
         # hermetic `ai::wire` unit tests in the --workspace Test step above remain
         # a HARD gate for the SSE/JSON parsing logic; this step is live smoke only.
         continue-on-error: true
+        # `continue-on-error` only swallows a FAILURE — it cannot rescue a HANG.
+        # Observed on PR #49: OpenRouter's SSE stream stalled without closing, so
+        # `ai_live` blocked forever; the job never left this step and was killed
+        # hours later, taking the REQUIRED build-and-test check down with it (once
+        # as `cancelled`, once as `failure`) even though Build + Test + MotherDuck
+        # had all already passed. That is precisely the "third-party outage blocks a
+        # required gate" tradeoff this step is documented to avoid. Cap the step so
+        # a stall fails fast and `continue-on-error` can do its job. 15m is well
+        # clear of the normal cost (binary is already built by the Test step above;
+        # the two serialized live calls take seconds).
+        timeout-minutes: 15
         env:
           OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
           CARGO_BUILD_JOBS: ${{ (runner.os == 'Linux' && runner.environment == 'github-hosted') && '2' || 'default' }}

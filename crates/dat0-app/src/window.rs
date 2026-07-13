@@ -6564,6 +6564,30 @@ impl Render for WorkspaceShell {
         // needs `&mut self`, unavailable inside the `.children(..)` closures.
         let catalog_fh = self.hero_focus_handle("catalog-tree", cx);
 
+        // AI-config-nav slice: stable per-button focus handles for the AI dock, minted
+        // on the persistent shell (hero_focus map) and threaded into `render_ai_panel`.
+        // Hoisted here — `hero_focus_handle` needs `&mut self`, unavailable inside the
+        // `.children(..)` render closures. Registering all 8 ids unconditionally is
+        // fine (`HeroHandles::get` is only invoked by whichever buttons actually render;
+        // `ai-key-forget` is only looked up when `key_set`).
+        let ai_handles = {
+            let ids: [&'static str; 8] = [
+                "ai-toggle-enabled",
+                "ai-provider-cycle",
+                "ai-key-set",
+                "ai-key-forget",
+                "ai-model-set",
+                "ai-toggle-advanced",
+                "ai-toggle-sample-rows",
+                "ai-test-connection",
+            ];
+            let mut map = std::collections::HashMap::new();
+            for id in ids {
+                map.insert(id, self.hero_focus_handle(id, cx));
+            }
+            crate::empty_state::HeroHandles { map }
+        };
+
         div()
             .id("workspace-shell")
             .size_full()
@@ -6687,7 +6711,11 @@ impl Render for WorkspaceShell {
                         div()
                             .w_64()
                             .border_r_1()
-                            .child(crate::ai::panel::render_ai_panel(&self.ai_panel, cx))
+                            .child(crate::ai::panel::render_ai_panel(
+                                &self.ai_panel,
+                                &ai_handles,
+                                cx,
+                            ))
                     }))
                     .child(div().flex_1().child(body))
                     // Inspector right dock last → Catalog | Connections | body | Inspector.
@@ -6845,6 +6873,35 @@ impl WorkspaceShell {
     #[cfg(feature = "a11y-capture")]
     pub fn recents_active_for_test(&self) -> usize {
         self.recents_active
+    }
+    /// Seed the AI dock draft state directly (bypassing `hydrate_ai_panel`, which
+    /// probes the OS keychain + settings.toml — the hermeticity trap) and open the
+    /// dock. Test-only.
+    #[cfg(feature = "a11y-capture")]
+    pub fn seed_ai_panel_for_test(&mut self, panel: crate::ai::panel::AiPanel) {
+        self.ai_panel = panel;
+        self.ai_panel_visible = true;
+    }
+    /// Read the AI dock's draft `enabled` flag (proves Enter-operability flipped it).
+    #[cfg(feature = "a11y-capture")]
+    pub fn ai_panel_enabled_for_test(&self) -> bool {
+        self.ai_panel.enabled
+    }
+    /// Toggle the SQL console visible, mark AI ready (so the NL→SQL chip + Explain
+    /// button render their interactive `if enabled` branch), and return the console
+    /// entity so a test can subscribe to its `SqlConsoleEvent`s. Test-only.
+    #[cfg(feature = "a11y-capture")]
+    pub fn open_console_ready_for_test(
+        &mut self,
+        window: &mut Window,
+        cx: &mut gpui::Context<Self>,
+    ) -> gpui::Entity<crate::view::sql_console::SqlConsole> {
+        if !self.sql_console_visible {
+            self.toggle_sql_console(window, cx);
+        }
+        let console = self.sql_console.clone().expect("console built by toggle");
+        console.update(cx, |c, _cx| c.ai_ready = true);
+        console
     }
 }
 

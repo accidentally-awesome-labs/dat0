@@ -28,7 +28,7 @@ use gpui_component::input::{Input, InputState};
 use gpui_component::spinner::Spinner;
 use gpui_component::table::{Table, TableState};
 
-use crate::a11y::A11yExt as _;
+use crate::a11y::{A11yExt as _, AccessRole, FocusStopExt as _};
 use crate::grid::{GridDataSource, GridTableDelegate};
 use crate::query::{ResultTarget, SqlTabMeta};
 use crate::window::WorkspaceShell;
@@ -175,6 +175,12 @@ pub struct SqlConsole {
     /// shell on AI config changes and on console creation. Gates the NL→SQL chip
     /// and the Explain button.
     pub(crate) ai_ready: bool,
+    /// Stable focus handle for the NL→SQL chip (AI-config-nav slice). Minted once
+    /// here so the chip is a stable Tab stop across re-renders.
+    pub(crate) nl2sql_focus: gpui::FocusHandle,
+    /// Stable focus handle for the Explain button (AI-config-nav slice). Minted
+    /// once here so the button is a stable Tab stop across re-renders.
+    pub(crate) explain_focus: gpui::FocusHandle,
 }
 
 /// Install the autocomplete provider on a freshly-built tab editor (P5b T2).
@@ -298,6 +304,8 @@ impl SqlConsole {
             nl_preview: None,
             explain: None,
             ai_ready: false,
+            nl2sql_focus: cx.focus_handle(),
+            explain_focus: cx.focus_handle(),
         }
     }
 
@@ -1012,9 +1020,20 @@ impl Render for SqlConsole {
                                     .when(enabled, |d| d.cursor_pointer())
                                     .child(SharedString::from(dat0_i18n::t("sql.nl2sql.chip")));
                                 if enabled {
-                                    chip.on_click(cx.listener(|_console, _ev, _window, cx| {
-                                        cx.emit(SqlConsoleEvent::OpenNl2SqlPrompt);
-                                    }))
+                                    let key = cx.listener(
+                                        |_console, _ev: &gpui::KeyDownEvent, _window, cx| {
+                                            cx.emit(SqlConsoleEvent::OpenNl2SqlPrompt);
+                                        },
+                                    );
+                                    chip.focus_stop("nl2sql-chip", &self.nl2sql_focus, 0, key)
+                                        .a11y(
+                                            "nl2sql-chip",
+                                            AccessRole::Button,
+                                            dat0_i18n::t("sql.nl2sql.chip"),
+                                        )
+                                        .on_click(cx.listener(|_console, _ev, _window, cx| {
+                                            cx.emit(SqlConsoleEvent::OpenNl2SqlPrompt);
+                                        }))
                                 } else {
                                     chip
                                 }
@@ -1033,9 +1052,20 @@ impl Render for SqlConsole {
                                     .when(enabled, |d| d.cursor_pointer())
                                     .child(SharedString::from(dat0_i18n::t("sql.explain.button")));
                                 if enabled {
-                                    btn.on_click(cx.listener(|_console, _ev, _window, cx| {
-                                        cx.emit(SqlConsoleEvent::Explain);
-                                    }))
+                                    let key = cx.listener(
+                                        |_console, _ev: &gpui::KeyDownEvent, _window, cx| {
+                                            cx.emit(SqlConsoleEvent::Explain);
+                                        },
+                                    );
+                                    btn.focus_stop("sql-explain", &self.explain_focus, 0, key)
+                                        .a11y(
+                                            "sql-explain",
+                                            AccessRole::Button,
+                                            dat0_i18n::t("sql.explain.button"),
+                                        )
+                                        .on_click(cx.listener(|_console, _ev, _window, cx| {
+                                            cx.emit(SqlConsoleEvent::Explain);
+                                        }))
                                 } else {
                                     btn
                                 }
