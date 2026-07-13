@@ -493,3 +493,126 @@ fn enter_on_explain_emits_explain(cx: &mut TestAppContext) {
     );
     drop(state);
 }
+
+// ----------------------------------------------------------------------------
+// Follow-ups (post-merge review findings).
+// ----------------------------------------------------------------------------
+
+/// FF-1 — the self-removing Forget button must HAND OFF focus, not orphan it.
+///
+/// Activating Forget sets `key_set = false`, which stops rendering the very button
+/// that was focused (`ai/panel.rs` gates `ai-key-forget` on `key_set`). The element
+/// tracking that focus handle disappears on the next frame, so without an explicit
+/// hand-off a keyboard user is left focused on nothing and must Tab from the top
+/// again. Assert focus moves to the sibling that survives the removal — "Set key…".
+///
+/// ★ SAFETY — `provider` is seeded `None` ON PURPOSE. `ForgetKey` wraps its keychain
+/// call in `if let Some(provider) = self.ai_panel.provider`, so a `None` provider skips
+/// `KeychainKeyStore::forget()` entirely. With `Some(..)` this test would DELETE THE
+/// DEVELOPER'S REAL STORED API KEY from the OS keychain (CI Linux runs a live
+/// gnome-keyring; macOS uses the login keychain). Nothing is lost by staying hermetic:
+/// `key_set = false` and the focus hand-off both live OUTSIDE that guard, so the path
+/// under test executes identically.
+#[gpui::test]
+#[serial]
+fn forget_key_hands_focus_to_set_key(cx: &mut TestAppContext) {
+    let cfg = tempfile::tempdir().unwrap();
+    let state = tempfile::tempdir().unwrap();
+    set_config_dir(cfg.path());
+    init_components(cx);
+    let session = build_empty_session(state.path());
+    let (shell, vcx) = open_shell_window(cx, session);
+    vcx.run_until_parked();
+
+    vcx.cx.update(|app| {
+        shell.update(app, |ws, _cx| {
+            ws.seed_ai_panel_for_test(AiPanel {
+                provider: None, // ★ keychain-safe — see the doc comment above
+                key_set: true,  // renders `ai-key-forget` (gated on key_set alone)
+                model: String::new(),
+                enabled: false,
+                advanced_override: false,
+                include_sample_rows: false,
+                test_result: None,
+            });
+        });
+    });
+    vcx.run_until_parked();
+
+    let forget = dat0_i18n::t("ai.key.forget");
+    let set_key = dat0_i18n::t("ai.key.set_button");
+
+    focus_shell_neutrally(vcx);
+    tab_until(vcx, &forget);
+
+    // Enter activates ForgetKey → the focused button removes itself.
+    vcx.simulate_keystrokes("enter");
+    vcx.run_until_parked();
+
+    let snap = A11ySnapshot::capture(vcx);
+    // Teeth: the button really did remove itself. Without this, the focus assertion
+    // below could pass trivially with the old button still painted.
+    assert!(
+        !snap.has_label(&forget),
+        "ai-key-forget must stop rendering once key_set is false"
+    );
+    assert_eq!(
+        snap.focused_label(),
+        Some(set_key.as_str()),
+        "focus must be handed to `ai-key-set`, not orphaned on the removed button"
+    );
+    drop(state);
+}
+
+/// T2-m2 — the console AI triggers are tab stops ONLY when operable.
+///
+/// With `ai_ready = false` the chip and Explain fall into their `else` arm: a plain,
+/// non-interactive div carrying neither `focus_stop` nor an `.a11y` twin. So they must
+/// surface no a11y node (a bare `.child(text)` is AccessKit-invisible) AND never join
+/// the Tab cycle. Mirrors `ai_dock_not_a_tab_stop_when_closed` for the console half.
+#[gpui::test]
+#[serial]
+fn console_ai_triggers_not_tab_stops_when_not_ready(cx: &mut TestAppContext) {
+    let cfg = tempfile::tempdir().unwrap();
+    let state = tempfile::tempdir().unwrap();
+    set_config_dir(cfg.path());
+    init_components(cx);
+    // Console-open `tokio::spawn`s (`refresh_completion_snapshot`) → ambient runtime
+    // for the whole test, entered BEFORE the window opens (T0 idiom).
+    let harness = enter_async_harness(cx);
+    let _g = harness.enter();
+    let session = build_empty_session(state.path());
+    let (shell, vcx) = open_shell_window(cx, session);
+    vcx.run_until_parked();
+
+    // Console OPEN, but AI NOT ready → chip/Explain render their disabled arm.
+    let _console = vcx.update(|window, app| {
+        shell.update(app, |ws, cx| ws.open_console_for_test(window, cx, false))
+    });
+    vcx.run_until_parked();
+
+    let chip = dat0_i18n::t("sql.nl2sql.chip");
+    let explain = dat0_i18n::t("sql.explain.button");
+
+    let snap = A11ySnapshot::capture(vcx);
+    assert!(
+        !snap.has_label(&chip),
+        "no nl2sql-chip a11y twin when !ai_ready"
+    );
+    assert!(
+        !snap.has_label(&explain),
+        "no sql-explain a11y twin when !ai_ready"
+    );
+
+    focus_shell_neutrally(vcx);
+    let seen = tab_labels(vcx, 40);
+    assert!(
+        !seen.contains(&chip),
+        "nl2sql-chip must not be a tab stop when !ai_ready; visited {seen:?}"
+    );
+    assert!(
+        !seen.contains(&explain),
+        "sql-explain must not be a tab stop when !ai_ready; visited {seen:?}"
+    );
+    drop(state);
+}
