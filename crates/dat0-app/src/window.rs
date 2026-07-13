@@ -5316,6 +5316,15 @@ impl WorkspaceShell {
                     }
                 }
                 self.ai_panel.key_set = false;
+                // This button REMOVES ITSELF: `ai-key-forget` is only rendered while
+                // `key_set` is true (ai/panel.rs), so the element tracking its focus
+                // handle stops painting on the very next frame. Without this, focus is
+                // left on a handle no element tracks — a keyboard user lands nowhere and
+                // has to Tab from the top again. (The mouse path is affected too, since
+                // `focus_stop` chains `track_focus`.) Hand focus to the sibling that
+                // survives the removal: "Set key…".
+                let set_key = self.hero_focus_handle("ai-key-set", cx);
+                set_key.focus(window);
                 cx.notify();
             }
             AiPanelEvent::TestConnection => {
@@ -6887,21 +6896,37 @@ impl WorkspaceShell {
     pub fn ai_panel_enabled_for_test(&self) -> bool {
         self.ai_panel.enabled
     }
-    /// Toggle the SQL console visible, mark AI ready (so the NL→SQL chip + Explain
-    /// button render their interactive `if enabled` branch), and return the console
+    /// Toggle the SQL console visible, set its `ai_ready` gate, and return the console
     /// entity so a test can subscribe to its `SqlConsoleEvent`s. Test-only.
+    ///
+    /// `ai_ready` is the gate the NL→SQL chip and the Explain button key their
+    /// `if enabled` branch on: `true` → they render as real keyboard controls (tab
+    /// stops with an `.a11y` twin); `false` → they stay plain, non-interactive divs
+    /// with no `focus_stop` and no a11y node. Both arms are exercised by tests.
+    #[cfg(feature = "a11y-capture")]
+    pub fn open_console_for_test(
+        &mut self,
+        window: &mut Window,
+        cx: &mut gpui::Context<Self>,
+        ai_ready: bool,
+    ) -> gpui::Entity<crate::view::sql_console::SqlConsole> {
+        if !self.sql_console_visible {
+            self.toggle_sql_console(window, cx);
+        }
+        let console = self.sql_console.clone().expect("console built by toggle");
+        console.update(cx, |c, _cx| c.ai_ready = ai_ready);
+        console
+    }
+
+    /// [`open_console_for_test`](Self::open_console_for_test) with AI ready — the
+    /// common case (chip + Explain are operable tab stops).
     #[cfg(feature = "a11y-capture")]
     pub fn open_console_ready_for_test(
         &mut self,
         window: &mut Window,
         cx: &mut gpui::Context<Self>,
     ) -> gpui::Entity<crate::view::sql_console::SqlConsole> {
-        if !self.sql_console_visible {
-            self.toggle_sql_console(window, cx);
-        }
-        let console = self.sql_console.clone().expect("console built by toggle");
-        console.update(cx, |c, _cx| c.ai_ready = true);
-        console
+        self.open_console_for_test(window, cx, true)
     }
 }
 
