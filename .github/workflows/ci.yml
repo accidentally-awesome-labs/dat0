@@ -151,6 +151,33 @@ jobs:
           cargo run --release --target ${{ matrix.target.triple }} -p dat0-fixtures -- --out /tmp/dat0-prime --csv-bytes 4096 --sqlite-target-bytes 4096 || true
           # Force a one-shot INSTALL so subsequent test-binary processes find the extension cached.
           cargo test -p dat0-engine --target ${{ matrix.target.triple }} --test attach_dispatch -- --nocapture || true
+      # The release tree is DEAD WEIGHT from here on — drop it before the debug
+      # test build, which is what actually exhausts the disk.
+      #
+      # `Build` (release) and `Test` (debug) both land in target/<triple>/, so the
+      # runner carries BOTH full trees at once (each with its own ~1.6 GB duckdb
+      # rlib). The last Linux consumer of the release tree is the Prime step above
+      # (`cargo run --release`); everything after this — Test, MotherDuck,
+      # OpenRouter — is debug, and the bench + its own reclaim step are macOS-only.
+      # So on Linux ~7.5 GB of release artifacts just sit there while the debug
+      # tree (duckdb + ~98 gpui-linked test binaries) balloons past the limit. The
+      # runner PROCESS itself then dies with `No space left on device` mid-step —
+      # it reddened main on b55758b and blocked PR #51. `Free disk space` is
+      # already maxed out and CARGO_INCREMENTAL=0 alone was not enough; this is the
+      # remaining lever.
+      #
+      # Triggers no rebuild: nothing downstream asks for --release on Linux.
+      # `df` before/after makes the headroom visible in the log — we previously had
+      # no way to measure it.
+      - name: Reclaim release tree before the debug test build (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          echo "── disk before ──"
+          df -h /
+          du -sh "target/${{ matrix.target.triple }}/release" 2>/dev/null || true
+          rm -rf "target/${{ matrix.target.triple }}/release"
+          echo "── disk after ──"
+          df -h /
       - name: Test
         # `--include-ignored` deliberately omitted. Heavy exit_criteria tests
         # (1 GB CSV / 500 MB Parquet / 100 MB SQLite) run nightly via
