@@ -3,6 +3,15 @@ on:
   workflow_dispatch: {}
   push:
     branches: [main]
+
+env:
+  # See ci.yml for the full rationale. Incremental caches are written but never
+  # reused in CI (every run is a clean build) and cost GBs of disk on a runner
+  # that has already died with `No space left on device`. Build-cache only — no
+  # compiled-output change, so the panic/backtrace behaviour this workflow
+  # exercises is unaffected.
+  CARGO_INCREMENTAL: 0
+
 jobs:
   glitchtip-roundtrip:
     runs-on: ubuntu-latest

@@ -10,6 +10,25 @@ concurrency:
   group: ci-${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
+env:
+  # Incremental compilation is pure waste in CI and a real disk hazard here.
+  # It only accelerates *re*builds within a persistent target dir; every CI run
+  # starts clean, so the incremental caches are written, never reused, and then
+  # thrown away — while consuming GBs (locally `target/debug/incremental` alone
+  # reaches ~20 GB). Combined with duckdb's ~1.6 GB rlib and ~98 gpui-linked
+  # integration-test binaries (~200-250 MB each), that pushed the hosted Ubuntu
+  # runner over its disk limit: the runner PROCESS itself died with
+  # `System.IO.IOException: No space left on device` mid-step, failing an
+  # otherwise-green post-merge main run (b55758b) even though Build + Test +
+  # MotherDuck had all passed. `Free disk space` is already maxed out, so the
+  # only remaining lever is producing less.
+  #
+  # This is a build-CACHE setting: it changes no compiled output, so panic
+  # backtraces and the crash-e2e assertions are unaffected. (`[profile.dev]
+  # debug = "line-tables-only"` in Cargo.toml already minimises debuginfo —
+  # dropping it further would degrade backtraces for no comparable win.)
+  CARGO_INCREMENTAL: 0
+
 jobs:
   fmt:
     runs-on: ubuntu-latest
@@ -48,6 +67,13 @@ jobs:
           # = 1x multiplier, ~1h per PR — manageable short-term.
           - { labels: '["ubuntu-latest"]',                         triple: x86_64-unknown-linux-gnu, name: linux-x86_64 }
     runs-on: ${{ fromJSON(matrix.target.labels) }}
+    # Backstop against a hung step burning to GitHub's 6-hour default. The
+    # OpenRouter soft-gate step did exactly that twice on PR #49 (its SSE stream
+    # stalled without closing), and because the job never finished, the REQUIRED
+    # check went down with it — `continue-on-error` cannot rescue a hang. That
+    # step now has its own `timeout-minutes`; this is the job-level net for any
+    # OTHER step that stalls. Well clear of normal cost (Linux ~75m, macOS ~40m).
+    timeout-minutes: 120
     env:
       DAT0_SPARKLE_APPCAST_URL: https://dat0.dev/appcast.xml
       DAT0_GLITCHTIP_DSN_PUBLIC: ${{ secrets.GLITCHTIP_DSN_PUBLIC }}

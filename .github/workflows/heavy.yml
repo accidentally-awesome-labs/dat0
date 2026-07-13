@@ -21,6 +21,14 @@ concurrency:
   group: heavy-${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
+env:
+  # See ci.yml for the full rationale. Incremental caches are written, never
+  # reused (every CI run is a clean build) and cost GBs of disk — a real hazard
+  # on the hosted Ubuntu runner, which has already died with `No space left on
+  # device`. Heavy runs additionally generate ~1.6 GB of fixtures, so the
+  # headroom matters even more here. Build-cache only: no compiled-output change.
+  CARGO_INCREMENTAL: 0
+
 jobs:
   exit-criteria:
     # Skip on PRs unless explicitly labelled. Schedule + manual + push always run.
