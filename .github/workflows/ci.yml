@@ -77,6 +77,33 @@ jobs:
     env:
       DAT0_SPARKLE_APPCAST_URL: https://dat0.dev/appcast.xml
       DAT0_GLITCHTIP_DSN_PUBLIC: ${{ secrets.GLITCHTIP_DSN_PUBLIC }}
+      # LINUX: drop DWARF from dev/test binaries. This is the disk fix.
+      #
+      # MEASURED (the #53 telemetry, same commit, same profile):
+      #   macOS  DISK[after-test] target= 32G  avail=6.5G
+      #   Linux  DISK[after-test] target=110G  avail=5.6G   ← 97% full
+      #   Linux  DISK[after-live-ai]          avail=2.6G    ← 99% full
+      # A 3.4x platform gap on identical code: on macOS debug info is NOT linked
+      # into the executable (it stays in .o/dSYM), but on Linux DWARF is EMBEDDED
+      # in every one of the ~139 statically-linked (duckdb+gpui) test binaries.
+      # So `[profile.dev] debug = "line-tables-only"` is nearly free on macOS and
+      # enormously expensive on Linux — which is why Linux finishes at 99% disk and
+      # intermittently dies with `No space left on device` (it reddened main on
+      # b55758b and blocked #51). CARGO_INCREMENTAL=0 (#50) and the release-tree
+      # reclaim (#52) together bought only ~4 GB; this is the real lever.
+      #
+      # ★ MUST be JOB-level, not step-level: Prime / Test / MotherDuck / OpenRouter
+      # all build dev-profile artifacts, and a profile that differs between steps
+      # changes the fingerprint → a FULL REBUILD, which would make disk *worse*.
+      # Uses `matrix` (not `runner`) because the `runner` context is unavailable in
+      # job-level `env`. The release profile is untouched (`Build` uses --release;
+      # CARGO_PROFILE_DEV_* only affects dev/test).
+      #
+      # COST: Linux CI backtraces keep function names but lose file:line. Accepted
+      # against a job running at 99% disk; flip this to `line-tables-only` on a
+      # branch if a Linux-only failure ever needs precise line numbers.
+      # The DISK[after-test] telemetry reports exactly what this buys.
+      CARGO_PROFILE_DEV_DEBUG: ${{ matrix.target.name == 'linux-x86_64' && '0' || 'line-tables-only' }}
     steps:
       - uses: actions/checkout@v5
       # GitHub-hosted ubuntu-latest ships ~14 GB free disk by default;
