@@ -95,6 +95,17 @@ jobs:
           haskell: true
           large-packages: true
           swap-storage: true
+      # Disk telemetry (see .github/scripts/disk-report.sh for the full why).
+      # The runner has intermittently died with `No space left on device` and we
+      # had NO disk data, so every diagnosis — including a "~100 GB debug build"
+      # that turned out to be ~23 GB — was guesswork. These snapshots make the
+      # LOW-WATER MARK visible on every run, including failed ones. Grep `DISK[`.
+      - name: 'Disk: baseline (after reclaim action)'
+        if: always()
+        run: |
+          echo '| phase | avail | used | target/ |' >> "$GITHUB_STEP_SUMMARY"
+          echo '|---|---|---|---|' >> "$GITHUB_STEP_SUMMARY"
+          ./.github/scripts/disk-report.sh baseline "${{ matrix.target.triple }}"
       - uses: dtolnay/rust-toolchain@1.97.0
         with:
           targets: ${{ matrix.target.triple }}
@@ -141,6 +152,9 @@ jobs:
           exit 1
       - name: Build
         run: cargo build --workspace --release --target ${{ matrix.target.triple }}
+      - name: 'Disk: after Build (release)'
+        if: always()
+        run: ./.github/scripts/disk-report.sh after-build-release "${{ matrix.target.triple }}"
       - name: Prime sqlite_scanner extension cache (avoid concurrent INSTALL race)
         run: |
           # `--target` keeps these in the SAME target/<triple>/ trees as the Build
@@ -172,12 +186,10 @@ jobs:
       - name: Reclaim release tree before the debug test build (Linux)
         if: runner.os == 'Linux'
         run: |
-          echo "── disk before ──"
-          df -h /
+          ./.github/scripts/disk-report.sh before-reclaim "${{ matrix.target.triple }}"
           du -sh "target/${{ matrix.target.triple }}/release" 2>/dev/null || true
           rm -rf "target/${{ matrix.target.triple }}/release"
-          echo "── disk after ──"
-          df -h /
+          ./.github/scripts/disk-report.sh after-reclaim "${{ matrix.target.triple }}"
       - name: Test
         # `--include-ignored` deliberately omitted. Heavy exit_criteria tests
         # (1 GB CSV / 500 MB Parquet / 100 MB SQLite) run nightly via
@@ -194,6 +206,13 @@ jobs:
           # non-Linux branch so cargo treats it as the unset semantics.
           CARGO_BUILD_JOBS: ${{ (runner.os == 'Linux' && runner.environment == 'github-hosted') && '2' || 'default' }}
         run: cargo test --workspace --target ${{ matrix.target.triple }}
+      # ★ THE LOW-WATER MARK. Every disk-exhaustion failure so far has struck at a
+      # cargo step AFTER a green `Test` — the debug build is the peak consumer, so
+      # this is the number that decides whether the job survives. `if: always()`
+      # so we still capture it when a later step dies.
+      - name: 'Disk: after Test (LOW-WATER MARK)'
+        if: always()
+        run: ./.github/scripts/disk-report.sh after-test "${{ matrix.target.triple }}"
       # P5c (D3): MotherDuck integration is a REQUIRED gate. The token is a
       # repo secret (Settings → Secrets and variables → Actions → MOTHERDUCK_TOKEN).
       # Fork PRs receive no secrets and will fail this step — acceptable for a
@@ -250,6 +269,12 @@ jobs:
         # --test-threads=1 serializes the two live calls so they don't fire
         # simultaneously against the per-key rate window.
         run: cargo test -p dat0-app --test ai_live --target ${{ matrix.target.triple }} -- --include-ignored --test-threads=1 --nocapture
+      # This is the exact step the runner has died on (disk-full, mid-step, leaving
+      # it `in_progress/null` — deceptively hang-like). Snapshot here to see how
+      # much headroom was actually left at the moment of death.
+      - name: 'Disk: after live-AI step'
+        if: always()
+        run: ./.github/scripts/disk-report.sh after-live-ai "${{ matrix.target.triple }}"
       # Bench is macOS-only (single host class — variance across runners
       # makes cross-OS comparison meaningless). Artifact-only at P3a; spec
       # line 819 defers the merge-gate threshold to P10.
