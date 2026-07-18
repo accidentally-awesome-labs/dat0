@@ -2013,6 +2013,10 @@ pub struct WorkspaceShell {
     /// deregisters silently (the P4a T10b trap). Cleared alongside
     /// `cell_editor`.
     pub(crate) cell_editor_sub: Option<Subscription>,
+    /// A cursor position requested before an async view-rebind (e.g. Enter-advance),
+    /// to be restored when the SelectionModel is rebuilt (which otherwise starts at
+    /// the origin). Consumed once, on the next selection rebuild.
+    pub(crate) pending_active_cell: Option<crate::grid::selection::CellCoord>,
     /// Marching-ants range set by the most recent copy/cut (T7). Stored in
     /// screen-space; T7 only records the range. T11/polish will render the
     /// animated dashed border and clear this on the next selection change —
@@ -2268,6 +2272,7 @@ impl WorkspaceShell {
             selection: None,
             cell_editor: None,
             cell_editor_sub: None,
+            pending_active_cell: None,
             copied_range: None,
             column_view: Vec::new(),
             focus_handle: cx.focus_handle(),
@@ -2329,6 +2334,8 @@ impl WorkspaceShell {
         // would leave SelectionModel with the old row/column counts, and
         // `selection.active().col` could point past the new schema.
         self.selection = None;
+        // A brand-new source has no prior cursor to restore.
+        self.pending_active_cell = None;
         self.data_source = Some(ds);
         // Re-derive the ColumnView from the new source's visible columns + the
         // active stack (P4c T5). On a fresh bind this is the identity over the
@@ -6060,7 +6067,14 @@ impl Render for WorkspaceShell {
             let rows = usize::try_from(ds.row_count).unwrap_or(usize::MAX);
             let cols = ds.visible_column_count();
             if rows > 0 && cols > 0 && self.selection.is_none() {
-                self.selection = Some(crate::grid::selection::SelectionModel::new(rows, cols));
+                let mut model = crate::grid::selection::SelectionModel::new(rows, cols);
+                if let Some(target) = self.pending_active_cell.take() {
+                    // Restore a cursor requested before an async rebind (Enter-advance).
+                    // move_active_to clamps to the (possibly new) dims — preserves the
+                    // "defensive clear" safety apply_view_change documents.
+                    model.move_active_to(target.row, target.col);
+                }
+                self.selection = Some(model);
             }
         }
 
@@ -6432,8 +6446,12 @@ impl Render for WorkspaceShell {
             let secondary_only = secondary && !mods.shift && !mods.alt;
             let no_mods = !mods.shift && !mods.platform && !mods.control && !mods.alt;
 
-            // Enter / F2 → begin cell edit (T6).
-            if (key_str == "enter" || key_str == "f2") && no_mods {
+            // Enter / F2 → begin cell edit (T6) — but only when no editor is already
+            // open. When an editor IS open, its inner Input handles Enter (emits
+            // PressEnter then cx.propagate()s); the raw key bubbles here, and
+            // re-mounting would drop the commit subscription before PressEnter routes
+            // CommitAndMove. The open editor owns Enter; the shell must not re-mount it.
+            if (key_str == "enter" || key_str == "f2") && no_mods && ws.cell_editor.is_none() {
                 ws.begin_cell_edit(window, cx);
                 return;
             }
@@ -6877,6 +6895,40 @@ impl WorkspaceShell {
                  (no non-empty data source bound yet?)",
             )
             .active()
+    }
+    /// Cell-editor coverage slice: is the inline cell editor currently mounted?
+    pub fn cell_editor_open_for_test(&self) -> bool {
+        self.cell_editor.is_some()
+    }
+
+    /// The live inline cell-editor entity (to reach its inner `InputState` /
+    /// column type from a test). `None` when no editor is mounted.
+    pub fn cell_editor_for_test(&self) -> Option<Entity<crate::grid::cell_editor::CellEditor>> {
+        self.cell_editor.clone()
+    }
+
+    /// Read a rendered cell's display string off the LIVE data source (which, after
+    /// a commit, is the rebound overlay view), by screen `(row, visible-col)`.
+    /// `None` when no data source is mounted or the cell isn't resident.
+    pub fn cell_display_for_test(&self, row: usize, col: usize) -> Option<String> {
+        self.data_source.as_ref()?.cell_display(row, col)
+    }
+
+    /// Cell-editor coverage slice (T0 gate finding, NOT in the original plan's
+    /// accessor list): install a fresh `ViewModel` for `table` so cell-edit
+    /// commits aren't silently no-op'd by `commit_cell_edit`'s
+    /// `self.view_model.is_some()` guard. `set_data_source` deliberately never
+    /// touches `view_model` (T13: one `ViewModel` at a time, orthogonal to which
+    /// data source is bound), so a grid mounted via `set_data_source` alone
+    /// (sufficient for nav-only tests like `keyboard_nav.rs`'s grid test) cannot
+    /// commit an edit. Mirrors the production `open_table_tab` /
+    /// `route_drop_outcomes` pattern exactly (`ViewModel::new(name, quoted)`) —
+    /// both of those are `pub(crate)`/private and unreachable from this
+    /// integration-test crate, so there is no existing public path to seed this.
+    pub fn seed_view_model_for_test(&mut self, table: impl Into<String>) {
+        let table = table.into();
+        let quoted = format!("\"{}\"", table.replace('"', "\"\""));
+        self.view_model = Some(crate::view::ViewModel::new(table, quoted));
     }
     /// Test oracle for recents-list arrow nav (mirrors `grid_active_cell_for_test`).
     #[cfg(feature = "a11y-capture")]

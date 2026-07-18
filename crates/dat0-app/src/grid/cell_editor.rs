@@ -516,6 +516,31 @@ impl Render for CellEditor {
     }
 }
 
+#[cfg(feature = "a11y-capture")]
+impl CellEditor {
+    /// The column type this editor was built for. Lets a test assert the Bool
+    /// column mounted the `Select` path (not a text `Input`). `ColumnType` is `Copy`.
+    pub fn column_type_for_test(&self) -> ColumnType {
+        self.column_type
+    }
+
+    /// Set the inner text input's value directly — the reliable headless drive for
+    /// the typed characters (raw per-char keystrokes into a gpui-component `Input`
+    /// are unreliable; the Settings-slice finding, which also used
+    /// `InputState::set_value`). No-op when the widget is the Bool `Select` or
+    /// hasn't rendered its `InputState` yet.
+    pub fn set_text_value_for_test(
+        &mut self,
+        value: impl Into<SharedString>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if let Some(text) = self.widgets.as_ref().and_then(|w| w.text.clone()) {
+            text.update(cx, |state, cx| state.set_value(value, window, cx));
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
