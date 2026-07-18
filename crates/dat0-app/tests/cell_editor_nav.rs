@@ -596,3 +596,100 @@ fn invalid_numeric_is_rejected_editor_stays(cx: &mut TestAppContext) {
         "invalid input must leave the editor open to correct"
     );
 }
+
+/// The one deep proof: a typed numeric value driven through the real engine
+/// round-trip reads back off the live (rebound overlay) data source. Proves
+/// the UI→CellEdit→engine bridge once.
+#[gpui::test]
+#[serial]
+fn numeric_commit_round_trips_to_data_source(cx: &mut TestAppContext) {
+    let cfg = tempfile::tempdir().unwrap();
+    set_config_dir(cfg.path());
+    ensure_dispatcher();
+    let harness = enter_async_harness(cx);
+    let _guard = harness.enter();
+    init_components(cx);
+    drain_dispatcher(cx);
+
+    let (shell, cx, _ds, _state) = mount_grid_ready(cx, &harness);
+
+    // Sanity: (0,0) starts at the seeded 1.
+    assert_eq!(
+        shell
+            .update(cx, |ws, _| ws.cell_display_for_test(0, 0))
+            .as_deref(),
+        Some("1"),
+        "seed sanity: (0,0) is 1 before the edit"
+    );
+
+    cx.simulate_keystrokes("enter"); // mount over (0,0)
+    cx.run_until_parked();
+    let editor = shell
+        .update(cx, |ws, _| ws.cell_editor_for_test())
+        .expect("editor mounted");
+    cx.update(|window, app| {
+        editor.update(app, |ed, ecx| ed.set_text_value_for_test("42", window, ecx));
+    });
+    cx.run_until_parked();
+    cx.simulate_keystrokes("enter"); // commit + advance
+    cx.run_until_parked();
+
+    let mut got = None;
+    for _ in 0..100 {
+        cx.run_until_parked();
+        drain_dispatcher(cx);
+        cx.run_until_parked();
+        got = shell.update(cx, |ws, _| ws.cell_display_for_test(0, 0));
+        if got.as_deref() == Some("42") {
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(20));
+    }
+    assert_eq!(
+        got.as_deref(),
+        Some("42"),
+        "the edited numeric value must persist through the engine round-trip \
+         and read back off the live overlay source"
+    );
+}
+
+/// A Bool column mounts the `Select` widget path (not a text `Input`). This is
+/// the meaningful, robust proof of the second widget path. Driving the actual
+/// `SelectEvent::Confirm` headlessly is a known gpui-component limitation
+/// (`set_selected_value` does not emit `Confirm`) — the commit itself stays
+/// covered by the `parse_bool_text_path` unit in `cell_editor.rs`, so the mount
+/// proof is where the new coverage lives.
+#[gpui::test]
+#[serial]
+fn bool_column_mounts_select_path(cx: &mut TestAppContext) {
+    let cfg = tempfile::tempdir().unwrap();
+    set_config_dir(cfg.path());
+    ensure_dispatcher();
+    let harness = enter_async_harness(cx);
+    let _guard = harness.enter();
+    init_components(cx);
+    drain_dispatcher(cx);
+
+    let (shell, cx, _ds, _state) = mount_grid_ready(cx, &harness);
+
+    // Move the active cell to the bool column (`flag`, screen col 1), then open.
+    cx.simulate_keystrokes("right");
+    cx.run_until_parked();
+    assert_eq!(
+        shell.update(cx, |ws, _| ws.grid_active_cell_for_test()).col,
+        1,
+        "Right must move the active cell onto the bool column"
+    );
+    cx.simulate_keystrokes("enter");
+    cx.run_until_parked();
+
+    let editor = shell
+        .update(cx, |ws, _| ws.cell_editor_for_test())
+        .expect("bool editor mounted");
+    let ct = editor.read_with(cx, |ed, _| ed.column_type_for_test());
+    assert_eq!(
+        ct,
+        dat0_app::view::filter_popover::ColumnType::Bool,
+        "a bool column must mount the Select (Bool) editor path, not a text Input"
+    );
+}
