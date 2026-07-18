@@ -174,6 +174,10 @@ impl WorkspaceShell {
         };
         if let Some(sel) = self.selection.as_mut() {
             sel.move_active(dr, dc);
+            // Preserve the advanced cursor across the async rebind that
+            // commit_cell_edit's spawn_rebind → apply_view_change triggers (it clears
+            // self.selection; the rebuilt model would otherwise start at the origin).
+            self.pending_active_cell = Some(sel.active());
         } else {
             // No selection model → nothing to advance onto; the commit already ran.
             return;
