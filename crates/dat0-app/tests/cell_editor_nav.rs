@@ -597,6 +597,107 @@ fn invalid_numeric_is_rejected_editor_stays(cx: &mut TestAppContext) {
     );
 }
 
+/// Positive control for the `dispatch_action(Enter)` drive that
+/// `invalid_numeric_is_rejected_editor_stays` relies on for its commit attempt.
+///
+/// That test's two assertions (no advance + editor stays open) would ALSO pass
+/// if `cx.dispatch_action(gpui_component::input::Enter { .. })` were a complete
+/// no-op — nothing would have proven the action actually routes anywhere. This
+/// test drives the SAME mechanism with a VALID value ("99") and asserts the
+/// active cell genuinely ADVANCES: that assertion FAILS if the dispatch were a
+/// no-op (the cursor would stay at `before`), so a pass here is proof the
+/// action reaches the real `InputState::enter()` → `PressEnter` →
+/// `CommitAndMove` → `commit_cell_edit_and_advance` chain — the same chain the
+/// invalid-reject test's commit ATTEMPT rides, just with a parse that
+/// succeeds instead of one that's rejected. That, in turn, is what makes the
+/// invalid test's "no advance" assertion meaningful rather than vacuous.
+///
+/// Since 99 is valid, the commit SUCCEEDS and the editor tears down + re-mounts
+/// fresh on the advanced cell — no risk of the stray-IME-"\n" panic that only
+/// bites a REJECTED, still-open editor (see the doc comment on
+/// `invalid_numeric_is_rejected_editor_stays` for why that one can't use a
+/// second real keystroke).
+#[gpui::test]
+#[serial]
+fn dispatch_action_enter_commits_valid_and_advances(cx: &mut TestAppContext) {
+    let cfg = tempfile::tempdir().unwrap();
+    set_config_dir(cfg.path());
+    ensure_dispatcher();
+    let harness = enter_async_harness(cx);
+    let _guard = harness.enter();
+    init_components(cx);
+    drain_dispatcher(cx);
+
+    let (shell, cx, _ds, _state) = mount_grid_ready(cx, &harness);
+    let before = shell.update(cx, |ws, _| ws.grid_active_cell_for_test());
+
+    cx.simulate_keystrokes("enter"); // mount over (0,0) (real keystroke, as every test uses)
+    cx.run_until_parked();
+    let editor = shell
+        .update(cx, |ws, _| ws.cell_editor_for_test())
+        .expect("editor mounted");
+    cx.update(|window, app| {
+        editor.update(app, |ed, ecx| ed.set_text_value_for_test("99", window, ecx));
+    });
+    cx.run_until_parked();
+    // Commit attempt — SAME mechanism the invalid-reject test uses for its
+    // commit attempt, but with a value that parses cleanly.
+    cx.dispatch_action(gpui_component::input::Enter { secondary: false });
+    cx.run_until_parked();
+    drain_dispatcher(cx);
+    cx.run_until_parked();
+
+    let target = CellCoord {
+        row: before.row + 1,
+        col: before.col,
+    };
+    let mut after = shell.update(cx, |ws, _| ws.grid_active_cell_for_test());
+    for _ in 0..100 {
+        if after == target {
+            break;
+        }
+        cx.run_until_parked();
+        drain_dispatcher(cx);
+        cx.run_until_parked();
+        std::thread::sleep(Duration::from_millis(20));
+        after = shell.update(cx, |ws, _| ws.grid_active_cell_for_test());
+    }
+
+    assert_eq!(
+        after.row,
+        before.row + 1,
+        "positive control: dispatch_action(Enter) with a VALID value must \
+         advance the active cell one row down — a value of {:?} means the \
+         dispatch_action drive did NOT reach the real commit-and-advance path \
+         (i.e. it would have been a no-op), which would make the sibling \
+         invalid-reject test's \"no advance\" assertion vacuous",
+        after
+    );
+    assert_eq!(
+        after.col, before.col,
+        "advance must stay in the same column"
+    );
+
+    // Value round-trip: separate settle loop (the display read can lag the
+    // active-cell advance briefly, same as `numeric_commit_round_trips_to_data_source`).
+    let mut got = shell.update(cx, |ws, _| ws.cell_display_for_test(0, 0));
+    for _ in 0..100 {
+        if got.as_deref() == Some("99") {
+            break;
+        }
+        cx.run_until_parked();
+        drain_dispatcher(cx);
+        cx.run_until_parked();
+        std::thread::sleep(Duration::from_millis(20));
+        got = shell.update(cx, |ws, _| ws.cell_display_for_test(0, 0));
+    }
+    assert_eq!(
+        got.as_deref(),
+        Some("99"),
+        "the committed value must round-trip through the engine"
+    );
+}
+
 /// The one deep proof: a typed numeric value driven through the real engine
 /// round-trip reads back off the live (rebound overlay) data source. Proves
 /// the UI→CellEdit→engine bridge once.
