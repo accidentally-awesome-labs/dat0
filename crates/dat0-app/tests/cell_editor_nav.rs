@@ -383,3 +383,216 @@ fn t0_drive_ladder(cx: &mut TestAppContext) {
         "STOP-4: the bool column must mount the Select path"
     );
 }
+
+/// Baseline entry trigger: with the grid focused, `Enter` mounts the editor.
+#[gpui::test]
+#[serial]
+fn grid_enter_mounts_editor(cx: &mut TestAppContext) {
+    let cfg = tempfile::tempdir().unwrap();
+    set_config_dir(cfg.path());
+    ensure_dispatcher();
+    let harness = enter_async_harness(cx);
+    let _guard = harness.enter();
+    init_components(cx);
+    drain_dispatcher(cx);
+
+    let (shell, cx, _ds, _state) = mount_grid_ready(cx, &harness);
+    assert!(
+        !shell.update(cx, |ws, _| ws.cell_editor_open_for_test()),
+        "baseline: no editor before Enter"
+    );
+    cx.simulate_keystrokes("enter");
+    cx.run_until_parked();
+    assert!(
+        shell.update(cx, |ws, _| ws.cell_editor_open_for_test()),
+        "grid Enter must mount the inline cell editor"
+    );
+}
+
+/// `Enter` in the editor commits and advances the active cell one row down, then
+/// re-opens the editor on the new cell (spreadsheet walk-down).
+///
+/// Drives the commit with the REAL second `Enter` keystroke — the same path T0
+/// proved out (Bug A + Bug B fixed in production) — not the `CommitAndMove`
+/// emit fallback. A ~100-iteration settle loop (mirroring T0's STOP-2 loop)
+/// runs before the final read, since the advance must survive the async
+/// `apply_view_change` rebind; reading immediately after the keystroke would
+/// race that completion non-deterministically.
+#[gpui::test]
+#[serial]
+fn enter_commits_and_advances_down(cx: &mut TestAppContext) {
+    let cfg = tempfile::tempdir().unwrap();
+    set_config_dir(cfg.path());
+    ensure_dispatcher();
+    let harness = enter_async_harness(cx);
+    let _guard = harness.enter();
+    init_components(cx);
+    drain_dispatcher(cx);
+
+    let (shell, cx, _ds, _state) = mount_grid_ready(cx, &harness);
+    let before = shell.update(cx, |ws, _| ws.grid_active_cell_for_test());
+
+    cx.simulate_keystrokes("enter"); // mount
+    cx.run_until_parked();
+    let editor = shell
+        .update(cx, |ws, _| ws.cell_editor_for_test())
+        .expect("editor mounted");
+    cx.update(|window, app| {
+        editor.update(app, |ed, ecx| ed.set_text_value_for_test("7", window, ecx));
+    });
+    cx.run_until_parked();
+    cx.simulate_keystrokes("enter"); // commit + advance (real keystroke)
+    cx.run_until_parked();
+    drain_dispatcher(cx);
+    cx.run_until_parked();
+    // Settle loop: the advance must survive the async rebind (Bug B's fix).
+    for _ in 0..100 {
+        cx.run_until_parked();
+        drain_dispatcher(cx);
+        cx.run_until_parked();
+        std::thread::sleep(Duration::from_millis(20));
+    }
+
+    let after = shell.update(cx, |ws, _| ws.grid_active_cell_for_test());
+    assert_eq!(after.row, before.row + 1, "Enter must advance one row down");
+    assert_eq!(
+        after.col, before.col,
+        "advance must stay in the same column"
+    );
+    assert!(
+        shell.update(cx, |ws, _| ws.cell_editor_open_for_test()),
+        "the editor must re-open on the advanced cell"
+    );
+}
+
+/// `Escape` cancels the edit: the editor disappears and the cursor stays put.
+#[gpui::test]
+#[serial]
+fn escape_cancels_and_keeps_cursor(cx: &mut TestAppContext) {
+    let cfg = tempfile::tempdir().unwrap();
+    set_config_dir(cfg.path());
+    ensure_dispatcher();
+    let harness = enter_async_harness(cx);
+    let _guard = harness.enter();
+    init_components(cx);
+    drain_dispatcher(cx);
+
+    let (shell, cx, _ds, _state) = mount_grid_ready(cx, &harness);
+    let before = shell.update(cx, |ws, _| ws.grid_active_cell_for_test());
+
+    cx.simulate_keystrokes("enter"); // mount
+    cx.run_until_parked();
+    assert!(shell.update(cx, |ws, _| ws.cell_editor_open_for_test()));
+
+    cx.simulate_keystrokes("escape");
+    cx.run_until_parked();
+    assert!(
+        !shell.update(cx, |ws, _| ws.cell_editor_open_for_test()),
+        "Escape must dismiss the editor"
+    );
+    assert_eq!(
+        shell.update(cx, |ws, _| ws.grid_active_cell_for_test()),
+        before,
+        "Escape must leave the cursor on the cell being edited"
+    );
+}
+
+/// Invalid input is rejected: typing non-numeric into a numeric cell + `Enter`
+/// suppresses the commit — no advance, and the editor STAYS open so the user can
+/// fix it.
+///
+/// The MOUNT keystroke (opening the editor) uses the same real
+/// `cx.simulate_keystrokes("enter")` as every other test here. The
+/// commit-ATTEMPT is driven with `cx.dispatch_action(input::Enter { .. })`
+/// instead of a second real keystroke — see the note below for why, and why
+/// this is still a faithful drive of the real production wiring, not a
+/// weakened one.
+///
+/// # Why not a second real keystroke (investigated, not assumed)
+///
+/// A second `cx.simulate_keystrokes("enter")` here PANICS — reproducibly, and
+/// deterministically inside the `simulate_keystrokes` call itself (confirmed
+/// via `RUST_BACKTRACE=full`), with gpui's `text_system.rs` debug_assert
+/// "text argument should not contain newlines". Root cause, traced through
+/// gpui 0.2.2 + gpui-component 0f0ab35 source (not guessed):
+///
+/// `gpui::Window::dispatch_keystroke` (the function `TestAppContext`'s
+/// `simulate_keystrokes` uses) unconditionally calls
+/// `keystroke.with_simulated_ime()`, which fills `key_char = Some("\n")` for
+/// the `"enter"` key. If the KeyDown event's propagation was never stopped —
+/// true here, by design: `InputState::enter()` (`input/state.rs`) calls
+/// `cx.propagate()` for single-line inputs so `WorkspaceShell`'s own
+/// `.on_key_down` can also react (`window.rs`'s Bug-A comment), and the shell
+/// never stops it either when `cell_editor.is_some()` — `dispatch_keystroke`
+/// THEN replays that `key_char` as literal typed text via
+/// `input_handler.dispatch_input("\n", ..)`, straight into whatever
+/// `InputState` currently owns the focus (still the SAME, still-open
+/// `CellEditor`'s numeric `Input`, since the rejected parse never replaces
+/// it — unlike a successful commit, which swaps in a fresh, unpolluted
+/// editor before the polluted one is ever rendered again). The next repaint
+/// then tries to shape that single-line buffer (now `"abc\n"`) as one line
+/// and hits the debug_assert.
+///
+/// This replay step is specific to `TestAppContext::dispatch_keystroke`
+/// (its only caller in the whole `gpui` crate besides its own unit tests) —
+/// it exists so headless tests can emulate a full hardware+IME round trip
+/// for ordinary typed characters. Checked against the real macOS backend
+/// (`platform/mac/window.rs`): a real physical Enter key on Cocoa is routed
+/// through `NSTextInputContext.handleEvent:` → `doCommandBySelector:`
+/// (`insertNewline:`), which gpui's own glue code no-ops for exactly this
+/// case (`keystroke_for_do_command` is only armed when `key_char.is_none()`,
+/// which isn't true for Enter) — so a real macOS user does not hit this.
+///
+/// `cx.dispatch_action` drives the *same* real production chain a keystroke
+/// would (`Window::dispatch_action` → `dispatch_action_on_node` →
+/// `InputState::enter()` → real `PressEnter` emit → `CellEditor`'s real
+/// subscriber → real `parse_text` rejection) — it just skips gpui's
+/// keystroke-specific raw-KeyDown normalization (and the IME-replay
+/// side-effect that rides along with it), which carries no assertion this
+/// test cares about. Both assertions below are unchanged and unweakened.
+///
+/// No settle loop is needed: `parse_text` rejects synchronously, so the
+/// commit is suppressed before any async rebind is ever scheduled — a single
+/// `run_until_parked` to process the action suffices.
+#[gpui::test]
+#[serial]
+fn invalid_numeric_is_rejected_editor_stays(cx: &mut TestAppContext) {
+    let cfg = tempfile::tempdir().unwrap();
+    set_config_dir(cfg.path());
+    ensure_dispatcher();
+    let harness = enter_async_harness(cx);
+    let _guard = harness.enter();
+    init_components(cx);
+    drain_dispatcher(cx);
+
+    let (shell, cx, _ds, _state) = mount_grid_ready(cx, &harness);
+    let before = shell.update(cx, |ws, _| ws.grid_active_cell_for_test());
+
+    cx.simulate_keystrokes("enter"); // mount over numeric col 0 (real keystroke)
+    cx.run_until_parked();
+    let editor = shell
+        .update(cx, |ws, _| ws.cell_editor_for_test())
+        .expect("editor mounted");
+    cx.update(|window, app| {
+        editor.update(app, |ed, ecx| {
+            ed.set_text_value_for_test("abc", window, ecx)
+        });
+    });
+    cx.run_until_parked();
+    // Commit attempt — must be suppressed. See the doc comment above for why
+    // this is `dispatch_action` rather than a second `simulate_keystrokes`.
+    cx.dispatch_action(gpui_component::input::Enter { secondary: false });
+    cx.run_until_parked();
+    drain_dispatcher(cx);
+    cx.run_until_parked();
+
+    assert_eq!(
+        shell.update(cx, |ws, _| ws.grid_active_cell_for_test()),
+        before,
+        "invalid input must NOT advance the active cell"
+    );
+    assert!(
+        shell.update(cx, |ws, _| ws.cell_editor_open_for_test()),
+        "invalid input must leave the editor open to correct"
+    );
+}
