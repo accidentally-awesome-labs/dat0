@@ -181,6 +181,14 @@ pub struct SqlConsole {
     /// Stable focus handle for the Explain button (AI-config-nav slice). Minted
     /// once here so the button is a stable Tab stop across re-renders.
     pub(crate) explain_focus: gpui::FocusHandle,
+    /// Toolbar-button focus handles (SQL-Console-nav slice), keyed by the
+    /// control's `&'static str` id. Get-or-insert via [`Self::toolbar_fh`] so each
+    /// button is a stable Tab stop across re-renders. Kept separate from the
+    /// `nl2sql_focus`/`explain_focus` named fields, which predate this map.
+    pub(crate) toolbar_focus: std::collections::HashMap<&'static str, gpui::FocusHandle>,
+    /// Stable focus handle for the tab-strip tablist container (SQL-Console-nav
+    /// slice). ONE stop for the whole strip; ←/→ switch the active tab.
+    pub(crate) tabstrip_focus: gpui::FocusHandle,
 }
 
 /// Install the autocomplete provider on a freshly-built tab editor (P5b T2).
@@ -306,6 +314,8 @@ impl SqlConsole {
             ai_ready: false,
             nl2sql_focus: cx.focus_handle(),
             explain_focus: cx.focus_handle(),
+            toolbar_focus: std::collections::HashMap::new(),
+            tabstrip_focus: cx.focus_handle(),
         }
     }
 
@@ -552,6 +562,16 @@ impl SqlConsole {
         cx.notify();
     }
 
+    /// Get-or-insert the stable toolbar focus handle for `id` (SQL-Console-nav
+    /// slice). Mirrors `WorkspaceShell::hero_focus_handle`; returns a CLONE so the
+    /// caller can chain it into `focus_stop` without holding a borrow on the map.
+    fn toolbar_fh(&mut self, id: &'static str, cx: &mut Context<Self>) -> gpui::FocusHandle {
+        self.toolbar_focus
+            .entry(id)
+            .or_insert_with(|| cx.focus_handle())
+            .clone()
+    }
+
     /// Snapshot all tabs to the persistable shape (for `Session::set_sql_tabs`).
     ///
     /// Takes `&App` (not `&Context<Self>`) so `WorkspaceShell` can call it with
@@ -584,6 +604,15 @@ impl Render for SqlConsole {
             self.load_into_new_tab(sql, window, cx);
         }
         let active = self.active;
+        let run_fh = self.toolbar_fh("sql-run", cx);
+        let run_pane_fh = self.toolbar_fh("sql-run-pane", cx);
+        let new_tab_fh = self.toolbar_fh("sql-tab-add", cx);
+        let history_fh = self.toolbar_fh("sql-history", cx);
+        let save_fh = self.toolbar_fh("sql-save", cx);
+        let saved_fh = self.toolbar_fh("sql-saved", cx);
+        let save_as_table_fh = self.toolbar_fh("sql-save-as-table", cx);
+        let tabstrip_fh = self.tabstrip_focus.clone();
+        let tabstrip_name: String = self.tabs[self.active].meta.title.clone();
 
         // ── Lazy-promote the Pane result source → TableState (P5a T9) ───────
         // Mirrors `WorkspaceShell::render`: `set_pane_source` stored the bound
@@ -613,6 +642,7 @@ impl Render for SqlConsole {
         // polish task.
         let tab_count = self.tabs.len();
         let tab_strip = div()
+            .id("sql-tabstrip")
             .flex()
             .flex_row()
             .items_center()
@@ -665,10 +695,61 @@ impl Render for SqlConsole {
                     .py_1()
                     .cursor_pointer()
                     .child(SharedString::from("+"))
+                    .focus_stop(
+                        "sql-tab-add",
+                        &new_tab_fh,
+                        0,
+                        cx.listener(|this, _ev: &gpui::KeyDownEvent, window, cx| {
+                            this.new_tab(window, cx);
+                        }),
+                    )
+                    .a11y(
+                        "sql-tab-add",
+                        AccessRole::Button,
+                        dat0_i18n::t("sql.new_tab"),
+                    )
                     .on_click(cx.listener(move |this, _ev, window, cx| {
                         this.new_tab(window, cx);
                     })),
-            );
+            )
+            // Enter/Space are a no-op: in the auto-activate model the tab under
+            // the cursor is already the live tab.
+            .focus_stop(
+                "sql-tabstrip",
+                &tabstrip_fh,
+                0,
+                cx.listener(|_this, _ev: &gpui::KeyDownEvent, _window, _cx| {}),
+            )
+            .a11y("sql-tabstrip", AccessRole::Button, tabstrip_name)
+            // Second on_key_down for ←/→/Delete. gpui PUSHES key_down listeners, so
+            // this coexists with focus_stop's Enter/Space listener (recents-nav R1).
+            .on_key_down(cx.listener(|this, ev: &gpui::KeyDownEvent, _window, cx| {
+                let m = &ev.keystroke.modifiers;
+                if m.shift || m.platform || m.control || m.alt {
+                    return;
+                }
+                match ev.keystroke.key.as_str() {
+                    "left" => {
+                        if this.active > 0 {
+                            this.active -= 1;
+                            cx.emit(SqlConsoleEvent::Persist);
+                            cx.notify();
+                        }
+                    }
+                    "right" => {
+                        if this.active + 1 < this.tabs.len() {
+                            this.active += 1;
+                            cx.emit(SqlConsoleEvent::Persist);
+                            cx.notify();
+                        }
+                    }
+                    "delete" | "backspace" => {
+                        let a = this.active;
+                        this.close_tab(a, cx); // no-op on the last tab; clamps active
+                    }
+                    _ => {}
+                }
+            }));
 
         // ── Run / Cancel split-button (primary Run + ▾ "run in pane") ───────
         // The primary segment runs Cancel while in flight, else Run→MainGrid.
@@ -680,12 +761,23 @@ impl Render for SqlConsole {
         } else {
             dat0_i18n::t("sql.run")
         };
+        let run_key = cx.listener(|this, _ev: &gpui::KeyDownEvent, _window, cx| {
+            if this.running {
+                cx.emit(SqlConsoleEvent::Cancel);
+            } else {
+                cx.emit(SqlConsoleEvent::Run {
+                    target: ResultTarget::MainGrid,
+                });
+            }
+        });
         let primary_btn = div()
             .id("sql-run")
             .px_3()
             .py_1()
             .cursor_pointer()
-            .child(SharedString::from(run_label))
+            .child(SharedString::from(run_label.clone()))
+            .focus_stop("sql-run", &run_fh, 0, run_key)
+            .a11y("sql-run", AccessRole::Button, run_label)
             .on_click(cx.listener(|this, _ev, _window, cx| {
                 if this.running {
                     cx.emit(SqlConsoleEvent::Cancel);
@@ -710,6 +802,21 @@ impl Render for SqlConsole {
                 .cursor_pointer()
                 .border_l_1()
                 .child(SharedString::from("▾"))
+                .focus_stop(
+                    "sql-run-pane",
+                    &run_pane_fh,
+                    0,
+                    cx.listener(|_this, _ev: &gpui::KeyDownEvent, _window, cx| {
+                        cx.emit(SqlConsoleEvent::Run {
+                            target: ResultTarget::Pane,
+                        });
+                    }),
+                )
+                .a11y(
+                    "sql-run-pane",
+                    AccessRole::Button,
+                    dat0_i18n::t("sql.run_in_pane"),
+                )
                 .on_click(cx.listener(move |_this, _ev, _window, cx| {
                     cx.emit(SqlConsoleEvent::Run {
                         target: ResultTarget::Pane,
@@ -959,6 +1066,21 @@ impl Render for SqlConsole {
                                     .py_1()
                                     .cursor_pointer()
                                     .child(SharedString::from("🕘"))
+                                    .focus_stop(
+                                        "sql-history",
+                                        &history_fh,
+                                        0,
+                                        cx.listener(
+                                            |_this, _ev: &gpui::KeyDownEvent, _window, cx| {
+                                                cx.emit(SqlConsoleEvent::ShowHistory);
+                                            },
+                                        ),
+                                    )
+                                    .a11y(
+                                        "sql-history",
+                                        AccessRole::Button,
+                                        dat0_i18n::t("sql.history"),
+                                    )
                                     .on_click(cx.listener(|_this, _ev, _window, cx| {
                                         cx.emit(SqlConsoleEvent::ShowHistory);
                                     })),
@@ -973,6 +1095,21 @@ impl Render for SqlConsole {
                                     .py_1()
                                     .cursor_pointer()
                                     .child(SharedString::from("💾"))
+                                    .focus_stop(
+                                        "sql-save",
+                                        &save_fh,
+                                        0,
+                                        cx.listener(
+                                            |_this, _ev: &gpui::KeyDownEvent, _window, cx| {
+                                                cx.emit(SqlConsoleEvent::SaveQuery);
+                                            },
+                                        ),
+                                    )
+                                    .a11y(
+                                        "sql-save",
+                                        AccessRole::Button,
+                                        dat0_i18n::t("sql.save_query"),
+                                    )
                                     .on_click(cx.listener(|_this, _ev, _window, cx| {
                                         cx.emit(SqlConsoleEvent::SaveQuery);
                                     })),
@@ -987,6 +1124,21 @@ impl Render for SqlConsole {
                                     .py_1()
                                     .cursor_pointer()
                                     .child(SharedString::from("📑"))
+                                    .focus_stop(
+                                        "sql-saved",
+                                        &saved_fh,
+                                        0,
+                                        cx.listener(
+                                            |_this, _ev: &gpui::KeyDownEvent, _window, cx| {
+                                                cx.emit(SqlConsoleEvent::ShowSaved);
+                                            },
+                                        ),
+                                    )
+                                    .a11y(
+                                        "sql-saved",
+                                        AccessRole::Button,
+                                        dat0_i18n::t("sql.load_query"),
+                                    )
                                     .on_click(cx.listener(|_this, _ev, _window, cx| {
                                         cx.emit(SqlConsoleEvent::ShowSaved);
                                     })),
@@ -1002,6 +1154,21 @@ impl Render for SqlConsole {
                                     .py_1()
                                     .cursor_pointer()
                                     .child(SharedString::from("⤓ Table"))
+                                    .focus_stop(
+                                        "sql-save-as-table",
+                                        &save_as_table_fh,
+                                        0,
+                                        cx.listener(
+                                            |_this, _ev: &gpui::KeyDownEvent, _window, cx| {
+                                                cx.emit(SqlConsoleEvent::SaveAsTable);
+                                            },
+                                        ),
+                                    )
+                                    .a11y(
+                                        "sql-save-as-table",
+                                        AccessRole::Button,
+                                        dat0_i18n::t("sql.save_as_table"),
+                                    )
                                     .on_click(cx.listener(|_this, _ev, _window, cx| {
                                         cx.emit(SqlConsoleEvent::SaveAsTable);
                                     })),
@@ -1176,6 +1343,32 @@ impl Render for SqlConsole {
                 panel
             }))
             .children(history_overlay)
+    }
+}
+
+#[cfg(feature = "a11y-capture")]
+impl SqlConsole {
+    /// The active tab index — lets a test assert an arrow switched tabs.
+    pub fn active_tab_for_test(&self) -> usize {
+        self.active
+    }
+
+    /// The open-tab count — lets a test assert Delete closed a tab.
+    pub fn tab_count_for_test(&self) -> usize {
+        self.tabs.len()
+    }
+
+    /// Whether the tab-strip tablist container currently holds focus — the
+    /// title-agnostic reach oracle for the tab strip (its accessible name is the
+    /// active tab's title, which is dynamic, so the test detects reach by focus).
+    pub fn tabstrip_focused_for_test(&self, window: &Window) -> bool {
+        self.tabstrip_focus.is_focused(window)
+    }
+
+    /// The open-tab titles in strip order — lets a test assert that Delete closed
+    /// the ACTIVE tab specifically (by identity), not merely that the count dropped.
+    pub fn tab_titles_for_test(&self) -> Vec<String> {
+        self.tabs.iter().map(|t| t.meta.title.clone()).collect()
     }
 }
 
