@@ -158,6 +158,24 @@ fn tab_labels(vcx: &mut VisualTestContext, n: usize) -> Vec<String> {
     seen
 }
 
+/// Press Tab (up to `budget` times) until the tab-strip container holds focus.
+/// Returns true if reached. Mirrors `tab_until` but keys off the focus accessor
+/// (the tab strip's accessible name is the dynamic active-tab title).
+fn tab_until_tabstrip(
+    vcx: &mut VisualTestContext,
+    console: &Entity<SqlConsole>,
+    budget: usize,
+) -> bool {
+    for _ in 0..budget {
+        press_tab(vcx);
+        let f = vcx.update(|window, app| console.read(app).tabstrip_focused_for_test(window));
+        if f {
+            return true;
+        }
+    }
+    false
+}
+
 /// Open the console ready and subscribe to its events. Returns (console, log).
 fn open_console_with_log(
     shell: &Entity<WorkspaceShell>,
@@ -379,6 +397,162 @@ fn enter_on_run_while_running_emits_cancel(cx: &mut TestAppContext) {
             .any(|e| matches!(e, SqlConsoleEvent::Cancel)),
         "Enter on the running Cancel button must emit Cancel; got {:?}",
         log.borrow()
+    );
+    drop(state);
+}
+
+/// Seed 3 tabs; from the focused tab strip, ← / → move the active tab and clamp
+/// at both ends.
+#[gpui::test]
+#[serial]
+fn tabstrip_arrows_switch_and_clamp(cx: &mut TestAppContext) {
+    let cfg = tempfile::tempdir().unwrap();
+    let state = tempfile::tempdir().unwrap();
+    set_config_dir(cfg.path());
+    init_components(cx);
+    let harness = enter_async_harness(cx);
+    let _g = harness.enter();
+    let session = build_empty_session(state.path());
+    let (shell, vcx) = open_shell_window(cx, session);
+    vcx.run_until_parked();
+    let (console, _log) = open_console_with_log(&shell, vcx);
+
+    // 1 → 3 tabs (each new_tab makes itself active; end active == 2).
+    for _ in 0..2 {
+        vcx.update(|window, app| console.update(app, |c, cx| c.new_tab(window, cx)));
+        vcx.run_until_parked();
+    }
+    assert_eq!(console.read_with(&vcx.cx, |c, _| c.tab_count_for_test()), 3);
+
+    focus_shell_neutrally(vcx);
+    assert!(tab_until_tabstrip(vcx, &console, 60), "tab strip reachable");
+    assert_eq!(
+        console.read_with(&vcx.cx, |c, _| c.active_tab_for_test()),
+        2
+    );
+
+    // → at the right edge clamps (stays 2).
+    vcx.simulate_keystrokes("right");
+    vcx.run_until_parked();
+    assert_eq!(
+        console.read_with(&vcx.cx, |c, _| c.active_tab_for_test()),
+        2,
+        "right clamps at end"
+    );
+
+    // ← walks back to 0 and clamps.
+    vcx.simulate_keystrokes("left");
+    vcx.run_until_parked();
+    assert_eq!(
+        console.read_with(&vcx.cx, |c, _| c.active_tab_for_test()),
+        1
+    );
+    vcx.simulate_keystrokes("left");
+    vcx.run_until_parked();
+    assert_eq!(
+        console.read_with(&vcx.cx, |c, _| c.active_tab_for_test()),
+        0
+    );
+    vcx.simulate_keystrokes("left");
+    vcx.run_until_parked();
+    assert_eq!(
+        console.read_with(&vcx.cx, |c, _| c.active_tab_for_test()),
+        0,
+        "left clamps at start"
+    );
+
+    // → moves forward again (auto-activate).
+    vcx.simulate_keystrokes("right");
+    vcx.run_until_parked();
+    assert_eq!(
+        console.read_with(&vcx.cx, |c, _| c.active_tab_for_test()),
+        1
+    );
+    drop(state);
+}
+
+/// Delete on the focused tab strip closes the active tab (count drops, active
+/// clamps).
+#[gpui::test]
+#[serial]
+fn tabstrip_delete_closes_active(cx: &mut TestAppContext) {
+    let cfg = tempfile::tempdir().unwrap();
+    let state = tempfile::tempdir().unwrap();
+    set_config_dir(cfg.path());
+    init_components(cx);
+    let harness = enter_async_harness(cx);
+    let _g = harness.enter();
+    let session = build_empty_session(state.path());
+    let (shell, vcx) = open_shell_window(cx, session);
+    vcx.run_until_parked();
+    let (console, _log) = open_console_with_log(&shell, vcx);
+
+    vcx.update(|window, app| console.update(app, |c, cx| c.new_tab(window, cx)));
+    vcx.run_until_parked();
+    assert_eq!(console.read_with(&vcx.cx, |c, _| c.tab_count_for_test()), 2);
+
+    focus_shell_neutrally(vcx);
+    assert!(tab_until_tabstrip(vcx, &console, 60), "tab strip reachable");
+    vcx.simulate_keystrokes("delete");
+    vcx.run_until_parked();
+    assert_eq!(
+        console.read_with(&vcx.cx, |c, _| c.tab_count_for_test()),
+        1,
+        "delete closes the active tab"
+    );
+    drop(state);
+}
+
+/// Delete with a single tab open is a no-op (never an empty console).
+#[gpui::test]
+#[serial]
+fn tabstrip_delete_last_tab_is_noop(cx: &mut TestAppContext) {
+    let cfg = tempfile::tempdir().unwrap();
+    let state = tempfile::tempdir().unwrap();
+    set_config_dir(cfg.path());
+    init_components(cx);
+    let harness = enter_async_harness(cx);
+    let _g = harness.enter();
+    let session = build_empty_session(state.path());
+    let (shell, vcx) = open_shell_window(cx, session);
+    vcx.run_until_parked();
+    let (console, _log) = open_console_with_log(&shell, vcx);
+
+    assert_eq!(console.read_with(&vcx.cx, |c, _| c.tab_count_for_test()), 1);
+    focus_shell_neutrally(vcx);
+    assert!(tab_until_tabstrip(vcx, &console, 60), "tab strip reachable");
+    vcx.simulate_keystrokes("delete");
+    vcx.run_until_parked();
+    assert_eq!(
+        console.read_with(&vcx.cx, |c, _| c.tab_count_for_test()),
+        1,
+        "delete on the last tab must be a no-op"
+    );
+    drop(state);
+}
+
+/// With the console CLOSED, none of the new toolbar labels are Tab stops (the
+/// console render doesn't paint, so the `.a11y` twins are absent).
+#[gpui::test]
+#[serial]
+fn toolbar_not_tab_stops_when_console_closed(cx: &mut TestAppContext) {
+    let cfg = tempfile::tempdir().unwrap();
+    let state = tempfile::tempdir().unwrap();
+    set_config_dir(cfg.path());
+    init_components(cx);
+    let harness = enter_async_harness(cx);
+    let _g = harness.enter();
+    let session = build_empty_session(state.path());
+    let (_shell, vcx) = open_shell_window(cx, session);
+    vcx.run_until_parked();
+    // Do NOT open the console.
+
+    focus_shell_neutrally(vcx);
+    let seen = tab_labels(vcx, 60);
+    let run = dat0_i18n::t("sql.run");
+    assert!(
+        !seen.contains(&run),
+        "with the console closed, sql-run must not be a Tab stop; visited {seen:?}"
     );
     drop(state);
 }
