@@ -18,6 +18,7 @@ use serial_test::serial;
 
 use support::{A11ySnapshot, press_tab};
 
+use dat0_app::query::ResultTarget;
 use dat0_app::session::Session;
 use dat0_app::view::sql_console::{SqlConsole, SqlConsoleEvent};
 use dat0_app::window::WorkspaceShell;
@@ -274,6 +275,110 @@ fn t0_sql_console_nav_gate(cx: &mut TestAppContext) {
         console.read_with(&vcx.cx, |c, _| c.tab_count_for_test()),
         1,
         "STOP-4: delete on the focused tab strip must close the active tab"
+    );
+    drop(state);
+}
+
+/// Every fixed toolbar button is Tab-reachable (labels appear as Tab walks the
+/// console). Uses the label oracle — each button carries its localized `.a11y`
+/// twin (glyph child, text label).
+#[gpui::test]
+#[serial]
+fn toolbar_buttons_reachable(cx: &mut TestAppContext) {
+    let cfg = tempfile::tempdir().unwrap();
+    let state = tempfile::tempdir().unwrap();
+    set_config_dir(cfg.path());
+    init_components(cx);
+    let harness = enter_async_harness(cx);
+    let _g = harness.enter();
+    let session = build_empty_session(state.path());
+    let (shell, vcx) = open_shell_window(cx, session);
+    vcx.run_until_parked();
+    let (_console, _log) = open_console_with_log(&shell, vcx);
+
+    focus_shell_neutrally(vcx);
+    let seen = tab_labels(vcx, 80);
+    for key in [
+        "sql.run",
+        "sql.run_in_pane",
+        "sql.new_tab",
+        "sql.history",
+        "sql.save_query",
+        "sql.load_query",
+        "sql.save_as_table",
+    ] {
+        let label = dat0_i18n::t(key);
+        assert!(
+            seen.contains(&label),
+            "{key} ({label:?}) Tab-reachable; visited {seen:?}"
+        );
+    }
+    drop(state);
+}
+
+/// Enter on the focused Run button emits `Run { MainGrid }` while idle.
+#[gpui::test]
+#[serial]
+fn enter_on_run_emits_run(cx: &mut TestAppContext) {
+    let cfg = tempfile::tempdir().unwrap();
+    let state = tempfile::tempdir().unwrap();
+    set_config_dir(cfg.path());
+    init_components(cx);
+    let harness = enter_async_harness(cx);
+    let _g = harness.enter();
+    let session = build_empty_session(state.path());
+    let (shell, vcx) = open_shell_window(cx, session);
+    vcx.run_until_parked();
+    let (_console, log) = open_console_with_log(&shell, vcx);
+
+    let run = dat0_i18n::t("sql.run");
+    focus_shell_neutrally(vcx);
+    tab_until(vcx, &run);
+    vcx.simulate_keystrokes("enter");
+    vcx.run_until_parked();
+    assert!(
+        log.borrow().iter().any(|e| matches!(
+            e,
+            SqlConsoleEvent::Run {
+                target: ResultTarget::MainGrid
+            }
+        )),
+        "Enter on Run must emit Run{{MainGrid}}; got {:?}",
+        log.borrow()
+    );
+    drop(state);
+}
+
+/// While running, the same control shows Cancel and Enter emits Cancel.
+#[gpui::test]
+#[serial]
+fn enter_on_run_while_running_emits_cancel(cx: &mut TestAppContext) {
+    let cfg = tempfile::tempdir().unwrap();
+    let state = tempfile::tempdir().unwrap();
+    set_config_dir(cfg.path());
+    init_components(cx);
+    let harness = enter_async_harness(cx);
+    let _g = harness.enter();
+    let session = build_empty_session(state.path());
+    let (shell, vcx) = open_shell_window(cx, session);
+    vcx.run_until_parked();
+    let (console, log) = open_console_with_log(&shell, vcx);
+
+    // Force the running state so the primary button is Cancel.
+    vcx.update(|_w, app| console.update(app, |c, cx| c.set_running(true, cx)));
+    vcx.run_until_parked();
+
+    let cancel = dat0_i18n::t("sql.cancel");
+    focus_shell_neutrally(vcx);
+    tab_until(vcx, &cancel);
+    vcx.simulate_keystrokes("enter");
+    vcx.run_until_parked();
+    assert!(
+        log.borrow()
+            .iter()
+            .any(|e| matches!(e, SqlConsoleEvent::Cancel)),
+        "Enter on the running Cancel button must emit Cancel; got {:?}",
+        log.borrow()
     );
     drop(state);
 }

@@ -605,6 +605,12 @@ impl Render for SqlConsole {
         }
         let active = self.active;
         let run_fh = self.toolbar_fh("sql-run", cx);
+        let run_pane_fh = self.toolbar_fh("sql-run-pane", cx);
+        let new_tab_fh = self.toolbar_fh("sql-tab-add", cx);
+        let history_fh = self.toolbar_fh("sql-history", cx);
+        let save_fh = self.toolbar_fh("sql-save", cx);
+        let saved_fh = self.toolbar_fh("sql-saved", cx);
+        let save_as_table_fh = self.toolbar_fh("sql-save-as-table", cx);
         let tabstrip_fh = self.tabstrip_focus.clone();
         let tabstrip_name: String = self.tabs[self.active].meta.title.clone();
 
@@ -689,6 +695,19 @@ impl Render for SqlConsole {
                     .py_1()
                     .cursor_pointer()
                     .child(SharedString::from("+"))
+                    .focus_stop(
+                        "sql-tab-add",
+                        &new_tab_fh,
+                        0,
+                        cx.listener(|this, _ev: &gpui::KeyDownEvent, window, cx| {
+                            this.new_tab(window, cx);
+                        }),
+                    )
+                    .a11y(
+                        "sql-tab-add",
+                        AccessRole::Button,
+                        dat0_i18n::t("sql.new_tab"),
+                    )
                     .on_click(cx.listener(move |this, _ev, window, cx| {
                         this.new_tab(window, cx);
                     })),
@@ -783,6 +802,21 @@ impl Render for SqlConsole {
                 .cursor_pointer()
                 .border_l_1()
                 .child(SharedString::from("▾"))
+                .focus_stop(
+                    "sql-run-pane",
+                    &run_pane_fh,
+                    0,
+                    cx.listener(|_this, _ev: &gpui::KeyDownEvent, _window, cx| {
+                        cx.emit(SqlConsoleEvent::Run {
+                            target: ResultTarget::Pane,
+                        });
+                    }),
+                )
+                .a11y(
+                    "sql-run-pane",
+                    AccessRole::Button,
+                    dat0_i18n::t("sql.run_in_pane"),
+                )
                 .on_click(cx.listener(move |_this, _ev, _window, cx| {
                     cx.emit(SqlConsoleEvent::Run {
                         target: ResultTarget::Pane,
@@ -1032,6 +1066,21 @@ impl Render for SqlConsole {
                                     .py_1()
                                     .cursor_pointer()
                                     .child(SharedString::from("🕘"))
+                                    .focus_stop(
+                                        "sql-history",
+                                        &history_fh,
+                                        0,
+                                        cx.listener(
+                                            |_this, _ev: &gpui::KeyDownEvent, _window, cx| {
+                                                cx.emit(SqlConsoleEvent::ShowHistory);
+                                            },
+                                        ),
+                                    )
+                                    .a11y(
+                                        "sql-history",
+                                        AccessRole::Button,
+                                        dat0_i18n::t("sql.history"),
+                                    )
                                     .on_click(cx.listener(|_this, _ev, _window, cx| {
                                         cx.emit(SqlConsoleEvent::ShowHistory);
                                     })),
@@ -1046,6 +1095,21 @@ impl Render for SqlConsole {
                                     .py_1()
                                     .cursor_pointer()
                                     .child(SharedString::from("💾"))
+                                    .focus_stop(
+                                        "sql-save",
+                                        &save_fh,
+                                        0,
+                                        cx.listener(
+                                            |_this, _ev: &gpui::KeyDownEvent, _window, cx| {
+                                                cx.emit(SqlConsoleEvent::SaveQuery);
+                                            },
+                                        ),
+                                    )
+                                    .a11y(
+                                        "sql-save",
+                                        AccessRole::Button,
+                                        dat0_i18n::t("sql.save_query"),
+                                    )
                                     .on_click(cx.listener(|_this, _ev, _window, cx| {
                                         cx.emit(SqlConsoleEvent::SaveQuery);
                                     })),
@@ -1060,6 +1124,21 @@ impl Render for SqlConsole {
                                     .py_1()
                                     .cursor_pointer()
                                     .child(SharedString::from("📑"))
+                                    .focus_stop(
+                                        "sql-saved",
+                                        &saved_fh,
+                                        0,
+                                        cx.listener(
+                                            |_this, _ev: &gpui::KeyDownEvent, _window, cx| {
+                                                cx.emit(SqlConsoleEvent::ShowSaved);
+                                            },
+                                        ),
+                                    )
+                                    .a11y(
+                                        "sql-saved",
+                                        AccessRole::Button,
+                                        dat0_i18n::t("sql.load_query"),
+                                    )
                                     .on_click(cx.listener(|_this, _ev, _window, cx| {
                                         cx.emit(SqlConsoleEvent::ShowSaved);
                                     })),
@@ -1075,6 +1154,21 @@ impl Render for SqlConsole {
                                     .py_1()
                                     .cursor_pointer()
                                     .child(SharedString::from("⤓ Table"))
+                                    .focus_stop(
+                                        "sql-save-as-table",
+                                        &save_as_table_fh,
+                                        0,
+                                        cx.listener(
+                                            |_this, _ev: &gpui::KeyDownEvent, _window, cx| {
+                                                cx.emit(SqlConsoleEvent::SaveAsTable);
+                                            },
+                                        ),
+                                    )
+                                    .a11y(
+                                        "sql-save-as-table",
+                                        AccessRole::Button,
+                                        dat0_i18n::t("sql.save_as_table"),
+                                    )
                                     .on_click(cx.listener(|_this, _ev, _window, cx| {
                                         cx.emit(SqlConsoleEvent::SaveAsTable);
                                     })),
