@@ -1364,6 +1364,12 @@ impl SqlConsole {
     pub fn tabstrip_focused_for_test(&self, window: &Window) -> bool {
         self.tabstrip_focus.is_focused(window)
     }
+
+    /// The open-tab titles in strip order — lets a test assert that Delete closed
+    /// the ACTIVE tab specifically (by identity), not merely that the count dropped.
+    pub fn tab_titles_for_test(&self) -> Vec<String> {
+        self.tabs.iter().map(|t| t.meta.title.clone()).collect()
+    }
 }
 
 #[cfg(test)]

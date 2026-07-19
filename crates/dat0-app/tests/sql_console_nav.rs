@@ -503,6 +503,63 @@ fn tabstrip_delete_closes_active(cx: &mut TestAppContext) {
     drop(state);
 }
 
+/// Delete closes the ACTIVE tab specifically, not merely *a* tab. Seeds 3
+/// distinguishably-titled tabs (`Query 1..3`), switches active to the MIDDLE,
+/// deletes, and asserts the middle title is gone while both neighbours remain —
+/// so a hypothetical fixed-index handler (e.g. always closing tab 0) would fail
+/// this test even though it keeps the same count. (Hardens T3-pm1.)
+#[gpui::test]
+#[serial]
+fn tabstrip_delete_closes_active_by_identity(cx: &mut TestAppContext) {
+    let cfg = tempfile::tempdir().unwrap();
+    let state = tempfile::tempdir().unwrap();
+    set_config_dir(cfg.path());
+    init_components(cx);
+    let harness = enter_async_harness(cx);
+    let _g = harness.enter();
+    let session = build_empty_session(state.path());
+    let (shell, vcx) = open_shell_window(cx, session);
+    vcx.run_until_parked();
+    let (console, _log) = open_console_with_log(&shell, vcx);
+
+    // 1 → 3 tabs; new_tab titles auto-increment `Query {len+1}` and each makes
+    // itself active, so the strip is [Query 1, Query 2, Query 3] with active == 2.
+    for _ in 0..2 {
+        vcx.update(|window, app| console.update(app, |c, cx| c.new_tab(window, cx)));
+        vcx.run_until_parked();
+    }
+    assert_eq!(
+        console.read_with(&vcx.cx, |c, _| c.tab_titles_for_test()),
+        vec![
+            "Query 1".to_string(),
+            "Query 2".to_string(),
+            "Query 3".to_string()
+        ],
+        "seed: 3 distinguishably-titled tabs"
+    );
+
+    focus_shell_neutrally(vcx);
+    assert!(tab_until_tabstrip(vcx, &console, 60), "tab strip reachable");
+
+    // Switch active to the MIDDLE tab (2 → 1 == "Query 2").
+    vcx.simulate_keystrokes("left");
+    vcx.run_until_parked();
+    assert_eq!(
+        console.read_with(&vcx.cx, |c, _| c.active_tab_for_test()),
+        1
+    );
+
+    // Delete the active (middle) tab.
+    vcx.simulate_keystrokes("delete");
+    vcx.run_until_parked();
+    assert_eq!(
+        console.read_with(&vcx.cx, |c, _| c.tab_titles_for_test()),
+        vec!["Query 1".to_string(), "Query 3".to_string()],
+        "delete must remove the ACTIVE middle tab (Query 2), leaving its neighbours"
+    );
+    drop(state);
+}
+
 /// Delete with a single tab open is a no-op (never an empty console).
 #[gpui::test]
 #[serial]
