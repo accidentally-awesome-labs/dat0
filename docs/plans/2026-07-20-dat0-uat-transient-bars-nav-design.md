@@ -150,8 +150,10 @@ history listbox) is **unconditional shipped code**; only the state-injection rea
      strip.**
   2. Inject `finish_nl_preview(None)` while `nl2sql-stop` is focused → focus re-homes to
      `nl2sql-insert` (the swap-survival probe). **STOP if focus is dropped to nowhere.**
-  3. With a bar open, `dispatch_action(input::Escape)` routes to the correct ladder rung (cancel,
-     not editor→Run). **STOP if the consolidated ladder mis-prioritizes.**
+  3. With a bar open, `simulate_keystrokes("escape")` routes to the correct ladder rung (cancel,
+     not editor→Run). **STOP if the consolidated ladder mis-prioritizes.** (Real keystrokes, not
+     `dispatch_action` — the bars focus non-Input divs, so the `input::Escape` action is only
+     generated if a `key_context` binds `escape`; see the "Drive discipline" note.)
   4. Inject `show_history([..])` → the `sql-history-list` container is focused, `history_active == 0`;
      `simulate_keystrokes("down")` moves it; Enter loads the active row's SQL into a new tab.
      **STOP if the chained arrow `on_key_down` doesn't fire alongside `focus_stop`.**
@@ -164,7 +166,11 @@ history listbox) is **unconditional shipped code**; only the state-injection rea
   a non-vacuity negative (with every bar closed, none of the seven button ids are Tab stops).
 - **Drive discipline:** button/listbox activation via `simulate_keystrokes` on the focused
   `focus_stop` div (safe — these are divs, not single-line Inputs, so the cell-editor `"\n"`-panic
-  does not apply; the editor is multi-line). Escape via `dispatch_action(input::Escape)`. Seed
+  does not apply; the editor is multi-line). Escape via `simulate_keystrokes("escape")` too — this
+  needs a `key_context("SqlConsole")` on the console root + a scoped `escape → input::Escape`
+  keybinding (registered in both the production window setup and the test harness), because
+  `gpui_component` only binds `escape` in its own `"Input"` context and the bars focus non-Input
+  divs; driving Escape via `dispatch_action` would bypass the keymap and hide that gap. Seed
   preview/explain/error/history content through the `*_for_test` seams, never keystrokes.
 - **Oracle:** `focused_label()`/`A11ySnapshot` for buttons + the history container;
   `editor_focused_for_test` for the return-to-editor assertions; `history_active_for_test` for
