@@ -536,6 +536,7 @@ impl SqlConsole {
 
     pub(crate) fn begin_explain(&mut self, sql: String, cx: &mut Context<Self>) {
         self.explain = Some(ExplainView::new(sql));
+        self.pending_focus = Some("explain-stop"); // streaming → focus Stop
         cx.notify();
     }
     pub(crate) fn push_explain_delta(&mut self, text: &str, cx: &mut Context<Self>) {
@@ -547,6 +548,7 @@ impl SqlConsole {
     pub(crate) fn finish_explain(&mut self, error: Option<String>, cx: &mut Context<Self>) {
         if let Some(e) = &mut self.explain {
             e.finish(error);
+            self.pending_focus = Some("explain-close"); // re-home across Stop→Close
             cx.notify();
         }
     }
@@ -644,8 +646,8 @@ impl Render for SqlConsole {
         let nl_stop_fh = self.toolbar_fh("nl2sql-stop", cx);
         let nl_insert_fh = self.toolbar_fh("nl2sql-insert", cx);
         let nl_discard_fh = self.toolbar_fh("nl2sql-discard", cx);
-        let _explain_stop_fh = self.toolbar_fh("explain-stop", cx);
-        let _explain_close_fh = self.toolbar_fh("explain-close", cx);
+        let explain_stop_fh = self.toolbar_fh("explain-stop", cx);
+        let explain_close_fh = self.toolbar_fh("explain-close", cx);
         let _err_dismiss_fh = self.toolbar_fh("sql-err-dismiss", cx);
         let _history_close_fh = self.toolbar_fh("sql-history-close", cx);
         let _history_list_fh = self.toolbar_fh("sql-history-list", cx);
@@ -1388,6 +1390,9 @@ impl Render for SqlConsole {
                     panel = panel.child(div().child(SharedString::from(format!("✗ {err}"))));
                 }
                 if e.streaming {
+                    let key = cx.listener(|_c, _ev: &gpui::KeyDownEvent, _w, cx| {
+                        cx.emit(SqlConsoleEvent::StopAiStream);
+                    });
                     panel = panel.child(
                         div()
                             .id("explain-stop")
@@ -1396,11 +1401,21 @@ impl Render for SqlConsole {
                             .border_1()
                             .cursor_pointer()
                             .child(SharedString::from(dat0_i18n::t("sql.ai.stop")))
-                            .on_click(cx.listener(|_console, _ev, _window, cx| {
+                            .focus_stop("explain-stop", &explain_stop_fh, 0, key)
+                            .a11y(
+                                "explain-stop",
+                                AccessRole::Button,
+                                dat0_i18n::t("sql.ai.stop"),
+                            )
+                            .on_click(cx.listener(|_c, _ev, _w, cx| {
                                 cx.emit(SqlConsoleEvent::StopAiStream);
                             })),
                     );
                 } else {
+                    let key = cx.listener(|c, _ev: &gpui::KeyDownEvent, _w, cx| {
+                        c.pending_focus = Some(EDITOR_FOCUS);
+                        cx.emit(SqlConsoleEvent::CloseExplain);
+                    });
                     panel = panel.child(
                         div()
                             .id("explain-close")
@@ -1409,7 +1424,14 @@ impl Render for SqlConsole {
                             .border_1()
                             .cursor_pointer()
                             .child(SharedString::from(dat0_i18n::t("sql.explain.close")))
-                            .on_click(cx.listener(|_console, _ev, _window, cx| {
+                            .focus_stop("explain-close", &explain_close_fh, 0, key)
+                            .a11y(
+                                "explain-close",
+                                AccessRole::Button,
+                                dat0_i18n::t("sql.explain.close"),
+                            )
+                            .on_click(cx.listener(|c, _ev, _w, cx| {
+                                c.pending_focus = Some(EDITOR_FOCUS);
                                 cx.emit(SqlConsoleEvent::CloseExplain);
                             })),
                     );
@@ -1528,6 +1550,19 @@ impl SqlConsole {
     /// Whether the NL→SQL strip is currently open.
     pub fn nl_preview_open_for_test(&self) -> bool {
         self.nl_preview.is_some()
+    }
+
+    /// Inject a streaming Explain panel (bypasses the real SSE flow).
+    pub fn begin_explain_for_test(&mut self, sql: String, cx: &mut Context<Self>) {
+        self.begin_explain(sql, cx);
+    }
+    /// Finish the injected Explain (flips streaming → Close).
+    pub fn finish_explain_for_test(&mut self, error: Option<String>, cx: &mut Context<Self>) {
+        self.finish_explain(error, cx);
+    }
+    /// Whether the Explain panel is currently open.
+    pub fn explain_open_for_test(&self) -> bool {
+        self.explain.is_some()
     }
 }
 

@@ -370,3 +370,104 @@ fn nl2sql_discard_returns_focus_to_editor(cx: &mut TestAppContext) {
         "Discard must return focus to the editor"
     );
 }
+
+#[gpui::test]
+#[serial]
+fn explain_focuses_stop_then_rehomes_close(cx: &mut TestAppContext) {
+    let cfg = tempfile::tempdir().unwrap();
+    let state = tempfile::tempdir().unwrap();
+    set_config_dir(cfg.path());
+    init_components(cx);
+    let harness = enter_async_harness(cx);
+    let _g = harness.enter();
+    let session = build_empty_session(state.path());
+    let (shell, vcx) = open_shell_window(cx, session);
+    vcx.run_until_parked();
+    let (console, _log) = open_console_with_log(&shell, vcx);
+
+    vcx.update(|_w, app| {
+        console.update(app, |c, cx| c.begin_explain_for_test("SELECT 1".into(), cx))
+    });
+    vcx.run_until_parked();
+    assert_eq!(
+        A11ySnapshot::capture(vcx).focused_label(),
+        Some(dat0_i18n::t("sql.ai.stop").as_str()),
+        "streaming Explain must focus Stop"
+    );
+    vcx.update(|_w, app| console.update(app, |c, cx| c.finish_explain_for_test(None, cx)));
+    vcx.run_until_parked();
+    assert_eq!(
+        A11ySnapshot::capture(vcx).focused_label(),
+        Some(dat0_i18n::t("sql.explain.close").as_str()),
+        "finished Explain must re-home focus to Close"
+    );
+}
+
+#[gpui::test]
+#[serial]
+fn explain_close_emits_and_returns_focus(cx: &mut TestAppContext) {
+    let cfg = tempfile::tempdir().unwrap();
+    let state = tempfile::tempdir().unwrap();
+    set_config_dir(cfg.path());
+    init_components(cx);
+    let harness = enter_async_harness(cx);
+    let _g = harness.enter();
+    let session = build_empty_session(state.path());
+    let (shell, vcx) = open_shell_window(cx, session);
+    vcx.run_until_parked();
+    let (console, log) = open_console_with_log(&shell, vcx);
+
+    vcx.update(|_w, app| {
+        console.update(app, |c, cx| {
+            c.begin_explain_for_test("SELECT 1".into(), cx);
+            c.finish_explain_for_test(None, cx);
+        })
+    });
+    vcx.run_until_parked(); // focus on Close
+    vcx.simulate_keystrokes("enter");
+    vcx.run_until_parked();
+    assert!(
+        log.borrow()
+            .iter()
+            .any(|e| matches!(e, SqlConsoleEvent::CloseExplain)),
+        "Enter on Close must emit CloseExplain; got {:?}",
+        log.borrow()
+    );
+    assert!(
+        !console.read_with(&vcx.cx, |c, _| c.explain_open_for_test()),
+        "the shell's CloseExplain handler must clear the panel"
+    );
+    assert!(
+        vcx.update(|window, app| console.read(app).editor_focused_for_test(window, app)),
+        "Close must return focus to the editor"
+    );
+}
+
+#[gpui::test]
+#[serial]
+fn explain_escape_streaming_stops_finished_closes(cx: &mut TestAppContext) {
+    let cfg = tempfile::tempdir().unwrap();
+    let state = tempfile::tempdir().unwrap();
+    set_config_dir(cfg.path());
+    init_components(cx);
+    let harness = enter_async_harness(cx);
+    let _g = harness.enter();
+    let session = build_empty_session(state.path());
+    let (shell, vcx) = open_shell_window(cx, session);
+    vcx.run_until_parked();
+    let (console, log) = open_console_with_log(&shell, vcx);
+
+    // Streaming: Escape emits StopAiStream.
+    vcx.update(|_w, app| {
+        console.update(app, |c, cx| c.begin_explain_for_test("SELECT 1".into(), cx))
+    });
+    vcx.run_until_parked();
+    vcx.dispatch_action(gpui_component::input::Escape);
+    vcx.run_until_parked();
+    assert!(
+        log.borrow()
+            .iter()
+            .any(|e| matches!(e, SqlConsoleEvent::StopAiStream)),
+        "Escape while Explain streams must emit StopAiStream"
+    );
+}
