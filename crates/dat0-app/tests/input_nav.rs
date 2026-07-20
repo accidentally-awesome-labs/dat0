@@ -214,7 +214,7 @@ fn t0_input_nav_gate(cx: &mut TestAppContext) {
     let session = build_empty_session(state.path());
     let (shell, vcx) = open_shell_window(cx, session);
     vcx.run_until_parked();
-    let (console, log) = open_console_with_log(&shell, vcx);
+    let (console, _log) = open_console_with_log(&shell, vcx);
 
     // ── Probe 1: editor trap-exit (Escape → Run) ────────────────────────────
     let editor_fh = vcx.update(|_w, app| console.read(app).editor_focus_handle_for_test(app));
@@ -266,7 +266,10 @@ fn t0_input_nav_gate(cx: &mut TestAppContext) {
         vcx.update(|window, app| console.read(app).editor_focused_for_test(window, app)),
         "precondition: editor focused before dispatching the run action"
     );
-    log.borrow_mut().clear();
+    assert!(
+        !console.read_with(&vcx.cx, |c, _| c.running),
+        "precondition: not running before dispatch"
+    );
     vcx.dispatch_action(dat0_app::menu_macos::SqlRun);
     vcx.run_until_parked();
     assert!(
@@ -350,6 +353,129 @@ fn t0_input_nav_gate(cx: &mut TestAppContext) {
     assert!(
         !vcx.update(|_w, app| shell.read(app).name_prompt_open_for_test()),
         "STOP-4: Cancel must dismiss the overlay"
+    );
+    drop(state);
+}
+
+/// Escape from the focused editor lands focus on Run, then Tab/Shift-Tab resume
+/// normal navigation (proves the trap is genuinely broken open).
+#[gpui::test]
+#[serial]
+fn editor_escape_exits_to_run_then_tab_resumes(cx: &mut TestAppContext) {
+    let cfg = tempfile::tempdir().unwrap();
+    let state = tempfile::tempdir().unwrap();
+    set_config_dir(cfg.path());
+    init_components(cx);
+    let harness = enter_async_harness(cx);
+    let _g = harness.enter();
+    let session = build_empty_session(state.path());
+    let (shell, vcx) = open_shell_window(cx, session);
+    vcx.run_until_parked();
+    let (console, _log) = open_console_with_log(&shell, vcx);
+
+    let editor_fh = vcx.update(|_w, app| console.read(app).editor_focus_handle_for_test(app));
+    vcx.update(|window, _| window.focus(&editor_fh));
+    vcx.run_until_parked();
+    vcx.dispatch_action(gpui_component::input::Escape);
+    vcx.run_until_parked();
+    let run = dat0_i18n::t("sql.run");
+    assert_eq!(
+        A11ySnapshot::capture(vcx).focused_label(),
+        Some(run.as_str()),
+        "Escape lands on Run"
+    );
+    // Focus can now leave Run by Tab (no longer trapped): a subsequent Tab
+    // reaching another stop proves nav resumed.
+    press_tab(vcx);
+    assert!(
+        A11ySnapshot::capture(vcx).focused_label().is_some(),
+        "Tab from Run reaches another stop (nav resumed, not trapped)"
+    );
+    drop(state);
+}
+
+/// Escape does nothing observable when the editor is NOT focused (the guard):
+/// focus a toolbar button, Escape, and the focus label is unchanged (Run is not
+/// force-grabbed).
+#[gpui::test]
+#[serial]
+fn editor_escape_guarded_to_editor_focus(cx: &mut TestAppContext) {
+    let cfg = tempfile::tempdir().unwrap();
+    let state = tempfile::tempdir().unwrap();
+    set_config_dir(cfg.path());
+    init_components(cx);
+    let harness = enter_async_harness(cx);
+    let _g = harness.enter();
+    let session = build_empty_session(state.path());
+    let (shell, vcx) = open_shell_window(cx, session);
+    vcx.run_until_parked();
+    let (_console, _log) = open_console_with_log(&shell, vcx);
+
+    focus_shell_neutrally(vcx);
+    tab_until(vcx, &dat0_i18n::t("sql.history"));
+    let before = A11ySnapshot::capture(vcx)
+        .focused_label()
+        .map(str::to_string);
+    assert_eq!(
+        before.as_deref(),
+        Some(dat0_i18n::t("sql.history").as_str())
+    );
+    vcx.dispatch_action(gpui_component::input::Escape);
+    vcx.run_until_parked();
+    assert_eq!(
+        A11ySnapshot::capture(vcx)
+            .focused_label()
+            .map(str::to_string),
+        before,
+        "Escape while a non-editor stop is focused must not hijack focus to Run"
+    );
+    drop(state);
+}
+
+/// The run shortcut (`SqlRun` menu action) starts a run while the editor is
+/// focused. Mirrors `t0_input_nav_gate`'s Probe 2: `SqlRun`'s handler calls
+/// `spawn_sql_run` directly (never emits `SqlConsoleEvent::Run`, which is a
+/// separate path fired only by the toolbar Run button's own handlers) and
+/// bails out on an empty statement-under-cursor, so real SQL is seeded first
+/// via the already-`pub` `tabs`/`input` fields and the observable asserted is
+/// `SqlConsole.running`.
+#[gpui::test]
+#[serial]
+fn run_shortcut_works_from_editor(cx: &mut TestAppContext) {
+    let cfg = tempfile::tempdir().unwrap();
+    let state = tempfile::tempdir().unwrap();
+    set_config_dir(cfg.path());
+    init_components(cx);
+    let harness = enter_async_harness(cx);
+    let _g = harness.enter();
+    let session = build_empty_session(state.path());
+    let (shell, vcx) = open_shell_window(cx, session);
+    vcx.run_until_parked();
+    let (console, _log) = open_console_with_log(&shell, vcx);
+
+    let editor_fh = vcx.update(|_w, app| console.read(app).editor_focus_handle_for_test(app));
+    vcx.update(|window, app| {
+        console.update(app, |c, cx| {
+            let input = c.tabs[c.active].input.clone();
+            input.update(cx, |s, cx| s.set_value("SELECT 1", window, cx));
+        })
+    });
+    vcx.run_until_parked();
+    vcx.update(|window, _| window.focus(&editor_fh));
+    vcx.run_until_parked();
+    assert!(
+        vcx.update(|window, app| console.read(app).editor_focused_for_test(window, app)),
+        "precondition: editor focused before dispatching the run action"
+    );
+    assert!(
+        !console.read_with(&vcx.cx, |c, _| c.running),
+        "precondition: not running before dispatch"
+    );
+    vcx.dispatch_action(dat0_app::menu_macos::SqlRun);
+    vcx.run_until_parked();
+    assert!(
+        console.read_with(&vcx.cx, |c, _| c.running),
+        "run action from the editor must start a run (SqlConsole.running) while the editor is focused"
     );
     drop(state);
 }
