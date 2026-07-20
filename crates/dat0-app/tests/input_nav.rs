@@ -479,3 +479,132 @@ fn run_shortcut_works_from_editor(cx: &mut TestAppContext) {
     );
     drop(state);
 }
+
+/// Open a NamePrompt and subscribe to its events. Returns (prompt, log).
+fn open_prompt_with_log(
+    shell: &Entity<WorkspaceShell>,
+    vcx: &mut VisualTestContext,
+) -> (
+    Entity<NamePrompt>,
+    std::rc::Rc<std::cell::RefCell<Vec<NamePromptEvent>>>,
+) {
+    vcx.update(|window, app| shell.update(app, |ws, cx| ws.open_name_prompt_for_test(window, cx)));
+    vcx.run_until_parked();
+    let prompt = vcx
+        .update(|_w, app| shell.read(app).name_prompt_entity_for_test())
+        .expect("prompt open");
+    let log = std::rc::Rc::new(std::cell::RefCell::new(Vec::new()));
+    let log2 = log.clone();
+    let sub = vcx.cx.update(|app| {
+        app.subscribe(&prompt, move |_p, ev: &NamePromptEvent, _app| {
+            log2.borrow_mut().push(ev.clone());
+        })
+    });
+    std::mem::forget(sub);
+    (prompt, log)
+}
+
+/// The prompt field is focused on open (no click needed).
+#[gpui::test]
+#[serial]
+fn prompt_focused_on_open(cx: &mut TestAppContext) {
+    let cfg = tempfile::tempdir().unwrap();
+    let state = tempfile::tempdir().unwrap();
+    set_config_dir(cfg.path());
+    init_components(cx);
+    let harness = enter_async_harness(cx);
+    let _g = harness.enter();
+    let session = build_empty_session(state.path());
+    let (shell, vcx) = open_shell_window(cx, session);
+    vcx.run_until_parked();
+    let (_console, _log) = open_console_with_log(&shell, vcx);
+
+    let (prompt, _plog) = open_prompt_with_log(&shell, vcx);
+    assert!(
+        vcx.update(|window, app| prompt.read(app).input_focused_for_test(window, app)),
+        "the prompt field is focused on open"
+    );
+    drop(state);
+}
+
+/// Enter submits the typed value; the overlay dismisses.
+#[gpui::test]
+#[serial]
+fn prompt_enter_confirms_value(cx: &mut TestAppContext) {
+    let cfg = tempfile::tempdir().unwrap();
+    let state = tempfile::tempdir().unwrap();
+    set_config_dir(cfg.path());
+    init_components(cx);
+    let harness = enter_async_harness(cx);
+    let _g = harness.enter();
+    let session = build_empty_session(state.path());
+    let (shell, vcx) = open_shell_window(cx, session);
+    vcx.run_until_parked();
+    let (_console, _log) = open_console_with_log(&shell, vcx);
+
+    let (prompt, plog) = open_prompt_with_log(&shell, vcx);
+    vcx.update(|window, app| {
+        prompt.update(app, |p, cx| p.seed_value_for_test("my_query", window, cx))
+    });
+    vcx.run_until_parked();
+    vcx.dispatch_action(gpui_component::input::Enter { secondary: false });
+    vcx.run_until_parked();
+    assert!(
+        plog.borrow()
+            .iter()
+            .any(|e| matches!(e, NamePromptEvent::Confirm(v) if v == "my_query")),
+        "Enter emits Confirm(value); got {:?}",
+        plog.borrow()
+    );
+    assert!(
+        !vcx.update(|_w, app| shell.read(app).name_prompt_open_for_test()),
+        "Confirm dismisses the overlay"
+    );
+    drop(state);
+}
+
+/// Escape cancels and dismisses; OK/Cancel are keyboard-reachable + operable
+/// (Enter on the focused Cancel button emits Cancel).
+#[gpui::test]
+#[serial]
+fn prompt_escape_cancels_and_buttons_operable(cx: &mut TestAppContext) {
+    let cfg = tempfile::tempdir().unwrap();
+    let state = tempfile::tempdir().unwrap();
+    set_config_dir(cfg.path());
+    init_components(cx);
+    let harness = enter_async_harness(cx);
+    let _g = harness.enter();
+    let session = build_empty_session(state.path());
+    let (shell, vcx) = open_shell_window(cx, session);
+    vcx.run_until_parked();
+    let (_console, _log) = open_console_with_log(&shell, vcx);
+
+    // Escape → Cancel.
+    let (_p1, plog1) = open_prompt_with_log(&shell, vcx);
+    vcx.dispatch_action(gpui_component::input::Escape);
+    vcx.run_until_parked();
+    assert!(
+        plog1
+            .borrow()
+            .iter()
+            .any(|e| matches!(e, NamePromptEvent::Cancel)),
+        "Escape emits Cancel; got {:?}",
+        plog1.borrow()
+    );
+    assert!(!vcx.update(|_w, app| shell.read(app).name_prompt_open_for_test()));
+
+    // Buttons reachable + operable: Tab to Cancel, Enter → Cancel.
+    let (_p2, plog2) = open_prompt_with_log(&shell, vcx);
+    tab_until(vcx, &"Cancel".to_string());
+    vcx.simulate_keystrokes("enter");
+    vcx.run_until_parked();
+    assert!(
+        plog2
+            .borrow()
+            .iter()
+            .any(|e| matches!(e, NamePromptEvent::Cancel)),
+        "Enter on the focused Cancel button emits Cancel; got {:?}",
+        plog2.borrow()
+    );
+    drop(state);
+}
