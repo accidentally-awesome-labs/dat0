@@ -6980,6 +6980,27 @@ impl WorkspaceShell {
     ) -> gpui::Entity<crate::view::sql_console::SqlConsole> {
         self.open_console_for_test(window, cx, true)
     }
+
+    /// Open a `NamePrompt` from a test using a side-effect-free intent
+    /// (`SaveQuery` with no stashed SQL → `Confirm` is a clean no-op dismiss),
+    /// so the generic prompt keyboard behavior can be driven without AI/engine.
+    pub fn open_name_prompt_for_test(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.name_prompt_sql = None;
+        self.open_name_prompt_with("Test", "", NamePromptIntent::SaveQuery, window, cx);
+    }
+
+    /// Whether the name-prompt overlay is currently mounted.
+    pub fn name_prompt_open_for_test(&self) -> bool {
+        self.name_prompt.is_some()
+    }
+
+    /// The live prompt entity — lets a test subscribe to its `NamePromptEvent`
+    /// and read/seed its input.
+    pub fn name_prompt_entity_for_test(
+        &self,
+    ) -> Option<gpui::Entity<crate::view::name_prompt::NamePrompt>> {
+        self.name_prompt.clone()
+    }
 }
 
 #[cfg(test)]

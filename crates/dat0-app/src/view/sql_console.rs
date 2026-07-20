@@ -21,8 +21,8 @@ use std::sync::Arc;
 
 use gpui::prelude::*;
 use gpui::{
-    Context, Entity, EventEmitter, IntoElement, ParentElement, SharedString, Styled, WeakEntity,
-    Window, div,
+    Context, Entity, EventEmitter, Focusable as _, IntoElement, ParentElement, SharedString,
+    Styled, WeakEntity, Window, div,
 };
 use gpui_component::input::{Input, InputState};
 use gpui_component::spinner::Spinner;
@@ -1343,6 +1343,27 @@ impl Render for SqlConsole {
                 panel
             }))
             .children(history_overlay)
+            // Escape leaves the editor onto Run (fixes the code-editor keyboard
+            // trap: Tab/Shift-Tab indent in multi-line mode). Guarded on the
+            // active editor holding focus, so (a) when the autocomplete popup is
+            // open the editor consumes Escape first and this never fires, and
+            // (b) Escape while a toolbar button is focused is left alone. `run_fh`
+            // is the same handle the Run button's `focus_stop` uses, so focus
+            // lands on Run and Tab/Shift-Tab resume.
+            .on_action(
+                cx.listener(|this, _ev: &gpui_component::input::Escape, window, cx| {
+                    if this.tabs[this.active]
+                        .input
+                        .read(cx)
+                        .focus_handle(cx)
+                        .is_focused(window)
+                    {
+                        let run_fh = this.toolbar_fh("sql-run", cx);
+                        window.focus(&run_fh);
+                        cx.notify();
+                    }
+                }),
+            )
     }
 }
 
@@ -1369,6 +1390,21 @@ impl SqlConsole {
     /// the ACTIVE tab specifically (by identity), not merely that the count dropped.
     pub fn tab_titles_for_test(&self) -> Vec<String> {
         self.tabs.iter().map(|t| t.meta.title.clone()).collect()
+    }
+
+    /// The active tab's editor `FocusHandle` — lets a test focus the editor
+    /// directly (it is a native tab-stop but not part of the `focus_stop` kit).
+    pub fn editor_focus_handle_for_test(&self, cx: &gpui::App) -> gpui::FocusHandle {
+        self.tabs[self.active].input.read(cx).focus_handle(cx)
+    }
+
+    /// Whether the active editor holds focus (the trap-exit oracle).
+    pub fn editor_focused_for_test(&self, window: &gpui::Window, cx: &gpui::App) -> bool {
+        self.tabs[self.active]
+            .input
+            .read(cx)
+            .focus_handle(cx)
+            .is_focused(window)
     }
 }
 
