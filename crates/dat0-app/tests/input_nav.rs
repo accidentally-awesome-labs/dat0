@@ -595,7 +595,7 @@ fn prompt_escape_cancels_and_buttons_operable(cx: &mut TestAppContext) {
 
     // Buttons reachable + operable: Tab to Cancel, Enter → Cancel.
     let (_p2, plog2) = open_prompt_with_log(&shell, vcx);
-    tab_until(vcx, &"Cancel".to_string());
+    tab_until(vcx, "Cancel");
     vcx.simulate_keystrokes("enter");
     vcx.run_until_parked();
     assert!(
