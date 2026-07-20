@@ -745,3 +745,119 @@ fn history_close_and_escape_return_focus(cx: &mut TestAppContext) {
         "Escape must return focus to the editor"
     );
 }
+
+#[gpui::test]
+#[serial]
+fn escape_history_beats_error(cx: &mut TestAppContext) {
+    let cfg = tempfile::tempdir().unwrap();
+    let state = tempfile::tempdir().unwrap();
+    set_config_dir(cfg.path());
+    init_components(cx);
+    let harness = enter_async_harness(cx);
+    let _g = harness.enter();
+    let session = build_empty_session(state.path());
+    let (shell, vcx) = open_shell_window(cx, session);
+    vcx.run_until_parked();
+    let (console, _log) = open_console_with_log(&shell, vcx);
+
+    // Both an error and the history overlay are present. Escape must hit rung 1
+    // (history) first, leaving the error intact.
+    vcx.update(|_w, app| {
+        console.update(app, |c, cx| {
+            c.set_error_region_for_test("boom".into(), cx);
+            c.show_fake_history_for_test(vec!["a".into()], cx);
+        })
+    });
+    vcx.run_until_parked();
+    vcx.dispatch_action(gpui_component::input::Escape);
+    vcx.run_until_parked();
+    assert!(
+        !console.read_with(&vcx.cx, |c, _| c.history_open_for_test()),
+        "Escape must close history first (rung 1)"
+    );
+    assert!(
+        console.read_with(&vcx.cx, |c, _| c.error_region_for_test()),
+        "the error must survive the history-closing Escape"
+    );
+}
+
+#[gpui::test]
+#[serial]
+fn no_transient_button_is_a_tab_stop_when_closed(cx: &mut TestAppContext) {
+    let cfg = tempfile::tempdir().unwrap();
+    let state = tempfile::tempdir().unwrap();
+    set_config_dir(cfg.path());
+    init_components(cx);
+    let harness = enter_async_harness(cx);
+    let _g = harness.enter();
+    let session = build_empty_session(state.path());
+    let (shell, vcx) = open_shell_window(cx, session);
+    vcx.run_until_parked();
+    let (_console, _log) = open_console_with_log(&shell, vcx);
+
+    // Non-vacuity: with every transient bar closed, none of the seven labels is
+    // reachable by Tab (they only exist while their bar is mounted).
+    focus_shell_neutrally(vcx);
+    let seen = tab_labels(vcx, 60);
+    for label_key in [
+        "sql.ai.stop",
+        "sql.nl2sql.insert",
+        "sql.nl2sql.discard",
+        "sql.explain.close",
+        "sql.error.dismiss",
+        "sql.history.close",
+    ] {
+        let label = dat0_i18n::t(label_key);
+        assert!(
+            !seen.contains(&label),
+            "{label_key} must not be a Tab stop when its bar is closed; visited {seen:?}"
+        );
+    }
+}
+
+#[gpui::test]
+#[serial]
+fn history_close_button_dismisses_and_returns_focus(cx: &mut TestAppContext) {
+    let cfg = tempfile::tempdir().unwrap();
+    let state = tempfile::tempdir().unwrap();
+    set_config_dir(cfg.path());
+    init_components(cx);
+    let harness = enter_async_harness(cx);
+    let _g = harness.enter();
+    let session = build_empty_session(state.path());
+    let (shell, vcx) = open_shell_window(cx, session);
+    vcx.run_until_parked();
+    let (console, _log) = open_console_with_log(&shell, vcx);
+
+    // The overlay opens with focus on the LIST (see `history_opens_focuses_list_at_row0`);
+    // the editor Tab-trap blocks a Tab-walk to the ✕, so focus it directly via the
+    // new seam to prove its OWN focus_stop Enter listener works — the Escape path
+    // (`history_close_and_escape_return_focus`) exercises a different code path and
+    // does not cover this button's own wiring.
+    vcx.update(|_w, app| {
+        console.update(app, |c, cx| {
+            c.show_fake_history_for_test(vec!["a".into()], cx)
+        })
+    });
+    vcx.run_until_parked();
+
+    let close_fh = vcx
+        .update(|_w, app| console.update(app, |c, cx| c.history_close_focus_handle_for_test(cx)));
+    vcx.update(|window, _app| window.focus(&close_fh));
+    vcx.run_until_parked();
+    assert_eq!(
+        A11ySnapshot::capture(vcx).focused_label(),
+        Some(dat0_i18n::t("sql.history.close").as_str()),
+        "the ✕ must be a correctly-labeled tab-stop when focused directly"
+    );
+    vcx.simulate_keystrokes("enter");
+    vcx.run_until_parked();
+    assert!(
+        !console.read_with(&vcx.cx, |c, _| c.history_open_for_test()),
+        "Enter on the ✕ must close the history overlay"
+    );
+    assert!(
+        vcx.update(|window, app| console.read(app).editor_focused_for_test(window, app)),
+        "closing via the ✕ must return focus to the editor"
+    );
+}

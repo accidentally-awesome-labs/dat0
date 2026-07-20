@@ -1671,6 +1671,16 @@ impl SqlConsole {
         self.toolbar_fh("sql-err-dismiss", cx)
     }
 
+    /// The history-overlay close ✕ button's `FocusHandle` — lets a test focus it
+    /// directly (the overlay opens with focus on the LIST, and the editor Tab-trap
+    /// blocks a Tab-walk to the ✕), to prove its own focus_stop Enter listener works.
+    pub fn history_close_focus_handle_for_test(
+        &mut self,
+        cx: &mut Context<Self>,
+    ) -> gpui::FocusHandle {
+        self.toolbar_fh("sql-history-close", cx)
+    }
+
     /// Open the history overlay with fake entries (bypasses the session store).
     pub fn show_fake_history_for_test(&mut self, sqls: Vec<String>, cx: &mut Context<Self>) {
         let entries = sqls
