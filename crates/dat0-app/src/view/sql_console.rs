@@ -181,10 +181,6 @@ pub struct SqlConsole {
     /// Active row index for the query-history overlay listbox (carve-out #7).
     /// Reset to 0 in [`show_history`](Self::show_history); clamped to the entry
     /// count at render. Mirrors `WorkspaceShell.recents_active`.
-    // Written here; the read (history-overlay listbox nav) lands in a later
-    // carve-out #7 slice — reserved field, mirrors `toast.rs`'s future-call-site
-    // pattern.
-    #[allow(dead_code)]
     pub(crate) history_active: usize,
     /// Live NL→SQL preview strip state (P9c-2 T6). `None` while hidden.
     pub(crate) nl_preview: Option<NlPreview>,
@@ -501,6 +497,8 @@ impl SqlConsole {
         cx: &mut Context<Self>,
     ) {
         self.history_overlay = Some(entries);
+        self.history_active = 0;
+        self.pending_focus = Some("sql-history-list"); // focus the list on open
         cx.notify();
     }
 
@@ -649,8 +647,8 @@ impl Render for SqlConsole {
         let explain_stop_fh = self.toolbar_fh("explain-stop", cx);
         let explain_close_fh = self.toolbar_fh("explain-close", cx);
         let err_dismiss_fh = self.toolbar_fh("sql-err-dismiss", cx);
-        let _history_close_fh = self.toolbar_fh("sql-history-close", cx);
-        let _history_list_fh = self.toolbar_fh("sql-history-list", cx);
+        let history_close_fh = self.toolbar_fh("sql-history-close", cx);
+        let history_list_fh = self.toolbar_fh("sql-history-list", cx);
         let tabstrip_fh = self.tabstrip_focus.clone();
         let tabstrip_name: String = self.tabs[self.active].meta.title.clone();
 
@@ -1005,14 +1003,57 @@ impl Render for SqlConsole {
         // affordance (✕) also clears it.
         let history_overlay: Option<gpui::AnyElement> =
             self.history_overlay.as_ref().map(|entries| {
+                let len = entries.len();
+                let active = self.history_active.min(len.saturating_sub(1));
+                // DISPLAY order is newest-first (the list renders `.iter().rev()`),
+                // so the active row's SQL is `reversed[active]`.
+                let picks: Vec<String> = entries.iter().rev().map(|e| e.sql.clone()).collect();
+
+                // Row click path (mouse) — load + close + return focus to editor.
                 let this = cx.entity();
                 let on_pick = move |sql: String, window: &mut Window, app: &mut gpui::App| {
                     this.update(app, |c, cx| {
                         c.history_overlay = None;
+                        c.pending_focus = Some(EDITOR_FOCUS);
                         c.load_into_new_tab(sql, window, cx);
                     });
                 };
-                let close = cx.entity();
+
+                // Enter/Space (keyboard) — SAME load path via the active index.
+                let picks_for_enter = picks.clone();
+                let activate = cx.listener(move |c, _ev: &gpui::KeyDownEvent, window, cx| {
+                    if let Some(sql) = picks_for_enter.get(active).cloned() {
+                        c.history_overlay = None;
+                        c.pending_focus = Some(EDITOR_FOCUS);
+                        c.load_into_new_tab(sql, window, cx);
+                    }
+                });
+
+                // ↑/↓ move the active index (second on_key_down, chained after
+                // focus_stop — gpui fires both). `len` captured for the down-clamp.
+                let arrows = cx.listener(move |c, ev: &gpui::KeyDownEvent, _window, cx| {
+                    match ev.keystroke.key.as_str() {
+                        "down" => {
+                            c.history_active = (c.history_active + 1).min(len.saturating_sub(1))
+                        }
+                        "up" => c.history_active = c.history_active.saturating_sub(1),
+                        _ => return,
+                    }
+                    cx.notify();
+                });
+
+                // Close ✕ (Enter/Space + click) — clear + return focus to editor.
+                let close_entity = cx.entity();
+                let close_key =
+                    move |_ev: &gpui::KeyDownEvent, _window: &mut Window, app: &mut gpui::App| {
+                        close_entity.update(app, |c, cx| {
+                            c.history_overlay = None;
+                            c.pending_focus = Some(EDITOR_FOCUS);
+                            cx.notify();
+                        });
+                    };
+                let close_click = cx.entity();
+
                 div()
                     .absolute()
                     .top_8()
@@ -1037,17 +1078,41 @@ impl Render for SqlConsole {
                                     .cursor_pointer()
                                     .px_1()
                                     .child(SharedString::from("✕"))
+                                    .focus_stop(
+                                        "sql-history-close",
+                                        &history_close_fh,
+                                        0,
+                                        close_key,
+                                    )
+                                    .a11y(
+                                        "sql-history-close",
+                                        AccessRole::Button,
+                                        dat0_i18n::t("sql.history.close"),
+                                    )
                                     .on_click(move |_ev, _window, cx| {
-                                        close.update(cx, |c, cx| {
+                                        close_click.update(cx, |c, cx| {
                                             c.history_overlay = None;
+                                            c.pending_focus = Some(EDITOR_FOCUS);
                                             cx.notify();
                                         });
                                     }),
                             ),
                     )
-                    .child(crate::view::query_library::render_history_list(
-                        entries, on_pick,
-                    ))
+                    .child(
+                        div()
+                            .flex()
+                            .flex_col()
+                            .focus_stop("sql-history-list", &history_list_fh, 0, activate)
+                            .on_key_down(arrows)
+                            .a11y(
+                                "sql-history-list",
+                                AccessRole::Button,
+                                dat0_i18n::t("sql.history"),
+                            )
+                            .child(crate::view::query_library::render_history_list(
+                                entries, active, on_pick,
+                            )),
+                    )
                     .into_any_element()
             });
 
@@ -1604,6 +1669,32 @@ impl SqlConsole {
         cx: &mut Context<Self>,
     ) -> gpui::FocusHandle {
         self.toolbar_fh("sql-err-dismiss", cx)
+    }
+
+    /// Open the history overlay with fake entries (bypasses the session store).
+    pub fn show_fake_history_for_test(&mut self, sqls: Vec<String>, cx: &mut Context<Self>) {
+        let entries = sqls
+            .into_iter()
+            .map(|s| crate::session::queries::HistoryEntry {
+                sql: s,
+                ran_at: 0,
+                ok: true,
+                elapsed_ms: 0,
+            })
+            .collect();
+        self.show_history(entries, cx);
+    }
+    /// The history listbox active row index.
+    pub fn history_active_for_test(&self) -> usize {
+        self.history_active
+    }
+    /// Whether the history overlay is open.
+    pub fn history_open_for_test(&self) -> bool {
+        self.history_overlay.is_some()
+    }
+    /// The active tab's SQL buffer (to assert which history row loaded).
+    pub fn active_sql_for_test(&self, cx: &gpui::App) -> String {
+        self.active_sql_and_cursor(cx).0
     }
 }
 

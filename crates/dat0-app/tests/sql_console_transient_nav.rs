@@ -598,3 +598,150 @@ fn escape_dismisses_error_then_run_trap_exit(cx: &mut TestAppContext) {
         "second Escape must do the editor→Run trap-exit"
     );
 }
+
+#[gpui::test]
+#[serial]
+fn history_opens_focuses_list_at_row0(cx: &mut TestAppContext) {
+    let cfg = tempfile::tempdir().unwrap();
+    let state = tempfile::tempdir().unwrap();
+    set_config_dir(cfg.path());
+    init_components(cx);
+    let harness = enter_async_harness(cx);
+    let _g = harness.enter();
+    let session = build_empty_session(state.path());
+    let (shell, vcx) = open_shell_window(cx, session);
+    vcx.run_until_parked();
+    let (console, _log) = open_console_with_log(&shell, vcx);
+
+    vcx.update(|_w, app| {
+        console.update(app, |c, cx| {
+            c.show_fake_history_for_test(vec!["a".into(), "b".into(), "c".into()], cx)
+        })
+    });
+    vcx.run_until_parked();
+    assert_eq!(
+        A11ySnapshot::capture(vcx).focused_label(),
+        Some(dat0_i18n::t("sql.history").as_str()),
+        "opening history must focus the list container"
+    );
+    assert_eq!(
+        console.read_with(&vcx.cx, |c, _| c.history_active_for_test()),
+        0,
+        "history opens with row 0 active"
+    );
+}
+
+#[gpui::test]
+#[serial]
+fn history_arrows_move_active_clamped(cx: &mut TestAppContext) {
+    let cfg = tempfile::tempdir().unwrap();
+    let state = tempfile::tempdir().unwrap();
+    set_config_dir(cfg.path());
+    init_components(cx);
+    let harness = enter_async_harness(cx);
+    let _g = harness.enter();
+    let session = build_empty_session(state.path());
+    let (shell, vcx) = open_shell_window(cx, session);
+    vcx.run_until_parked();
+    let (console, _log) = open_console_with_log(&shell, vcx);
+
+    vcx.update(|_w, app| {
+        console.update(app, |c, cx| {
+            c.show_fake_history_for_test(vec!["a".into(), "b".into(), "c".into()], cx)
+        })
+    });
+    vcx.run_until_parked();
+    vcx.simulate_keystrokes("down down down"); // clamp at len-1 == 2
+    vcx.run_until_parked();
+    assert_eq!(
+        console.read_with(&vcx.cx, |c, _| c.history_active_for_test()),
+        2,
+        "down clamps at the last row"
+    );
+    vcx.simulate_keystrokes("up up up"); // clamp at 0
+    vcx.run_until_parked();
+    assert_eq!(
+        console.read_with(&vcx.cx, |c, _| c.history_active_for_test()),
+        0,
+        "up clamps at the first row"
+    );
+}
+
+#[gpui::test]
+#[serial]
+fn history_enter_picks_active_into_new_tab(cx: &mut TestAppContext) {
+    let cfg = tempfile::tempdir().unwrap();
+    let state = tempfile::tempdir().unwrap();
+    set_config_dir(cfg.path());
+    init_components(cx);
+    let harness = enter_async_harness(cx);
+    let _g = harness.enter();
+    let session = build_empty_session(state.path());
+    let (shell, vcx) = open_shell_window(cx, session);
+    vcx.run_until_parked();
+    let (console, _log) = open_console_with_log(&shell, vcx);
+
+    // Entries ["a","b","c"] render newest-first as ["c","b","a"]; active 1 == "b".
+    vcx.update(|_w, app| {
+        console.update(app, |c, cx| {
+            c.show_fake_history_for_test(vec!["a".into(), "b".into(), "c".into()], cx)
+        })
+    });
+    vcx.run_until_parked();
+    let before = console.read_with(&vcx.cx, |c, _| c.tab_count_for_test());
+    vcx.simulate_keystrokes("down"); // active 0 → 1 ("b")
+    vcx.run_until_parked();
+    vcx.simulate_keystrokes("enter");
+    vcx.run_until_parked();
+    assert!(
+        !console.read_with(&vcx.cx, |c, _| c.history_open_for_test()),
+        "Enter must close the overlay"
+    );
+    assert_eq!(
+        console.read_with(&vcx.cx, |c, _| c.tab_count_for_test()),
+        before + 1,
+        "Enter must open a new tab for the picked query"
+    );
+    assert_eq!(
+        console.read_with(&vcx.cx, |c, cx| c.active_sql_for_test(cx)),
+        "b",
+        "the picked row (display index 1) is the SQL loaded"
+    );
+    assert!(
+        vcx.update(|window, app| console.read(app).editor_focused_for_test(window, app)),
+        "pick must land focus on the new tab's editor"
+    );
+}
+
+#[gpui::test]
+#[serial]
+fn history_close_and_escape_return_focus(cx: &mut TestAppContext) {
+    let cfg = tempfile::tempdir().unwrap();
+    let state = tempfile::tempdir().unwrap();
+    set_config_dir(cfg.path());
+    init_components(cx);
+    let harness = enter_async_harness(cx);
+    let _g = harness.enter();
+    let session = build_empty_session(state.path());
+    let (shell, vcx) = open_shell_window(cx, session);
+    vcx.run_until_parked();
+    let (console, _log) = open_console_with_log(&shell, vcx);
+
+    // Escape closes the overlay and returns focus to the editor.
+    vcx.update(|_w, app| {
+        console.update(app, |c, cx| {
+            c.show_fake_history_for_test(vec!["a".into()], cx)
+        })
+    });
+    vcx.run_until_parked();
+    vcx.dispatch_action(gpui_component::input::Escape);
+    vcx.run_until_parked();
+    assert!(
+        !console.read_with(&vcx.cx, |c, _| c.history_open_for_test()),
+        "Escape must close the history overlay"
+    );
+    assert!(
+        vcx.update(|window, app| console.read(app).editor_focused_for_test(window, app)),
+        "Escape must return focus to the editor"
+    );
+}

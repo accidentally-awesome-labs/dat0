@@ -23,11 +23,13 @@ use gpui::{App, ParentElement, SharedString, Styled, Window, div};
 
 use crate::session::queries::{HistoryEntry, SavedQuery};
 
-/// Render a history list (newest first). `on_pick` is called with the chosen
-/// SQL plus the live `Window`/`App` from the click, so the caller can load it
-/// into a new tab (which needs a `&mut Window`).
+/// Render a history list (newest first). `active` is the index (in DISPLAY /
+/// newest-first order) of the keyboard-selected row; it gets an active-row ring.
+/// `on_pick` is called with the chosen SQL plus the live `Window`/`App` from the
+/// click, so the caller can load it into a new tab (which needs a `&mut Window`).
 pub fn render_history_list(
     entries: &[HistoryEntry],
+    active: usize,
     on_pick: impl Fn(String, &mut Window, &mut App) + 'static + Clone,
 ) -> impl IntoElement {
     div()
@@ -35,13 +37,13 @@ pub fn render_history_list(
         .flex_col()
         .gap_1()
         .p_2()
-        .children(entries.iter().rev().enumerate().map(|(i, e)| {
+        .children(entries.iter().rev().enumerate().map(move |(i, e)| {
             let sql = e.sql.clone();
             let on_pick = on_pick.clone();
             let preview: SharedString = first_line(&e.sql, 80).into();
             let meta: SharedString =
                 format!("{} · {} ms", if e.ok { "ok" } else { "err" }, e.elapsed_ms).into();
-            div()
+            let mut row = div()
                 .id(("hist-row", i))
                 .flex()
                 .flex_row()
@@ -52,7 +54,13 @@ pub fn render_history_list(
                 .cursor_pointer()
                 .child(preview)
                 .child(meta)
-                .on_click(move |_ev, window, cx| on_pick(sql.clone(), window, cx))
+                .on_click(move |_ev, window, cx| on_pick(sql.clone(), window, cx));
+            if i == active {
+                row = row
+                    .border_1()
+                    .border_color(gpui::rgb(crate::a11y::FOCUS_RING));
+            }
+            row
         }))
 }
 

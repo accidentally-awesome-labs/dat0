@@ -81,6 +81,7 @@
   "sql.md": "md",
   "sql.mixed": "mixed",
   "sql.history": "History",
+  "sql.history.close": "Close history",
   "sql.save_query": "Save Query…",
   "sql.load_query": "Saved Queries…",
   "sql.save_as_table": "Save as Table…",
