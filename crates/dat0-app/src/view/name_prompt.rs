@@ -1,8 +1,12 @@
 //! Reusable single-line name-prompt modal (P5b). Emits the entered name on
 //! confirm, or Cancelled. Used by Save Query + Save as Table.
+use crate::a11y::{A11yExt as _, AccessRole, FocusStopExt as _};
 use gpui::prelude::*;
-use gpui::{Context, Entity, EventEmitter, ParentElement, SharedString, Styled, Window, div};
-use gpui_component::input::{Input, InputState};
+use gpui::{
+    Context, Entity, EventEmitter, FocusHandle, Focusable as _, ParentElement, SharedString,
+    Styled, Subscription, Window, div,
+};
+use gpui_component::input::{Escape, Input, InputEvent, InputState};
 
 #[derive(Debug, Clone)]
 pub enum NamePromptEvent {
@@ -13,6 +17,13 @@ pub enum NamePromptEvent {
 pub struct NamePrompt {
     title: SharedString,
     input: Entity<InputState>,
+    /// Focus stops for the OK/Cancel buttons (SQL-input-nav slice) — so the
+    /// modal is fully keyboard-operable, not just click-operable.
+    ok_focus: FocusHandle,
+    cancel_focus: FocusHandle,
+    /// Keeps the `input`→`PressEnter` subscription alive for the prompt's life
+    /// (Enter in the field submits, mirroring the OK button).
+    _enter_sub: Subscription,
 }
 
 impl NamePrompt {
@@ -31,9 +42,25 @@ impl NamePrompt {
                 .placeholder("name")
                 .default_value(initial)
         });
+        // Enter in the single-line field submits. `enter()` emits `PressEnter`
+        // and `cx.propagate()`s; nothing consumed it before (the prompt was
+        // mouse-only). Subscribing here fixes Enter-submit for ALL 5 call sites.
+        let enter_sub = cx.subscribe(&input, |this, _input, ev: &InputEvent, cx| {
+            if matches!(ev, InputEvent::PressEnter { .. }) {
+                let v = this.value(cx);
+                cx.emit(NamePromptEvent::Confirm(v));
+            }
+        });
+        // Focus the field on open so a keyboard user can type immediately and
+        // Tab/Escape work. `new` holds `&mut Window`; the pending focus lands on
+        // the input when it next renders with `.track_focus`.
+        window.focus(&input.read(cx).focus_handle(cx));
         Self {
             title: title.into(),
             input,
+            ok_focus: cx.focus_handle(),
+            cancel_focus: cx.focus_handle(),
+            _enter_sub: enter_sub,
         }
     }
 
@@ -42,15 +69,50 @@ impl NamePrompt {
     }
 }
 
+#[cfg(feature = "a11y-capture")]
+impl NamePrompt {
+    /// Whether the prompt's text field currently holds focus (proves
+    /// focus-on-open).
+    pub fn input_focused_for_test(&self, window: &Window, cx: &gpui::App) -> bool {
+        self.input.read(cx).focus_handle(cx).is_focused(window)
+    }
+
+    /// The field's `FocusHandle` — lets a test re-focus INTO the modal. This
+    /// slice does not add a Tab focus-trap: the scope is "OK/Cancel are
+    /// reachable" and "Escape cancels from within the modal", not "Tab can
+    /// never leave it". So a long Tab walk (e.g. proving OK/Cancel are stops)
+    /// can wander focus into the background shell; a test that then wants to
+    /// prove Escape cancels FROM WITHIN the modal needs to land focus back
+    /// inside it first.
+    pub fn input_focus_handle_for_test(&self, cx: &gpui::App) -> gpui::FocusHandle {
+        self.input.read(cx).focus_handle(cx)
+    }
+
+    /// Seed the field's text without keystrokes (so a test can assert the
+    /// submitted value round-trips through `Confirm`).
+    pub fn seed_value_for_test(&self, value: &str, window: &mut Window, cx: &mut gpui::App) {
+        let value = value.to_string();
+        self.input
+            .update(cx, |s, cx| s.set_value(value, window, cx));
+    }
+}
+
 impl EventEmitter<NamePromptEvent> for NamePrompt {}
 
 impl Render for NamePrompt {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let ok_fh = self.ok_focus.clone();
+        let cancel_fh = self.cancel_focus.clone();
         div()
             .flex()
             .flex_col()
             .gap_2()
             .p_3()
+            // Escape cancels. A single-line `escape()` is a no-op that
+            // `cx.propagate()`s, so this ancestor `on_action` catches it.
+            .on_action(cx.listener(|_this, _ev: &Escape, _window, cx| {
+                cx.emit(NamePromptEvent::Cancel);
+            }))
             .child(self.title.clone())
             .child(Input::new(&self.input))
             .child(
@@ -65,6 +127,16 @@ impl Render for NamePrompt {
                             .py_1()
                             .cursor_pointer()
                             .child(SharedString::from("Save"))
+                            .focus_stop(
+                                "name-prompt-ok",
+                                &ok_fh,
+                                0,
+                                cx.listener(|this, _ev: &gpui::KeyDownEvent, _window, cx| {
+                                    let v = this.value(cx);
+                                    cx.emit(NamePromptEvent::Confirm(v));
+                                }),
+                            )
+                            .a11y("name-prompt-ok", AccessRole::Button, "Save")
                             .on_click(cx.listener(|this, _ev, _window, cx| {
                                 let v = this.value(cx);
                                 cx.emit(NamePromptEvent::Confirm(v));
@@ -77,6 +149,15 @@ impl Render for NamePrompt {
                             .py_1()
                             .cursor_pointer()
                             .child(SharedString::from("Cancel"))
+                            .focus_stop(
+                                "name-prompt-cancel",
+                                &cancel_fh,
+                                0,
+                                cx.listener(|_this, _ev: &gpui::KeyDownEvent, _window, cx| {
+                                    cx.emit(NamePromptEvent::Cancel);
+                                }),
+                            )
+                            .a11y("name-prompt-cancel", AccessRole::Button, "Cancel")
                             .on_click(cx.listener(|_this, _ev, _window, cx| {
                                 cx.emit(NamePromptEvent::Cancel);
                             })),
