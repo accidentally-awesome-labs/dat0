@@ -70,6 +70,7 @@
   "sql.run_in_pane": "Run in results pane",
   "sql.cancel": "Cancel",
   "sql.cancelled": "Cancelled",
+  "sql.error.dismiss": "Dismiss error",
   "sql.running": "running…",
   "sql.ok": "OK",
   "sql.new_tab": "New query tab",

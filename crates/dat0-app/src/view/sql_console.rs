@@ -648,7 +648,7 @@ impl Render for SqlConsole {
         let nl_discard_fh = self.toolbar_fh("nl2sql-discard", cx);
         let explain_stop_fh = self.toolbar_fh("explain-stop", cx);
         let explain_close_fh = self.toolbar_fh("explain-close", cx);
-        let _err_dismiss_fh = self.toolbar_fh("sql-err-dismiss", cx);
+        let err_dismiss_fh = self.toolbar_fh("sql-err-dismiss", cx);
         let _history_close_fh = self.toolbar_fh("sql-history-close", cx);
         let _history_list_fh = self.toolbar_fh("sql-history-list", cx);
         let tabstrip_fh = self.tabstrip_focus.clone();
@@ -960,17 +960,27 @@ impl Render for SqlConsole {
                     // `Alert` node (not `Label` — an error is an alert). No-op in release.
                     .a11y_label(crate::a11y::AccessRole::Alert, msg.clone())
                     .child(SharedString::from(msg))
-                    .child(
+                    .child({
+                        let key = cx.listener(|this, _ev: &gpui::KeyDownEvent, _w, cx| {
+                            this.region = ResultRegion::Empty;
+                            cx.notify();
+                        });
                         div()
                             .id("sql-err-dismiss")
                             .cursor_pointer()
                             .px_1()
                             .child(SharedString::from("✕"))
+                            .focus_stop("sql-err-dismiss", &err_dismiss_fh, 0, key)
+                            .a11y(
+                                "sql-err-dismiss",
+                                AccessRole::Button,
+                                dat0_i18n::t("sql.error.dismiss"),
+                            )
                             .on_click(cx.listener(|this, _ev, _window, cx| {
                                 this.region = ResultRegion::Empty;
                                 cx.notify();
-                            })),
-                    )
+                            }))
+                    })
                     .into_any_element()
             }
             ResultRegion::Cancelled => {
@@ -1563,6 +1573,37 @@ impl SqlConsole {
     /// Whether the Explain panel is currently open.
     pub fn explain_open_for_test(&self) -> bool {
         self.explain.is_some()
+    }
+
+    /// Put the result region into the DuckDB-error state (bypasses a real run).
+    pub fn set_error_region_for_test(&mut self, msg: String, cx: &mut Context<Self>) {
+        self.region = ResultRegion::Error(msg);
+        cx.notify();
+    }
+    /// Whether the result region is currently showing an error.
+    pub fn error_region_for_test(&self) -> bool {
+        matches!(self.region, ResultRegion::Error(_))
+    }
+
+    /// The error-dismiss ✕ button's `FocusHandle` — mirrors
+    /// `editor_focus_handle_for_test`. Needed because the error strip is
+    /// positioned AFTER the editor in render order, and the editor is a
+    /// keyboard trap for Tab/Shift-Tab (gpui-component binds both to inline
+    /// indent/outdent in its "Input" keymap context — confirmed empirically:
+    /// a forward Tab-walk from before the editor lands IN the editor and never
+    /// leaves it). The NL→SQL and Explain strips route around this the same
+    /// trap via `pending_focus` auto-focus-on-appear; the error strip
+    /// deliberately does NOT auto-focus (design decision — a failed Run must
+    /// not steal focus from the editor), so there is no Tab-only path to it
+    /// from outside the editor. This seam lets a test give it focus directly,
+    /// the same way `editor_focus_handle_for_test` already does for the
+    /// editor, to prove the NEW `focus_stop` Enter/Space listener (as opposed
+    /// to the pre-existing `on_click`) actually dismisses it.
+    pub fn err_dismiss_focus_handle_for_test(
+        &mut self,
+        cx: &mut Context<Self>,
+    ) -> gpui::FocusHandle {
+        self.toolbar_fh("sql-err-dismiss", cx)
     }
 }
 

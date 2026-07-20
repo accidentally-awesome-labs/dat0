@@ -471,3 +471,130 @@ fn explain_escape_streaming_stops_finished_closes(cx: &mut TestAppContext) {
         "Escape while Explain streams must emit StopAiStream"
     );
 }
+
+#[gpui::test]
+#[serial]
+fn error_strip_does_not_steal_focus(cx: &mut TestAppContext) {
+    let cfg = tempfile::tempdir().unwrap();
+    let state = tempfile::tempdir().unwrap();
+    set_config_dir(cfg.path());
+    init_components(cx);
+    let harness = enter_async_harness(cx);
+    let _g = harness.enter();
+    let session = build_empty_session(state.path());
+    let (shell, vcx) = open_shell_window(cx, session);
+    vcx.run_until_parked();
+    let (console, _log) = open_console_with_log(&shell, vcx);
+
+    // Focus the editor, then raise an error — focus must NOT move to the ✕.
+    let editor_fh = console.read_with(&vcx.cx, |c, cx| c.editor_focus_handle_for_test(cx));
+    vcx.update(|window, _app| window.focus(&editor_fh));
+    vcx.run_until_parked();
+    vcx.update(|_w, app| {
+        console.update(app, |c, cx| c.set_error_region_for_test("boom".into(), cx))
+    });
+    vcx.run_until_parked();
+    assert!(
+        vcx.update(|window, app| console.read(app).editor_focused_for_test(window, app)),
+        "the error strip must not steal focus from the editor"
+    );
+}
+
+// NOTE (deviation from the Task 3 brief, documented in task-3-report.md): the
+// brief's original version of this test reached the ✕ via
+// `focus_shell_neutrally` + `tab_until`. That is not possible in this
+// codebase: the SQL editor sits between the toolbar and the error region in
+// render order, and gpui-component's Input widget binds both "tab" and
+// "shift-tab" to inline indent/outdent inside its "Input" keymap context — a
+// forward Tab-walk that reaches the editor gets trapped there permanently
+// (confirmed empirically: `editor_focused_for_test` stays `true` across
+// repeated Tab presses once focus lands in the editor). This is the SAME trap
+// `pending_focus` auto-focus-on-appear routes around for the NL→SQL and
+// Explain strips — the error strip deliberately does not auto-focus (a failed
+// Run must not steal focus from the editor), so there genuinely is no
+// Tab-only path to it from outside the editor. This test instead focuses the
+// ✕ directly via `err_dismiss_focus_handle_for_test` (the same technique
+// `editor_focus_handle_for_test` already uses for the editor) and proves the
+// NEW `focus_stop` Enter/Space listener dismisses it — a check that is
+// distinct from the pre-existing `on_click` path.
+#[gpui::test]
+#[serial]
+fn error_dismiss_reachable_and_dismisses(cx: &mut TestAppContext) {
+    let cfg = tempfile::tempdir().unwrap();
+    let state = tempfile::tempdir().unwrap();
+    set_config_dir(cfg.path());
+    init_components(cx);
+    let harness = enter_async_harness(cx);
+    let _g = harness.enter();
+    let session = build_empty_session(state.path());
+    let (shell, vcx) = open_shell_window(cx, session);
+    vcx.run_until_parked();
+    let (console, _log) = open_console_with_log(&shell, vcx);
+
+    vcx.update(|_w, app| {
+        console.update(app, |c, cx| c.set_error_region_for_test("boom".into(), cx))
+    });
+    vcx.run_until_parked();
+
+    // Focus the ✕ directly (see the NOTE above for why this replaces a
+    // Tab-walk), confirm it is the correctly-labeled tab-stop, then Enter
+    // dismisses via the new `focus_stop` key listener.
+    let dismiss_fh =
+        vcx.update(|_w, app| console.update(app, |c, cx| c.err_dismiss_focus_handle_for_test(cx)));
+    vcx.update(|window, _app| window.focus(&dismiss_fh));
+    vcx.run_until_parked();
+    assert_eq!(
+        A11ySnapshot::capture(vcx).focused_label(),
+        Some(dat0_i18n::t("sql.error.dismiss").as_str()),
+        "the ✕ must be a correctly-labeled tab-stop when focused directly"
+    );
+    vcx.simulate_keystrokes("enter");
+    vcx.run_until_parked();
+    assert!(
+        !console.read_with(&vcx.cx, |c, _| c.error_region_for_test()),
+        "Enter on the ✕ must dismiss the error"
+    );
+}
+
+#[gpui::test]
+#[serial]
+fn escape_dismisses_error_then_run_trap_exit(cx: &mut TestAppContext) {
+    let cfg = tempfile::tempdir().unwrap();
+    let state = tempfile::tempdir().unwrap();
+    set_config_dir(cfg.path());
+    init_components(cx);
+    let harness = enter_async_harness(cx);
+    let _g = harness.enter();
+    let session = build_empty_session(state.path());
+    let (shell, vcx) = open_shell_window(cx, session);
+    vcx.run_until_parked();
+    let (console, _log) = open_console_with_log(&shell, vcx);
+
+    // Editor focused + error showing → first Escape dismisses the error (rung 4),
+    // keeps editor focus; second Escape does the Run trap-exit (rung 5).
+    let editor_fh = console.read_with(&vcx.cx, |c, cx| c.editor_focus_handle_for_test(cx));
+    vcx.update(|window, _app| window.focus(&editor_fh));
+    vcx.update(|_w, app| {
+        console.update(app, |c, cx| c.set_error_region_for_test("boom".into(), cx))
+    });
+    vcx.run_until_parked();
+
+    vcx.dispatch_action(gpui_component::input::Escape);
+    vcx.run_until_parked();
+    assert!(
+        !console.read_with(&vcx.cx, |c, _| c.error_region_for_test()),
+        "first Escape must dismiss the error"
+    );
+    assert!(
+        vcx.update(|window, app| console.read(app).editor_focused_for_test(window, app)),
+        "first Escape must keep focus in the editor"
+    );
+
+    vcx.dispatch_action(gpui_component::input::Escape);
+    vcx.run_until_parked();
+    assert_eq!(
+        A11ySnapshot::capture(vcx).focused_label(),
+        Some(dat0_i18n::t("sql.run").as_str()),
+        "second Escape must do the editor→Run trap-exit"
+    );
+}
