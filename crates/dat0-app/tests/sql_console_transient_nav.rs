@@ -78,7 +78,13 @@ fn open_shell_window(
 /// any gpui-component widget renders AND before `Root`'s "tab"/"shift-tab"
 /// bindings (→ `focus_next`/`focus_prev`) are live.
 fn init_components(cx: &mut TestAppContext) {
-    cx.update(gpui_component::init);
+    cx.update(|cx| {
+        gpui_component::init(cx);
+        // Register the SqlConsole-scoped `escape` keybinding so tests exercise
+        // the SAME real keymap path production does (a real Escape keypress on a
+        // non-Input transient-bar button reaching the console's Escape ladder).
+        dat0_app::view::sql_console::register_sql_console_keys(cx);
+    });
 }
 
 /// A tokio runtime kept alive for the whole test so foreground-polled `cx.spawn`
@@ -253,7 +259,7 @@ fn t0_transient_bars_gate(cx: &mut TestAppContext) {
     );
 
     // Probe 3: Escape discards the finished strip and returns to the editor.
-    vcx.dispatch_action(gpui_component::input::Escape);
+    vcx.simulate_keystrokes("escape");
     vcx.run_until_parked();
     assert!(
         !console.read_with(&vcx.cx, |c, _| c.nl_preview_open_for_test()),
@@ -462,7 +468,7 @@ fn explain_escape_streaming_stops_finished_closes(cx: &mut TestAppContext) {
         console.update(app, |c, cx| c.begin_explain_for_test("SELECT 1".into(), cx))
     });
     vcx.run_until_parked();
-    vcx.dispatch_action(gpui_component::input::Escape);
+    vcx.simulate_keystrokes("escape");
     vcx.run_until_parked();
     assert!(
         log.borrow()
@@ -519,7 +525,7 @@ fn error_strip_does_not_steal_focus(cx: &mut TestAppContext) {
 // distinct from the pre-existing `on_click` path.
 #[gpui::test]
 #[serial]
-fn error_dismiss_reachable_and_dismisses(cx: &mut TestAppContext) {
+fn error_dismiss_operable_when_focused(cx: &mut TestAppContext) {
     let cfg = tempfile::tempdir().unwrap();
     let state = tempfile::tempdir().unwrap();
     set_config_dir(cfg.path());
@@ -579,7 +585,7 @@ fn escape_dismisses_error_then_run_trap_exit(cx: &mut TestAppContext) {
     });
     vcx.run_until_parked();
 
-    vcx.dispatch_action(gpui_component::input::Escape);
+    vcx.simulate_keystrokes("escape");
     vcx.run_until_parked();
     assert!(
         !console.read_with(&vcx.cx, |c, _| c.error_region_for_test()),
@@ -590,7 +596,7 @@ fn escape_dismisses_error_then_run_trap_exit(cx: &mut TestAppContext) {
         "first Escape must keep focus in the editor"
     );
 
-    vcx.dispatch_action(gpui_component::input::Escape);
+    vcx.simulate_keystrokes("escape");
     vcx.run_until_parked();
     assert_eq!(
         A11ySnapshot::capture(vcx).focused_label(),
@@ -715,7 +721,7 @@ fn history_enter_picks_active_into_new_tab(cx: &mut TestAppContext) {
 
 #[gpui::test]
 #[serial]
-fn history_close_and_escape_return_focus(cx: &mut TestAppContext) {
+fn history_escape_returns_focus(cx: &mut TestAppContext) {
     let cfg = tempfile::tempdir().unwrap();
     let state = tempfile::tempdir().unwrap();
     set_config_dir(cfg.path());
@@ -734,7 +740,7 @@ fn history_close_and_escape_return_focus(cx: &mut TestAppContext) {
         })
     });
     vcx.run_until_parked();
-    vcx.dispatch_action(gpui_component::input::Escape);
+    vcx.simulate_keystrokes("escape");
     vcx.run_until_parked();
     assert!(
         !console.read_with(&vcx.cx, |c, _| c.history_open_for_test()),
@@ -769,7 +775,7 @@ fn escape_history_beats_error(cx: &mut TestAppContext) {
         })
     });
     vcx.run_until_parked();
-    vcx.dispatch_action(gpui_component::input::Escape);
+    vcx.simulate_keystrokes("escape");
     vcx.run_until_parked();
     assert!(
         !console.read_with(&vcx.cx, |c, _| c.history_open_for_test()),
@@ -832,7 +838,7 @@ fn history_close_button_dismisses_and_returns_focus(cx: &mut TestAppContext) {
     // The overlay opens with focus on the LIST (see `history_opens_focuses_list_at_row0`);
     // the editor Tab-trap blocks a Tab-walk to the ✕, so focus it directly via the
     // new seam to prove its OWN focus_stop Enter listener works — the Escape path
-    // (`history_close_and_escape_return_focus`) exercises a different code path and
+    // (`history_escape_returns_focus`) exercises a different code path and
     // does not cover this button's own wiring.
     vcx.update(|_w, app| {
         console.update(app, |c, cx| {

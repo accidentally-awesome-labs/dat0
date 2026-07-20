@@ -33,6 +33,26 @@ use crate::grid::{GridDataSource, GridTableDelegate};
 use crate::query::{ResultTarget, SqlTabMeta};
 use crate::window::WorkspaceShell;
 
+/// Register the SqlConsole-scoped Escape keybinding so a real Escape keypress
+/// reaches the console's `on_action` Escape ladder even when focus is on a
+/// non-Input transient-bar button (the gpui-component `Escape` action is only
+/// bound in the widget's own "Input" context). Called from production window
+/// setup AND the test harness so both exercise the same keymap path.
+///
+/// Safe against the editor: when the editor (an Input, a descendant of the
+/// console root) is focused, BOTH the deeper "Input" and this "SqlConsole"
+/// escape bindings are in the dispatch stack; gpui resolves the deepest → the
+/// Input binding still wins (autocomplete-dismiss and the carve-out #6
+/// editor→Run trap-exit are unchanged). When a bar div (no "Input" context) is
+/// focused, only "SqlConsole" matches → the Escape action fires the ladder.
+pub fn register_sql_console_keys(cx: &mut gpui::App) {
+    cx.bind_keys([gpui::KeyBinding::new(
+        "escape",
+        gpui_component::input::Escape,
+        Some("SqlConsole"),
+    )]);
+}
+
 /// One open console tab: persistable metadata + the live editor buffer.
 pub struct ConsoleTab {
     pub meta: SqlTabMeta,
@@ -1121,6 +1141,12 @@ impl Render for SqlConsole {
             .flex()
             .flex_col()
             .size_full()
+            // Scopes the `escape` keybinding registered by
+            // `register_sql_console_keys` so a REAL Escape keypress reaches the
+            // consolidated Escape ladder below even when focus is on a
+            // non-Input transient-bar button (gpui-component only binds the
+            // `Escape` action in the widget's own "Input" context).
+            .key_context("SqlConsole")
             .child(
                 div()
                     .flex()

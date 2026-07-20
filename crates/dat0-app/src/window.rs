@@ -1426,6 +1426,11 @@ pub fn run_app(lock: AppLock, initial_paths: Vec<PathBuf>, main_loop: MainLoop) 
         // will fail silently.
         gpui_component::init(cx);
 
+        // Register the SqlConsole-scoped `escape` keybinding so a real Escape
+        // keypress reaches the console's Escape ladder even when focus sits on a
+        // non-Input transient-bar button (see `register_sql_console_keys`).
+        crate::view::sql_console::register_sql_console_keys(cx);
+
         // P3b T12 (D-002 closure): promote dat0's own `crate::theme::Theme`
         // to a `gpui::Global` for the lifetime of the app. The initial id
         // is read from `theme.id` in the persisted settings file (the same

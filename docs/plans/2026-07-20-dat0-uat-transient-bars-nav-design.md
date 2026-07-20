@@ -88,7 +88,7 @@ the bar — WCAG 2.4.3 deferred, consistent with the NamePrompt slice).
 | | finished | re-home → `nl2sql-insert` | Insert, Discard | Insert: take preview, `load_into_new_tab`, focus=editor · Discard: `clear_nl_preview`, focus=editor |
 | Explain panel | streaming | → `explain-stop` | Stop | `StopAiStream` |
 | | finished | re-home → `explain-close` | Close | `CloseExplain`, focus=editor |
-| Error strip | present | **no move** (stays editor) | Dismiss ✕ | `region = Empty`, keep focus |
+| Error strip | present | **no move** (stays editor) | Dismiss ✕ (operable when focused; editor traps forward-Tab, so Escape is the primary dismiss) | `region = Empty`, keep focus |
 | History overlay | open | → listbox, row 0 active | listbox + Close ✕ | row Enter/click: `load_into_new_tab`, focus=new-tab editor · Close: clear overlay, focus=editor · ↑/↓: move active |
 
 ### History listbox — reuse the recents pattern verbatim
@@ -157,8 +157,9 @@ history listbox) is **unconditional shipped code**; only the state-injection rea
      **STOP if the chained arrow `on_key_down` doesn't fire alongside `focus_stop`.**
 - **Behavioral suite:** focus-on-appear for each AI bar + history; streaming→finished re-home
   (nl2sql + explain); Insert opens a new tab and lands focus on its editor; Discard/Close/history-
-  Close return focus to the editor; error strip does **not** steal focus on appear but its ✕ is Tab-
-  reachable and Enter dismisses; Escape ladder (each rung, incl. error-dismiss-below-Run and the
+  Close return focus to the editor; error strip does **not** steal focus on appear but its ✕ is
+  operable when focused (Enter dismisses) — the SQL editor traps forward-Tab, so Escape is the
+  primary keyboard dismiss path; Escape ladder (each rung, incl. error-dismiss-below-Run and the
   Run trap-exit still firing when no bar is open); history ↑/↓ move + Enter-pick + Escape-close;
   a non-vacuity negative (with every bar closed, none of the seven button ids are Tab stops).
 - **Drive discipline:** button/listbox activation via `simulate_keystrokes` on the focused
