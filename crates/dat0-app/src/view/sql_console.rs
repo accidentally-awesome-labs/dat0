@@ -33,6 +33,26 @@ use crate::grid::{GridDataSource, GridTableDelegate};
 use crate::query::{ResultTarget, SqlTabMeta};
 use crate::window::WorkspaceShell;
 
+/// Register the SqlConsole-scoped Escape keybinding so a real Escape keypress
+/// reaches the console's `on_action` Escape ladder even when focus is on a
+/// non-Input transient-bar button (the gpui-component `Escape` action is only
+/// bound in the widget's own "Input" context). Called from production window
+/// setup AND the test harness so both exercise the same keymap path.
+///
+/// Safe against the editor: when the editor (an Input, a descendant of the
+/// console root) is focused, BOTH the deeper "Input" and this "SqlConsole"
+/// escape bindings are in the dispatch stack; gpui resolves the deepest → the
+/// Input binding still wins (autocomplete-dismiss and the carve-out #6
+/// editor→Run trap-exit are unchanged). When a bar div (no "Input" context) is
+/// focused, only "SqlConsole" matches → the Escape action fires the ladder.
+pub fn register_sql_console_keys(cx: &mut gpui::App) {
+    cx.bind_keys([gpui::KeyBinding::new(
+        "escape",
+        gpui_component::input::Escape,
+        Some("SqlConsole"),
+    )]);
+}
+
 /// One open console tab: persistable metadata + the live editor buffer.
 pub struct ConsoleTab {
     pub meta: SqlTabMeta,
@@ -118,6 +138,10 @@ impl ExplainView {
     }
 }
 
+/// `pending_focus` sentinel meaning "the active tab's editor". Not a real
+/// `toolbar_fh` id — `render` resolves it to the editor's `FocusHandle`.
+const EDITOR_FOCUS: &str = "__editor__";
+
 /// The SQL Console GPUI entity. Owns the open tabs + the result-region state.
 /// Execution (run/cancel) is driven by `WorkspaceShell` via [`SqlConsoleEvent`].
 pub struct SqlConsole {
@@ -167,6 +191,17 @@ pub struct SqlConsole {
     /// [`queue_load`](Self::queue_load) and `render` drains it. `None` when
     /// nothing is pending.
     pub(crate) pending_load: Option<String>,
+    /// Focus target queued for the next render (transient-bars nav, carve-out #7).
+    /// Focus is a `&mut Window` op, but the setters that decide it (`begin_*`/
+    /// `finish_*`/`show_history` + the Escape ladder) run in `Context<Self>` with
+    /// no window in scope. Stash the target's `&'static str` id (a button id
+    /// resolved via `toolbar_fh`, or [`EDITOR_FOCUS`] for the active editor) and
+    /// let [`render`](Self::render) drain it — mirrors `pending_load`.
+    pub(crate) pending_focus: Option<&'static str>,
+    /// Active row index for the query-history overlay listbox (carve-out #7).
+    /// Reset to 0 in [`show_history`](Self::show_history); clamped to the entry
+    /// count at render. Mirrors `WorkspaceShell.recents_active`.
+    pub(crate) history_active: usize,
     /// Live NL→SQL preview strip state (P9c-2 T6). `None` while hidden.
     pub(crate) nl_preview: Option<NlPreview>,
     /// Live Explain side-panel state (P9c-2 T7). `None` while hidden.
@@ -309,6 +344,8 @@ impl SqlConsole {
             last_routing: None,
             history_overlay: None,
             pending_load: None,
+            pending_focus: None,
+            history_active: 0,
             nl_preview: None,
             explain: None,
             ai_ready: false,
@@ -480,6 +517,8 @@ impl SqlConsole {
         cx: &mut Context<Self>,
     ) {
         self.history_overlay = Some(entries);
+        self.history_active = 0;
+        self.pending_focus = Some("sql-history-list"); // focus the list on open
         cx.notify();
     }
 
@@ -496,6 +535,7 @@ impl SqlConsole {
 
     pub(crate) fn begin_nl_preview(&mut self, prompt: String, cx: &mut Context<Self>) {
         self.nl_preview = Some(NlPreview::new(prompt));
+        self.pending_focus = Some("nl2sql-stop"); // streaming → focus Stop
         cx.notify();
     }
     pub(crate) fn push_nl_delta(&mut self, text: &str, cx: &mut Context<Self>) {
@@ -507,16 +547,14 @@ impl SqlConsole {
     pub(crate) fn finish_nl_preview(&mut self, error: Option<String>, cx: &mut Context<Self>) {
         if let Some(p) = &mut self.nl_preview {
             p.finish(error);
+            self.pending_focus = Some("nl2sql-insert"); // re-home across Stop→Insert swap
             cx.notify();
         }
-    }
-    pub(crate) fn clear_nl_preview(&mut self, cx: &mut Context<Self>) {
-        self.nl_preview = None;
-        cx.notify();
     }
 
     pub(crate) fn begin_explain(&mut self, sql: String, cx: &mut Context<Self>) {
         self.explain = Some(ExplainView::new(sql));
+        self.pending_focus = Some("explain-stop"); // streaming → focus Stop
         cx.notify();
     }
     pub(crate) fn push_explain_delta(&mut self, text: &str, cx: &mut Context<Self>) {
@@ -528,6 +566,7 @@ impl SqlConsole {
     pub(crate) fn finish_explain(&mut self, error: Option<String>, cx: &mut Context<Self>) {
         if let Some(e) = &mut self.explain {
             e.finish(error);
+            self.pending_focus = Some("explain-close"); // re-home across Stop→Close
             cx.notify();
         }
     }
@@ -603,6 +642,17 @@ impl Render for SqlConsole {
         if let Some(sql) = self.pending_load.take() {
             self.load_into_new_tab(sql, window, cx);
         }
+        // Drain any focus target queued by a transient-bar setter/handler
+        // (carve-out #7). Done after the `pending_load` load so a freshly-opened
+        // tab is already active when `EDITOR_FOCUS` resolves.
+        if let Some(id) = self.pending_focus.take() {
+            let fh = if id == EDITOR_FOCUS {
+                self.tabs[self.active].input.read(cx).focus_handle(cx)
+            } else {
+                self.toolbar_fh(id, cx)
+            };
+            window.focus(&fh);
+        }
         let active = self.active;
         let run_fh = self.toolbar_fh("sql-run", cx);
         let run_pane_fh = self.toolbar_fh("sql-run-pane", cx);
@@ -611,6 +661,14 @@ impl Render for SqlConsole {
         let save_fh = self.toolbar_fh("sql-save", cx);
         let saved_fh = self.toolbar_fh("sql-saved", cx);
         let save_as_table_fh = self.toolbar_fh("sql-save-as-table", cx);
+        let nl_stop_fh = self.toolbar_fh("nl2sql-stop", cx);
+        let nl_insert_fh = self.toolbar_fh("nl2sql-insert", cx);
+        let nl_discard_fh = self.toolbar_fh("nl2sql-discard", cx);
+        let explain_stop_fh = self.toolbar_fh("explain-stop", cx);
+        let explain_close_fh = self.toolbar_fh("explain-close", cx);
+        let err_dismiss_fh = self.toolbar_fh("sql-err-dismiss", cx);
+        let history_close_fh = self.toolbar_fh("sql-history-close", cx);
+        let history_list_fh = self.toolbar_fh("sql-history-list", cx);
         let tabstrip_fh = self.tabstrip_focus.clone();
         let tabstrip_name: String = self.tabs[self.active].meta.title.clone();
 
@@ -920,17 +978,27 @@ impl Render for SqlConsole {
                     // `Alert` node (not `Label` — an error is an alert). No-op in release.
                     .a11y_label(crate::a11y::AccessRole::Alert, msg.clone())
                     .child(SharedString::from(msg))
-                    .child(
+                    .child({
+                        let key = cx.listener(|this, _ev: &gpui::KeyDownEvent, _w, cx| {
+                            this.region = ResultRegion::Empty;
+                            cx.notify();
+                        });
                         div()
                             .id("sql-err-dismiss")
                             .cursor_pointer()
                             .px_1()
                             .child(SharedString::from("✕"))
+                            .focus_stop("sql-err-dismiss", &err_dismiss_fh, 0, key)
+                            .a11y(
+                                "sql-err-dismiss",
+                                AccessRole::Button,
+                                dat0_i18n::t("sql.error.dismiss"),
+                            )
                             .on_click(cx.listener(|this, _ev, _window, cx| {
                                 this.region = ResultRegion::Empty;
                                 cx.notify();
-                            })),
-                    )
+                            }))
+                    })
                     .into_any_element()
             }
             ResultRegion::Cancelled => {
@@ -955,14 +1023,57 @@ impl Render for SqlConsole {
         // affordance (✕) also clears it.
         let history_overlay: Option<gpui::AnyElement> =
             self.history_overlay.as_ref().map(|entries| {
+                let len = entries.len();
+                let active = self.history_active.min(len.saturating_sub(1));
+                // DISPLAY order is newest-first (the list renders `.iter().rev()`),
+                // so the active row's SQL is `reversed[active]`.
+                let picks: Vec<String> = entries.iter().rev().map(|e| e.sql.clone()).collect();
+
+                // Row click path (mouse) — load + close + return focus to editor.
                 let this = cx.entity();
                 let on_pick = move |sql: String, window: &mut Window, app: &mut gpui::App| {
                     this.update(app, |c, cx| {
                         c.history_overlay = None;
+                        c.pending_focus = Some(EDITOR_FOCUS);
                         c.load_into_new_tab(sql, window, cx);
                     });
                 };
-                let close = cx.entity();
+
+                // Enter/Space (keyboard) — SAME load path via the active index.
+                let picks_for_enter = picks.clone();
+                let activate = cx.listener(move |c, _ev: &gpui::KeyDownEvent, window, cx| {
+                    if let Some(sql) = picks_for_enter.get(active).cloned() {
+                        c.history_overlay = None;
+                        c.pending_focus = Some(EDITOR_FOCUS);
+                        c.load_into_new_tab(sql, window, cx);
+                    }
+                });
+
+                // ↑/↓ move the active index (second on_key_down, chained after
+                // focus_stop — gpui fires both). `len` captured for the down-clamp.
+                let arrows = cx.listener(move |c, ev: &gpui::KeyDownEvent, _window, cx| {
+                    match ev.keystroke.key.as_str() {
+                        "down" => {
+                            c.history_active = (c.history_active + 1).min(len.saturating_sub(1))
+                        }
+                        "up" => c.history_active = c.history_active.saturating_sub(1),
+                        _ => return,
+                    }
+                    cx.notify();
+                });
+
+                // Close ✕ (Enter/Space + click) — clear + return focus to editor.
+                let close_entity = cx.entity();
+                let close_key =
+                    move |_ev: &gpui::KeyDownEvent, _window: &mut Window, app: &mut gpui::App| {
+                        close_entity.update(app, |c, cx| {
+                            c.history_overlay = None;
+                            c.pending_focus = Some(EDITOR_FOCUS);
+                            cx.notify();
+                        });
+                    };
+                let close_click = cx.entity();
+
                 div()
                     .absolute()
                     .top_8()
@@ -987,17 +1098,41 @@ impl Render for SqlConsole {
                                     .cursor_pointer()
                                     .px_1()
                                     .child(SharedString::from("✕"))
+                                    .focus_stop(
+                                        "sql-history-close",
+                                        &history_close_fh,
+                                        0,
+                                        close_key,
+                                    )
+                                    .a11y(
+                                        "sql-history-close",
+                                        AccessRole::Button,
+                                        dat0_i18n::t("sql.history.close"),
+                                    )
                                     .on_click(move |_ev, _window, cx| {
-                                        close.update(cx, |c, cx| {
+                                        close_click.update(cx, |c, cx| {
                                             c.history_overlay = None;
+                                            c.pending_focus = Some(EDITOR_FOCUS);
                                             cx.notify();
                                         });
                                     }),
                             ),
                     )
-                    .child(crate::view::query_library::render_history_list(
-                        entries, on_pick,
-                    ))
+                    .child(
+                        div()
+                            .flex()
+                            .flex_col()
+                            .focus_stop("sql-history-list", &history_list_fh, 0, activate)
+                            .on_key_down(arrows)
+                            .a11y(
+                                "sql-history-list",
+                                AccessRole::Button,
+                                dat0_i18n::t("sql.history"),
+                            )
+                            .child(crate::view::query_library::render_history_list(
+                                entries, active, on_pick,
+                            )),
+                    )
                     .into_any_element()
             });
 
@@ -1006,6 +1141,12 @@ impl Render for SqlConsole {
             .flex()
             .flex_col()
             .size_full()
+            // Scopes the `escape` keybinding registered by
+            // `register_sql_console_keys` so a REAL Escape keypress reaches the
+            // consolidated Escape ladder below even when focus is on a
+            // non-Input transient-bar button (gpui-component only binds the
+            // `Escape` action in the widget's own "Input" context).
+            .key_context("SqlConsole")
             .child(
                 div()
                     .flex()
@@ -1255,6 +1396,9 @@ impl Render for SqlConsole {
                     strip = strip.child(div().child(SharedString::from(format!("✗ {err}"))));
                 }
                 if p.streaming {
+                    let key = cx.listener(|_c, _ev: &gpui::KeyDownEvent, _w, cx| {
+                        cx.emit(SqlConsoleEvent::StopAiStream);
+                    });
                     strip = strip.child(
                         div()
                             .id("nl2sql-stop")
@@ -1263,11 +1407,29 @@ impl Render for SqlConsole {
                             .border_1()
                             .cursor_pointer()
                             .child(SharedString::from(dat0_i18n::t("sql.ai.stop")))
-                            .on_click(cx.listener(|_console, _ev, _window, cx| {
+                            .focus_stop("nl2sql-stop", &nl_stop_fh, 0, key)
+                            .a11y(
+                                "nl2sql-stop",
+                                AccessRole::Button,
+                                dat0_i18n::t("sql.ai.stop"),
+                            )
+                            .on_click(cx.listener(|_c, _ev, _w, cx| {
                                 cx.emit(SqlConsoleEvent::StopAiStream);
                             })),
                     );
                 } else {
+                    let insert_key = cx.listener(|c, _ev: &gpui::KeyDownEvent, window, cx| {
+                        if let Some(p) = c.nl_preview.take() {
+                            c.load_into_new_tab(p.sql, window, cx);
+                        }
+                        c.pending_focus = Some(EDITOR_FOCUS);
+                        cx.notify();
+                    });
+                    let discard_key = cx.listener(|c, _ev: &gpui::KeyDownEvent, _w, cx| {
+                        c.nl_preview = None;
+                        c.pending_focus = Some(EDITOR_FOCUS);
+                        cx.notify();
+                    });
                     strip = strip.child(
                         div()
                             .flex()
@@ -1281,10 +1443,17 @@ impl Render for SqlConsole {
                                     .border_1()
                                     .cursor_pointer()
                                     .child(SharedString::from(dat0_i18n::t("sql.nl2sql.insert")))
+                                    .focus_stop("nl2sql-insert", &nl_insert_fh, 0, insert_key)
+                                    .a11y(
+                                        "nl2sql-insert",
+                                        AccessRole::Button,
+                                        dat0_i18n::t("sql.nl2sql.insert"),
+                                    )
                                     .on_click(cx.listener(|c, _ev, window, cx| {
                                         if let Some(p) = c.nl_preview.take() {
                                             c.load_into_new_tab(p.sql, window, cx);
                                         }
+                                        c.pending_focus = Some(EDITOR_FOCUS);
                                         cx.notify();
                                     })),
                             )
@@ -1296,8 +1465,16 @@ impl Render for SqlConsole {
                                     .border_1()
                                     .cursor_pointer()
                                     .child(SharedString::from(dat0_i18n::t("sql.nl2sql.discard")))
-                                    .on_click(cx.listener(|c, _ev, _window, cx| {
-                                        c.clear_nl_preview(cx);
+                                    .focus_stop("nl2sql-discard", &nl_discard_fh, 0, discard_key)
+                                    .a11y(
+                                        "nl2sql-discard",
+                                        AccessRole::Button,
+                                        dat0_i18n::t("sql.nl2sql.discard"),
+                                    )
+                                    .on_click(cx.listener(|c, _ev, _w, cx| {
+                                        c.nl_preview = None;
+                                        c.pending_focus = Some(EDITOR_FOCUS);
+                                        cx.notify();
                                     })),
                             ),
                     );
@@ -1314,6 +1491,9 @@ impl Render for SqlConsole {
                     panel = panel.child(div().child(SharedString::from(format!("✗ {err}"))));
                 }
                 if e.streaming {
+                    let key = cx.listener(|_c, _ev: &gpui::KeyDownEvent, _w, cx| {
+                        cx.emit(SqlConsoleEvent::StopAiStream);
+                    });
                     panel = panel.child(
                         div()
                             .id("explain-stop")
@@ -1322,11 +1502,21 @@ impl Render for SqlConsole {
                             .border_1()
                             .cursor_pointer()
                             .child(SharedString::from(dat0_i18n::t("sql.ai.stop")))
-                            .on_click(cx.listener(|_console, _ev, _window, cx| {
+                            .focus_stop("explain-stop", &explain_stop_fh, 0, key)
+                            .a11y(
+                                "explain-stop",
+                                AccessRole::Button,
+                                dat0_i18n::t("sql.ai.stop"),
+                            )
+                            .on_click(cx.listener(|_c, _ev, _w, cx| {
                                 cx.emit(SqlConsoleEvent::StopAiStream);
                             })),
                     );
                 } else {
+                    let key = cx.listener(|c, _ev: &gpui::KeyDownEvent, _w, cx| {
+                        c.pending_focus = Some(EDITOR_FOCUS);
+                        cx.emit(SqlConsoleEvent::CloseExplain);
+                    });
                     panel = panel.child(
                         div()
                             .id("explain-close")
@@ -1335,7 +1525,14 @@ impl Render for SqlConsole {
                             .border_1()
                             .cursor_pointer()
                             .child(SharedString::from(dat0_i18n::t("sql.explain.close")))
-                            .on_click(cx.listener(|_console, _ev, _window, cx| {
+                            .focus_stop("explain-close", &explain_close_fh, 0, key)
+                            .a11y(
+                                "explain-close",
+                                AccessRole::Button,
+                                dat0_i18n::t("sql.explain.close"),
+                            )
+                            .on_click(cx.listener(|c, _ev, _w, cx| {
+                                c.pending_focus = Some(EDITOR_FOCUS);
                                 cx.emit(SqlConsoleEvent::CloseExplain);
                             })),
                     );
@@ -1343,15 +1540,47 @@ impl Render for SqlConsole {
                 panel
             }))
             .children(history_overlay)
-            // Escape leaves the editor onto Run (fixes the code-editor keyboard
-            // trap: Tab/Shift-Tab indent in multi-line mode). Guarded on the
-            // active editor holding focus, so (a) when the autocomplete popup is
-            // open the editor consumes Escape first and this never fires, and
-            // (b) Escape while a toolbar button is focused is left alone. `run_fh`
-            // is the same handle the Run button's `focus_stop` uses, so focus
-            // lands on Run and Tab/Shift-Tab resume.
+            // Consolidated Escape ladder (transient-bars nav, carve-out #7).
+            // First matching rung wins; gpui bubbles the action to this one
+            // ancestor handler. Rung 5 preserves the carve-out #6 editor
+            // trap-exit (Escape leaves the code editor onto Run).
             .on_action(
                 cx.listener(|this, _ev: &gpui_component::input::Escape, window, cx| {
+                    // 1. History overlay open → close, return to editor.
+                    if this.history_overlay.is_some() {
+                        this.history_overlay = None;
+                        this.pending_focus = Some(EDITOR_FOCUS);
+                        cx.notify();
+                        return;
+                    }
+                    // 2. NL→SQL strip → stop if streaming, else discard.
+                    if let Some(streaming) = this.nl_preview.as_ref().map(|p| p.streaming) {
+                        if streaming {
+                            cx.emit(SqlConsoleEvent::StopAiStream);
+                        } else {
+                            this.nl_preview = None;
+                            this.pending_focus = Some(EDITOR_FOCUS);
+                            cx.notify();
+                        }
+                        return;
+                    }
+                    // 3. Explain panel → stop if streaming, else close.
+                    if let Some(streaming) = this.explain.as_ref().map(|e| e.streaming) {
+                        if streaming {
+                            cx.emit(SqlConsoleEvent::StopAiStream);
+                        } else {
+                            this.pending_focus = Some(EDITOR_FOCUS);
+                            cx.emit(SqlConsoleEvent::CloseExplain);
+                        }
+                        return;
+                    }
+                    // 4. Error strip → dismiss, keep current focus.
+                    if matches!(this.region, ResultRegion::Error(_)) {
+                        this.region = ResultRegion::Empty;
+                        cx.notify();
+                        return;
+                    }
+                    // 5. Editor focused → leave onto Run (carve-out #6 trap-exit).
                     if this.tabs[this.active]
                         .input
                         .read(cx)
@@ -1405,6 +1634,103 @@ impl SqlConsole {
             .read(cx)
             .focus_handle(cx)
             .is_focused(window)
+    }
+
+    /// Inject a streaming NL→SQL preview (bypasses the real SSE flow).
+    pub fn begin_nl_preview_for_test(&mut self, prompt: String, cx: &mut Context<Self>) {
+        self.begin_nl_preview(prompt, cx);
+    }
+    /// Append a generated-SQL delta to the injected preview.
+    pub fn push_nl_delta_for_test(&mut self, text: &str, cx: &mut Context<Self>) {
+        self.push_nl_delta(text, cx);
+    }
+    /// Finish the injected preview (flips streaming → Insert/Discard).
+    pub fn finish_nl_preview_for_test(&mut self, error: Option<String>, cx: &mut Context<Self>) {
+        self.finish_nl_preview(error, cx);
+    }
+    /// Whether the NL→SQL strip is currently open.
+    pub fn nl_preview_open_for_test(&self) -> bool {
+        self.nl_preview.is_some()
+    }
+
+    /// Inject a streaming Explain panel (bypasses the real SSE flow).
+    pub fn begin_explain_for_test(&mut self, sql: String, cx: &mut Context<Self>) {
+        self.begin_explain(sql, cx);
+    }
+    /// Finish the injected Explain (flips streaming → Close).
+    pub fn finish_explain_for_test(&mut self, error: Option<String>, cx: &mut Context<Self>) {
+        self.finish_explain(error, cx);
+    }
+    /// Whether the Explain panel is currently open.
+    pub fn explain_open_for_test(&self) -> bool {
+        self.explain.is_some()
+    }
+
+    /// Put the result region into the DuckDB-error state (bypasses a real run).
+    pub fn set_error_region_for_test(&mut self, msg: String, cx: &mut Context<Self>) {
+        self.region = ResultRegion::Error(msg);
+        cx.notify();
+    }
+    /// Whether the result region is currently showing an error.
+    pub fn error_region_for_test(&self) -> bool {
+        matches!(self.region, ResultRegion::Error(_))
+    }
+
+    /// The error-dismiss ✕ button's `FocusHandle` — mirrors
+    /// `editor_focus_handle_for_test`. Needed because the error strip is
+    /// positioned AFTER the editor in render order, and the editor is a
+    /// keyboard trap for Tab/Shift-Tab (gpui-component binds both to inline
+    /// indent/outdent in its "Input" keymap context — confirmed empirically:
+    /// a forward Tab-walk from before the editor lands IN the editor and never
+    /// leaves it). The NL→SQL and Explain strips route around this the same
+    /// trap via `pending_focus` auto-focus-on-appear; the error strip
+    /// deliberately does NOT auto-focus (design decision — a failed Run must
+    /// not steal focus from the editor), so there is no Tab-only path to it
+    /// from outside the editor. This seam lets a test give it focus directly,
+    /// the same way `editor_focus_handle_for_test` already does for the
+    /// editor, to prove the NEW `focus_stop` Enter/Space listener (as opposed
+    /// to the pre-existing `on_click`) actually dismisses it.
+    pub fn err_dismiss_focus_handle_for_test(
+        &mut self,
+        cx: &mut Context<Self>,
+    ) -> gpui::FocusHandle {
+        self.toolbar_fh("sql-err-dismiss", cx)
+    }
+
+    /// The history-overlay close ✕ button's `FocusHandle` — lets a test focus it
+    /// directly (the overlay opens with focus on the LIST, and the editor Tab-trap
+    /// blocks a Tab-walk to the ✕), to prove its own focus_stop Enter listener works.
+    pub fn history_close_focus_handle_for_test(
+        &mut self,
+        cx: &mut Context<Self>,
+    ) -> gpui::FocusHandle {
+        self.toolbar_fh("sql-history-close", cx)
+    }
+
+    /// Open the history overlay with fake entries (bypasses the session store).
+    pub fn show_fake_history_for_test(&mut self, sqls: Vec<String>, cx: &mut Context<Self>) {
+        let entries = sqls
+            .into_iter()
+            .map(|s| crate::session::queries::HistoryEntry {
+                sql: s,
+                ran_at: 0,
+                ok: true,
+                elapsed_ms: 0,
+            })
+            .collect();
+        self.show_history(entries, cx);
+    }
+    /// The history listbox active row index.
+    pub fn history_active_for_test(&self) -> usize {
+        self.history_active
+    }
+    /// Whether the history overlay is open.
+    pub fn history_open_for_test(&self) -> bool {
+        self.history_overlay.is_some()
+    }
+    /// The active tab's SQL buffer (to assert which history row loaded).
+    pub fn active_sql_for_test(&self, cx: &gpui::App) -> String {
+        self.active_sql_and_cursor(cx).0
     }
 }
 
