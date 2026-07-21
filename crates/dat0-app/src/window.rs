@@ -1276,6 +1276,292 @@ fn count_orphan_scratch(scratch_root: &std::path::Path) -> usize {
     count
 }
 
+/// Interim Help ▸ Documentation target until the P11b docs site ships; the
+/// P11c launch-ops checklist swaps this const for the real docs URL.
+const DOCS_URL: &str = "https://github.com/accidentally-awesome-labs/dat0#readme";
+
+/// Interim Help ▸ Join Discord target — the server/invite is minted by the
+/// P11c launch-ops checklist (P0 runbook §D3); swap this const then.
+const DISCORD_URL: &str = "https://github.com/accidentally-awesome-labs/dat0";
+
+/// Global (App-scoped) handlers + keybindings for every menu action that
+/// needs no view state. Called once from `run_app` inside `Application::run`,
+/// and by `tests/menu_reachability.rs`, which asserts that every
+/// `MenuItem::action` in `menu_macos::build_menus` resolves to a registered
+/// handler — macOS grays out menu items whose action has none (that is how
+/// View ▸ Settings… shipped dead; 2026-07-21 UI-redesign master plan §4b).
+///
+/// View-scoped actions (SqlRun, the dock toggles, …) are deliberately NOT
+/// here: they are handled on the `WorkspaceShell` root in `render` and
+/// enable only while the shell has focus.
+pub fn register_menu_action_handlers(cx: &mut App) {
+    // Wire Cmd-N → NewWindow action. `cx.on_action` registers a global
+    // handler called on the GPUI main thread whenever the action fires
+    // (keyboard shortcut or menu item); `spawn_window` is synchronous and
+    // safe to call from there. Reads the process-wide singletons at
+    // dispatch time (the same pattern as the ActionRegistry `window.new`
+    // descriptor) instead of capturing `run_app` locals, so this fn stays
+    // parameterless for the menu-reachability test. Registered
+    // unconditionally (was macOS-only): the action is declared
+    // unconditionally in `menu_macos.rs`, and on Linux nothing fires it.
+    cx.on_action(|_action: &crate::menu_macos::NewWindow, cx: &mut App| {
+        tracing::info!("Cmd-N: spawning new window");
+        let Some(state_root) = crate::window_registry::state_root() else {
+            tracing::warn!("action: NewWindow — state_root singleton not installed; skipping");
+            return;
+        };
+        let Some(registry) = crate::window_registry::window_registry() else {
+            tracing::warn!("action: NewWindow — window_registry singleton not installed; skipping");
+            return;
+        };
+        spawn_window(cx, state_root, registry);
+    });
+
+    // Wire Cmd-Shift-P (macOS) / Ctrl-Shift-P (Linux) → OpenCommandPalette
+    // action (P3b T6). `bind_keys` registers the keystroke against the
+    // global keymap; `on_action` registers the handler. Both fire the
+    // same `OpenCommandPalette` action so the menu-item click and the
+    // keystroke path converge on `command_palette::open`.
+    //
+    // The Linux menu module doesn't exist yet (the comment above flags
+    // "Linux Cmd-N is P3b"), but `OpenCommandPalette` is declared in
+    // `menu_macos.rs` unconditionally so we can bind it on Linux too —
+    // the handler still resolves and the keystroke fires even without a
+    // visible menu item.
+    {
+        #[cfg(target_os = "macos")]
+        let keystroke = "cmd-shift-p";
+        #[cfg(not(target_os = "macos"))]
+        let keystroke = "ctrl-shift-p";
+        cx.bind_keys([gpui::KeyBinding::new(
+            keystroke,
+            crate::menu_macos::OpenCommandPalette,
+            None,
+        )]);
+        cx.on_action(
+            |_action: &crate::menu_macos::OpenCommandPalette, cx: &mut App| {
+                crate::command_palette::open(cx);
+            },
+        );
+    }
+
+    // Wire Cmd-Z / Ctrl-Z → Undo, Cmd-Shift-Z / Ctrl-Shift-Z → Redo (P4a T7).
+    // `Undo` and `Redo` are gpui action stubs declared in `menu_macos.rs`
+    // (unconditional, so they resolve on Linux too). Handlers dispatch
+    // through the ActionRegistry so the same closure drives menu-click,
+    // keybind, and command-palette paths.
+    {
+        #[cfg(target_os = "macos")]
+        let (undo_ks, redo_ks) = ("cmd-z", "cmd-shift-z");
+        #[cfg(not(target_os = "macos"))]
+        let (undo_ks, redo_ks) = ("ctrl-z", "ctrl-shift-z");
+        cx.bind_keys([
+            gpui::KeyBinding::new(undo_ks, crate::menu_macos::Undo, None),
+            gpui::KeyBinding::new(redo_ks, crate::menu_macos::Redo, None),
+        ]);
+        cx.on_action(|_action: &crate::menu_macos::Undo, cx: &mut App| {
+            if let Some(reg) = crate::window_registry::action_registry() {
+                if let Some(desc) = reg.get(&crate::actions::ActionId::from(
+                    crate::actions::builtin::ids::VIEW_UNDO,
+                )) {
+                    (desc.dispatch)(cx);
+                }
+            }
+        });
+        cx.on_action(|_action: &crate::menu_macos::Redo, cx: &mut App| {
+            if let Some(reg) = crate::window_registry::action_registry() {
+                if let Some(desc) = reg.get(&crate::actions::ActionId::from(
+                    crate::actions::builtin::ids::VIEW_REDO,
+                )) {
+                    (desc.dispatch)(cx);
+                }
+            }
+        });
+    }
+
+    // Wire Cmd-E / Ctrl-E → Export (P4c T11). `Export` is a gpui action stub
+    // declared in `menu_macos.rs` (unconditional, so it resolves on Linux
+    // too). The handler dispatches through the ActionRegistry so the
+    // menu-click, keybind, and command-palette paths converge on
+    // `view.export` → `WorkspaceShell::open_export_dialog`.
+    {
+        #[cfg(target_os = "macos")]
+        let export_ks = "cmd-e";
+        #[cfg(not(target_os = "macos"))]
+        let export_ks = "ctrl-e";
+        cx.bind_keys([gpui::KeyBinding::new(
+            export_ks,
+            crate::menu_macos::Export,
+            None,
+        )]);
+        cx.on_action(|_action: &crate::menu_macos::Export, cx: &mut App| {
+            if let Some(reg) = crate::window_registry::action_registry() {
+                if let Some(desc) = reg.get(&crate::actions::ActionId::from(
+                    crate::actions::builtin::ids::VIEW_EXPORT,
+                )) {
+                    (desc.dispatch)(cx);
+                }
+            }
+        });
+    }
+
+    // Wire OpenWorkspace / SaveWorkspace → workspace flows (P7a T7-T9).
+    // Both actions are declared in menu_macos.rs (unconditional), so the
+    // handlers resolve on Linux too even without a visible menu item.
+    cx.on_action(|_action: &crate::menu_macos::OpenWorkspace, cx: &mut App| {
+        open_workspace_flow(cx);
+    });
+    cx.on_action(|_action: &crate::menu_macos::SaveWorkspace, cx: &mut App| {
+        save_workspace_flow(cx);
+    });
+
+    // Wire Help → About → About box (P10a T5). Declared unconditionally in
+    // menu_macos.rs so the handler resolves on Linux too.
+    cx.on_action(|_action: &crate::menu_macos::ShowAbout, cx: &mut App| {
+        crate::about::open(cx);
+    });
+
+    // Wire Help → Report a Bug → crash/bug-report dialog (P10c T8).
+    // Declared unconditionally in menu_macos.rs so the handler resolves on
+    // Linux too (no visible menu item there, but the action still dispatches).
+    cx.on_action(|_action: &crate::menu_macos::ReportBug, cx: &mut App| {
+        if let Ok(dir) = crate::platform::data_dir() {
+            crate::view::crash_report::open_report(
+                cx,
+                crate::telemetry::report_logic::ReportKind::Bug,
+                dir,
+            );
+        }
+    });
+
+    // Wire Help → Take a Tour → onboarding carousel (P11a T7).
+    // Declared unconditionally in menu_macos.rs so the handler resolves on
+    // Linux too (no visible menu item there, but the action still dispatches).
+    // `open_deferred` (not `open`): this handler runs INSIDE a
+    // `window.update` of the active window, where a synchronous
+    // `onboarding::open` would re-enter that taken window and silently
+    // no-op. The deferred hop runs the open from a plain App context after
+    // the frame — same mechanism the auto-show uses.
+    cx.on_action(|_a: &crate::menu_macos::TakeTour, cx: &mut App| {
+        crate::onboarding::open_deferred(cx);
+    });
+
+    // Wire hero → Open demo.dat0 → editable workspace (P11a T9).
+    // Declared unconditionally in menu_macos.rs; no menu item needed —
+    // only the first-run hero band button triggers it.
+    cx.on_action(|_a: &crate::menu_macos::OpenDemoWorkspace, cx: &mut App| {
+        open_demo_workspace(cx);
+    });
+
+    // Wire Help → Check for Updates (P10a-2 T6). Declared unconditionally in
+    // menu_macos.rs so the handler resolves on Linux too.
+    cx.on_action(
+        |_action: &crate::menu_macos::CheckForUpdates, cx: &mut App| {
+            crate::update::ui::run_update_flow(cx, true);
+        },
+    );
+
+    // Wire the .dat0 package actions (P8 T9). All declared unconditionally in
+    // menu_macos.rs so the handlers resolve on Linux too (no visible menu).
+    cx.on_action(|_action: &crate::menu_macos::ExportPackage, cx: &mut App| {
+        export_package_flow(cx);
+    });
+    cx.on_action(|_action: &crate::menu_macos::OpenPackage, cx: &mut App| {
+        open_package_flow(cx);
+    });
+    cx.on_action(|_action: &crate::menu_macos::UnpackPackage, cx: &mut App| {
+        unpack_package_flow(cx);
+    });
+    cx.on_action(|_action: &crate::menu_macos::ReplayPackage, cx: &mut App| {
+        replay_package_flow(cx);
+    });
+
+    // Wire File → Open Recent fan-out (P7a T10).
+    //
+    // Each OpenRecentN action maps to slot N in the filtered workspace-recents
+    // list.  The helper reads the live recents store at invocation time so a
+    // stale menu (e.g. the recents store changed between menu-rebuild and click)
+    // is handled gracefully: if the index is now out of range the handler is a
+    // no-op.  Cap is OPEN_RECENT_MENU_CAP=10; entries ≥10 are not in the menu.
+    cx.on_action(|_: &crate::menu_macos::OpenRecent0, cx: &mut App| {
+        open_recent_n(cx, 0);
+    });
+    cx.on_action(|_: &crate::menu_macos::OpenRecent1, cx: &mut App| {
+        open_recent_n(cx, 1);
+    });
+    cx.on_action(|_: &crate::menu_macos::OpenRecent2, cx: &mut App| {
+        open_recent_n(cx, 2);
+    });
+    cx.on_action(|_: &crate::menu_macos::OpenRecent3, cx: &mut App| {
+        open_recent_n(cx, 3);
+    });
+    cx.on_action(|_: &crate::menu_macos::OpenRecent4, cx: &mut App| {
+        open_recent_n(cx, 4);
+    });
+    cx.on_action(|_: &crate::menu_macos::OpenRecent5, cx: &mut App| {
+        open_recent_n(cx, 5);
+    });
+    cx.on_action(|_: &crate::menu_macos::OpenRecent6, cx: &mut App| {
+        open_recent_n(cx, 6);
+    });
+    cx.on_action(|_: &crate::menu_macos::OpenRecent7, cx: &mut App| {
+        open_recent_n(cx, 7);
+    });
+    cx.on_action(|_: &crate::menu_macos::OpenRecent8, cx: &mut App| {
+        open_recent_n(cx, 8);
+    });
+    cx.on_action(|_: &crate::menu_macos::OpenRecent9, cx: &mut App| {
+        open_recent_n(cx, 9);
+    });
+
+    // Wire the SQL Console keystrokes (P5a T11):
+    //   Cmd+Enter / Ctrl+Enter      → SqlRun    (run the active statement)
+    //   Cmd+.     / Ctrl+.          → SqlCancel (interrupt the in-flight run)
+    //   Cmd+Shift+C / Ctrl+Shift+C  → SqlConsoleToggle (show/hide the console)
+    //
+    // Unlike Export/Undo/Redo (handled by GLOBAL `cx.on_action` here in
+    // run_app), these actions are handled VIEW-scoped on the WorkspaceShell
+    // root in `render` — they reach `self`, and toggle/new-tab need a
+    // `&mut Window` that the App-level dispatch path can't supply. We only
+    // register the keystrokes here; gpui routes the dispatched action up the
+    // focused element tree to the shell's `.on_action` handlers. SqlNewTab /
+    // SqlCloseTab are reachable via the menu + command palette (and the
+    // console's own "+"/"✕" tab buttons) — no default keystroke is bound to
+    // avoid colliding with the editor's own text-editing keymap.
+    {
+        #[cfg(target_os = "macos")]
+        let (run_ks, cancel_ks, toggle_ks) = ("cmd-enter", "cmd-.", "cmd-shift-c");
+        #[cfg(not(target_os = "macos"))]
+        let (run_ks, cancel_ks, toggle_ks) = ("ctrl-enter", "ctrl-.", "ctrl-shift-c");
+        cx.bind_keys([
+            gpui::KeyBinding::new(run_ks, crate::menu_macos::SqlRun, None),
+            gpui::KeyBinding::new(cancel_ks, crate::menu_macos::SqlCancel, None),
+            gpui::KeyBinding::new(toggle_ks, crate::menu_macos::SqlConsoleToggle, None),
+        ]);
+    }
+
+    // Hotfix (2026-07-21, found by the UI-redesign A0 spike — master plan
+    // §4b): `OpenSettings`, `OpenDocs` and `OpenDiscord` were declared in
+    // `menu_macos.rs` and attached to menu items but had NO gpui handler —
+    // macOS auto-enablement therefore grayed them out, and the Settings
+    // window was unreachable in production (the ActionRegistry
+    // `settings.open` descriptor's only consumer is the stub command
+    // palette). `tests/menu_reachability.rs` is the regression gate.
+    cx.on_action(|_action: &crate::menu_macos::OpenSettings, cx: &mut App| {
+        crate::settings_ui::open_settings_window(cx);
+    });
+    cx.on_action(|_action: &crate::menu_macos::OpenDocs, _cx: &mut App| {
+        if let Err(e) = crate::platform::open_url(DOCS_URL) {
+            tracing::warn!(error = %e, "menu: open documentation failed");
+        }
+    });
+    cx.on_action(|_action: &crate::menu_macos::OpenDiscord, _cx: &mut App| {
+        if let Err(e) = crate::platform::open_url(DISCORD_URL) {
+            tracing::warn!(error = %e, "menu: open discord failed");
+        }
+    });
+}
+
 /// Launch the dat0 desktop application.
 ///
 /// Blocks the calling thread on the platform event loop until the user
@@ -1476,248 +1762,11 @@ pub fn run_app(lock: AppLock, initial_paths: Vec<PathBuf>, main_loop: MainLoop) 
             cx.set_menus(menus);
         }
 
-        // Wire Cmd-N → NewWindow action (macOS only; Linux Cmd-N is P3b).
-        // `cx.on_action` registers a global handler called on the GPUI main
-        // thread whenever the action fires (keyboard shortcut or menu item).
-        // `spawn_window` is synchronous and safe to call from the main thread.
-        #[cfg(target_os = "macos")]
-        {
-            let state_root_for_new_window = state_root_for_action.clone();
-            let registry_for_action = Arc::clone(&registry_for_run);
-            cx.on_action(
-                move |_action: &crate::menu_macos::NewWindow, cx: &mut App| {
-                    tracing::info!("Cmd-N: spawning new window");
-                    spawn_window(
-                        cx,
-                        &state_root_for_new_window,
-                        Arc::clone(&registry_for_action),
-                    );
-                },
-            );
-        }
-
-        // Wire Cmd-Shift-P (macOS) / Ctrl-Shift-P (Linux) → OpenCommandPalette
-        // action (P3b T6). `bind_keys` registers the keystroke against the
-        // global keymap; `on_action` registers the handler. Both fire the
-        // same `OpenCommandPalette` action so the menu-item click and the
-        // keystroke path converge on `command_palette::open`.
-        //
-        // The Linux menu module doesn't exist yet (the comment above flags
-        // "Linux Cmd-N is P3b"), but `OpenCommandPalette` is declared in
-        // `menu_macos.rs` unconditionally so we can bind it on Linux too —
-        // the handler still resolves and the keystroke fires even without a
-        // visible menu item.
-        {
-            #[cfg(target_os = "macos")]
-            let keystroke = "cmd-shift-p";
-            #[cfg(not(target_os = "macos"))]
-            let keystroke = "ctrl-shift-p";
-            cx.bind_keys([gpui::KeyBinding::new(
-                keystroke,
-                crate::menu_macos::OpenCommandPalette,
-                None,
-            )]);
-            cx.on_action(
-                |_action: &crate::menu_macos::OpenCommandPalette, cx: &mut App| {
-                    crate::command_palette::open(cx);
-                },
-            );
-        }
-
-        // Wire Cmd-Z / Ctrl-Z → Undo, Cmd-Shift-Z / Ctrl-Shift-Z → Redo (P4a T7).
-        // `Undo` and `Redo` are gpui action stubs declared in `menu_macos.rs`
-        // (unconditional, so they resolve on Linux too). Handlers dispatch
-        // through the ActionRegistry so the same closure drives menu-click,
-        // keybind, and command-palette paths.
-        {
-            #[cfg(target_os = "macos")]
-            let (undo_ks, redo_ks) = ("cmd-z", "cmd-shift-z");
-            #[cfg(not(target_os = "macos"))]
-            let (undo_ks, redo_ks) = ("ctrl-z", "ctrl-shift-z");
-            cx.bind_keys([
-                gpui::KeyBinding::new(undo_ks, crate::menu_macos::Undo, None),
-                gpui::KeyBinding::new(redo_ks, crate::menu_macos::Redo, None),
-            ]);
-            cx.on_action(|_action: &crate::menu_macos::Undo, cx: &mut App| {
-                if let Some(reg) = crate::window_registry::action_registry() {
-                    if let Some(desc) = reg.get(&crate::actions::ActionId::from(
-                        crate::actions::builtin::ids::VIEW_UNDO,
-                    )) {
-                        (desc.dispatch)(cx);
-                    }
-                }
-            });
-            cx.on_action(|_action: &crate::menu_macos::Redo, cx: &mut App| {
-                if let Some(reg) = crate::window_registry::action_registry() {
-                    if let Some(desc) = reg.get(&crate::actions::ActionId::from(
-                        crate::actions::builtin::ids::VIEW_REDO,
-                    )) {
-                        (desc.dispatch)(cx);
-                    }
-                }
-            });
-        }
-
-        // Wire Cmd-E / Ctrl-E → Export (P4c T11). `Export` is a gpui action stub
-        // declared in `menu_macos.rs` (unconditional, so it resolves on Linux
-        // too). The handler dispatches through the ActionRegistry so the
-        // menu-click, keybind, and command-palette paths converge on
-        // `view.export` → `WorkspaceShell::open_export_dialog`.
-        {
-            #[cfg(target_os = "macos")]
-            let export_ks = "cmd-e";
-            #[cfg(not(target_os = "macos"))]
-            let export_ks = "ctrl-e";
-            cx.bind_keys([gpui::KeyBinding::new(
-                export_ks,
-                crate::menu_macos::Export,
-                None,
-            )]);
-            cx.on_action(|_action: &crate::menu_macos::Export, cx: &mut App| {
-                if let Some(reg) = crate::window_registry::action_registry() {
-                    if let Some(desc) = reg.get(&crate::actions::ActionId::from(
-                        crate::actions::builtin::ids::VIEW_EXPORT,
-                    )) {
-                        (desc.dispatch)(cx);
-                    }
-                }
-            });
-        }
-
-        // Wire OpenWorkspace / SaveWorkspace → workspace flows (P7a T7-T9).
-        // Both actions are declared in menu_macos.rs (unconditional), so the
-        // handlers resolve on Linux too even without a visible menu item.
-        cx.on_action(|_action: &crate::menu_macos::OpenWorkspace, cx: &mut App| {
-            open_workspace_flow(cx);
-        });
-        cx.on_action(|_action: &crate::menu_macos::SaveWorkspace, cx: &mut App| {
-            save_workspace_flow(cx);
-        });
-
-        // Wire Help → About → About box (P10a T5). Declared unconditionally in
-        // menu_macos.rs so the handler resolves on Linux too.
-        cx.on_action(|_action: &crate::menu_macos::ShowAbout, cx: &mut App| {
-            crate::about::open(cx);
-        });
-
-        // Wire Help → Report a Bug → crash/bug-report dialog (P10c T8).
-        // Declared unconditionally in menu_macos.rs so the handler resolves on
-        // Linux too (no visible menu item there, but the action still dispatches).
-        cx.on_action(|_action: &crate::menu_macos::ReportBug, cx: &mut App| {
-            if let Ok(dir) = crate::platform::data_dir() {
-                crate::view::crash_report::open_report(
-                    cx,
-                    crate::telemetry::report_logic::ReportKind::Bug,
-                    dir,
-                );
-            }
-        });
-
-        // Wire Help → Take a Tour → onboarding carousel (P11a T7).
-        // Declared unconditionally in menu_macos.rs so the handler resolves on
-        // Linux too (no visible menu item there, but the action still dispatches).
-        // `open_deferred` (not `open`): this handler runs INSIDE a
-        // `window.update` of the active window, where a synchronous
-        // `onboarding::open` would re-enter that taken window and silently
-        // no-op. The deferred hop runs the open from a plain App context after
-        // the frame — same mechanism the auto-show uses.
-        cx.on_action(|_a: &crate::menu_macos::TakeTour, cx: &mut App| {
-            crate::onboarding::open_deferred(cx);
-        });
-
-        // Wire hero → Open demo.dat0 → editable workspace (P11a T9).
-        // Declared unconditionally in menu_macos.rs; no menu item needed —
-        // only the first-run hero band button triggers it.
-        cx.on_action(|_a: &crate::menu_macos::OpenDemoWorkspace, cx: &mut App| {
-            open_demo_workspace(cx);
-        });
-
-        // Wire Help → Check for Updates (P10a-2 T6). Declared unconditionally in
-        // menu_macos.rs so the handler resolves on Linux too.
-        cx.on_action(
-            |_action: &crate::menu_macos::CheckForUpdates, cx: &mut App| {
-                crate::update::ui::run_update_flow(cx, true);
-            },
-        );
-
-        // Wire the .dat0 package actions (P8 T9). All declared unconditionally in
-        // menu_macos.rs so the handlers resolve on Linux too (no visible menu).
-        cx.on_action(|_action: &crate::menu_macos::ExportPackage, cx: &mut App| {
-            export_package_flow(cx);
-        });
-        cx.on_action(|_action: &crate::menu_macos::OpenPackage, cx: &mut App| {
-            open_package_flow(cx);
-        });
-        cx.on_action(|_action: &crate::menu_macos::UnpackPackage, cx: &mut App| {
-            unpack_package_flow(cx);
-        });
-        cx.on_action(|_action: &crate::menu_macos::ReplayPackage, cx: &mut App| {
-            replay_package_flow(cx);
-        });
-
-        // Wire File → Open Recent fan-out (P7a T10).
-        //
-        // Each OpenRecentN action maps to slot N in the filtered workspace-recents
-        // list.  The helper reads the live recents store at invocation time so a
-        // stale menu (e.g. the recents store changed between menu-rebuild and click)
-        // is handled gracefully: if the index is now out of range the handler is a
-        // no-op.  Cap is OPEN_RECENT_MENU_CAP=10; entries ≥10 are not in the menu.
-        cx.on_action(|_: &crate::menu_macos::OpenRecent0, cx: &mut App| {
-            open_recent_n(cx, 0);
-        });
-        cx.on_action(|_: &crate::menu_macos::OpenRecent1, cx: &mut App| {
-            open_recent_n(cx, 1);
-        });
-        cx.on_action(|_: &crate::menu_macos::OpenRecent2, cx: &mut App| {
-            open_recent_n(cx, 2);
-        });
-        cx.on_action(|_: &crate::menu_macos::OpenRecent3, cx: &mut App| {
-            open_recent_n(cx, 3);
-        });
-        cx.on_action(|_: &crate::menu_macos::OpenRecent4, cx: &mut App| {
-            open_recent_n(cx, 4);
-        });
-        cx.on_action(|_: &crate::menu_macos::OpenRecent5, cx: &mut App| {
-            open_recent_n(cx, 5);
-        });
-        cx.on_action(|_: &crate::menu_macos::OpenRecent6, cx: &mut App| {
-            open_recent_n(cx, 6);
-        });
-        cx.on_action(|_: &crate::menu_macos::OpenRecent7, cx: &mut App| {
-            open_recent_n(cx, 7);
-        });
-        cx.on_action(|_: &crate::menu_macos::OpenRecent8, cx: &mut App| {
-            open_recent_n(cx, 8);
-        });
-        cx.on_action(|_: &crate::menu_macos::OpenRecent9, cx: &mut App| {
-            open_recent_n(cx, 9);
-        });
-
-        // Wire the SQL Console keystrokes (P5a T11):
-        //   Cmd+Enter / Ctrl+Enter      → SqlRun    (run the active statement)
-        //   Cmd+.     / Ctrl+.          → SqlCancel (interrupt the in-flight run)
-        //   Cmd+Shift+C / Ctrl+Shift+C  → SqlConsoleToggle (show/hide the console)
-        //
-        // Unlike Export/Undo/Redo (handled by GLOBAL `cx.on_action` here in
-        // run_app), these actions are handled VIEW-scoped on the WorkspaceShell
-        // root in `render` — they reach `self`, and toggle/new-tab need a
-        // `&mut Window` that the App-level dispatch path can't supply. We only
-        // register the keystrokes here; gpui routes the dispatched action up the
-        // focused element tree to the shell's `.on_action` handlers. SqlNewTab /
-        // SqlCloseTab are reachable via the menu + command palette (and the
-        // console's own "+"/"✕" tab buttons) — no default keystroke is bound to
-        // avoid colliding with the editor's own text-editing keymap.
-        {
-            #[cfg(target_os = "macos")]
-            let (run_ks, cancel_ks, toggle_ks) = ("cmd-enter", "cmd-.", "cmd-shift-c");
-            #[cfg(not(target_os = "macos"))]
-            let (run_ks, cancel_ks, toggle_ks) = ("ctrl-enter", "ctrl-.", "ctrl-shift-c");
-            cx.bind_keys([
-                gpui::KeyBinding::new(run_ks, crate::menu_macos::SqlRun, None),
-                gpui::KeyBinding::new(cancel_ks, crate::menu_macos::SqlCancel, None),
-                gpui::KeyBinding::new(toggle_ks, crate::menu_macos::SqlConsoleToggle, None),
-            ]);
-        }
+        // Global menu-action handlers + keybindings for every menu action
+        // that needs no view state — extracted to
+        // `register_menu_action_handlers` so `tests/menu_reachability.rs`
+        // registers the exact production set.
+        register_menu_action_handlers(cx);
 
         // Register the SQL grammar for the P5 console editor (runtime-registered,
         // single grammar — see query::highlight). T0 spike confirmed the runtime
