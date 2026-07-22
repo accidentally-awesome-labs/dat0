@@ -1560,6 +1560,75 @@ pub fn register_menu_action_handlers(cx: &mut App) {
             tracing::warn!(error = %e, "menu: open discord failed");
         }
     });
+
+    // Dead-menu-item follow-up (2026-07-22): Quit / Close Window / Minimize /
+    // Zoom had no handlers since their menus were added — permanently grayed
+    // (Cmd-Q included: the key equivalent hangs off the menu item, so a
+    // disabled item swallows it; quitting only worked via the Dock). Standard
+    // macOS chords are bound here; the handlers are unconditional (on Linux
+    // nothing fires them — no menu bar and no bindings).
+    #[cfg(target_os = "macos")]
+    cx.bind_keys([
+        gpui::KeyBinding::new("cmd-q", crate::menu_macos::Quit, None),
+        gpui::KeyBinding::new("cmd-w", crate::menu_macos::CloseWindow, None),
+        gpui::KeyBinding::new("cmd-m", crate::menu_macos::Minimize, None),
+    ]);
+    // File ▸ Open File… — global (not view-scoped) so the item is enabled on
+    // a fresh boot before anything in the window has keyboard focus, matching
+    // Open Workspace…. Routes through the focused workspace's picker (the
+    // same handle_drop flow the hero button uses); no-op without a workspace.
+    cx.on_action(|_action: &crate::menu_macos::OpenFile, cx: &mut App| {
+        let Some(ws) = crate::window_registry::focused_workspace_weak()
+            .and_then(|w| w.upgrade())
+            .and_then(|e| e.downcast::<WorkspaceShell>().ok())
+        else {
+            return;
+        };
+        ws.update(cx, |ws, cx| ws.open_file_picker(cx));
+    });
+
+    cx.on_action(|_action: &crate::menu_macos::Quit, cx: &mut App| {
+        // Best-effort SQL-console flush first (the per-mutation persists keep
+        // disk current; this catches editor text typed since). The platform
+        // terminate path does NOT run per-window `on_window_should_close`
+        // hooks — same semantics as Dock-quit today.
+        flush_focused_workspace_sql(cx);
+        cx.quit();
+    });
+    cx.on_action(|_action: &crate::menu_macos::CloseWindow, cx: &mut App| {
+        // `Window::remove_window` bypasses `on_window_should_close` (that hook
+        // only fires from the OS close-button path), so run the same SQL
+        // persist backstop it would have run before removing.
+        flush_focused_workspace_sql(cx);
+        if let Some(window) = cx.active_window() {
+            let _ = window.update(cx, |_root, window, _cx| window.remove_window());
+        }
+    });
+    cx.on_action(|_action: &crate::menu_macos::Minimize, cx: &mut App| {
+        if let Some(window) = cx.active_window() {
+            let _ = window.update(cx, |_root, window, _cx| window.minimize_window());
+        }
+    });
+    cx.on_action(|_action: &crate::menu_macos::Zoom, cx: &mut App| {
+        if let Some(window) = cx.active_window() {
+            let _ = window.update(cx, |_root, window, _cx| window.zoom_window());
+        }
+    });
+}
+
+/// Best-effort flush of the focused workspace's SQL-console edit buffer to
+/// disk — the same persist the `on_window_should_close` backstop runs on the
+/// OS close-button path. Used by the menu Quit / Close Window handlers, whose
+/// paths (`platform.quit()` / `Window::remove_window`) never fire that hook.
+/// No-op when no workspace is registered or the entity is gone.
+fn flush_focused_workspace_sql(cx: &mut App) {
+    let Some(ws) = crate::window_registry::focused_workspace_weak()
+        .and_then(|w| w.upgrade())
+        .and_then(|e| e.downcast::<WorkspaceShell>().ok())
+    else {
+        return;
+    };
+    ws.update(cx, |ws, cx| ws.persist_sql_console(cx));
 }
 
 /// Launch the dat0 desktop application.
@@ -1756,17 +1825,19 @@ pub fn run_app(lock: AppLock, initial_paths: Vec<PathBuf>, main_loop: MainLoop) 
         // there is no `cx.activate_menu(...)` API. `set_menus` borrows `cx`
         // immutably while `build_menus` takes `&mut App`, so the call is
         // split into two statements to satisfy the borrow checker.
+        // Global menu-action handlers + keybindings for every menu action
+        // that needs no view state — extracted to
+        // `register_menu_action_handlers` so `tests/menu_reachability.rs`
+        // registers the exact production set. MUST run before `set_menus`:
+        // menu items derive their displayed key equivalents (⌘Q, ⌘W, …) from
+        // the keymap at install time.
+        register_menu_action_handlers(cx);
+
         #[cfg(target_os = "macos")]
         {
             let menus = crate::menu_macos::build_menus(cx);
             cx.set_menus(menus);
         }
-
-        // Global menu-action handlers + keybindings for every menu action
-        // that needs no view state — extracted to
-        // `register_menu_action_handlers` so `tests/menu_reachability.rs`
-        // registers the exact production set.
-        register_menu_action_handlers(cx);
 
         // Register the SQL grammar for the P5 console editor (runtime-registered,
         // single grammar — see query::highlight). T0 spike confirmed the runtime

@@ -141,9 +141,19 @@ pub fn build_menus(_cx: &mut gpui::App) -> Vec<gpui::Menu> {
                 MenuItem::action(dat0_i18n::t("menu.edit.undo"), Undo),
                 MenuItem::action(dat0_i18n::t("menu.edit.redo"), Redo),
                 MenuItem::separator(),
-                MenuItem::action(dat0_i18n::t("menu.edit.cut"), Cut),
-                MenuItem::action(dat0_i18n::t("menu.edit.copy"), Copy),
-                MenuItem::action(dat0_i18n::t("menu.edit.paste"), Paste),
+                // Dead-menu-item fix (2026-07-22): these previously dispatched
+                // dat0-local Cut/Copy/Paste actions that never had a handler —
+                // permanently grayed. gpui's mac view implements no cut:/copy:/
+                // paste: selectors, so `MenuItem::os_action` cannot enable them
+                // either at this pin. Dispatching gpui-component's Input
+                // actions instead gives correct focus-gating: the items enable
+                // exactly while a text input is focused and dispatch into it.
+                MenuItem::action(dat0_i18n::t("menu.edit.cut"), gpui_component::input::Cut),
+                MenuItem::action(dat0_i18n::t("menu.edit.copy"), gpui_component::input::Copy),
+                MenuItem::action(
+                    dat0_i18n::t("menu.edit.paste"),
+                    gpui_component::input::Paste,
+                ),
             ],
         },
         Menu {
@@ -220,9 +230,8 @@ gpui::actions!(
         Quit,
         Undo,
         Redo,
-        Cut,
-        Copy,
-        Paste,
+        // NOTE: no Cut/Copy/Paste here — the Edit menu dispatches
+        // `gpui_component::input::{Cut, Copy, Paste}` directly (2026-07-22).
         OpenCommandPalette,
         OpenSettings,
         Minimize,
