@@ -9,7 +9,7 @@
 //! `ThemeConfigColors`, so the gate uses the exact rename keys and survives
 //! field renames in the Rust struct.
 
-use dat0_app::theme::contrast::contrast_ratio;
+use dat0_app::theme::contrast::{composite_over, contrast_ratio};
 use gpui_component::ThemeConfig;
 
 const BUILTIN_SOURCES: [(&str, &str); 3] = [
@@ -157,4 +157,35 @@ fn sibling_pairs_all_gated() {
             );
         }
     }
+}
+
+/// Tinted (8-digit) JSON tokens: text must stay readable THROUGH the tint,
+/// i.e. against the source-over-composited effective color.
+/// `scrollbar.background` is intentionally fully transparent (α=0) and has
+/// no text on it — deliberately unchecked.
+#[test]
+fn composited_tints_keep_text_readable() {
+    let mut failures = vec![];
+    for (name, json) in BUILTIN_SOURCES {
+        let colors = colors_of(json);
+        let fg = color(&colors, "foreground");
+        for (tint_key, base_key) in [
+            ("selection.background", "table.background"),
+            ("drop_target.background", "background"),
+        ] {
+            let eff = composite_over(&color(&colors, tint_key), &color(&colors, base_key));
+            let r = contrast_ratio(&fg, &eff);
+            eprintln!("{name}: foreground over {tint_key}∘{base_key} ({eff}) = {r:.2}:1 (min 4.5)");
+            if r < 4.5 {
+                failures.push(format!(
+                    "{name}: foreground over {tint_key}∘{base_key} ({eff}) = {r:.2}:1 < 4.5"
+                ));
+            }
+        }
+    }
+    assert!(
+        failures.is_empty(),
+        "composited-tint contrast failures:\n{}",
+        failures.join("\n")
+    );
 }
