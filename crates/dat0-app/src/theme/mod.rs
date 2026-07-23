@@ -10,6 +10,7 @@
 //! (master plan §4, verified at rev 0f0ab35).
 
 pub mod contrast;
+pub mod tokens;
 
 use std::rc::Rc;
 use std::sync::LazyLock;
