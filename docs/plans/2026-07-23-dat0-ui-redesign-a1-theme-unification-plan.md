@@ -901,17 +901,15 @@ with:
 Run: `cargo test -p dat0-app --test theme --test theme_contrast_gate --test p1_exit_smoke`
 Expected: PASS. `theme_live_switch` still references `load_builtin` and now FAILS TO COMPILE — expected; it is rewritten in Task 4. Confirm with `cargo build -p dat0-app` that the library itself compiles clean (window.rs, settings_ui — `Theme::switch` call sites are signature-compatible).
 
-- [ ] **Step 8: Temporarily neutralize `theme_live_switch` for a green commit**
+- [ ] **Step 8: Remove `theme_live_switch.rs` (Task 4 recreates it)**
 
-Replace the entire content of `tests/theme_live_switch.rs` with the Task-4 marker (Task 4 replaces it same-branch, next commit):
+The old suite is welded to `load_builtin`/`background()` which no longer exist. Task 4 writes its replacement from scratch in the next commit, so delete rather than leave a transitional stub:
 
-```rust
-//! Rewritten by A1 Task 4 (live-switch round-trip through the production
-//! install/switch path). Transitional empty suite so the Task-3 commit
-//! builds green; see docs/plans/2026-07-23-dat0-ui-redesign-a1-theme-unification-plan.md.
+```bash
+git rm crates/dat0-app/tests/theme_live_switch.rs
 ```
 
-Run: `cargo test -p dat0-app --test theme_live_switch` — Expected: PASS (0 tests).
+Run: `cargo test -p dat0-app --test theme` — Expected: PASS (and no `theme_live_switch` target remains to fail the build).
 
 - [ ] **Step 9: Format and commit**
 
