@@ -124,6 +124,63 @@ pub trait SpStyled: Styled + Sized {
 
 impl<E: Styled> SpStyled for E {}
 
+/// Desktop typography ladder (master plan §3 + owner decision 2026-07-23:
+/// size + weight + line-height per role, so surfaces can't half-apply the
+/// ladder). Body is 13px against the A1 `font.size` 14 root.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TextRole {
+    Caption,
+    Small,
+    Body,
+    BodyLg,
+    Title,
+    Display,
+}
+
+impl TextRole {
+    pub fn size(self) -> Pixels {
+        px(match self {
+            TextRole::Caption => 11.,
+            TextRole::Small => 12.,
+            TextRole::Body => 13.,
+            TextRole::BodyLg => 14.,
+            TextRole::Title => 16.,
+            TextRole::Display => 20.,
+        })
+    }
+
+    pub fn weight(self) -> FontWeight {
+        match self {
+            TextRole::Title => FontWeight::MEDIUM,
+            TextRole::Display => FontWeight::SEMIBOLD,
+            _ => FontWeight::NORMAL,
+        }
+    }
+
+    /// Line height as a multiple of the role's font size
+    /// (`gpui::relative` fraction semantics).
+    pub fn line_height_factor(self) -> f32 {
+        match self {
+            TextRole::Caption | TextRole::Small => 1.4,
+            TextRole::Body | TextRole::BodyLg => 1.5,
+            TextRole::Title => 1.3,
+            TextRole::Display => 1.2,
+        }
+    }
+}
+
+/// `.text_role(TextRole::Title)` applies size + weight + line-height in one
+/// call — the centralized map is the point (no per-site weight drift).
+pub trait TypoStyled: Styled + Sized {
+    fn text_role(self, role: TextRole) -> Self {
+        self.text_size(role.size())
+            .font_weight(role.weight())
+            .line_height(relative(role.line_height_factor()))
+    }
+}
+
+impl<E: Styled> TypoStyled for E {}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -192,6 +249,24 @@ mod tests {
         for (sp, v) in expect {
             assert_eq!(sp.pixels(), px(v), "{sp:?}");
             assert_eq!(Pixels::from(sp), px(v));
+        }
+    }
+
+    #[test]
+    fn text_role_ladder_exact_values() {
+        use TextRole::*;
+        let expect = [
+            (Caption, 11., FontWeight::NORMAL, 1.4),
+            (Small, 12., FontWeight::NORMAL, 1.4),
+            (Body, 13., FontWeight::NORMAL, 1.5),
+            (BodyLg, 14., FontWeight::NORMAL, 1.5),
+            (Title, 16., FontWeight::MEDIUM, 1.3),
+            (Display, 20., FontWeight::SEMIBOLD, 1.2),
+        ];
+        for (role, size, weight, lh) in expect {
+            assert_eq!(role.size(), px(size), "{role:?} size");
+            assert_eq!(role.weight(), weight, "{role:?} weight");
+            assert!((role.line_height_factor() - lh).abs() < f32::EPSILON, "{role:?} line-height");
         }
     }
 }
