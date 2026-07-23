@@ -1801,10 +1801,10 @@ pub fn run_app(lock: AppLock, initial_paths: Vec<PathBuf>, main_loop: MainLoop) 
             crate::theme::Theme::install(cx, &store);
         } else {
             // Without a config dir we still want subscribers to find a
-            // global (`cx.global::<Theme>` panics otherwise). Install the
-            // built-in default directly — same shape as the fallback path
-            // in `Theme::install`.
-            cx.set_global(crate::theme::Theme::load_builtin_or_default("dark"));
+            // global (`cx.global::<Theme>` panics otherwise). Installs the
+            // built-in default via the same activate path `Theme::install`
+            // uses.
+            crate::theme::Theme::install_default(cx);
         }
 
         // PD-010 closure: drive the MainThreadDispatcher receiver loop from

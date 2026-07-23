@@ -1,49 +1,58 @@
-//! WCAG AA contrast gate over the three builtin themes (P10b a11y).
-//! Fails CI if any required fg/bg pair drops below threshold. `border`
-//! is intentionally exempt (decorative; WCAG 1.4.11 carve-out).
+//! WCAG AA contrast gate over the three builtin theme configs (P10b a11y,
+//! retargeted by UI-redesign A1 to the gpui_component::ThemeConfig shape —
+//! the SAME parsed document production applies via `apply_config`).
 //!
-//! Grid selection uses a hardcoded ring (`border_2().border_color`) plus a
-//! translucent tint overlay (`rgba(0x3b82f622)` / `rgba(0x3b82f611)`). The
-//! cell text colour is NOT changed for selected/active cells — foreground
-//! text still renders on the background colour (branch A). Therefore no
-//! `foreground`-on-`accent`-fill text pair exists and no `selection_fg`
-//! token is needed; `accent`/`background` at ≥4.5 already covers the
-//! ring-vs-background requirement and strictly subsumes any 3.0 check.
+//! A1 keeps the P10b 5-pair floor; slice A3 extends the matrix (~15 text
+//! pairs, ~10 non-text 3:1 pairs, 8-digit-hex alpha compositing) and does
+//! the final palette tuning. `border` stays exempt (decorative; WCAG
+//! 1.4.11 carve-out). Values are read through serde serialization of the
+//! parsed `ThemeConfigColors`, so the gate uses the exact rename keys and
+//! survives field renames in the Rust struct.
 
-use dat0_app::theme::{Theme, contrast::contrast_ratio};
+use dat0_app::theme::contrast::contrast_ratio;
+use gpui_component::ThemeConfig;
 
-fn style_color<'a>(t: &'a Theme, name: &str) -> &'a str {
-    match name {
-        "background" => &t.style.background,
-        "foreground" => &t.style.foreground,
-        "accent" => &t.style.accent,
-        "error" => &t.style.error,
-        "success" => &t.style.success,
-        "warning" => &t.style.warning,
-        other => panic!("unknown token {other}"),
-    }
+const BUILTIN_SOURCES: [(&str, &str); 3] = [
+    ("dark", include_str!("../src/theme/builtins/dark.json")),
+    ("light", include_str!("../src/theme/builtins/light.json")),
+    (
+        "high-contrast",
+        include_str!("../src/theme/builtins/high-contrast.json"),
+    ),
+];
+
+fn color(colors: &serde_json::Value, key: &str) -> String {
+    colors[key]
+        .as_str()
+        .unwrap_or_else(|| {
+            panic!("color key {key} missing/null (coverage gate should have caught this)")
+        })
+        .to_string()
 }
 
 #[test]
 fn builtin_themes_meet_wcag_aa() {
-    // (token_a, token_b, min_ratio)
-    // Branch A: grid selection is a ring + translucent tint (no fill);
-    // foreground text remains on background. No additional pair needed.
-    let matrix: &[(&str, &str, f64)] = &[
-        ("foreground", "background", 4.5),
-        ("error", "background", 4.5),
-        ("success", "background", 4.5),
-        ("warning", "background", 4.5),
-        ("accent", "background", 4.5),
+    // (fg_key, min_ratio) — each checked against "background".
+    // ring replaces the old `accent` token: it IS the single accent now
+    // (the two-blues split died in A1).
+    let matrix: &[(&str, f64)] = &[
+        ("foreground", 4.5),
+        ("danger.background", 4.5),
+        ("success.background", 4.5),
+        ("warning.background", 4.5),
+        ("ring", 4.5),
     ];
     let mut failures = vec![];
-    for name in ["light", "dark", "high-contrast"] {
-        let t = Theme::load_builtin(name).expect("builtin parses");
-        for (a, b, min) in matrix {
-            let r = contrast_ratio(style_color(&t, a), style_color(&t, b));
-            eprintln!("{name}: {a}/{b} = {r:.2}:1 (min {min})");
+    for (name, json) in BUILTIN_SOURCES {
+        let cfg: ThemeConfig = serde_json::from_str(json).expect("builtin parses");
+        let colors = serde_json::to_value(&cfg.colors).expect("colors serialize");
+        let bg = color(&colors, "background");
+        for (key, min) in matrix {
+            let fg = color(&colors, key);
+            let r = contrast_ratio(&fg, &bg);
+            eprintln!("{name}: {key}/background = {r:.2}:1 (min {min})");
             if r < *min {
-                failures.push(format!("{name}: {a}/{b} = {r:.2}:1 < {min}"));
+                failures.push(format!("{name}: {key}/background = {r:.2}:1 < {min}"));
             }
         }
     }
