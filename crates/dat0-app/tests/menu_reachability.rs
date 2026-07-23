@@ -17,15 +17,15 @@
 //! - **global** (the default): must be `is_action_available` right after
 //!   registration — a new menu item whose action has no handler fails here
 //!   immediately;
-//! - **`VIEW_SCOPED`**: handled via `.on_action` on the `WorkspaceShell` root
-//!   in `render`, enabled only while the shell has focus. Skipped here
-//!   (headless availability is legitimately false without a focused window);
-//!   behaviourally covered by the nav suites;
-//! - **`KNOWN_DEAD`**: pre-existing debt — items that have shipped grayed-out
-//!   since their menus were added (system/window ops that want `os_action`
-//!   conversion or window plumbing). Asserted UNAVAILABLE both ways, so
-//!   wiring one up forces removing it from the list (ratchet, same policy as
-//!   the style-lint allowlist).
+//! - **`VIEW_SCOPED`**: focus-gated — handled on the `WorkspaceShell` root or
+//!   inside gpui-component's `"Input"` key context, enabled only while the
+//!   right element has focus. Skipped here (headless availability is
+//!   legitimately false without a focused window); behaviourally covered by
+//!   the nav suites.
+//!
+//! The original inventory also carried a `KNOWN_DEAD` bucket (11 items shipped
+//! permanently grayed); it emptied on 2026-07-22 and was removed — every menu
+//! action now must land in one of the two buckets above.
 //!
 //! On Linux `build_menus` returns an empty Vec (no native menu bar), so the
 //! walk is vacuous there — the direct asserts on the hotfix trio keep the
@@ -33,9 +33,16 @@
 
 use gpui::TestAppContext;
 
-/// Actions handled view-scoped on the `WorkspaceShell` root (window.rs
-/// `render`): reach `self` / need `&mut Window`, enable only with shell
-/// focus. Covered by `keyboard_nav` / `sql_console_nav` / dock-toggle tests.
+/// Focus-gated actions — legitimately unavailable headless, enabled only
+/// while the right element has focus:
+///
+/// - `dat0_menu::*` entries: handled view-scoped on the `WorkspaceShell` root
+///   (window.rs `render`); reach `self` / need `&mut Window`. Covered by
+///   `keyboard_nav` / `sql_console_nav` / dock-toggle tests.
+/// - `input::*` entries: the Edit menu dispatches gpui-component's Input
+///   actions (dead-item fix, 2026-07-22), handled inside the focused Input's
+///   `"Input"` key context — items enable exactly while a text input has
+///   focus.
 const VIEW_SCOPED: &[&str] = &[
     "dat0_menu::SqlRun",
     "dat0_menu::SqlCancel",
@@ -47,31 +54,17 @@ const VIEW_SCOPED: &[&str] = &[
     "dat0_menu::InspectorToggle",
     "dat0_menu::ChartVisualize",
     "dat0_menu::AiPanelToggle",
+    "input::Cut",
+    "input::Copy",
+    "input::Paste",
 ];
 
-/// Known-dead menu items (render permanently grayed on macOS) — pre-existing
-/// debt inventoried 2026-07-21, deliberately NOT fixed by the hotfix because
-/// each needs an `os_action` conversion or window-handle plumbing decision:
-///
-/// - `Cut`/`Copy`/`Paste`: should likely become `MenuItem::os_action` so the
-///   OS routes them to the focused text input's responder chain.
-/// - `Quit`/`CloseWindow`/`Minimize`/`Zoom`: window/system ops; users reach
-///   them via Cmd-Q keybind-free platform paths and window chrome today.
-/// - `OpenFile`: the hero/dock flows exist (`open_file_picker`) but the menu
-///   action was never wired.
-///
-/// Fixing any of these MUST remove the entry here or the test fails — the
-/// list can only shrink.
-const KNOWN_DEAD: &[&str] = &[
-    "dat0_menu::OpenFile",
-    "dat0_menu::CloseWindow",
-    "dat0_menu::Quit",
-    "dat0_menu::Cut",
-    "dat0_menu::Copy",
-    "dat0_menu::Paste",
-    "dat0_menu::Minimize",
-    "dat0_menu::Zoom",
-];
+// The 2026-07-21 inventory found 11 dead menu items (no handler anywhere →
+// permanently grayed). PR #59 fixed OpenSettings/OpenDocs/OpenDiscord; the
+// 2026-07-22 follow-up fixed the rest (Quit, CloseWindow, Minimize, Zoom
+// globally; OpenFile view-scoped; Cut/Copy/Paste re-pointed at
+// `gpui_component::input` actions). The dead-list is now EMPTY — every menu
+// action must be global-available or listed in `VIEW_SCOPED` with a reason.
 
 /// Recursively collect every `MenuItem::Action` in a menu tree.
 fn collect_actions(items: &[gpui::MenuItem], out: &mut Vec<Box<dyn gpui::Action>>) {
@@ -90,8 +83,8 @@ fn every_menu_action_has_a_registered_handler(cx: &mut TestAppContext) {
         // The exact production registration path (run_app calls this fn).
         dat0_app::window::register_menu_action_handlers(cx);
 
-        // The hotfix trio, asserted directly so the Linux leg (empty menu
-        // tree) still guards the regression.
+        // The previously-dead items now wired globally, asserted directly so
+        // the Linux leg (empty menu tree) still guards the regressions.
         for (name, available) in [
             (
                 "OpenSettings",
@@ -105,10 +98,24 @@ fn every_menu_action_has_a_registered_handler(cx: &mut TestAppContext) {
                 "OpenDiscord",
                 cx.is_action_available(&dat0_app::menu_macos::OpenDiscord),
             ),
+            ("Quit", cx.is_action_available(&dat0_app::menu_macos::Quit)),
+            (
+                "CloseWindow",
+                cx.is_action_available(&dat0_app::menu_macos::CloseWindow),
+            ),
+            (
+                "Minimize",
+                cx.is_action_available(&dat0_app::menu_macos::Minimize),
+            ),
+            ("Zoom", cx.is_action_available(&dat0_app::menu_macos::Zoom)),
+            (
+                "OpenFile",
+                cx.is_action_available(&dat0_app::menu_macos::OpenFile),
+            ),
         ] {
             assert!(
                 available,
-                "{name} lost its global handler — View/Help menu item goes dead again"
+                "{name} lost its global handler — its menu item goes dead again"
             );
         }
 
@@ -126,24 +133,17 @@ fn every_menu_action_has_a_registered_handler(cx: &mut TestAppContext) {
         );
         for action in &actions {
             let name = action.name();
-            let available = cx.is_action_available(action.as_ref());
-            if KNOWN_DEAD.contains(&name) {
-                assert!(
-                    !available,
-                    "{name} is listed KNOWN_DEAD but now has a global handler — \
-                     remove it from KNOWN_DEAD (the list can only shrink)"
-                );
-            } else if VIEW_SCOPED.contains(&name) {
-                // Legitimately unavailable headless; covered by nav suites.
-            } else {
-                assert!(
-                    available,
-                    "menu action {name} has NO registered handler — its menu item \
-                     renders permanently grayed-out on macOS. Register it in \
-                     window::register_menu_action_handlers (global) or add it to \
-                     VIEW_SCOPED/KNOWN_DEAD with a reason."
-                );
+            if VIEW_SCOPED.contains(&name) {
+                // Legitimately unavailable headless; focus-gated (see const).
+                continue;
             }
+            assert!(
+                cx.is_action_available(action.as_ref()),
+                "menu action {name} has NO registered handler — its menu item \
+                 renders permanently grayed-out on macOS. Register it in \
+                 window::register_menu_action_handlers (global) or add it to \
+                 VIEW_SCOPED with a reason."
+            );
         }
     });
 }
