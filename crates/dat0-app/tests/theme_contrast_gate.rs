@@ -189,3 +189,85 @@ fn composited_tints_keep_text_readable() {
         failures.join("\n")
     );
 }
+
+use dat0_app::theme::tokens::Dat0Theme;
+use std::rc::Rc;
+
+/// Standalone Theme styled by a builtin config — no gpui App needed
+/// (`apply_config` is a plain `&mut self` method, A2-verified at rev 0f0ab35).
+fn theme_for(id: &str) -> gpui_component::Theme {
+    let cfg = dat0_app::theme::builtin_config(id)
+        .expect("builtin theme id")
+        .clone();
+    let mut theme = gpui_component::Theme::default();
+    theme.apply_config(&Rc::new(cfg));
+    theme
+}
+
+/// Hsla → `#rrggbbaa` so every derived value flows through composite_over
+/// uniformly (solid colors carry α=ff and composite to identity).
+fn hex8(c: gpui::Hsla) -> String {
+    let rgba: gpui::Rgba = c.into();
+    let ch = |v: f32| (v.clamp(0.0, 1.0) * 255.0).round() as u8;
+    format!(
+        "#{:02x}{:02x}{:02x}{:02x}",
+        ch(rgba.r),
+        ch(rgba.g),
+        ch(rgba.b),
+        ch(rgba.a)
+    )
+}
+
+/// The A2 alpha factors' promised correctness gate (tokens.rs derivation
+/// comment): derived tints checked against their REAL composited values.
+#[test]
+fn derived_dat0_colors_meet_wcag() {
+    let mut failures = vec![];
+    for (name, json) in BUILTIN_SOURCES {
+        let colors = colors_of(json);
+        let d0 = theme_for(name).d0();
+        let bg = color(&colors, "background");
+        let table_bg = color(&colors, "table.background");
+        let fg = color(&colors, "foreground");
+
+        let mut check = |label: &str, r: f64, min: f64| {
+            eprintln!("{name}: {label} = {r:.2}:1 (min {min})");
+            if r < min {
+                failures.push(format!("{name}: {label} = {r:.2}:1 < {min}"));
+            }
+        };
+
+        // Text stays readable through grid tints (4.5:1).
+        let sel = composite_over(&hex8(d0.selection_tint), &table_bg);
+        check("fg over selection_tint∘table.bg", contrast_ratio(&fg, &sel), 4.5);
+        let cell = composite_over(&hex8(d0.active_cell_tint), &table_bg);
+        check("fg over active_cell_tint∘table.bg", contrast_ratio(&fg, &cell), 4.5);
+        let banner = composite_over(&hex8(d0.banner_tint), &bg);
+        check("fg over banner_tint∘bg", contrast_ratio(&fg, &banner), 4.5);
+        let pill = composite_over(&hex8(d0.pipeline_pill), &bg);
+        check("fg over pipeline_pill∘bg", contrast_ratio(&fg, &pill), 4.5);
+
+        // Non-text indicators distinguishable from their surface (3:1).
+        let handle = composite_over(&hex8(d0.fill_handle), &table_bg);
+        check(
+            "fill_handle∘table.bg vs table.bg",
+            contrast_ratio(&handle, &table_bg),
+            3.0,
+        );
+        let ants = composite_over(&hex8(d0.marching_ants), &table_bg);
+        check(
+            "marching_ants vs table.bg",
+            contrast_ratio(&ants, &table_bg),
+            3.0,
+        );
+    }
+    assert!(
+        failures.is_empty(),
+        "derived Dat0Colors contrast failures:\n{}",
+        failures.join("\n")
+    );
+}
+
+// Note on pill text: `foreground` deliberately (design doc §2d). If A6f puts
+// `text_muted` on pills, the pair gets added THEN (dark measures ≈4.0 → forces
+// an explicit decision at migration time).
