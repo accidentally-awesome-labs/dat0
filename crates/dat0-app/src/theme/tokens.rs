@@ -181,6 +181,96 @@ pub trait TypoStyled: Styled + Sized {
 
 impl<E: Styled> TypoStyled for E {}
 
+/// Surface-elevation ladder (master plan §3). One enum drives bg + border +
+/// radius + shadow TOGETHER (Zed `ElevationIndex` pattern) so surfaces can't
+/// mix rungs. Shadows are gated on `theme.shadow` — the A1 high-contrast
+/// builtin sets `shadow:false`, so HC stays flat and the always-painted
+/// border carries the edge.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Elevation {
+    Background,
+    Surface,
+    Raised,
+    Overlay,
+    Modal,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ShadowLevel {
+    None,
+    Small,
+    Medium,
+    Large,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct ElevationStyle {
+    pub bg: Hsla,
+    pub border: Hsla,
+    pub radius: Pixels,
+    pub shadow: ShadowLevel,
+}
+
+impl Elevation {
+    /// Pure resolution — testable without a window.
+    pub fn resolve(self, theme: &Theme) -> ElevationStyle {
+        let gate = |level| if theme.shadow { level } else { ShadowLevel::None };
+        match self {
+            Elevation::Background => ElevationStyle {
+                bg: theme.background,
+                border: theme.border,
+                radius: px(0.),
+                shadow: ShadowLevel::None,
+            },
+            Elevation::Surface => ElevationStyle {
+                bg: theme.sidebar,
+                border: theme.sidebar_border,
+                radius: px(0.),
+                shadow: ShadowLevel::None,
+            },
+            Elevation::Raised => ElevationStyle {
+                bg: theme.popover,
+                border: theme.border,
+                radius: theme.radius,
+                shadow: gate(ShadowLevel::Small),
+            },
+            Elevation::Overlay => ElevationStyle {
+                bg: theme.popover,
+                border: theme.border,
+                radius: theme.radius,
+                shadow: gate(ShadowLevel::Medium),
+            },
+            Elevation::Modal => ElevationStyle {
+                bg: theme.popover,
+                border: theme.border,
+                radius: theme.radius_lg,
+                shadow: gate(ShadowLevel::Large),
+            },
+        }
+    }
+}
+
+/// `.elevation(Elevation::Overlay, cx.theme())` — applies the whole resolved
+/// rung (bg, border, radius, shadow) in one call.
+pub trait ElevationStyled: Styled + Sized {
+    fn elevation(self, rung: Elevation, theme: &Theme) -> Self {
+        let style = rung.resolve(theme);
+        let this = self
+            .bg(style.bg)
+            .border_1()
+            .border_color(style.border)
+            .rounded(style.radius);
+        match style.shadow {
+            ShadowLevel::None => this,
+            ShadowLevel::Small => this.shadow_sm(),
+            ShadowLevel::Medium => this.shadow_md(),
+            ShadowLevel::Large => this.shadow_lg(),
+        }
+    }
+}
+
+impl<E: Styled> ElevationStyled for E {}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -268,5 +358,48 @@ mod tests {
             assert_eq!(role.weight(), weight, "{role:?} weight");
             assert!((role.line_height_factor() - lh).abs() < f32::EPSILON, "{role:?} line-height");
         }
+    }
+
+    #[test]
+    fn elevation_shadow_gates_on_theme_shadow() {
+        let dark = theme_for("dark"); // shadow: true (A1 builtin)
+        let hc = theme_for("high-contrast"); // shadow: false — HC stays flat
+        assert!(dark.shadow && !hc.shadow, "A1 builtin shadow flags moved — update this test's premise");
+
+        assert_eq!(Elevation::Background.resolve(&dark).shadow, ShadowLevel::None);
+        assert_eq!(Elevation::Surface.resolve(&dark).shadow, ShadowLevel::None);
+        assert_eq!(Elevation::Raised.resolve(&dark).shadow, ShadowLevel::Small);
+        assert_eq!(Elevation::Overlay.resolve(&dark).shadow, ShadowLevel::Medium);
+        assert_eq!(Elevation::Modal.resolve(&dark).shadow, ShadowLevel::Large);
+
+        for rung in [
+            Elevation::Background,
+            Elevation::Surface,
+            Elevation::Raised,
+            Elevation::Overlay,
+            Elevation::Modal,
+        ] {
+            assert_eq!(rung.resolve(&hc).shadow, ShadowLevel::None, "{rung:?} must be flat in HC");
+        }
+    }
+
+    #[test]
+    fn elevation_geometry_and_backgrounds() {
+        let dark = theme_for("dark");
+        // bg ladder: background → sidebar → popover (A1 palette #0e1116 →
+        // #151a21 → #1a2029); floating rungs share popover, differ by
+        // shadow strength + radius.
+        assert_eq!(Elevation::Background.resolve(&dark).bg, dark.background);
+        assert_eq!(Elevation::Surface.resolve(&dark).bg, dark.sidebar);
+        assert_eq!(Elevation::Surface.resolve(&dark).border, dark.sidebar_border);
+        assert_eq!(Elevation::Raised.resolve(&dark).bg, dark.popover);
+        assert_eq!(Elevation::Overlay.resolve(&dark).bg, dark.popover);
+        assert_eq!(Elevation::Modal.resolve(&dark).bg, dark.popover);
+
+        assert_eq!(Elevation::Background.resolve(&dark).radius, px(0.));
+        assert_eq!(Elevation::Surface.resolve(&dark).radius, px(0.));
+        assert_eq!(Elevation::Raised.resolve(&dark).radius, dark.radius);
+        assert_eq!(Elevation::Overlay.resolve(&dark).radius, dark.radius);
+        assert_eq!(Elevation::Modal.resolve(&dark).radius, dark.radius_lg);
     }
 }
