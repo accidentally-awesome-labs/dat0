@@ -76,6 +76,54 @@ impl Dat0Theme for Theme {
     }
 }
 
+/// Spacing scale (px). The ONLY spacing values new dat0 UI should use
+/// (master plan §3); A6 migrates magic px call sites onto it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Sp {
+    S1 = 1,
+    S2 = 2,
+    S4 = 4,
+    S6 = 6,
+    S8 = 8,
+    S12 = 12,
+    S16 = 16,
+    S24 = 24,
+    S32 = 32,
+}
+
+impl Sp {
+    pub fn pixels(self) -> Pixels {
+        px(self as u16 as f32)
+    }
+}
+
+impl From<Sp> for Pixels {
+    fn from(sp: Sp) -> Pixels {
+        sp.pixels()
+    }
+}
+
+/// Spacing helpers so call sites stay terse: `.p_sp(Sp::S8)`.
+pub trait SpStyled: Styled + Sized {
+    fn p_sp(self, sp: Sp) -> Self {
+        self.p(sp.pixels())
+    }
+    fn px_sp(self, sp: Sp) -> Self {
+        self.px(sp.pixels())
+    }
+    fn py_sp(self, sp: Sp) -> Self {
+        self.py(sp.pixels())
+    }
+    fn gap_sp(self, sp: Sp) -> Self {
+        self.gap(sp.pixels())
+    }
+    fn m_sp(self, sp: Sp) -> Self {
+        self.m(sp.pixels())
+    }
+}
+
+impl<E: Styled> SpStyled for E {}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -126,5 +174,24 @@ mod tests {
         assert!((d0.banner_tint.a - dark.muted_foreground.a * 0.08).abs() < 1e-4);
         assert_eq!(d0.selection_tint.h, dark.ring.h);
         assert_eq!(d0.selection_tint.l, dark.ring.l);
+    }
+
+    #[test]
+    fn sp_scale_exact_values() {
+        let expect = [
+            (Sp::S1, 1.),
+            (Sp::S2, 2.),
+            (Sp::S4, 4.),
+            (Sp::S6, 6.),
+            (Sp::S8, 8.),
+            (Sp::S12, 12.),
+            (Sp::S16, 16.),
+            (Sp::S24, 24.),
+            (Sp::S32, 32.),
+        ];
+        for (sp, v) in expect {
+            assert_eq!(sp.pixels(), px(v), "{sp:?}");
+            assert_eq!(Pixels::from(sp), px(v));
+        }
     }
 }
