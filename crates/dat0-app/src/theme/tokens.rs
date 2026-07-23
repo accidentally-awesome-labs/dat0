@@ -6,7 +6,7 @@
 //! high-contrast palette propagates automatically. Strict zero-literal
 //! policy: no color constructors in this file (self-lint test below).
 
-use gpui::{px, relative, FontWeight, Hsla, Pixels, Styled};
+use gpui::{FontWeight, Hsla, Pixels, Styled, px, relative};
 use gpui_component::Theme;
 
 /// dat0-specific color semantics, derived from the active
@@ -214,7 +214,13 @@ pub struct ElevationStyle {
 impl Elevation {
     /// Pure resolution — testable without a window.
     pub fn resolve(self, theme: &Theme) -> ElevationStyle {
-        let gate = |level| if theme.shadow { level } else { ShadowLevel::None };
+        let gate = |level| {
+            if theme.shadow {
+                level
+            } else {
+                ShadowLevel::None
+            }
+        };
         match self {
             Elevation::Background => ElevationStyle {
                 bg: theme.background,
@@ -381,7 +387,10 @@ mod tests {
         for (role, size, weight, lh) in expect {
             assert_eq!(role.size(), px(size), "{role:?} size");
             assert_eq!(role.weight(), weight, "{role:?} weight");
-            assert!((role.line_height_factor() - lh).abs() < f32::EPSILON, "{role:?} line-height");
+            assert!(
+                (role.line_height_factor() - lh).abs() < f32::EPSILON,
+                "{role:?} line-height"
+            );
         }
     }
 
@@ -389,12 +398,21 @@ mod tests {
     fn elevation_shadow_gates_on_theme_shadow() {
         let dark = theme_for("dark"); // shadow: true (A1 builtin)
         let hc = theme_for("high-contrast"); // shadow: false — HC stays flat
-        assert!(dark.shadow && !hc.shadow, "A1 builtin shadow flags moved — update this test's premise");
+        assert!(
+            dark.shadow && !hc.shadow,
+            "A1 builtin shadow flags moved — update this test's premise"
+        );
 
-        assert_eq!(Elevation::Background.resolve(&dark).shadow, ShadowLevel::None);
+        assert_eq!(
+            Elevation::Background.resolve(&dark).shadow,
+            ShadowLevel::None
+        );
         assert_eq!(Elevation::Surface.resolve(&dark).shadow, ShadowLevel::None);
         assert_eq!(Elevation::Raised.resolve(&dark).shadow, ShadowLevel::Small);
-        assert_eq!(Elevation::Overlay.resolve(&dark).shadow, ShadowLevel::Medium);
+        assert_eq!(
+            Elevation::Overlay.resolve(&dark).shadow,
+            ShadowLevel::Medium
+        );
         assert_eq!(Elevation::Modal.resolve(&dark).shadow, ShadowLevel::Large);
 
         for rung in [
@@ -404,7 +422,11 @@ mod tests {
             Elevation::Overlay,
             Elevation::Modal,
         ] {
-            assert_eq!(rung.resolve(&hc).shadow, ShadowLevel::None, "{rung:?} must be flat in HC");
+            assert_eq!(
+                rung.resolve(&hc).shadow,
+                ShadowLevel::None,
+                "{rung:?} must be flat in HC"
+            );
         }
     }
 
@@ -416,7 +438,10 @@ mod tests {
         // shadow strength + radius.
         assert_eq!(Elevation::Background.resolve(&dark).bg, dark.background);
         assert_eq!(Elevation::Surface.resolve(&dark).bg, dark.sidebar);
-        assert_eq!(Elevation::Surface.resolve(&dark).border, dark.sidebar_border);
+        assert_eq!(
+            Elevation::Surface.resolve(&dark).border,
+            dark.sidebar_border
+        );
         assert_eq!(Elevation::Raised.resolve(&dark).bg, dark.popover);
         assert_eq!(Elevation::Overlay.resolve(&dark).bg, dark.popover);
         assert_eq!(Elevation::Modal.resolve(&dark).bg, dark.popover);
@@ -477,7 +502,10 @@ mod tests {
 
         // TypoStyled: all three text properties land, with Title's values.
         let mut el = gpui::div().text_role(TextRole::Title);
-        let text = el.text_style().clone().expect("text_role must set text style");
+        let text = el
+            .text_style()
+            .clone()
+            .expect("text_role must set text style");
         assert_eq!(text.font_size, Some(TextRole::Title.size().into()));
         assert_eq!(text.font_weight, Some(TextRole::Title.weight()));
         assert_eq!(
@@ -498,7 +526,10 @@ mod tests {
         let style = el.style();
         assert_eq!(style.border_color, Some(resolved.border));
         assert_eq!(style.corner_radii.top_left, Some(resolved.radius.into()));
-        assert!(style.background.is_some(), "elevation must set a background");
+        assert!(
+            style.background.is_some(),
+            "elevation must set a background"
+        );
         assert!(
             style.box_shadow.as_ref().is_some_and(|s| !s.is_empty()),
             "Modal in dark casts a shadow"
