@@ -53,8 +53,16 @@ const TEXT_PAIRS: &[(&str, &str, f64)] = &[
     ("info.foreground", "info.background", 4.5),
     ("popover.foreground", "popover.background", 4.5),
     ("sidebar.foreground", "sidebar.background", 4.5),
-    ("sidebar.accent.foreground", "sidebar.accent.background", 4.5),
-    ("sidebar.primary.foreground", "sidebar.primary.background", 4.5),
+    (
+        "sidebar.accent.foreground",
+        "sidebar.accent.background",
+        4.5,
+    ),
+    (
+        "sidebar.primary.foreground",
+        "sidebar.primary.background",
+        4.5,
+    ),
     ("group_box.foreground", "group_box.background", 4.5),
     ("group_box.title.foreground", "group_box.background", 4.5),
     ("tab.foreground", "tab.background", 4.5),
@@ -239,9 +247,17 @@ fn derived_dat0_colors_meet_wcag() {
 
         // Text stays readable through grid tints (4.5:1).
         let sel = composite_over(&hex8(d0.selection_tint), &table_bg);
-        check("fg over selection_tint∘table.bg", contrast_ratio(&fg, &sel), 4.5);
+        check(
+            "fg over selection_tint∘table.bg",
+            contrast_ratio(&fg, &sel),
+            4.5,
+        );
         let cell = composite_over(&hex8(d0.active_cell_tint), &table_bg);
-        check("fg over active_cell_tint∘table.bg", contrast_ratio(&fg, &cell), 4.5);
+        check(
+            "fg over active_cell_tint∘table.bg",
+            contrast_ratio(&fg, &cell),
+            4.5,
+        );
         let banner = composite_over(&hex8(d0.banner_tint), &bg);
         check("fg over banner_tint∘bg", contrast_ratio(&fg, &banner), 4.5);
         let pill = composite_over(&hex8(d0.pipeline_pill), &bg);

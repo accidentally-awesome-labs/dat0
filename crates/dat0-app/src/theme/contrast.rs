@@ -38,9 +38,15 @@ pub fn composite_over(fg: &str, bg: &str) -> String {
     if f.len() == 6 {
         return format!("#{f}");
     }
-    assert!(f.len() == 8, "composite_over fg must be #rrggbb or #rrggbbaa (got {fg})");
+    assert!(
+        f.len() == 8,
+        "composite_over fg must be #rrggbb or #rrggbbaa (got {fg})"
+    );
     let b = bg.trim_start_matches('#');
-    assert!(b.len() == 6, "composite_over bg must be opaque #rrggbb (got {bg})");
+    assert!(
+        b.len() == 6,
+        "composite_over bg must be opaque #rrggbb (got {bg})"
+    );
     let a = u8::from_str_radix(&f[6..8], 16).unwrap_or(0) as f64 / 255.0;
     let ch = |i: usize| {
         let fc = u8::from_str_radix(&f[i..i + 2], 16).unwrap_or(0) as f64;
