@@ -331,6 +331,14 @@ mod tests {
         assert_eq!(dark.d0().hover_tint, dark.list_hover);
         assert_eq!(dark.d0().chart_placeholder_a, dark.chart_2);
         assert_eq!(dark.d0().chart_placeholder_b, dark.chart_1);
+        assert_eq!(dark.d0().banner_info, dark.info);
+        assert_eq!(dark.d0().banner_warning, dark.warning);
+        assert_eq!(dark.d0().banner_error, dark.danger);
+        assert_eq!(dark.d0().pipeline_accent, dark.primary);
+        assert_eq!(dark.d0().pipeline_chip, dark.secondary);
+        assert_eq!(dark.d0().text_error, dark.danger);
+        assert_eq!(dark.d0().pager_dot_active, dark.foreground);
+        assert_eq!(dark.d0().pager_dot_inactive, dark.muted_foreground);
 
         // The three palettes actually differ (ring: #58a6ff / #0969da /
         // #ffff00) → derived fields differ. Proves apply_config took effect
@@ -344,7 +352,7 @@ mod tests {
     fn alpha_tints_scale_the_source_alpha() {
         let dark = theme_for("dark");
         let d0 = dark.d0();
-        // Colorize::opacity multiplies alpha and leaves h/s/l untouched.
+        // Hsla::opacity multiplies alpha and leaves h/s/l untouched.
         assert!((d0.selection_tint.a - dark.ring.a * 0.13).abs() < 1e-4);
         assert!((d0.fill_handle.a - dark.ring.a * 0.65).abs() < 1e-4);
         assert!((d0.active_cell_tint.a - dark.ring.a * 0.07).abs() < 1e-4);
