@@ -1,27 +1,38 @@
-use dat0_app::theme::Theme;
+use dat0_app::theme::builtin_config;
 
 #[test]
 fn dark_loads() {
-    let t = Theme::load_builtin("dark").unwrap();
-    assert_eq!(t.name, "dark");
+    assert_eq!(
+        builtin_config("dark").expect("dark builtin").name.as_ref(),
+        "dark"
+    );
 }
 
 #[test]
 fn light_loads() {
-    let t = Theme::load_builtin("light").unwrap();
-    assert_eq!(t.name, "light");
+    assert_eq!(
+        builtin_config("light")
+            .expect("light builtin")
+            .name
+            .as_ref(),
+        "light"
+    );
 }
 
 #[test]
 fn high_contrast_loads() {
-    let t = Theme::load_builtin("high-contrast").unwrap();
-    assert_eq!(t.name, "high-contrast");
+    assert_eq!(
+        builtin_config("high-contrast")
+            .expect("hc builtin")
+            .name
+            .as_ref(),
+        "high-contrast"
+    );
 }
 
 #[test]
-fn unknown_returns_err() {
-    let r = Theme::load_builtin("does-not-exist");
-    assert!(r.is_err());
+fn unknown_returns_none() {
+    assert!(builtin_config("does-not-exist").is_none());
 }
 
 // ---------------------------------------------------------------------------

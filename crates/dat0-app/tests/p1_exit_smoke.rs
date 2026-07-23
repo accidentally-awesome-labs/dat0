@@ -15,10 +15,9 @@ fn settings_toml_round_trip() {
 
 #[test]
 fn theme_default_loads() {
-    use dat0_app::theme::Theme;
-    assert!(Theme::load_builtin("dark").is_ok());
-    assert!(Theme::load_builtin("light").is_ok());
-    assert!(Theme::load_builtin("high-contrast").is_ok());
+    assert!(dat0_app::theme::builtin_config("dark").is_some());
+    assert!(dat0_app::theme::builtin_config("light").is_some());
+    assert!(dat0_app::theme::builtin_config("high-contrast").is_some());
 }
 
 #[test]

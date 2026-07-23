@@ -1,103 +1,108 @@
-pub mod contrast;
-mod zed_schema;
+//! dat0 theme façade (UI-redesign A1). The single color source of truth is
+//! `gpui_component::Theme` — [`Theme::install`] / [`Theme::switch`] apply a
+//! full-coverage builtin `ThemeConfig` via `apply_config` and refresh every
+//! window. This global only carries the active `{id, mode}` for persistence
+//! (`theme.id` in the SettingsStore), the 3-way Settings picker, and
+//! `cx.observe_global::<Theme>` fan-out (unchanged subscriber contract).
+//!
+//! NEVER use `gpui_component::Theme::change` for the 3-way switch: it
+//! re-applies from the stored light/dark slots and clobbers high-contrast
+//! (master plan §4, verified at rev 0f0ab35).
 
-use anyhow::{Context, Result};
-pub use zed_schema::*;
+pub mod contrast;
+
+use std::rc::Rc;
+use std::sync::LazyLock;
+
+use gpui_component::{ThemeConfig, ThemeMode};
 
 #[derive(Debug, Clone)]
 pub struct Theme {
-    pub name: String,
-    pub style: ZedStyle,
-}
-
-impl Theme {
-    pub fn load_builtin(name: &str) -> Result<Self> {
-        let json = match name {
-            "dark" => include_str!("builtins/dark.json"),
-            "light" => include_str!("builtins/light.json"),
-            "high-contrast" => include_str!("builtins/high-contrast.json"),
-            other => anyhow::bail!("unknown built-in theme: {other}"),
-        };
-        let parsed: ZedTheme =
-            serde_json::from_str(json).with_context(|| format!("parse builtin theme {name}"))?;
-        Ok(Self {
-            name: parsed.name,
-            style: parsed.style,
-        })
-    }
-
-    /// Same as [`load_builtin`] but swallows the unknown-id error and
-    /// falls back to the `"dark"` built-in. P3b T12 uses this on the
-    /// install / switch paths so a corrupt `theme.id` in
-    /// `settings.toml` doesn't crash the running app — the failure
-    /// shape is "user sees the dark theme" rather than a panic. The
-    /// fallible [`load_builtin`] is kept for callers that want to
-    /// distinguish "known id" from "unknown id" (tests, future
-    /// validation UI).
-    pub fn load_builtin_or_default(name: &str) -> Self {
-        match Self::load_builtin(name) {
-            Ok(t) => t,
-            Err(e) => {
-                tracing::warn!(
-                    error = %e,
-                    requested = name,
-                    "Theme::load_builtin_or_default: unknown id; falling back to 'dark'"
-                );
-                // Built-in `dark.json` is checked into the repo and parses;
-                // an Err here is unreachable in practice. `expect` keeps the
-                // failure loud if someone breaks the JSON in a future change.
-                Self::load_builtin("dark").expect("built-in 'dark' theme must parse")
-            }
-        }
-    }
-
-    /// Logical id of this theme (matches the value persisted at
-    /// `theme.id` in the SettingsStore). The current
-    /// [`Theme::load_builtin`] sets `self.name` from the JSON's
-    /// `"name"` field, which by convention matches the id for the
-    /// three built-ins; tests in
-    /// `crates/dat0-app/tests/theme_live_switch.rs` rely on this
-    /// equality.
-    pub fn id(&self) -> &str {
-        &self.name
-    }
-
-    /// Background colour hex string, taken from the Zed-schema style
-    /// block. Returned as `&str` so the equality assertion in
-    /// `theme_live_switch::load_builtin_dark_and_light_differ` can
-    /// compare two `&str` slices without needing an Hsla parser.
-    pub fn background(&self) -> &str {
-        &self.style.background
-    }
+    /// Logical id: `"dark" | "light" | "high-contrast"`. Matches the value
+    /// persisted at `theme.id` in the SettingsStore.
+    pub id: String,
+    /// The gpui-component mode this id maps to (high-contrast is a `Dark`
+    /// config; `apply_config` sets the component-side mode itself).
+    pub mode: ThemeMode,
 }
 
 impl gpui::Global for Theme {}
 
+fn parse(name: &str, json: &str) -> ThemeConfig {
+    // Builtins are compiled in; a parse failure is a programmer error and
+    // the coverage gate in tests/theme.rs keeps them well-formed. Loud
+    // failure over silent fallback (same policy as the old
+    // `load_builtin_or_default` inner expect).
+    serde_json::from_str(json).unwrap_or_else(|e| panic!("built-in theme '{name}' must parse: {e}"))
+}
+
+static DARK: LazyLock<ThemeConfig> =
+    LazyLock::new(|| parse("dark", include_str!("builtins/dark.json")));
+static LIGHT: LazyLock<ThemeConfig> =
+    LazyLock::new(|| parse("light", include_str!("builtins/light.json")));
+static HIGH_CONTRAST: LazyLock<ThemeConfig> =
+    LazyLock::new(|| parse("high-contrast", include_str!("builtins/high-contrast.json")));
+
+/// The parsed builtin `ThemeConfig` for a dat0 theme id, or `None` for
+/// unknown ids (callers that want fallback semantics use
+/// [`Theme::switch`], which maps unknown → `"dark"`).
+pub fn builtin_config(id: &str) -> Option<&'static ThemeConfig> {
+    match id {
+        "dark" => Some(&DARK),
+        "light" => Some(&LIGHT),
+        "high-contrast" => Some(&HIGH_CONTRAST),
+        _ => None,
+    }
+}
+
 impl Theme {
-    /// Install the active theme as a `gpui::Global` at app boot.
-    /// Reads the persisted `theme.id` from the [`SettingsStore`] and
-    /// falls back to `"dark"` when the key is missing or unknown.
-    /// Called once from `run_app` before any window opens — every
-    /// view that subscribes via `cx.observe_global::<Theme>` then
-    /// sees the same initial palette.
+    pub fn id(&self) -> &str {
+        &self.id
+    }
+
+    /// App-boot install: read the persisted `theme.id` (missing/unknown →
+    /// `"dark"`), set the façade global, and restyle gpui-component.
+    /// Called once from `run_app` before any window opens.
     pub fn install(cx: &mut gpui::App, settings: &crate::settings::store::SettingsStore) {
         let id = settings
             .get_string("theme.id")
             .unwrap_or_else(|| "dark".into());
-        let theme = Self::load_builtin_or_default(&id);
-        cx.set_global(theme);
+        Self::activate(cx, &id);
     }
 
-    /// Replace the global theme with the built-in identified by
-    /// `new_id`. Subscribers registered with `cx.observe_global::<Theme>`
-    /// receive a `NotifyGlobalObservers` effect on the next tick and
-    /// re-render with the new palette — no app restart required.
-    /// Unknown ids fall back to `"dark"` (see
-    /// [`Theme::load_builtin_or_default`]). Cross-window propagation
-    /// is automatic because the global is app-scoped per
-    /// `docs/internal/gpui-api-notes.md` §0.A.4.
+    /// Install the default (`"dark"`) theme — the no-config-dir fallback
+    /// path in `run_app` and pure-test convenience.
+    pub fn install_default(cx: &mut gpui::App) {
+        Self::activate(cx, "dark");
+    }
+
+    /// Switch to `new_id` and fan out: sets the façade global (observers
+    /// registered with `cx.observe_global::<Theme>` re-render next tick)
+    /// and re-applies the matching config to the gpui-component global so
+    /// widgets actually restyle. Unknown ids fall back to `"dark"`.
     pub fn switch(cx: &mut gpui::App, new_id: &str) {
-        let new_theme = Self::load_builtin_or_default(new_id);
-        cx.set_global(new_theme);
+        Self::activate(cx, new_id);
+    }
+
+    fn activate(cx: &mut gpui::App, requested: &str) {
+        let (id, cfg) = match builtin_config(requested) {
+            Some(cfg) => (requested, cfg),
+            None => {
+                tracing::warn!(requested, "unknown theme id; falling back to 'dark'");
+                ("dark", builtin_config("dark").expect("'dark' is a builtin"))
+            }
+        };
+        cx.set_global(Self {
+            id: id.to_string(),
+            mode: cfg.mode,
+        });
+        // Forward to the gpui-component global so widgets restyle. No-op in
+        // pure-test contexts that never ran `gpui_component::init` — the
+        // façade global still installs so observer-based tests keep working
+        // (A0 spike pattern).
+        if cx.has_global::<gpui_component::Theme>() {
+            gpui_component::Theme::global_mut(cx).apply_config(&Rc::new(cfg.clone()));
+            cx.refresh_windows();
+        }
     }
 }
