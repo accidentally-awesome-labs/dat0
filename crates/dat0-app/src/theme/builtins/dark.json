@@ -29,7 +29,7 @@
     "muted.foreground": "#8b949e",
 
     "danger.background": "#f85149",
-    "danger.foreground": "#ffffff",
+    "danger.foreground": "#0e1116",
     "danger.hover.background": "#ff6a5f",
     "danger.active.background": "#e0443c",
     "success.background": "#3fb950",

@@ -48,12 +48,13 @@ impl Dat0Theme for Theme {
     fn d0(&self) -> Dat0Colors {
         // `Theme` derefs to `ThemeColor`, so `self.ring` etc. read the
         // active palette. Alpha factors are eyeball-matched to the pre-A6
-        // inline values (0x22≈0.13, 0xaa≈0.65, 0x11≈0.07, 0x40=0.25,
-        // 0x14≈0.08); the A3 contrast matrix is their correctness gate.
+        // inline values (0x22≈0.13, 0xaa≈0.65→0.72 (A3: light-theme 3:1),
+        // 0x11≈0.07, 0x40=0.25, 0x14≈0.08); the A3 contrast matrix is their
+        // correctness gate.
         Dat0Colors {
             focus_ring: self.ring,
             selection_tint: self.ring.opacity(0.13),
-            fill_handle: self.ring.opacity(0.65),
+            fill_handle: self.ring.opacity(0.72),
             active_cell_tint: self.ring.opacity(0.07),
             marching_ants: self.success,
             null_value_fg: self.muted_foreground,
@@ -354,7 +355,7 @@ mod tests {
         let d0 = dark.d0();
         // Hsla::opacity multiplies alpha and leaves h/s/l untouched.
         assert!((d0.selection_tint.a - dark.ring.a * 0.13).abs() < 1e-4);
-        assert!((d0.fill_handle.a - dark.ring.a * 0.65).abs() < 1e-4);
+        assert!((d0.fill_handle.a - dark.ring.a * 0.72).abs() < 1e-4);
         assert!((d0.active_cell_tint.a - dark.ring.a * 0.07).abs() < 1e-4);
         assert!((d0.pipeline_pill.a - dark.ring.a * 0.25).abs() < 1e-4);
         assert!((d0.banner_tint.a - dark.muted_foreground.a * 0.08).abs() < 1e-4);
