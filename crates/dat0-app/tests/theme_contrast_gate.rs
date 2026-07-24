@@ -169,8 +169,8 @@ fn sibling_pairs_all_gated() {
 
 /// Tinted (8-digit) JSON tokens: text must stay readable THROUGH the tint,
 /// i.e. against the source-over-composited effective color.
-/// `scrollbar.background` is intentionally fully transparent (α=0) and has
-/// no text on it — deliberately unchecked.
+/// `scrollbar.background` (α=0 in dark/light, opaque black in
+/// high-contrast) carries no text — deliberately unchecked.
 #[test]
 fn composited_tints_keep_text_readable() {
     let mut failures = vec![];
@@ -228,6 +228,8 @@ fn hex8(c: gpui::Hsla) -> String {
 
 /// The A2 alpha factors' promised correctness gate (tokens.rs derivation
 /// comment): derived tints checked against their REAL composited values.
+/// Compositing bases assume `table.background == background` (true in all
+/// builtins); zebra/active rows sit within the checked margins until A6.
 #[test]
 fn derived_dat0_colors_meet_wcag() {
     let mut failures = vec![];
