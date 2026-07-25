@@ -400,7 +400,7 @@ fn components_section(theme: &ComponentTheme, input: &Entity<InputState>) -> imp
             .child(buttons)
             .child(sub_title(theme, "Input"))
             .child(div().w(Sp::S32.pixels() * 8.0).child(Input::new(input)))
-            .child(sub_title(theme, "Card"))
+            .child(sub_title(theme, "Cards"))
             .child(card)
             .child(sub_title(theme, "Table (stub)"))
             .child(

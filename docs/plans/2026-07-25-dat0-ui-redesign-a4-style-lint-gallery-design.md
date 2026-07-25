@@ -13,7 +13,7 @@ pixels move in this slice:
    constructors in `crates/dat0-app/src/**`, with a per-line escape comment and
    a per-file **shrink-only count ratchet**. A1-A3 built the token system; A4 is
    what stops new code from bypassing it, and what forces A6a-g to actually
-   retire the 31 remaining literal sites instead of leaving them.
+   retire the 36 remaining literal sites instead of leaving them.
 2. **`src/gallery.rs` + `examples/gallery.rs` + `tests/gallery_smoke.rs`** — a
    runnable token gallery. It is the manual-UAT vehicle for every later slice:
    the accumulating "owed human glance" backlog (palette feel ×3, HC legibility,
@@ -60,8 +60,9 @@ Substring match, any argument:
 rgb(   rgba(   hsla(   hsl(   white()   black()   parse_hex
 ```
 
-Plus one regex for bare literals: `\b0x[0-9a-fA-F]{6}([0-9a-fA-F]{2})?\b`
-(6 or 8 hex digits, word-bounded).
+Plus one regex for bare literals: `(?i)(^|[^0-9a-z_])0x[0-9a-f]{6}([0-9a-f]{2})?([^0-9a-f]|$)`
+(6 or 8 hex digits, boundary-guarded on both sides with explicit character
+classes rather than `\b`, since the `regex` crate has no lookaround support).
 
 The 6-or-8-digit anchor is what makes the bare-hex rule affordable. Measured
 against `src/` at `dca3c9c` it matches exactly one line — `a11y/mod.rs:30`

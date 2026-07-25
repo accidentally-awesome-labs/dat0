@@ -69,6 +69,33 @@ fn bare_hex_re() -> Regex {
         .expect("bare-hex pattern must compile")
 }
 
+/// gpui's other color constructors (`gpui-0.2.2/src/color.rs`) plus the raw
+/// struct literals. Boundary-anchored on the left: a plain substring match on
+/// `red(` would fire on ordinary identifiers such as `md_not_attached_ignored()`
+/// (`crates/dat0-app/src/connections/routing.rs:133`).
+fn color_ctor_re() -> Regex {
+    Regex::new(
+        r"(^|[^0-9a-zA-Z_])(opaque_grey|transparent_black|transparent_white|red|blue|green|yellow)\(|\b(Hsla|Rgba)\s*\{",
+    )
+    .expect("color-constructor pattern must compile")
+}
+
+/// Both banned-pattern regexes, bundled so `scan()` takes one argument
+/// instead of growing an unbounded parameter list as the pattern table grows.
+struct Patterns {
+    hex: Regex,
+    ctor: Regex,
+}
+
+impl Patterns {
+    fn new() -> Self {
+        Self {
+            hex: bare_hex_re(),
+            ctor: color_ctor_re(),
+        }
+    }
+}
+
 #[derive(Debug)]
 struct Violation {
     line_no: usize,
@@ -87,13 +114,19 @@ struct ScanResult {
 }
 
 /// The first banned pattern on `line`, if any.
-fn banned_hit(line: &str, hex: &Regex) -> Option<String> {
+fn banned_hit(line: &str, patterns: &Patterns) -> Option<String> {
     for pat in BANNED_SUBSTRINGS {
         if line.contains(pat) {
             return Some((*pat).to_string());
         }
     }
-    hex.find(line).map(|m| m.as_str().trim().to_string())
+    if let Some(m) = patterns.hex.find(line) {
+        return Some(m.as_str().trim().to_string());
+    }
+    patterns
+        .ctor
+        .find(line)
+        .map(|m| m.as_str().trim().to_string())
 }
 
 /// The reason text inside `// style-lint: allow(<reason>)`, or `None` when the
@@ -105,11 +138,11 @@ fn allow_reason(line: &str) -> Option<&str> {
     Some(rest[..end].trim())
 }
 
-fn scan(src: &str, hex: &Regex) -> ScanResult {
+fn scan(src: &str, patterns: &Patterns) -> ScanResult {
     let mut out = ScanResult::default();
     for (i, line) in src.lines().enumerate() {
         let line_no = i + 1;
-        match (banned_hit(line, hex), allow_reason(line)) {
+        match (banned_hit(line, patterns), allow_reason(line)) {
             (_, Some("")) => out.empty_reasons.push(line_no),
             (Some(_), Some(_)) => {} // excused, with a reason
             (Some(pattern), None) => out.violations.push(Violation {
@@ -137,7 +170,7 @@ fn collect_rs(dir: &Path, out: &mut Vec<PathBuf>) {
 
 #[test]
 fn scanner_flags_constructors_and_bare_hex_only() {
-    let hex = bare_hex_re();
+    let patterns = Patterns::new();
     // (source line, expected violation count)
     let cases: &[(&str, usize)] = &[
         ("        BannerKind::Info => gpui::rgb(0x3b82f6),", 1),
@@ -158,9 +191,17 @@ fn scanner_flags_constructors_and_bare_hex_only() {
             0,
         ),
         ("        let x = self.ring.opacity(0.13);", 0),
+        ("        let c = gpui::opaque_grey(0.5, 1.0);", 1),
+        (
+            "        let x = Hsla { h: 0.5, s: 0.1, l: 0.2, a: 1.0 };",
+            1,
+        ),
+        // False-positive guard: a plain substring match on `red(` would fire
+        // here (`igno` + `red()`), the exact bug the boundary anchor fixes.
+        ("fn md_not_attached_ignored() {", 0),
     ];
     for (line, expected) in cases {
-        let res = scan(line, &hex);
+        let res = scan(line, &patterns);
         assert_eq!(
             res.violations.len(),
             *expected,
@@ -171,35 +212,78 @@ fn scanner_flags_constructors_and_bare_hex_only() {
 
 #[test]
 fn escape_comment_suppresses_and_ratchets() {
-    let hex = bare_hex_re();
+    let patterns = Patterns::new();
 
     // A reasoned escape suppresses the violation.
     let excused = "    let c = gpui::rgb(0x112233); // style-lint: allow(plotters needs a raw RGB)";
-    let res = scan(excused, &hex);
+    let res = scan(excused, &patterns);
     assert!(res.violations.is_empty(), "reasoned escape must suppress");
     assert!(res.stale_allows.is_empty());
     assert!(res.empty_reasons.is_empty());
 
     // An escape with no banned pattern is stale and must fail.
     let stale = "    let c = theme.ring; // style-lint: allow(leftover)";
-    let res = scan(stale, &hex);
+    let res = scan(stale, &patterns);
     assert_eq!(res.stale_allows, vec![1], "stale escape must be reported");
 
     // An escape with no reason must fail.
     let no_reason = "    let c = gpui::rgb(0x112233); // style-lint: allow()";
-    let res = scan(no_reason, &hex);
+    let res = scan(no_reason, &patterns);
     assert_eq!(res.empty_reasons, vec![1], "empty reason must be reported");
 
     // A marker with no closing paren excuses nothing.
     let malformed = "    let c = gpui::rgb(0x112233); // style-lint: allow(unterminated";
-    let res = scan(malformed, &hex);
+    let res = scan(malformed, &patterns);
     assert_eq!(res.violations.len(), 1, "malformed marker must not excuse");
+}
+
+/// The ratchet's over/under-budget arithmetic, pulled out of the test so both
+/// halves can be exercised directly against synthetic maps rather than only
+/// ever running in their passing (i.e. silent) state against the real tree.
+///
+/// `counts` holds the observed violation count per file that has at least one
+/// (files with zero violations are simply absent, matching how the caller
+/// builds it); `allow` is the `ALLOW` ratchet table; `detail` holds the
+/// pre-formatted per-line breakdown for files present in `counts`.
+fn ratchet_report(
+    counts: &BTreeMap<String, usize>,
+    allow: &BTreeMap<&str, usize>,
+    detail: &BTreeMap<String, String>,
+) -> String {
+    let mut errors = String::new();
+
+    // Over budget → a new literal entered the tree.
+    for (rel, found) in counts {
+        let budget = allow.get(rel.as_str()).copied().unwrap_or(0);
+        if *found > budget {
+            errors.push_str(&format!(
+                "\n{rel}: {found} color-literal lines, allowance {budget} — {} new.\n\
+                 Use a token from `crate::theme::tokens` (`cx.theme().d0()`), or add\n\
+                 `// style-lint: allow(reason)` if the color is genuinely not a theme color.\n{}",
+                found - budget,
+                detail.get(rel).map(String::as_str).unwrap_or("")
+            ));
+        }
+    }
+
+    // Under budget → the ratchet was not tightened after a migration.
+    for (rel, budget) in allow {
+        let found = counts.get(*rel).copied().unwrap_or(0);
+        if found < *budget {
+            errors.push_str(&format!(
+                "\n{rel}: down to {found} color-literal lines but ALLOW says {budget}.\n\
+                 Lower ALLOW[\"{rel}\"] to {found} (or remove the entry if it is 0).\n"
+            ));
+        }
+    }
+
+    errors
 }
 
 #[test]
 fn src_holds_no_unallowed_color_literals() {
     let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
-    let hex = bare_hex_re();
+    let patterns = Patterns::new();
 
     let mut files = Vec::new();
     collect_rs(&root, &mut files);
@@ -223,7 +307,7 @@ fn src_holds_no_unallowed_color_literals() {
             .to_string_lossy()
             .replace('\\', "/");
         let src = fs::read_to_string(path).expect("source must be readable");
-        let res = scan(&src, &hex);
+        let res = scan(&src, &patterns);
 
         for line_no in &res.stale_allows {
             errors.push_str(&format!(
@@ -248,30 +332,55 @@ fn src_holds_no_unallowed_color_literals() {
         }
     }
 
-    // Over budget → a new literal entered the tree.
-    for (rel, found) in &counts {
-        let budget = allow.get(rel.as_str()).copied().unwrap_or(0);
-        if *found > budget {
-            errors.push_str(&format!(
-                "\n{rel}: {found} color-literal lines, allowance {budget} — {} new.\n\
-                 Use a token from `crate::theme::tokens` (`cx.theme().d0()`), or add\n\
-                 `// style-lint: allow(reason)` if the color is genuinely not a theme color.\n{}",
-                found - budget,
-                detail.get(rel).map(String::as_str).unwrap_or("")
-            ));
-        }
-    }
-
-    // Under budget → the ratchet was not tightened after a migration.
-    for (rel, budget) in &allow {
-        let found = counts.get(*rel).copied().unwrap_or(0);
-        if found < *budget {
-            errors.push_str(&format!(
-                "\n{rel}: down to {found} color-literal lines but ALLOW says {budget}.\n\
-                 Lower ALLOW[\"{rel}\"] to {found} (or remove the entry if it is 0).\n"
-            ));
-        }
-    }
+    errors.push_str(&ratchet_report(&counts, &allow, &detail));
 
     assert!(errors.is_empty(), "\nstyle-lint failures:\n{errors}");
+}
+
+#[test]
+fn ratchet_report_covers_over_under_and_at_budget() {
+    // observed > allowance → non-empty, names the file and the new count.
+    let mut counts = BTreeMap::new();
+    counts.insert("over.rs".to_string(), 3usize);
+    let mut allow = BTreeMap::new();
+    allow.insert("over.rs", 1usize);
+    let mut detail = BTreeMap::new();
+    detail.insert(
+        "over.rs".to_string(),
+        "    src/over.rs:1: banned `rgb(` — ...\n".to_string(),
+    );
+    let report = ratchet_report(&counts, &allow, &detail);
+    assert!(!report.is_empty(), "over-budget must produce a report");
+    assert!(report.contains("over.rs"), "report must name the file");
+    assert!(
+        report.contains("2 new"),
+        "report must state how many are new: {report}"
+    );
+
+    // observed < allowance → non-empty, contains the actionable instruction.
+    let mut counts = BTreeMap::new();
+    counts.insert("under.rs".to_string(), 1usize);
+    let mut allow = BTreeMap::new();
+    allow.insert("under.rs", 4usize);
+    let detail = BTreeMap::new();
+    let report = ratchet_report(&counts, &allow, &detail);
+    assert!(!report.is_empty(), "under-budget must produce a report");
+    assert!(
+        report.contains("Lower ALLOW[\"under.rs\"] to 1"),
+        "report must give the actionable instruction: {report}"
+    );
+
+    // observed == allowance, plus a file absent from ALLOW with zero
+    // violations (so it is absent from `counts` too) → report is empty.
+    let mut counts = BTreeMap::new();
+    counts.insert("exact.rs".to_string(), 2usize);
+    let mut allow = BTreeMap::new();
+    allow.insert("exact.rs", 2usize);
+    let mut detail = BTreeMap::new();
+    detail.insert("exact.rs".to_string(), String::new());
+    let report = ratchet_report(&counts, &allow, &detail);
+    assert!(
+        report.is_empty(),
+        "on-budget plus an unlisted clean file must report nothing: {report}"
+    );
 }
