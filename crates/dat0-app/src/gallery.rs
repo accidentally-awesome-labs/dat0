@@ -18,7 +18,7 @@
 
 use gpui::{Entity, IntoElement, ParentElement as _, Render, Styled as _, Window, div, prelude::*};
 use gpui_component::button::{Button, ButtonVariants as _};
-use gpui_component::input::InputState;
+use gpui_component::input::{Input, InputState};
 use gpui_component::{ActiveTheme as _, Theme as ComponentTheme, h_flex, v_flex};
 
 use crate::a11y::{A11yExt as _, AccessRole};
@@ -31,9 +31,6 @@ use crate::theme::tokens::{
 pub struct GalleryView {
     /// Live widget for the components section (T4). Built once — `InputState`
     /// needs a `Window`, which `render` does not hand to child constructors.
-    // A4 T4 removes this attribute when components_section starts reading the
-    // field; it exists only so the T2 commit is clippy-clean at -D warnings.
-    #[allow(dead_code)]
     sample_input: Entity<InputState>,
 }
 
@@ -52,7 +49,8 @@ impl GalleryView {
 
 impl Render for GalleryView {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let theme = cx.theme();
+        let theme = cx.theme().clone();
+        let theme = &theme;
         v_flex()
             .id("gallery-root")
             .size_full()
@@ -65,6 +63,7 @@ impl Render for GalleryView {
             .child(colors_section(theme))
             .child(scales_section(theme))
             .child(elevation_section(theme))
+            .child(components_section(theme, &self.sample_input))
     }
 }
 
@@ -269,7 +268,7 @@ fn scales_section(theme: &ComponentTheme) -> impl IntoElement {
             .child(
                 div()
                     .text_role(TextRole::Body)
-                    .child(format!("{name} — {:.0}px row", d.size().table_row_height())),
+                    .child(format!("{name} — {} row", d.size().table_row_height())),
             )
     }));
 
@@ -329,4 +328,87 @@ fn sub_title(theme: &ComponentTheme, text: &str) -> impl IntoElement {
         .text_role(TextRole::Title)
         .text_color(theme.foreground)
         .child(text.to_string())
+}
+
+fn components_section(theme: &ComponentTheme, input: &Entity<InputState>) -> impl IntoElement {
+    let buttons = h_flex()
+        .gap_sp(Sp::S8)
+        .flex_wrap()
+        .child(
+            Button::new("gallery-btn-primary")
+                .label("Primary")
+                .primary(),
+        )
+        .child(Button::new("gallery-btn-secondary").label("Secondary"))
+        .child(Button::new("gallery-btn-ghost").label("Ghost").ghost())
+        .child(Button::new("gallery-btn-danger").label("Danger").danger());
+
+    // Card at the Raised rung — the surface most dat0 panels will sit on.
+    let card = v_flex()
+        .w(Sp::S32.pixels() * 8.0)
+        .p_sp(Sp::S12)
+        .gap_sp(Sp::S4)
+        .elevation(Elevation::Raised, theme)
+        .child(div().text_role(TextRole::Title).child("Card"))
+        .child(
+            div()
+                .text_role(TextRole::Body)
+                .text_color(theme.muted_foreground)
+                .child("Raised surface with body copy, as a panel would use it."),
+        );
+
+    // Hand-rolled table stub: real Table needs a TableDelegate, and the master
+    // plan pins Table + GridTableDelegate byte-identical through workstream B.
+    let row_h = crate::theme::tokens::grid_density()
+        .size()
+        .table_row_height();
+    let header = h_flex()
+        .h(row_h)
+        .items_center()
+        .px_sp(Sp::S8)
+        .gap_sp(Sp::S16)
+        .bg(theme.list_active)
+        .child(div().text_role(TextRole::Caption).child("id"))
+        .child(div().text_role(TextRole::Caption).child("name"))
+        .child(div().text_role(TextRole::Caption).child("value"));
+    let rows = v_flex().children((0..4).map(|i| {
+        let mut row = h_flex()
+            .h(row_h)
+            .items_center()
+            .px_sp(Sp::S8)
+            .gap_sp(Sp::S16)
+            .border_b_1()
+            .border_color(theme.border)
+            .child(div().text_role(TextRole::Body).child(format!("{i}")))
+            .child(div().text_role(TextRole::Body).child(format!("row {i}")))
+            .child(div().text_role(TextRole::Body).child(format!("{}", i * 7)));
+        // Second row shows the selection tint over the table background —
+        // the composited pair A3's contrast matrix gates.
+        if i == 1 {
+            row = row.bg(theme.d0().selection_tint);
+        }
+        row
+    }));
+
+    section(
+        theme,
+        "gallery.components",
+        "Components",
+        v_flex()
+            .gap_sp(Sp::S16)
+            .child(sub_title(theme, "Buttons"))
+            .child(buttons)
+            .child(sub_title(theme, "Input"))
+            .child(div().w(Sp::S32.pixels() * 8.0).child(Input::new(input)))
+            .child(sub_title(theme, "Card"))
+            .child(card)
+            .child(sub_title(theme, "Table (stub)"))
+            .child(
+                v_flex()
+                    .w(Sp::S32.pixels() * 10.0)
+                    .elevation(Elevation::Surface, theme)
+                    .child(header)
+                    .child(rows),
+            ),
+    )
 }

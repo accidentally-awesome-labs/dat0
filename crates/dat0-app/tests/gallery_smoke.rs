@@ -22,7 +22,7 @@ const SECTIONS: &[&str] = &[
     "gallery.colors",
     "gallery.scales",
     "gallery.elevation",
-    // Restored by A4 T4: "gallery.components",
+    "gallery.components",
 ];
 
 #[gpui::test]
