@@ -90,6 +90,11 @@ accesskit_consumer = { workspace = true, optional = true }
 # flag-free `cargo test --workspace` still compiles capture in.
 a11y-capture = ["dep:accesskit", "dep:accesskit_consumer", "gpui/test-support"]
 
+# A4 token gallery: dev-only surface (`src/gallery.rs` + `examples/gallery.rs`).
+# Turned on for this crate's test/example targets by the self-dev-dependency
+# below — same mechanism as `a11y-capture` — so it is never in a release build.
+gallery = []
+
 # P9a Charts (Linux build fix): plotters' `ttf` feature pulls `font-kit`, which on
 # Linux compiles its `sources/fontconfig.rs` against `yeslogic-fontconfig-sys` v6.
 # v6 exposes the `Fc*` symbols ONLY through its dlopen `statics::LIB` handle, so
@@ -121,7 +126,7 @@ insta = { workspace = true }
 # crate's own integration tests (a11y_spike.rs), so CI's flag-free
 # `cargo test --workspace` compiles capture in with no ci.yml change. kittest
 # reads the emitted `accesskit::TreeUpdate` (query by label/role).
-dat0-app = { path = ".", features = ["a11y-capture"] }
+dat0-app = { path = ".", features = ["a11y-capture", "gallery"] }
 kittest = { workspace = true }
 
 [[bench]]

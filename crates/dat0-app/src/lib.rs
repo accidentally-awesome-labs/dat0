@@ -19,6 +19,10 @@ pub mod connections;
 pub mod empty_state;
 pub mod error_ux;
 pub mod file_drop;
+/// Dev-only token gallery (UI redesign A4). Never compiled into the shipped
+/// binary — the `gallery` feature is only enabled by the self-dev-dependency.
+#[cfg(feature = "gallery")]
+pub mod gallery;
 pub mod grid;
 pub mod import_progress;
 pub mod import_wizard;
