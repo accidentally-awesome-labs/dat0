@@ -66,8 +66,12 @@ Plus one regex for bare literals: `\b0x[0-9a-fA-F]{6}([0-9a-fA-F]{2})?\b`
 The 6-or-8-digit anchor is what makes the bare-hex rule affordable. Measured
 against `src/` at `dca3c9c` it matches exactly one line — `a11y/mod.rs:30`
 `pub const FOCUS_RING: u32 = 0x3b82f6;` — the site the master plan's
-`rgb(0x`-only regex would have missed entirely, since it is consumed one
-indirection away as `rgb(FOCUS_RING)`. Everything else in `src/` that spells
+`rgb(0x`-only regex would have missed entirely. Together with the
+constructor-any-arg rule it also catches that const's four consumers
+(`a11y/mod.rs:65`, `empty_state.rs:462`, `catalog/panel.rs:140,173`,
+`view/query_library.rs:61`), all written `gpui::rgb(crate::a11y::FOCUS_RING)` —
+five real sites the literal-only sketch was blind to, and exactly the A6a work
+item. Everything else in `src/` that spells
 hex is 2- or 4-digit and never trips: PNG magic `0x89` (`charts/export.rs`),
 SSE UTF-8 continuation bytes `0xE2`/`0x86` (`ai/sse.rs`), IPv6 prefixes
 `0xfc00`/`0xfe80`/`0x2606` (`ai/ssrf.rs`), and the alpha-factor comments in
@@ -98,24 +102,27 @@ non-theme colors (a plotters palette, u32 bit-math) that later slices may add.
 ### 1d. Allowlist ratchet
 
 ```rust
-/// Files that still hold pre-A6 inline colors, with their EXACT current count.
+/// Files that still hold pre-A6 inline colors, with their EXACT current count
+/// of offending LINES (a line with two constructors counts once).
 /// Shrink-only: lower the number in the same PR that removes the literals.
 const ALLOW: &[(&str, usize)] = &[
     ("view/pipeline_bar.rs", 9),
     ("grid/mod.rs", 7),
+    ("catalog/panel.rs", 4),
     ("error_ux/banner.rs", 4),
-    ("catalog/panel.rs", 2),
+    ("a11y/mod.rs", 2),
     ("charts/mod.rs", 2),
     ("charts/panel.rs", 2),
     ("onboarding/mod.rs", 2),
-    ("a11y/mod.rs", 1),
+    ("empty_state.rs", 1),
     ("settings_ui/panel.rs", 1),
+    ("view/query_library.rs", 1),
     ("window.rs", 1),
 ];
 ```
 
 Paths are relative to `src/`. Any file absent from the table has an implicit
-allowance of 0.
+allowance of 0. Total: **36 lines across 12 files**.
 
 - `found > allowed` → fail: *regression*, a new literal entered an allowed file.
 - `found < allowed` → fail: *stale ratchet*, with the message
@@ -223,7 +230,7 @@ A5/A6 renamed a token. The smoke test fails loudly instead.
 
 ## 7. Out of scope
 
-- Migrating any of the 31 literal sites (that is A6a-g, one file per sub-slice).
+- Migrating any of the 36 literal sites (that is A6a-g, one file per sub-slice).
 - Glyph bans (A5), magic-`px` bans (B10).
 - Contrast readouts in the gallery (D5).
 - i18n keys for gallery strings.
