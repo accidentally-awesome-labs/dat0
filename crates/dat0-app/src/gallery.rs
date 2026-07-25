@@ -24,7 +24,8 @@ use gpui_component::{ActiveTheme as _, Theme as ComponentTheme, h_flex, v_flex};
 use crate::a11y::{A11yExt as _, AccessRole};
 use crate::theme::Theme;
 use crate::theme::tokens::{
-    Dat0Theme as _, Elevation, ElevationStyled as _, Sp, SpStyled as _, TextRole, TypoStyled as _,
+    Dat0Theme as _, Density, Elevation, ElevationStyled as _, Sp, SpStyled as _, TextRole,
+    TypoStyled as _,
 };
 
 pub struct GalleryView {
@@ -62,6 +63,8 @@ impl Render for GalleryView {
             .gap_sp(Sp::S24)
             .child(theme_row(theme))
             .child(colors_section(theme))
+            .child(scales_section(theme))
+            .child(elevation_section(theme))
     }
 }
 
@@ -202,4 +205,128 @@ fn colors_section(theme: &ComponentTheme) -> impl IntoElement {
             .child(grid("Dat0Colors (derived)", dat0))
             .child(grid("ThemeColor (gpui-component)", base)),
     )
+}
+
+fn scales_section(theme: &ComponentTheme) -> impl IntoElement {
+    let spacing = [
+        ("S1", Sp::S1),
+        ("S2", Sp::S2),
+        ("S4", Sp::S4),
+        ("S6", Sp::S6),
+        ("S8", Sp::S8),
+        ("S12", Sp::S12),
+        ("S16", Sp::S16),
+        ("S24", Sp::S24),
+        ("S32", Sp::S32),
+    ];
+    let roles = [
+        ("Caption", TextRole::Caption),
+        ("Small", TextRole::Small),
+        ("Body", TextRole::Body),
+        ("BodyLg", TextRole::BodyLg),
+        ("Title", TextRole::Title),
+        ("Display", TextRole::Display),
+    ];
+    let densities = [
+        ("Compact", Density::Compact),
+        ("Default", Density::Default),
+        ("Comfortable", Density::Comfortable),
+    ];
+
+    // Spacing: a bar whose WIDTH is the step, so the ratios are visible.
+    let sp_rows = v_flex().gap_sp(Sp::S2).children(spacing.map(|(name, sp)| {
+        h_flex()
+            .gap_sp(Sp::S8)
+            .items_center()
+            .child(
+                div()
+                    .w(Sp::S32.pixels())
+                    .text_role(TextRole::Caption)
+                    .text_color(theme.muted_foreground)
+                    .child(name),
+            )
+            .child(div().w(sp.pixels()).h(Sp::S8.pixels()).bg(theme.primary))
+    }));
+
+    // Typography: each role rendered AS itself — size, weight and line-height
+    // together, which is the whole reason TextRole carries all three.
+    let type_rows = v_flex().gap_sp(Sp::S2).children(roles.map(|(name, role)| {
+        div().text_role(role).child(format!(
+            "{name} — the quick brown fox jumps over the lazy dog"
+        ))
+    }));
+
+    // Density: three rows at their real table-row heights.
+    let density_rows = v_flex().gap_sp(Sp::S4).children(densities.map(|(name, d)| {
+        h_flex()
+            .h(d.size().table_row_height())
+            .items_center()
+            .px_sp(Sp::S8)
+            .gap_sp(Sp::S8)
+            .bg(theme.list_hover)
+            .border_1()
+            .border_color(theme.border)
+            .child(
+                div()
+                    .text_role(TextRole::Body)
+                    .child(format!("{name} — {:.0}px row", d.size().table_row_height())),
+            )
+    }));
+
+    section(
+        theme,
+        "gallery.scales",
+        "Scales",
+        v_flex()
+            .gap_sp(Sp::S16)
+            .child(sub_title(theme, "Sp (spacing)"))
+            .child(sp_rows)
+            .child(sub_title(theme, "TextRole (typography)"))
+            .child(type_rows)
+            .child(sub_title(theme, "Density (row heights)"))
+            .child(density_rows),
+    )
+}
+
+fn elevation_section(theme: &ComponentTheme) -> impl IntoElement {
+    let rungs = [
+        ("Background", Elevation::Background),
+        ("Surface", Elevation::Surface),
+        ("Raised", Elevation::Raised),
+        ("Overlay", Elevation::Overlay),
+        ("Modal", Elevation::Modal),
+    ];
+    section(
+        theme,
+        "gallery.elevation",
+        "Elevation",
+        h_flex()
+            .flex_wrap()
+            .gap_sp(Sp::S16)
+            .children(rungs.map(|(name, rung)| {
+                v_flex()
+                    .w(Sp::S32.pixels() * 5.0)
+                    .h(Sp::S32.pixels() * 3.0)
+                    .p_sp(Sp::S12)
+                    .gap_sp(Sp::S4)
+                    .elevation(rung, theme)
+                    .child(div().text_role(TextRole::Title).child(name))
+                    .child(
+                        div()
+                            .text_role(TextRole::Caption)
+                            .text_color(theme.muted_foreground)
+                            // HC sets shadow:false, so every rung reads flat
+                            // there — that difference is the thing to look at.
+                            .child(format!("{:?}", rung.resolve(theme).shadow)),
+                    )
+            })),
+    )
+}
+
+/// Small heading inside a section body.
+fn sub_title(theme: &ComponentTheme, text: &str) -> impl IntoElement {
+    div()
+        .text_role(TextRole::Title)
+        .text_color(theme.foreground)
+        .child(text.to_string())
 }

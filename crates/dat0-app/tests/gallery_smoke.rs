@@ -20,7 +20,8 @@ use support::A11ySnapshot;
 const SECTIONS: &[&str] = &[
     "gallery.theme",
     "gallery.colors",
-    // Restored by A4 T3: "gallery.scales", "gallery.elevation",
+    "gallery.scales",
+    "gallery.elevation",
     // Restored by A4 T4: "gallery.components",
 ];
 
