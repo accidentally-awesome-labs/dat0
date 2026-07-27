@@ -4,7 +4,8 @@
 //! global — colors are DERIVED ON READ (`cx.theme().d0().focus_ring`), never
 //! cached in a second global, so theme switches can never go stale and the
 //! high-contrast palette propagates automatically. Strict zero-literal
-//! policy: no color constructors in this file (self-lint test below).
+//! policy: no color constructors in this file, enforced repo-wide by
+//! `tests/style_lint.rs` (A4).
 
 use gpui::{FontWeight, Hsla, Pixels, Styled, px, relative};
 use gpui_component::Theme;
@@ -475,28 +476,6 @@ mod tests {
         assert_eq!(Density::Default.size().table_row_height(), px(32.));
         assert_eq!(Density::Comfortable.size().table_row_height(), px(40.));
         assert_eq!(grid_density(), Density::Compact);
-    }
-
-    #[test]
-    fn tokens_module_stays_literal_free() {
-        // Zero-literal policy (owner decision 2026-07-23): colors in this
-        // module must derive from theme tokens. Patterns are assembled by
-        // concatenation so this test can't match itself. Forerunner of the
-        // A4 repo-wide style lint.
-        let src = include_str!("tokens.rs");
-        let banned = [
-            format!("rgb{}", "(0x"),
-            format!("rgba{}", "(0x"),
-            format!("parse{}", "_hex"),
-            format!("hsla{}", "("),
-            format!("rgb{}", "a("),
-        ];
-        for pat in &banned {
-            assert!(
-                !src.contains(pat.as_str()),
-                "tokens.rs must stay color-literal-free; found `{pat}`"
-            );
-        }
     }
 
     #[test]
