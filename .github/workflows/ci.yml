@@ -197,21 +197,33 @@ jobs:
       #
       # `Build` (release) and `Test` (debug) both land in target/<triple>/, so the
       # runner carries BOTH full trees at once (each with its own ~1.6 GB duckdb
-      # rlib). The last Linux consumer of the release tree is the Prime step above
+      # rlib). The last consumer of the release tree is the Prime step above
       # (`cargo run --release`); everything after this — Test, MotherDuck,
-      # OpenRouter — is debug, and the bench + its own reclaim step are macOS-only.
-      # So on Linux ~7.5 GB of release artifacts just sit there while the debug
-      # tree (duckdb + ~98 gpui-linked test binaries) balloons past the limit. The
-      # runner PROCESS itself then dies with `No space left on device` mid-step —
-      # it reddened main on b55758b and blocked PR #51. `Free disk space` is
-      # already maxed out and CARGO_INCREMENTAL=0 alone was not enough; this is the
-      # remaining lever.
+      # OpenRouter — is debug. On Linux ~7.5 GB of release artifacts just sit
+      # there while the debug tree (duckdb + ~98 gpui-linked test binaries)
+      # balloons past the limit. The runner PROCESS itself then dies with `No
+      # space left on device` mid-step — it reddened main on b55758b and blocked
+      # PR #51. `Free disk space` is already maxed out and CARGO_INCREMENTAL=0
+      # alone was not enough; this is the remaining lever.
       #
-      # Triggers no rebuild: nothing downstream asks for --release on Linux.
+      # ★ Ran Linux-only until 819d068 (UI-redesign A4). That slice added ONE
+      # extra debug link — the feature-gated `gallery` example, built by both
+      # `clippy --all-targets` and `cargo test` — and the macOS job-end free
+      # space fell 4.8 G → 2.9 G (main run 30283360033: DISK[after-test] 4.5 Gi
+      # LOW-WATER, DISK[after-live-ai] 2.9 Gi). macOS has the same dead release
+      # tree for the same reason, so the gate is now dropped and both platforms
+      # reclaim. macOS is NOT covered by CARGO_PROFILE_DEV_DEBUG: 0 (that is a
+      # Linux-only lever — see the job-level env above), so this is the only
+      # headroom it gets before A5 adds rust-embed assets + SVGs on top.
+      #
+      # Triggers no rebuild on either platform: nothing downstream asks for
+      # --release. On macOS specifically the bench runs with NO `--target`, so it
+      # builds a fresh host tree in target/{debug,release} and never reuses this
+      # one — and its own reclaim step already `rm -rf`s the whole target/<triple>
+      # (that step still works fine against a tree missing `release/`).
       # `df` before/after makes the headroom visible in the log — we previously had
       # no way to measure it.
-      - name: Reclaim release tree before the debug test build (Linux)
-        if: runner.os == 'Linux'
+      - name: Reclaim release tree before the debug test build
         run: |
           ./.github/scripts/disk-report.sh before-reclaim "${{ matrix.target.triple }}"
           du -sh "target/${{ matrix.target.triple }}/release" 2>/dev/null || true
