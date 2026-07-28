@@ -50,7 +50,6 @@ const ALLOW: &[(&str, usize)] = &[
     ("catalog/panel.rs", 2),
     ("charts/mod.rs", 2),
     ("charts/panel.rs", 2),
-    ("error_ux/banner.rs", 4),
     ("grid/mod.rs", 7),
     ("onboarding/mod.rs", 2),
     ("settings_ui/panel.rs", 1),
