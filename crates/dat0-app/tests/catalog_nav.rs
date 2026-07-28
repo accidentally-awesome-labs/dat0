@@ -318,6 +318,14 @@ fn left_jumps_to_parent_then_collapses_children_vanish(cx: &mut TestAppContext) 
     assert!(snap.has_label("alpha"), "child renders while expanded");
     assert!(snap.has_label("zeta"));
 
+    // A6d: the parent's chevron is an Icon, so its accessible name is the bare
+    // "alias (n)" — the glyph is decoration and must not be announced. Asserted
+    // in the EXPANDED state, where the glyph used to be "▾".
+    assert!(
+        snap.has_label("sq (2)"),
+        "attach parent announces without its chevron glyph"
+    );
+
     // ← on the (expanded) parent collapses it: children VANISH from the a11y
     // tree (absence teeth — render-conditioned seams, R2).
     vcx.simulate_keystrokes("left");

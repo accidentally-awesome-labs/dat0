@@ -47,7 +47,6 @@ const ALLOW_MARKER: &str = "// style-lint: allow(";
 /// in the same PR; the gate fails if a count is left too high *or* too low.
 /// A file absent from this table has an allowance of 0.
 const ALLOW: &[(&str, usize)] = &[
-    ("catalog/panel.rs", 2),
     ("charts/mod.rs", 2),
     ("charts/panel.rs", 2),
     ("grid/mod.rs", 7),

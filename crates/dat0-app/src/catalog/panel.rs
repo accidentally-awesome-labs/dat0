@@ -18,7 +18,7 @@ use crate::theme::tokens::Dat0Theme as _;
 use crate::window::WorkspaceShell;
 use gpui::prelude::*;
 use gpui::{Context, SharedString, div};
-use gpui_component::ActiveTheme as _;
+use gpui_component::{ActiveTheme as _, Icon, IconName};
 use std::collections::HashSet;
 
 /// A section header label, e.g. `section_label("Tables", 3) == "Tables (3)"`.
@@ -122,9 +122,17 @@ fn parent_row(
     is_active: bool,
     cx: &mut Context<WorkspaceShell>,
 ) -> gpui::Stateful<gpui::Div> {
-    let ring = cx.theme().d0().focus_ring;
-    let chev = if expanded { "▾" } else { "▸" };
-    let text = format!("{chev} {alias} ({n_children})");
+    let d0 = cx.theme().d0();
+    let (ring, hover) = (d0.focus_ring, d0.hover_tint);
+    // A6d: the chevron is a real icon, not a glyph folded into the label. The
+    // accessible name deliberately drops it — a screen reader should announce
+    // "main (3)", not "▾ main (3)"; expand/collapse state is the icon's job.
+    let chev = if expanded {
+        IconName::ChevronDown
+    } else {
+        IconName::ChevronRight
+    };
+    let text = format!("{alias} ({n_children})");
     let alias_owned = alias.to_string();
     // `attach-` infix: a parent id can never collide with a same-named table
     // row id within the section.
@@ -133,7 +141,12 @@ fn parent_row(
         .px_2()
         .py_1()
         .cursor_pointer()
-        .hover(|s| s.bg(gpui::rgba(0x80808022)))
+        .flex()
+        .flex_row()
+        .items_center()
+        .gap_1()
+        .hover(move |s| s.bg(hover))
+        .child(Icon::new(chev))
         .child(SharedString::from(text.clone()))
         .a11y_label(crate::a11y::AccessRole::Label, text)
         .on_click(cx.listener(move |ws, _ev, _window, cx| {
@@ -155,14 +168,15 @@ fn catalog_row(
     is_active: bool,
     cx: &mut Context<WorkspaceShell>,
 ) -> gpui::Stateful<gpui::Div> {
-    let ring = cx.theme().d0().focus_ring;
+    let d0 = cx.theme().d0();
+    let (ring, hover) = (d0.focus_ring, d0.hover_tint);
     let name = name.to_string();
     let mut row = div()
         .id(SharedString::from(format!("cat-{section}-{name}")))
         .px_2()
         .py_1()
         .cursor_pointer()
-        .hover(|s| s.bg(gpui::rgba(0x80808022)))
+        .hover(move |s| s.bg(hover))
         .child(SharedString::from(name.clone()))
         .a11y_label(crate::a11y::AccessRole::Label, name.clone())
         .on_click(cx.listener(move |ws, _ev, window, cx| {

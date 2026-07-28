@@ -20,6 +20,7 @@ use crate::inspector::{InspectorModel, ProfileTargetMode, format};
 use crate::window::WorkspaceShell;
 use gpui::prelude::*;
 use gpui::{Context, SharedString, div};
+use gpui_component::{Icon, IconName};
 
 /// Render the inspector dock from the current model. Called from
 /// `WorkspaceShell::render`. A pure function of `model` (+ `cx` for the toggle
@@ -102,12 +103,19 @@ pub fn render_inspector(
         }
 
         // The inspected table itself (highlighted, not clickable).
-        let target_row = format!("▸ {target}");
+        // A6d: the leading chevron is an icon, so the accessible name is the
+        // bare target — the glyph was decoration, not content.
+        let target_row = target.to_string();
         section = section.child(
             div()
                 .px_1()
                 .border_1()
+                .flex()
+                .flex_row()
+                .items_center()
+                .gap_1()
                 .a11y_label(AccessRole::Label, target_row.clone())
+                .child(Icon::new(IconName::ChevronRight))
                 .child(SharedString::from(target_row)),
         );
 
@@ -150,12 +158,25 @@ pub fn render_inspector(
                 dat0_i18n::t("inspector.hidden"),
                 cards.hidden.len()
             );
-            let caret = if model.hidden_expanded { "▾" } else { "▸" };
+            // A6d: expand/collapse state moves from a glyph into an icon. This
+            // element carries no `.a11y_label` and deliberately gains none —
+            // naming this toggle is real a11y work for its own slice, not a
+            // side effect of a colour-and-icon migration.
+            let caret = if model.hidden_expanded {
+                IconName::ChevronDown
+            } else {
+                IconName::ChevronRight
+            };
             let mut section = div().flex().flex_col().gap_2().child(
                 div()
                     .id("inspector-hidden-toggle")
                     .cursor_pointer()
-                    .child(SharedString::from(format!("{caret} {header}")))
+                    .flex()
+                    .flex_row()
+                    .items_center()
+                    .gap_1()
+                    .child(Icon::new(caret))
+                    .child(SharedString::from(header))
                     .on_click(cx.listener(|ws, _ev, _window, cx| {
                         ws.inspector.toggle_hidden();
                         cx.notify();
