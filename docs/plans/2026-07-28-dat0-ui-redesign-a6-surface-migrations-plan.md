@@ -1006,6 +1006,13 @@ cargo test -p dat0-app --test style_lint
 Revert the probe before continuing. Confirm with `git diff --stat` that nothing
 remains.
 
+> ⚠ **`touch` the file after reverting a probe, and re-run.** Restoring a probe
+> by moving a backup back into place gives the file an *older* mtime than the
+> probe build, so cargo considers it up to date and silently re-runs the
+> **stale probe binary** — the revert looks like it failed. Hit during T4:
+> a correctly-reverted source reported RED until `touch` forced the rebuild.
+> Never read a post-revert result without forcing the rebuild first.
+
 - [ ] **Step 3: Confirm the literal population is actually empty**
 
 ```bash
