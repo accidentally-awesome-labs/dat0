@@ -3,9 +3,10 @@
 //! pure + unit-tested; the GPUI render mounts on the WorkspaceShell.
 
 use crate::a11y::A11yExt as _;
-use crate::theme::tokens::{Sp, SpStyled as _};
+use crate::theme::tokens::{Dat0Theme as _, Sp, SpStyled as _};
 use dat0_engine::transform::{SortDirection, Transformation};
 use gpui::{IntoElement, prelude::*};
+use gpui_component::ActiveTheme as _;
 use gpui_component::h_flex;
 
 /// Human-readable one-line label for a pill / timeline row.
@@ -76,6 +77,15 @@ pub fn render_pipeline_bar(
 
     use gpui::div;
 
+    // A6: one theme read for the whole bar. Bound as individual `Hsla`
+    // (Copy) locals so any builder closure captures a value, not the struct.
+    let d0 = cx.theme().d0();
+    let muted = d0.text_muted;
+    let accent = d0.pipeline_accent;
+    let error_fg = d0.text_error;
+    let pill = d0.pipeline_pill;
+    let chip = d0.pipeline_chip;
+
     if state.expanded {
         // ── EXPANDED: vertical timeline ───────────────────────────────────────
 
@@ -90,7 +100,7 @@ pub fn render_pipeline_bar(
             .child(
                 div()
                     .text_sm()
-                    .text_color(gpui::rgba(0x6b72_80ff)) // gray-500
+                    .text_color(muted)
                     .a11y_label(
                         crate::a11y::AccessRole::Label,
                         dat0_i18n::t("pipeline.base"),
@@ -99,12 +109,7 @@ pub fn render_pipeline_bar(
                         crate::assets::Dat0IconName::Layers,
                     )),
             )
-            .child(
-                div()
-                    .text_sm()
-                    .text_color(gpui::rgba(0x3b82_f6ff)) // blue-500
-                    .child("base"),
-            )
+            .child(div().text_sm().text_color(accent).child("base"))
             .on_mouse_up(
                 gpui::MouseButton::Left,
                 cx.listener(|ws, _ev, _window, cx| {
@@ -130,7 +135,7 @@ pub fn render_pipeline_bar(
                     .child(
                         div()
                             .text_sm()
-                            .text_color(gpui::rgba(0x6b72_80ff)) // gray-500
+                            .text_color(muted)
                             .a11y_label(
                                 crate::a11y::AccessRole::Label,
                                 dat0_i18n::t("pipeline.step_separator"),
@@ -153,7 +158,7 @@ pub fn render_pipeline_bar(
                     .py_0p5()
                     .rounded_md()
                     .text_sm()
-                    .text_color(gpui::rgba(0xef44_44ff)) // red-500
+                    .text_color(error_fg)
                     .cursor_pointer()
                     .a11y_label(
                         crate::a11y::AccessRole::Label,
@@ -186,7 +191,7 @@ pub fn render_pipeline_bar(
             .py_0p5()
             .rounded_md()
             .text_sm()
-            .bg(gpui::rgba(0x3b82_f640)) // blue-500/25
+            .bg(pill)
             .cursor_pointer()
             .child(gpui::SharedString::from(dat0_i18n::t("view.save_as_table")))
             .on_mouse_up(
@@ -242,7 +247,7 @@ pub fn render_pipeline_bar(
             .py_0p5()
             .rounded_md()
             .text_sm()
-            .bg(gpui::rgba(0x3b82_f640)) // blue-500/25
+            .bg(pill)
             .cursor_pointer()
             // The one deliberate exception to the scope rule: glyph AND text in
             // a single string literal, split into a flex row so the glyph can
@@ -276,7 +281,7 @@ pub fn render_pipeline_bar(
                 div()
                     .px_1()
                     .text_sm()
-                    .text_color(gpui::rgba(0x6b72_80ff)) // gray-500
+                    .text_color(muted)
                     .a11y_label(
                         crate::a11y::AccessRole::Label,
                         dat0_i18n::t("pipeline.step_separator"),
@@ -294,7 +299,7 @@ pub fn render_pipeline_bar(
                 .py_0p5()
                 .rounded_md()
                 .text_sm()
-                .bg(gpui::rgba(0xf3f4_f6ff)) // gray-100
+                .bg(chip)
                 .cursor_pointer()
                 .child(label)
                 .on_mouse_up(
@@ -318,7 +323,7 @@ pub fn render_pipeline_bar(
             .py_0p5()
             .rounded_md()
             .text_sm()
-            .bg(gpui::rgba(0x3b82_f640)) // blue-500/25
+            .bg(pill)
             .cursor_pointer()
             .child(gpui::SharedString::from(dat0_i18n::t("view.save_as_table")))
             .on_mouse_up(
