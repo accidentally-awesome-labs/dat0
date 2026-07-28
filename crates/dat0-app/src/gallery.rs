@@ -19,9 +19,10 @@
 use gpui::{Entity, IntoElement, ParentElement as _, Render, Styled as _, Window, div, prelude::*};
 use gpui_component::button::{Button, ButtonVariants as _};
 use gpui_component::input::{Input, InputState};
-use gpui_component::{ActiveTheme as _, Theme as ComponentTheme, h_flex, v_flex};
+use gpui_component::{ActiveTheme as _, Icon, Theme as ComponentTheme, h_flex, v_flex};
 
 use crate::a11y::{A11yExt as _, AccessRole};
+use crate::assets::{BUNDLED_USED, Dat0IconName};
 use crate::theme::Theme;
 use crate::theme::tokens::{
     Dat0Theme as _, Density, Elevation, ElevationStyled as _, Sp, SpStyled as _, TextRole,
@@ -64,6 +65,7 @@ impl Render for GalleryView {
             .child(scales_section(theme))
             .child(elevation_section(theme))
             .child(components_section(theme, &self.sample_input))
+            .child(icons_section(theme))
     }
 }
 
@@ -411,4 +413,56 @@ fn components_section(theme: &ComponentTheme, input: &Entity<InputState>) -> imp
                     .child(rows),
             ),
     )
+}
+
+/// One icon plus its name, rendered at a given text role so size inheritance
+/// is visible — `Icon` derives its size from `window.text_style().font_size`
+/// when no explicit size is set (gpui-component icon.rs RenderOnce).
+fn icon_cell(theme: &ComponentTheme, icon: Icon, name: &str, role: TextRole) -> impl IntoElement {
+    v_flex()
+        .gap_sp(Sp::S2)
+        .w(Sp::S32.pixels() * 3.0)
+        .child(
+            div()
+                .text_role(role)
+                .text_color(theme.foreground)
+                .child(icon),
+        )
+        .child(
+            div()
+                .text_role(TextRole::Caption)
+                .text_color(theme.muted_foreground)
+                .child(name.to_string()),
+        )
+}
+
+/// dat0-owned icons and the upstream ones dat0 references, side by side at
+/// three text roles. Vendored and bundled icons sit in the same grid on
+/// purpose: a stroke-weight or optical-size mismatch in a vendored file is only
+/// obvious next to the set it has to live with.
+fn icons_section(theme: &ComponentTheme) -> impl IntoElement {
+    let roles = [TextRole::Caption, TextRole::Body, TextRole::Display];
+
+    let mut rows = v_flex().gap_sp(Sp::S8);
+    for role in roles {
+        let mut row = h_flex().gap_sp(Sp::S8);
+        for name in Dat0IconName::ALL {
+            row = row.child(icon_cell(
+                theme,
+                Icon::new(*name),
+                &format!("{name:?}"),
+                role,
+            ));
+        }
+        for path in BUNDLED_USED {
+            let short = path
+                .trim_start_matches("icons/")
+                .trim_end_matches(".svg")
+                .to_string();
+            row = row.child(icon_cell(theme, Icon::empty().path(*path), &short, role));
+        }
+        rows = rows.child(row);
+    }
+
+    section(theme, "gallery.icons", "Icons", rows)
 }
