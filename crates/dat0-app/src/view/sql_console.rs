@@ -860,7 +860,10 @@ impl Render for SqlConsole {
                 .py_1()
                 .cursor_pointer()
                 .border_l_1()
-                .child(SharedString::from("▾"))
+                // Accessible name comes from the `.a11y` call below.
+                .child(gpui_component::Icon::new(
+                    gpui_component::IconName::ChevronDown,
+                ))
                 .focus_stop(
                     "sql-run-pane",
                     &run_pane_fh,

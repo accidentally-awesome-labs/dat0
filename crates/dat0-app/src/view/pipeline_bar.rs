@@ -123,7 +123,13 @@ pub fn render_pipeline_bar(
                         div()
                             .text_sm()
                             .text_color(gpui::rgba(0x6b72_80ff)) // gray-500
-                            .child("›"),
+                            .a11y_label(
+                                crate::a11y::AccessRole::Label,
+                                dat0_i18n::t("pipeline.step_separator"),
+                            )
+                            .child(gpui_component::Icon::new(
+                                gpui_component::IconName::ChevronRight,
+                            )),
                     )
                     .child(div().text_sm().child(label))
                     .on_mouse_up(
@@ -187,7 +193,13 @@ pub fn render_pipeline_bar(
             .rounded_md()
             .text_sm()
             .cursor_pointer()
-            .child("⌃")
+            .a11y_label(
+                crate::a11y::AccessRole::Label,
+                dat0_i18n::t("common.collapse"),
+            )
+            .child(gpui_component::Icon::new(
+                gpui_component::IconName::ChevronUp,
+            ))
             .on_mouse_up(
                 gpui::MouseButton::Left,
                 cx.listener(|ws, _ev, _window, _cx| {
@@ -243,7 +255,13 @@ pub fn render_pipeline_bar(
                     .px_1()
                     .text_sm()
                     .text_color(gpui::rgba(0x6b72_80ff)) // gray-500
-                    .child("›")
+                    .a11y_label(
+                        crate::a11y::AccessRole::Label,
+                        dat0_i18n::t("pipeline.step_separator"),
+                    )
+                    .child(gpui_component::Icon::new(
+                        gpui_component::IconName::ChevronRight,
+                    ))
                     .into_any_element(),
             );
 
@@ -296,7 +314,13 @@ pub fn render_pipeline_bar(
             .rounded_md()
             .text_sm()
             .cursor_pointer()
-            .child("⌄")
+            .a11y_label(
+                crate::a11y::AccessRole::Label,
+                dat0_i18n::t("common.expand"),
+            )
+            .child(gpui_component::Icon::new(
+                gpui_component::IconName::ChevronDown,
+            ))
             .on_mouse_up(
                 gpui::MouseButton::Left,
                 cx.listener(|ws, _ev, _window, _cx| {
