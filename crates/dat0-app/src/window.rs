@@ -1789,6 +1789,11 @@ pub fn run_app(lock: AppLock, initial_paths: Vec<PathBuf>, main_loop: MainLoop) 
         // non-Input transient-bar button (see `register_sql_console_keys`).
         crate::view::sql_console::register_sql_console_keys(cx);
 
+        // Register the `Dat0Modal`-scoped tab/shift-tab/escape bindings (B1) so
+        // the modal focus trap and modal-wide Escape are live in production.
+        // Tests must call this too — see `overlay::register_modal_keys`.
+        crate::overlay::register_modal_keys(cx);
+
         // P3b T12 (D-002 closure): promote dat0's own `crate::theme::Theme`
         // to a `gpui::Global` for the lifetime of the app. The initial id
         // is read from `theme.id` in the persisted settings file (the same
@@ -2271,6 +2276,11 @@ pub struct WorkspaceShell {
     /// [`on_name_prompt_event`](Self::on_name_prompt_event) matches on it to
     /// route to the right handler. Cleared alongside `name_prompt`.
     name_prompt_intent: Option<NamePromptIntent>,
+    /// Focus to return to when the currently-open modal dismisses (B1). Set from
+    /// `window.focused(cx)` in each modal's open path, BEFORE `NamePrompt::new`
+    /// moves focus to the field; `take`n in the dismiss path so a double dismiss
+    /// cannot re-focus a stale handle.
+    modal_restore_focus: Option<gpui::FocusHandle>,
     /// Whether the window-level saved-query picker overlay is shown (P5b T8).
     /// Toggled by `show_saved_picker` (📑) / closed on pick or the overlay's ✕.
     /// The overlay reads `session.saved_queries()` live at render, so no
@@ -2421,6 +2431,7 @@ impl WorkspaceShell {
             name_prompt_sub: None,
             name_prompt_sql: None,
             name_prompt_intent: None,
+            modal_restore_focus: None,
             saved_picker_open: false,
             connections: Default::default(),
             connections_panel_visible: false,
@@ -4829,17 +4840,58 @@ impl WorkspaceShell {
         cx: &mut Context<Self>,
     ) {
         use crate::view::name_prompt::{NamePrompt, NamePromptEvent};
+        // B1: remember where focus was BEFORE `NamePrompt::new` moves it to the
+        // field, so dismissing the modal can hand focus back.
+        self.modal_restore_focus = window.focused(cx);
         let prompt = cx.new(|cx| NamePrompt::new(title, initial, window, cx));
-        let sub = cx.subscribe(
+        // `subscribe_in` (not `subscribe`) so the dismiss path has a `&mut
+        // Window` for the B1 focus restore — the form the AI and MotherDuck
+        // prompts already use.
+        let sub = cx.subscribe_in(
             &prompt,
-            |ws: &mut Self, _prompt, ev: &NamePromptEvent, cx| {
-                ws.on_name_prompt_event(ev.clone(), cx);
+            window,
+            |ws: &mut Self, _prompt, ev: &NamePromptEvent, window, cx| {
+                ws.on_name_prompt_event(ev.clone(), window, cx);
             },
         );
         self.name_prompt_sub = Some(sub);
         self.name_prompt_intent = Some(intent);
         self.name_prompt = Some(prompt);
+        debug_assert!(
+            self.open_modal_count() <= 1,
+            "two modals mounted at once ({}) — B1 assumes a single modal; see \
+             docs/plans/2026-07-28-dat0-ui-redesign-b1-modal-host-design.md §2.7",
+            self.open_modal_count()
+        );
         cx.notify();
+    }
+
+    /// How many of the three `NamePrompt`-backed modals are currently mounted
+    /// (B1). The fields are independent `Option`s, so two-at-once is
+    /// representable; the invariant is that it never happens, and each open path
+    /// `debug_assert!`s it rather than the app growing a modal stack nothing
+    /// needs.
+    ///
+    /// Return focus to the stop that held it before the modal opened (B1). No-op
+    /// when nothing was focused (e.g. the modal was opened from a menu action).
+    fn restore_modal_focus(&mut self, window: &mut Window) {
+        if let Some(fh) = self.modal_restore_focus.take() {
+            window.focus(&fh);
+        }
+    }
+
+    /// Load-bearing for the trap, not just hygiene: `render` picks the trapped
+    /// focus order with an `or` chain over the same three fields, so a second
+    /// mounted modal would silently be the one NOT trapped.
+    pub(crate) fn open_modal_count(&self) -> usize {
+        [
+            self.name_prompt.is_some(),
+            self.md_token_prompt.is_some(),
+            self.ai_entry_prompt.is_some(),
+        ]
+        .iter()
+        .filter(|open| **open)
+        .count()
     }
 
     /// Route a `NamePromptEvent` from the shared name modal (P5b T8 + T10).
@@ -4850,6 +4902,7 @@ impl WorkspaceShell {
     fn on_name_prompt_event(
         &mut self,
         ev: crate::view::name_prompt::NamePromptEvent,
+        window: &mut Window,
         cx: &mut Context<Self>,
     ) {
         use crate::view::name_prompt::NamePromptEvent;
@@ -4879,6 +4932,7 @@ impl WorkspaceShell {
         self.name_prompt_sub = None;
         self.name_prompt_sql = None;
         self.name_prompt_intent = None;
+        self.restore_modal_focus(window);
         cx.notify();
     }
 
@@ -5198,12 +5252,15 @@ impl WorkspaceShell {
     /// trap).
     fn open_md_token_prompt(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         use crate::view::name_prompt::{NamePrompt, NamePromptEvent};
+        // B1: remember where focus was BEFORE `NamePrompt::new` moves it to the
+        // field, so dismissing the modal can hand focus back.
+        self.modal_restore_focus = window.focused(cx);
         let prompt = cx
             .new(|cx| NamePrompt::new(dat0_i18n::t("connections.md.token_prompt"), "", window, cx));
         let sub = cx.subscribe_in(
             &prompt,
             window,
-            |ws: &mut Self, _prompt, ev: &NamePromptEvent, _window, cx| match ev {
+            |ws: &mut Self, _prompt, ev: &NamePromptEvent, window, cx| match ev {
                 NamePromptEvent::Confirm(token) => {
                     use crate::connections::ConnectionStatus;
                     use crate::connections::token_store::{KeychainTokenStore, TokenStore as _};
@@ -5211,6 +5268,7 @@ impl WorkspaceShell {
                     // Close the prompt first.
                     ws.md_token_prompt = None;
                     ws.md_token_prompt_sub = None;
+                    ws.restore_modal_focus(window);
                     // Store the token; on failure surface an error and stop.
                     match KeychainTokenStore::new().and_then(|s| s.set(&token)) {
                         Ok(()) => {
@@ -5228,12 +5286,19 @@ impl WorkspaceShell {
                 NamePromptEvent::Cancel => {
                     ws.md_token_prompt = None;
                     ws.md_token_prompt_sub = None;
+                    ws.restore_modal_focus(window);
                     cx.notify();
                 }
             },
         );
         self.md_token_prompt_sub = Some(sub);
         self.md_token_prompt = Some(prompt);
+        debug_assert!(
+            self.open_modal_count() <= 1,
+            "two modals mounted at once ({}) — B1 assumes a single modal; see \
+             docs/plans/2026-07-28-dat0-ui-redesign-b1-modal-host-design.md §2.7",
+            self.open_modal_count()
+        );
         cx.notify();
     }
 
@@ -5791,6 +5856,9 @@ impl WorkspaceShell {
             AiEntryKind::Key => dat0_i18n::t("ai.key.prompt"),
             AiEntryKind::Model => dat0_i18n::t("ai.model.prompt"),
         };
+        // B1: remember where focus was BEFORE `NamePrompt::new` moves it to the
+        // field, so dismissing the modal can hand focus back.
+        self.modal_restore_focus = window.focused(cx);
         let prompt = cx.new(|cx| NamePrompt::new(label, "", window, cx));
         let sub = cx.subscribe_in(
             &prompt,
@@ -5801,6 +5869,9 @@ impl WorkspaceShell {
                     // Close the prompt first.
                     ws.ai_entry_prompt = None;
                     ws.ai_entry_prompt_sub = None;
+                    // Restore BEFORE dispatching: a handler that opens another
+                    // modal must capture the restored focus, not the field's.
+                    ws.restore_modal_focus(window);
                     if value.is_empty() {
                         cx.notify();
                         return;
@@ -5814,12 +5885,19 @@ impl WorkspaceShell {
                 NamePromptEvent::Cancel => {
                     ws.ai_entry_prompt = None;
                     ws.ai_entry_prompt_sub = None;
+                    ws.restore_modal_focus(window);
                     cx.notify();
                 }
             },
         );
         self.ai_entry_prompt_sub = Some(sub);
         self.ai_entry_prompt = Some(prompt);
+        debug_assert!(
+            self.open_modal_count() <= 1,
+            "two modals mounted at once ({}) — B1 assumes a single modal; see \
+             docs/plans/2026-07-28-dat0-ui-redesign-b1-modal-host-design.md §2.7",
+            self.open_modal_count()
+        );
         cx.notify();
     }
 
@@ -6390,46 +6468,60 @@ impl Render for WorkspaceShell {
                 .into_any_element()
         });
 
-        // Save-query name-prompt overlay (P5b T8). Mounted by `open_name_prompt`;
-        // emits `NamePromptEvent` routed via the stored `name_prompt_sub`
-        // subscription (Confirm → save + dismiss, Cancel → dismiss). Same
-        // top-centre placement as the export dialog.
+        // Save-query name-prompt modal (P5b T8, re-hosted in B1). Mounted by
+        // `open_name_prompt`; emits `NamePromptEvent` routed via the stored
+        // `name_prompt_sub` subscription (Confirm → save + dismiss, Cancel →
+        // dismiss). `modal_host` supplies the scrim, the centred card, the
+        // `Dialog` a11y node and the Tab trap.
         let name_prompt_overlay: Option<gpui::AnyElement> = self.name_prompt.as_ref().map(|p| {
-            div()
-                .absolute()
-                .top_16()
-                .left_1_2()
-                .child(p.clone())
-                .into_any_element()
+            crate::overlay::modal_host(
+                "name-prompt-modal",
+                p.read(cx).title(),
+                p.clone().into_any_element(),
+                cx,
+            )
+            .into_any_element()
         });
 
-        // MotherDuck token-entry overlay (P5c T11). Mounted by
+        // MotherDuck token-entry modal (P5c T11, re-hosted in B1). Mounted by
         // `open_md_token_prompt`; emits `NamePromptEvent` routed via the stored
         // `md_token_prompt_sub` subscription (Confirm → store token + connect,
-        // Cancel → dismiss). Same top-centre placement as the other modals.
+        // Cancel → dismiss).
         let md_token_prompt_overlay: Option<gpui::AnyElement> =
             self.md_token_prompt.as_ref().map(|p| {
-                div()
-                    .absolute()
-                    .top_16()
-                    .left_1_2()
-                    .child(p.clone())
-                    .into_any_element()
+                crate::overlay::modal_host(
+                    "md-token-prompt-modal",
+                    p.read(cx).title(),
+                    p.clone().into_any_element(),
+                    cx,
+                )
+                .into_any_element()
             });
 
-        // AI key/model entry overlay (P9c-1 T9). Mounted by `open_ai_entry_prompt`;
-        // emits `NamePromptEvent` routed via the stored `ai_entry_prompt_sub`
-        // subscription (Confirm → re-dispatch SetKey/SetModel, Cancel → dismiss).
-        // Same top-centre placement as the other modals.
+        // AI key/model entry modal (P9c-1 T9, re-hosted in B1). Mounted by
+        // `open_ai_entry_prompt`; emits `NamePromptEvent` routed via the stored
+        // `ai_entry_prompt_sub` subscription (Confirm → re-dispatch
+        // SetKey/SetModel, Cancel → dismiss).
         let ai_entry_prompt_overlay: Option<gpui::AnyElement> =
             self.ai_entry_prompt.as_ref().map(|p| {
-                div()
-                    .absolute()
-                    .top_16()
-                    .left_1_2()
-                    .child(p.clone())
-                    .into_any_element()
+                crate::overlay::modal_host(
+                    "ai-entry-prompt-modal",
+                    p.read(cx).title(),
+                    p.clone().into_any_element(),
+                    cx,
+                )
+                .into_any_element()
             });
+
+        // B1: the focus order of whichever modal is mounted, hoisted for the
+        // shell root's Tab trap below. At most one is ever open
+        // (`open_modal_count`), so `or` picks the live one rather than merging.
+        let modal_focus_order: Option<Vec<FocusHandle>> = self
+            .name_prompt
+            .as_ref()
+            .or(self.md_token_prompt.as_ref())
+            .or(self.ai_entry_prompt.as_ref())
+            .map(|p| p.read(cx).focus_order(cx));
 
         // Saved-query picker overlay (P5b T8). Window-level, flag-gated on
         // `saved_picker_open`; reads `session.saved_queries()` LIVE so a delete
@@ -6749,6 +6841,20 @@ impl Render for WorkspaceShell {
 
         div()
             .id("workspace-shell")
+            // B1 modal Tab trap. Installed HERE, on the shell root, rather than
+            // on the modal's own scrim, because gpui runs two separate lookups
+            // per keystroke: the key-context stack picks the ACTION, then the
+            // dispatch path (focused node → upward) picks the HANDLER. The scrim
+            // is a SIBLING of the shell's content, so neither lookup reaches it
+            // when focus sits outside the modal — measured: with the trap on the
+            // scrim, focus staged onto a background hero button walked to the
+            // next hero button on a real Tab, because the matched action found no
+            // handler, left `propagate_event` true, and `Root`'s Tab binding won
+            // the fallthrough. See `overlay`'s module docs.
+            //
+            // `when_some` means no modal → no key context → normal Tab
+            // navigation is byte-identical to before.
+            .when_some(modal_focus_order, crate::overlay::modal_trap)
             .size_full()
             .flex()
             .flex_col()
@@ -7125,6 +7231,11 @@ impl WorkspaceShell {
     /// Whether the name-prompt overlay is currently mounted.
     pub fn name_prompt_open_for_test(&self) -> bool {
         self.name_prompt.is_some()
+    }
+
+    /// How many modals are mounted — the B1 single-modal invariant.
+    pub fn open_modal_count_for_test(&self) -> usize {
+        self.open_modal_count()
     }
 
     /// The live prompt entity — lets a test subscribe to its `NamePromptEvent`

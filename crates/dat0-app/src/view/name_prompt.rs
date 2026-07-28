@@ -69,6 +69,24 @@ impl NamePrompt {
     fn value(&self, cx: &gpui::App) -> String {
         self.input.read(cx).value().to_string()
     }
+
+    /// The prompt's focus stops in VISUAL order — the source of truth for
+    /// `overlay::modal_trap`'s Tab cycle (B1). A render change that reorders the
+    /// buttons must update this; `prompt_focus_order_is_field_ok_cancel` in
+    /// `tests/modal_trap_nav.rs` guards the head of the list.
+    pub fn focus_order(&self, cx: &gpui::App) -> Vec<FocusHandle> {
+        vec![
+            self.input.read(cx).focus_handle(cx),
+            self.ok_focus.clone(),
+            self.cancel_focus.clone(),
+        ]
+    }
+
+    /// The prompt's title, used as the accessible name of the modal's `Dialog`
+    /// node (B1).
+    pub fn title(&self) -> SharedString {
+        self.title.clone()
+    }
 }
 
 #[cfg(feature = "a11y-capture")]
@@ -79,13 +97,8 @@ impl NamePrompt {
         self.input.read(cx).focus_handle(cx).is_focused(window)
     }
 
-    /// The field's `FocusHandle` — lets a test re-focus INTO the modal. This
-    /// slice does not add a Tab focus-trap: the scope is "OK/Cancel are
-    /// reachable" and "Escape cancels from within the modal", not "Tab can
-    /// never leave it". So a long Tab walk (e.g. proving OK/Cancel are stops)
-    /// can wander focus into the background shell; a test that then wants to
-    /// prove Escape cancels FROM WITHIN the modal needs to land focus back
-    /// inside it first.
+    /// The field's `FocusHandle` — lets a test re-focus INTO the modal or assert
+    /// the head of [`focus_order`](Self::focus_order).
     pub fn input_focus_handle_for_test(&self, cx: &gpui::App) -> gpui::FocusHandle {
         self.input.read(cx).focus_handle(cx)
     }
