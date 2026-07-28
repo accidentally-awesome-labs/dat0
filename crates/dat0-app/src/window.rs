@@ -2276,6 +2276,11 @@ pub struct WorkspaceShell {
     /// [`on_name_prompt_event`](Self::on_name_prompt_event) matches on it to
     /// route to the right handler. Cleared alongside `name_prompt`.
     name_prompt_intent: Option<NamePromptIntent>,
+    /// Focus to return to when the currently-open modal dismisses (B1). Set from
+    /// `window.focused(cx)` in each modal's open path, BEFORE `NamePrompt::new`
+    /// moves focus to the field; `take`n in the dismiss path so a double dismiss
+    /// cannot re-focus a stale handle.
+    modal_restore_focus: Option<gpui::FocusHandle>,
     /// Whether the window-level saved-query picker overlay is shown (P5b T8).
     /// Toggled by `show_saved_picker` (📑) / closed on pick or the overlay's ✕.
     /// The overlay reads `session.saved_queries()` live at render, so no
@@ -2426,6 +2431,7 @@ impl WorkspaceShell {
             name_prompt_sub: None,
             name_prompt_sql: None,
             name_prompt_intent: None,
+            modal_restore_focus: None,
             saved_picker_open: false,
             connections: Default::default(),
             connections_panel_visible: false,
@@ -4834,11 +4840,18 @@ impl WorkspaceShell {
         cx: &mut Context<Self>,
     ) {
         use crate::view::name_prompt::{NamePrompt, NamePromptEvent};
+        // B1: remember where focus was BEFORE `NamePrompt::new` moves it to the
+        // field, so dismissing the modal can hand focus back.
+        self.modal_restore_focus = window.focused(cx);
         let prompt = cx.new(|cx| NamePrompt::new(title, initial, window, cx));
-        let sub = cx.subscribe(
+        // `subscribe_in` (not `subscribe`) so the dismiss path has a `&mut
+        // Window` for the B1 focus restore — the form the AI and MotherDuck
+        // prompts already use.
+        let sub = cx.subscribe_in(
             &prompt,
-            |ws: &mut Self, _prompt, ev: &NamePromptEvent, cx| {
-                ws.on_name_prompt_event(ev.clone(), cx);
+            window,
+            |ws: &mut Self, _prompt, ev: &NamePromptEvent, window, cx| {
+                ws.on_name_prompt_event(ev.clone(), window, cx);
             },
         );
         self.name_prompt_sub = Some(sub);
@@ -4859,6 +4872,14 @@ impl WorkspaceShell {
     /// `debug_assert!`s it rather than the app growing a modal stack nothing
     /// needs.
     ///
+    /// Return focus to the stop that held it before the modal opened (B1). No-op
+    /// when nothing was focused (e.g. the modal was opened from a menu action).
+    fn restore_modal_focus(&mut self, window: &mut Window) {
+        if let Some(fh) = self.modal_restore_focus.take() {
+            window.focus(&fh);
+        }
+    }
+
     /// Load-bearing for the trap, not just hygiene: `render` picks the trapped
     /// focus order with an `or` chain over the same three fields, so a second
     /// mounted modal would silently be the one NOT trapped.
@@ -4881,6 +4902,7 @@ impl WorkspaceShell {
     fn on_name_prompt_event(
         &mut self,
         ev: crate::view::name_prompt::NamePromptEvent,
+        window: &mut Window,
         cx: &mut Context<Self>,
     ) {
         use crate::view::name_prompt::NamePromptEvent;
@@ -4910,6 +4932,7 @@ impl WorkspaceShell {
         self.name_prompt_sub = None;
         self.name_prompt_sql = None;
         self.name_prompt_intent = None;
+        self.restore_modal_focus(window);
         cx.notify();
     }
 
@@ -5229,12 +5252,15 @@ impl WorkspaceShell {
     /// trap).
     fn open_md_token_prompt(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         use crate::view::name_prompt::{NamePrompt, NamePromptEvent};
+        // B1: remember where focus was BEFORE `NamePrompt::new` moves it to the
+        // field, so dismissing the modal can hand focus back.
+        self.modal_restore_focus = window.focused(cx);
         let prompt = cx
             .new(|cx| NamePrompt::new(dat0_i18n::t("connections.md.token_prompt"), "", window, cx));
         let sub = cx.subscribe_in(
             &prompt,
             window,
-            |ws: &mut Self, _prompt, ev: &NamePromptEvent, _window, cx| match ev {
+            |ws: &mut Self, _prompt, ev: &NamePromptEvent, window, cx| match ev {
                 NamePromptEvent::Confirm(token) => {
                     use crate::connections::ConnectionStatus;
                     use crate::connections::token_store::{KeychainTokenStore, TokenStore as _};
@@ -5242,6 +5268,7 @@ impl WorkspaceShell {
                     // Close the prompt first.
                     ws.md_token_prompt = None;
                     ws.md_token_prompt_sub = None;
+                    ws.restore_modal_focus(window);
                     // Store the token; on failure surface an error and stop.
                     match KeychainTokenStore::new().and_then(|s| s.set(&token)) {
                         Ok(()) => {
@@ -5259,6 +5286,7 @@ impl WorkspaceShell {
                 NamePromptEvent::Cancel => {
                     ws.md_token_prompt = None;
                     ws.md_token_prompt_sub = None;
+                    ws.restore_modal_focus(window);
                     cx.notify();
                 }
             },
@@ -5828,6 +5856,9 @@ impl WorkspaceShell {
             AiEntryKind::Key => dat0_i18n::t("ai.key.prompt"),
             AiEntryKind::Model => dat0_i18n::t("ai.model.prompt"),
         };
+        // B1: remember where focus was BEFORE `NamePrompt::new` moves it to the
+        // field, so dismissing the modal can hand focus back.
+        self.modal_restore_focus = window.focused(cx);
         let prompt = cx.new(|cx| NamePrompt::new(label, "", window, cx));
         let sub = cx.subscribe_in(
             &prompt,
@@ -5838,6 +5869,9 @@ impl WorkspaceShell {
                     // Close the prompt first.
                     ws.ai_entry_prompt = None;
                     ws.ai_entry_prompt_sub = None;
+                    // Restore BEFORE dispatching: a handler that opens another
+                    // modal must capture the restored focus, not the field's.
+                    ws.restore_modal_focus(window);
                     if value.is_empty() {
                         cx.notify();
                         return;
@@ -5851,6 +5885,7 @@ impl WorkspaceShell {
                 NamePromptEvent::Cancel => {
                     ws.ai_entry_prompt = None;
                     ws.ai_entry_prompt_sub = None;
+                    ws.restore_modal_focus(window);
                     cx.notify();
                 }
             },

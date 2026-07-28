@@ -109,6 +109,36 @@ fn enter_async_harness(cx: &mut TestAppContext) -> AsyncHarness {
     AsyncHarness { rt }
 }
 
+/// Focus the shell the way a real keyboard user does: click a neutral spot in
+/// the enriched band's top row (60px left of the take-tour button, which sits
+/// top-RIGHT after a flex-grow tagline with no click handler of its own), then
+/// PROVE the click landed on the shell's own focus handle and NOT a wired hero
+/// button (copied from `keyboard_nav.rs` / `input_nav.rs`).
+///
+/// LOAD-BEARING for any Tab-driven test: with NOTHING focused, the dispatch
+/// path is the window root alone, so not even `Root`'s own "tab" binding
+/// matches and Tab is completely inert. Measured here — eight `press_tab` hops
+/// from a fresh window moved focus not at all.
+fn focus_shell_neutrally(cx: &mut VisualTestContext) {
+    let tt_bounds = cx
+        .debug_bounds("hero-take-tour")
+        .expect("hero-take-tour must be painted");
+    let focus_pt = gpui::point(tt_bounds.origin.x - gpui::px(60.), tt_bounds.center().y);
+    cx.simulate_click(focus_pt, gpui::Modifiers::none());
+    cx.run_until_parked();
+    assert!(
+        cx.update(|window, app| window.focused(app).is_some()),
+        "clicking into the workspace must focus something (precondition for Tab)"
+    );
+    let snap = A11ySnapshot::capture(cx);
+    assert!(
+        snap.focused_label().is_none(),
+        "neutral click must land on the shell's own focus handle, not a wired \
+         hero button (focus oracle named {:?})",
+        snap.focused_label()
+    );
+}
+
 /// Tab from the current focus until `want` is the focused stop, or panic after
 /// 20 hops (catalog_nav.rs `tab_to_catalog` idiom).
 fn tab_until(cx: &mut VisualTestContext, want: &str) {
@@ -482,5 +512,48 @@ fn at_most_one_modal_is_open(cx: &mut TestAppContext) {
         0,
         "back to zero after dismiss"
     );
+    drop(state);
+}
+
+/// Dismissing a modal returns focus to whatever held it before the modal opened.
+/// Without this, closing a prompt strands focus and the next Tab restarts from
+/// the top of the shell.
+#[gpui::test]
+#[serial]
+fn dismiss_restores_focus_to_the_pre_open_stop(cx: &mut TestAppContext) {
+    let cfg = tempfile::tempdir().unwrap();
+    let state = tempfile::tempdir().unwrap();
+    set_config_dir(cfg.path());
+    init_components(cx);
+    let harness = enter_async_harness(cx);
+    let _g = harness.enter();
+    let session = build_empty_session(state.path());
+    let (shell, vcx) = open_shell_window(cx, session);
+    vcx.run_until_parked();
+
+    // Land focus on a known shell stop and record its label. A single Tab from
+    // a fresh window lands on the shell's own UNLABELLED focus handle, so walk
+    // to a named hero button instead. The label is then read back rather than
+    // hardcoded into the final assertion, so a harness change surfaces as a
+    // clear failure rather than a silent tautology.
+    focus_shell_neutrally(vcx);
+    tab_until(vcx, "Take a tour");
+    let before = A11ySnapshot::capture(vcx)
+        .focused_label()
+        .map(str::to_string);
+    assert_eq!(
+        before.as_deref(),
+        Some("Take a tour"),
+        "precondition: focus is parked on a labelled shell stop"
+    );
+
+    let (_p, _log) = open_prompt_with_log(&shell, vcx);
+    vcx.simulate_keystrokes("escape");
+    vcx.run_until_parked();
+
+    let after = A11ySnapshot::capture(vcx)
+        .focused_label()
+        .map(str::to_string);
+    assert_eq!(after, before, "focus returned to the pre-open stop");
     drop(state);
 }
