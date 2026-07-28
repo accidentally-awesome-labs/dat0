@@ -32,6 +32,7 @@
 //! `Application::run` closure and passed through to `spawn_window`. T17
 //! will assert `registry.lock().len()` to verify window count.
 
+use crate::a11y::A11yExt as _;
 use anyhow::Result;
 use dat0_i18n::t;
 use gpui::{
@@ -1738,7 +1739,9 @@ pub fn run_app(lock: AppLock, initial_paths: Vec<PathBuf>, main_loop: MainLoop) 
     // the same `handle_drop` flow the cold-start `initial_paths` block uses.
     // `on_open_urls` is on `Application` and must be registered before `run`.
     // (S1 spike.)
-    let application = Application::new();
+    // A5: the ONE AssetSource for the process. Without it every `Icon` renders as
+    // nothing at all — gpui does not panic on an unresolved asset path (A0 spike).
+    let application = Application::new().with_assets(crate::assets::Dat0Assets);
     let session_for_open = Arc::clone(&session);
     application.on_open_urls(move |urls: Vec<String>| {
         let paths = paths_from_open_urls(&urls);
@@ -6488,7 +6491,11 @@ impl Render for WorkspaceShell {
                                 .id("sql-saved-close")
                                 .cursor_pointer()
                                 .px_1()
-                                .child("✕")
+                                .a11y_label(
+                                    crate::a11y::AccessRole::Label,
+                                    dat0_i18n::t("common.close"),
+                                )
+                                .child(gpui_component::Icon::new(gpui_component::IconName::Close))
                                 .on_click(move |_ev, _window, cx| {
                                     close.update(cx, |ws, cx| {
                                         ws.saved_picker_open = false;

@@ -1795,6 +1795,7 @@ dependencies = [
  "gethostname",
  "gpui",
  "gpui-component",
+ "gpui-component-assets",
  "image 0.25.10",
  "insta",
  "interprocess",
@@ -1811,6 +1812,7 @@ dependencies = [
  "regex",
  "reqwest",
  "ropey",
+ "rust-embed",
  "sentry",
  "serde",
  "serde_json",
@@ -3090,6 +3092,16 @@ dependencies = [
  "unicode-segmentation",
  "uuid",
  "zed-sum-tree",
+]
+
+[[package]]
+name = "gpui-component-assets"
+version = "0.5.1"
+source = "git+https://github.com/longbridge/gpui-component?rev=0f0ab35233212f8f3277028995caf0c41e13ee6c#0f0ab35233212f8f3277028995caf0c41e13ee6c"
+dependencies = [
+ "anyhow",
+ "gpui",
+ "rust-embed",
 ]
 
 [[package]]
@@ -6144,6 +6156,7 @@ dependencies = [
  "proc-macro2",
  "quote",
  "rust-embed-utils",
+ "shellexpand",
  "syn 2.0.117",
  "walkdir",
 ]
@@ -6817,6 +6830,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f40ca3c46823713e0d4209592e8d6e826aa57e928f09752619fc696c499637f6"
 dependencies = [
  "lazy_static",
+]
+
+[[package]]
+name = "shellexpand"
+version = "3.1.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "32824fab5e16e6c4d86dc1ba84489390419a39f97699852b66480bb87d297ed8"
+dependencies = [
+ "dirs 6.0.0",
 ]
 
 [[package]]

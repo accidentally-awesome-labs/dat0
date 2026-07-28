@@ -21,6 +21,7 @@
 use gpui::prelude::*;
 use gpui::{App, ParentElement, SharedString, Styled, Window, div};
 
+use crate::a11y::A11yExt as _;
 use crate::session::queries::{HistoryEntry, SavedQuery};
 
 /// Render a history list (newest first). `active` is the index (in DISPLAY /
@@ -108,7 +109,8 @@ pub fn render_saved_picker(
                     div()
                         .id(("saved-del", i))
                         .cursor_pointer()
-                        .child(SharedString::from("✕"))
+                        .a11y_label(crate::a11y::AccessRole::Label, dat0_i18n::t("common.close"))
+                        .child(gpui_component::Icon::new(gpui_component::IconName::Close))
                         .on_click(move |_ev, _w, cx| on_delete(id, cx)),
                 )
         }))

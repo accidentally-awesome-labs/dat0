@@ -285,7 +285,10 @@ impl GridTableDelegate {
                     h.update(cx, |ws, cx| ws.on_sort_zone_click(col_ix, shift, cx));
                 }
             })
-            .child("⇅")
+            .a11y_label(crate::a11y::AccessRole::Label, dat0_i18n::t("grid.sort"))
+            .child(gpui_component::Icon::new(
+                gpui_component::IconName::ChevronsUpDown,
+            ))
     }
 
     /// Renders the funnel-icon zone (rightmost).
@@ -311,7 +314,10 @@ impl GridTableDelegate {
                     h.update(cx, |ws, cx| ws.on_funnel_click(col_ix, window, cx));
                 }
             })
-            .child("⌄")
+            .a11y_label(crate::a11y::AccessRole::Label, dat0_i18n::t("grid.filter"))
+            .child(gpui_component::Icon::new(
+                crate::assets::Dat0IconName::Filter,
+            ))
     }
 }
 

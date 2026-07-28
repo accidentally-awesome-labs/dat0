@@ -23,6 +23,7 @@ const SECTIONS: &[&str] = &[
     "gallery.scales",
     "gallery.elevation",
     "gallery.components",
+    "gallery.icons",
 ];
 
 #[gpui::test]

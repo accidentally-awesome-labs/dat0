@@ -30,6 +30,10 @@ ureq = { workspace = true }
 url = "2"
 gpui = { workspace = true }
 gpui-component = { workspace = true }
+gpui-component-assets = { workspace = true }
+# A5: embeds dat0's own icons/*.svg into the binary. Same major as the copy
+# gpui-component-assets already resolves, so no second version lands in the tree.
+rust-embed = { version = "8.7.2", features = ["interpolate-folder-path"] }
 # P5b autocomplete: gpui-component's CompletionProvider trait is generic over
 # lsp-types + ropey. gpui-component re-exports only Rope/Position, not the
 # Completion* types, so dat0 names them directly. Pin to gpui-component's exact

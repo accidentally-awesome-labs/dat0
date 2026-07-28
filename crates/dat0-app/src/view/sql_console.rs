@@ -735,7 +735,8 @@ impl Render for SqlConsole {
                         div()
                             .id(("sql-tab-close", i))
                             .cursor_pointer()
-                            .child(SharedString::from("✕"))
+                            .a11y_label(AccessRole::Label, dat0_i18n::t("sql.close_tab"))
+                            .child(gpui_component::Icon::new(gpui_component::IconName::Close))
                             .on_click(cx.listener(move |this, _ev, _window, cx| {
                                 this.close_tab(i, cx);
                             })),
@@ -859,7 +860,10 @@ impl Render for SqlConsole {
                 .py_1()
                 .cursor_pointer()
                 .border_l_1()
-                .child(SharedString::from("▾"))
+                // Accessible name comes from the `.a11y` call below.
+                .child(gpui_component::Icon::new(
+                    gpui_component::IconName::ChevronDown,
+                ))
                 .focus_stop(
                     "sql-run-pane",
                     &run_pane_fh,
@@ -987,7 +991,9 @@ impl Render for SqlConsole {
                             .id("sql-err-dismiss")
                             .cursor_pointer()
                             .px_1()
-                            .child(SharedString::from("✕"))
+                            // The accessible name already comes from the `.a11y`
+                            // call below; a second push would duplicate the node.
+                            .child(gpui_component::Icon::new(gpui_component::IconName::Close))
                             .focus_stop("sql-err-dismiss", &err_dismiss_fh, 0, key)
                             .a11y(
                                 "sql-err-dismiss",
@@ -1097,7 +1103,10 @@ impl Render for SqlConsole {
                                     .id("sql-history-close")
                                     .cursor_pointer()
                                     .px_1()
-                                    .child(SharedString::from("✕"))
+                                    // Accessible name comes from `.a11y` below.
+                                    .child(gpui_component::Icon::new(
+                                        gpui_component::IconName::Close,
+                                    ))
                                     .focus_stop(
                                         "sql-history-close",
                                         &history_close_fh,
@@ -1206,7 +1215,11 @@ impl Render for SqlConsole {
                                     .px_2()
                                     .py_1()
                                     .cursor_pointer()
-                                    .child(SharedString::from("🕘"))
+                                    // Accessible name comes from the `.a11y`
+                                    // call below.
+                                    .child(gpui_component::Icon::new(
+                                        crate::assets::Dat0IconName::History,
+                                    ))
                                     .focus_stop(
                                         "sql-history",
                                         &history_fh,

@@ -63,6 +63,10 @@ gpui = "=0.2.2"
 # turns out to be re-exported through gpui-macros at the pinned version.
 gpui-macros = "=0.2.2"
 gpui-component = { git = "https://github.com/longbridge/gpui-component", rev = "0f0ab35233212f8f3277028995caf0c41e13ee6c" }
+# A5: the default Lucide icon bundle for gpui-component's `IconName`. MUST stay
+# on the same rev as gpui-component — a mismatched assets crate silently serves
+# a different icon set (blank or wrong glyphs, no build error).
+gpui-component-assets = { git = "https://github.com/longbridge/gpui-component", rev = "0f0ab35233212f8f3277028995caf0c41e13ee6c" }
 
 # Telemetry
 sentry = { version = "0.36", default-features = false, features = ["backtrace", "panic", "rustls", "reqwest"] }
