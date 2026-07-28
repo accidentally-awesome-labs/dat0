@@ -1215,7 +1215,11 @@ impl Render for SqlConsole {
                                     .px_2()
                                     .py_1()
                                     .cursor_pointer()
-                                    .child(SharedString::from("🕘"))
+                                    // Accessible name comes from the `.a11y`
+                                    // call below.
+                                    .child(gpui_component::Icon::new(
+                                        crate::assets::Dat0IconName::History,
+                                    ))
                                     .focus_stop(
                                         "sql-history",
                                         &history_fh,

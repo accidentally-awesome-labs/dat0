@@ -3,6 +3,7 @@
 //! pure + unit-tested; the GPUI render mounts on the WorkspaceShell.
 
 use crate::a11y::A11yExt as _;
+use crate::theme::tokens::{Sp, SpStyled as _};
 use dat0_engine::transform::{SortDirection, Transformation};
 use gpui::{IntoElement, prelude::*};
 use gpui_component::h_flex;
@@ -39,8 +40,9 @@ pub fn describe_transform(t: &Transformation) -> String {
 
 /// State for the PipelineBar toggle (expanded vs. collapsed).
 ///
-/// `expanded` is `false` by default; clicking `⌄` flips it to show the
-/// vertical timeline; clicking `⌃` collapses back to the pill strip.
+/// `expanded` is `false` by default; clicking the chevron-down toggle flips it
+/// to show the vertical timeline; the chevron-up toggle collapses back to the
+/// pill strip.
 #[derive(Debug, Default, Clone)]
 pub struct PipelineBarState {
     pub expanded: bool,
@@ -49,16 +51,16 @@ pub struct PipelineBarState {
 /// Render the PipelineBar — collapsed pill strip or expanded vertical timeline,
 /// depending on `state.expanded`.
 ///
-/// **Collapsed:** horizontal flex of pills: a leading `▣ base` chip (clickable
-/// → `jump_to(0)`), then one chip per `describe_transform(t)` with `›`
-/// separators, and a trailing `⌄` toggle. Clicking a pill calls
-/// `ws.pipeline_jump_to(i + 1)`.
+/// **Collapsed:** horizontal flex of pills: a leading layers-icon + "base" chip
+/// (clickable → `jump_to(0)`), then one chip per `describe_transform(t)` with
+/// chevron-right separators, and a trailing chevron-down toggle. Clicking a
+/// pill calls `ws.pipeline_jump_to(i + 1)`.
 ///
 /// **Expanded:** a vertical list with one row per active transform. Each row
-/// shows `[icon] describe_transform(t)` (clickable → `jump_to(i + 1)`) and a
-/// trailing `✕` remove button (`ws.pipeline_remove_at(i)`). Above the rows a
-/// `▣ base` entry (clickable → `jump_to(0)`) anchors the timeline. A `⌃`
-/// toggle collapses back to the pill strip.
+/// shows `[chevron] describe_transform(t)` (clickable → `jump_to(i + 1)`) and a
+/// trailing close-icon remove button (`ws.pipeline_remove_at(i)`). Above the
+/// rows a layers-icon + "base" entry (clickable → `jump_to(0)`) anchors the
+/// timeline. A chevron-up toggle collapses back to the pill strip.
 ///
 /// Returns `None` when the stack is empty (no bar shown until a transform is
 /// applied), so the caller can use `.children(render_pipeline_bar(...))`.
@@ -89,7 +91,13 @@ pub fn render_pipeline_bar(
                 div()
                     .text_sm()
                     .text_color(gpui::rgba(0x6b72_80ff)) // gray-500
-                    .child("▣"),
+                    .a11y_label(
+                        crate::a11y::AccessRole::Label,
+                        dat0_i18n::t("pipeline.base"),
+                    )
+                    .child(gpui_component::Icon::new(
+                        crate::assets::Dat0IconName::Layers,
+                    )),
             )
             .child(
                 div()
@@ -236,7 +244,21 @@ pub fn render_pipeline_bar(
             .text_sm()
             .bg(gpui::rgba(0x3b82_f640)) // blue-500/25
             .cursor_pointer()
-            .child("▣ base")
+            // The one deliberate exception to the scope rule: glyph AND text in
+            // a single string literal, split into a flex row so the glyph can
+            // become an Icon without the label losing its text.
+            .a11y_label(
+                crate::a11y::AccessRole::Label,
+                dat0_i18n::t("pipeline.base"),
+            )
+            .child(
+                h_flex()
+                    .gap_sp(Sp::S4)
+                    .child(gpui_component::Icon::new(
+                        crate::assets::Dat0IconName::Layers,
+                    ))
+                    .child("base"),
+            )
             .on_mouse_up(
                 gpui::MouseButton::Left,
                 cx.listener(|ws, _ev, _window, cx| {
