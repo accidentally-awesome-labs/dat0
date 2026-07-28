@@ -70,6 +70,7 @@ use gpui_component::{
     v_flex,
 };
 
+use crate::a11y::A11yExt as _;
 use crate::view::filter_popover::ColumnType;
 use dat0_engine::Scalar;
 
@@ -152,9 +153,15 @@ impl Render for HeaderRenameEditor {
         let text = self.text.as_ref().expect("ensure_input just ran");
 
         let entity_cancel = cx.entity();
+        // Icon, not the word: a ghost button labelled "Cancel" is visibly wider
+        // than the ✕ it replaces, and this slice must not move layout.
         let cancel_btn = Button::new("header-rename-cancel")
-            .label("✕")
+            .icon(gpui_component::IconName::Close)
             .ghost()
+            .a11y_label(
+                crate::a11y::AccessRole::Label,
+                dat0_i18n::t("common.cancel"),
+            )
             .on_click(move |_ev, _window, cx| {
                 entity_cancel.update(cx, |_this, cx| {
                     cx.emit(HeaderRenameEvent::Cancel);

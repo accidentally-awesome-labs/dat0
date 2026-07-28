@@ -2,6 +2,7 @@
 //! a scrubber (jump-to-state) + per-transform remove. The pill LABEL logic is
 //! pure + unit-tested; the GPUI render mounts on the WorkspaceShell.
 
+use crate::a11y::A11yExt as _;
 use dat0_engine::transform::{SortDirection, Transformation};
 use gpui::{IntoElement, prelude::*};
 use gpui_component::h_flex;
@@ -140,7 +141,11 @@ pub fn render_pipeline_bar(
                     .text_sm()
                     .text_color(gpui::rgba(0xef44_44ff)) // red-500
                     .cursor_pointer()
-                    .child("✕")
+                    .a11y_label(
+                        crate::a11y::AccessRole::Label,
+                        dat0_i18n::t("pipeline.remove_step"),
+                    )
+                    .child(gpui_component::Icon::new(gpui_component::IconName::Close))
                     .on_mouse_up(
                         gpui::MouseButton::Left,
                         cx.listener(move |ws, _ev, _window, cx| {
