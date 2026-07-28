@@ -1738,7 +1738,9 @@ pub fn run_app(lock: AppLock, initial_paths: Vec<PathBuf>, main_loop: MainLoop) 
     // the same `handle_drop` flow the cold-start `initial_paths` block uses.
     // `on_open_urls` is on `Application` and must be registered before `run`.
     // (S1 spike.)
-    let application = Application::new();
+    // A5: the ONE AssetSource for the process. Without it every `Icon` renders as
+    // nothing at all — gpui does not panic on an unresolved asset path (A0 spike).
+    let application = Application::new().with_assets(crate::assets::Dat0Assets);
     let session_for_open = Arc::clone(&session);
     application.on_open_urls(move |urls: Vec<String>| {
         let paths = paths_from_open_urls(&urls);
