@@ -45,7 +45,10 @@ can never leave a migrated surface stale. Access idiom, already dogfooded by
 > migrated file gains that import — a useful signal that the file really was
 > outside the token system.
 
-## 2. The one API change: `focus_stop` gains a ring parameter
+## 2. Primary API change: `focus_stop` gains a ring parameter
+
+(Four render helpers also gain a `cx: &App` parameter — see §4.3, found while
+planning against the tree.)
 
 `a11y::FocusStopExt::focus_stop` paints the focus ring from a module constant:
 
@@ -182,6 +185,38 @@ vendored asset and no `Dat0IconName` variant is needed.
 > All three sites **already carry `.a11y_label`**. T4 must **edit the existing
 > label's text**, never add a second label, or these rows gain duplicate
 > accessible names.
+
+### 4.3 Four render helpers must gain theme access (found during planning)
+
+The design above assumed `focus_stop` was the only signature change. Verifying
+each literal's containing function against the tree disproved that: four render
+helpers hold literals but take **no `cx`**, so they cannot reach the theme.
+
+| function | current signature | callers |
+|---|---|---|
+| `error_ux::banner::render_banner` | `(b: &Banner)` | `window.rs:6149`, `tests/a11y_content.rs:665` |
+| `charts::render_histogram` | `(bins: &[Bin])` | `inspector/panel.rs:241` |
+| `charts::render_topn` | `(items: &[(String, u64)])` | `inspector/panel.rs:239` |
+| `charts::panel::render_chart_body` | `(panel, image, logical)` | `window.rs:6899` |
+
+**Decision:** each gains a trailing `cx: &App` parameter. `App` (not
+`&Dat0Colors`) keeps one access idiom — `cx.theme().d0().x` — at every site in
+the slice, and does not lock these helpers out of plain `ThemeColor` fields
+later; the grid ghost pill already needs `primary`/`primary_foreground`, which
+`Dat0Colors` does not carry.
+
+One intermediate must thread it: `inspector::panel::column_card` (no `cx`
+today) gains `cx: &App` and passes it to the two `charts::` calls.
+`render_inspector` — its caller — already has `cx`.
+
+Unaffected, verified: `view::pipeline_bar::render_pipeline_bar` already takes
+`cx: &mut Context<WorkspaceShell>`, and `onboarding::present_panel` already
+takes `cx: &mut App`.
+
+`Context<T>` derefs to `App`, so callers pass `cx` directly. Where the borrow
+checker objects inside a larger element-builder expression, hoist the colour
+into a local before the expression — the same hoist pattern T1 uses for the
+ring.
 
 ## 5. Grid paint-path risk (T6)
 
