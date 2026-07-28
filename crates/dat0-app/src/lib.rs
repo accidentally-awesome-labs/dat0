@@ -10,6 +10,7 @@ pub mod about;
 pub mod actions;
 pub mod ai;
 pub mod app_lock;
+pub mod assets;
 pub mod boot;
 pub mod catalog;
 pub mod charts;
