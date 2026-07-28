@@ -49,7 +49,6 @@ const ALLOW_MARKER: &str = "// style-lint: allow(";
 const ALLOW: &[(&str, usize)] = &[
     ("charts/mod.rs", 2),
     ("charts/panel.rs", 2),
-    ("grid/mod.rs", 7),
     ("onboarding/mod.rs", 2),
     ("window.rs", 1),
 ];

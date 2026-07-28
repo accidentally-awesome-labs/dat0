@@ -677,14 +677,25 @@ theme zero times today. `d0()` builds all 21 fields per call. A5 held the macOS
 grid-scroll bench only because `a11y_label` is an identity stub in release —
 that protection does not apply to a real colour read.
 
-- [ ] **Step 1: Record the pre-change bench baseline**
+- [ ] **Step 1: Record the pre-change bench baseline** — ⚠ **NOT RUNNABLE on
+  this machine; attempted and blocked.**
 
 ```bash
 cargo bench -p dat0-app --bench grid_scroll 2>&1 | tail -20
 ```
 
-Record the numbers in the task notes. Local macOS numbers are noisy — this is a
-smoke check for an order-of-magnitude regression, not the gate.
+This fails before running a single iteration, on the **pre-existing** macOS 27
+/ Xcode 26.6 libduckdb-sys breakage (`third_party/parquet/parquet_types.cpp`,
+built `-std=c++11`, will not compile against the new libc++ headers). The bench
+carries no `--target`, so it forces a *fresh* `libduckdb-sys` compile into
+`target/release/build/` — precisely the path that hits the bad SDK, and the
+reason `cargo test -p dat0-app` (cached artifact) succeeds while this does not.
+
+Nothing about A6 causes it and no local workaround is in scope. **The gate is
+therefore entirely the CI grid-scroll bench, which is push-to-main-only** — so
+the post-merge watch in Task 8 Step 7 is not a formality for this slice, it is
+the only measurement that will ever be taken. Say so plainly when reporting;
+do not imply a local bench result exists.
 
 - [ ] **Step 2: Migrate the column-reorder ghost pill**
 
@@ -762,12 +773,17 @@ cargo fmt --all
 cargo clippy -p dat0-app --all-targets -- -D warnings
 cargo test -p dat0-app --test style_lint
 cargo test -p dat0-app --features a11y-capture
-cargo bench -p dat0-app --bench grid_scroll 2>&1 | tail -20
 ```
 
-Compare against the Step-1 baseline. A few percent is noise. A large regression
-means the lazy-branch structure was not preserved — check that no `d0()` call
-escaped to the top of `render_td`.
+The bench delta cannot be measured here (Step 1). The structural guarantee is
+instead checked by reading the diff: **every `cx.theme()` call in `render_td`
+must sit inside a styling branch**, so an untinted cell does no theme work.
+Verify mechanically:
+
+```bash
+# expect 4 hits, all indented inside `if` branches, none at fn-body level
+grep -n "cx.theme()" crates/dat0-app/src/grid/mod.rs
+```
 
 - [ ] **Step 6: Commit**
 
