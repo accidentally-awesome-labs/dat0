@@ -166,19 +166,20 @@ fn open_prompt_with_log(
 }
 
 // ---------------------------------------------------------------------------
-// Task 0 — hard gate. These characterize TODAY's behaviour; Task 3 inverts the
-// two `gate_*` tests into the real assertions.
+// The trap. The first two tests started life as Task 0's `gate_*` probes,
+// which asserted the PRE-B1 behaviour and both failed the moment T3 mounted
+// `modal_host` — see the T0 and T3 commits for the red→green transition.
 // ---------------------------------------------------------------------------
 
-/// PRE-B1: Tab past Cancel leaves the modal entirely — the WCAG 2.4.3 gap
-/// deferred out of kbd-nav carve-out #6 (`name_prompt.rs` doc comment).
-/// Task 3 inverts this into `tab_wraps_from_last_stop_to_first`.
+/// Tab past the last stop wraps to the first instead of escaping into the
+/// obscured shell — the WCAG 2.4.3 gap deferred out of kbd-nav carve-out #6.
 ///
-/// Two hops past Cancel, not one: a single hop could land on the modal's own
-/// unlabelled text field and read as `None` for the wrong reason.
+/// Two hops past Cancel, not one: the first lands on the modal's own UNLABELLED
+/// text field (which reads as `None`), so only the second produces a label that
+/// distinguishes "wrapped inside" from "escaped outside".
 #[gpui::test]
 #[serial]
-fn gate_tab_escapes_the_modal_today(cx: &mut TestAppContext) {
+fn tab_wraps_from_last_stop_to_first(cx: &mut TestAppContext) {
     let cfg = tempfile::tempdir().unwrap();
     let state = tempfile::tempdir().unwrap();
     set_config_dir(cfg.path());
@@ -193,32 +194,22 @@ fn gate_tab_escapes_the_modal_today(cx: &mut TestAppContext) {
     tab_until(vcx, "Cancel");
     press_tab(vcx);
     press_tab(vcx);
-    let after = A11ySnapshot::capture(vcx)
-        .focused_label()
-        .map(str::to_string);
-    // Two assertions, because "not Save/Cancel" alone is vacuous: it would also
-    // pass if focus had merely wrapped onto the modal's own UNLABELLED text
-    // field. Requiring a `Some` label proves focus reached a real labelled stop
-    // in the obscured background shell.
-    assert!(
-        after.is_some(),
-        "PRE-B1 premise: Tab past Cancel reaches a labelled BACKGROUND stop, \
-         not the modal's unlabelled field"
-    );
-    assert!(
-        !matches!(after.as_deref(), Some("Save") | Some("Cancel")),
-        "PRE-B1 premise: Tab past Cancel escapes the modal; landed on {after:?}"
+    assert_eq!(
+        A11ySnapshot::capture(vcx).focused_label(),
+        Some("Save"),
+        "Tab past Cancel wraps to the field, then to Save — focus never leaves \
+         the modal"
     );
     drop(state);
 }
 
-/// PRE-B1: Escape does nothing once focus leaves the text field, because
-/// `escape` is bound only under key context "Input"
-/// (gpui-component `input/state.rs:120`). Task 3 inverts this into
-/// `escape_from_cancel_dismisses`.
+/// Escape cancels from ANY stop, not just the text field. Upstream binds
+/// `escape` only under key context "Input" (gpui-component
+/// `input/state.rs:120`), so before B1 this was dead once focus reached
+/// OK/Cancel; the `Dat0Modal`-scoped binding fixes it.
 #[gpui::test]
 #[serial]
-fn gate_escape_from_cancel_is_dead_today(cx: &mut TestAppContext) {
+fn escape_from_cancel_dismisses(cx: &mut TestAppContext) {
     let cfg = tempfile::tempdir().unwrap();
     let state = tempfile::tempdir().unwrap();
     set_config_dir(cfg.path());
@@ -234,13 +225,15 @@ fn gate_escape_from_cancel_is_dead_today(cx: &mut TestAppContext) {
     vcx.simulate_keystrokes("escape");
     vcx.run_until_parked();
     assert!(
-        log.borrow().is_empty(),
-        "PRE-B1 premise: Escape from Cancel emits nothing; got {:?}",
+        log.borrow()
+            .iter()
+            .any(|e| matches!(e, NamePromptEvent::Cancel)),
+        "Escape from Cancel emits Cancel; got {:?}",
         log.borrow()
     );
     assert!(
-        vcx.update(|_w, app| shell.read(app).name_prompt_open_for_test()),
-        "PRE-B1 premise: the modal is still open after Escape from Cancel"
+        !vcx.update(|_w, app| shell.read(app).name_prompt_open_for_test()),
+        "Escape from Cancel dismisses the modal"
     );
     drop(state);
 }
@@ -300,5 +293,194 @@ fn prompt_focus_order_is_field_ok_cancel(cx: &mut TestAppContext) {
     });
     assert_eq!(order.len(), 3, "field + Save + Cancel");
     assert_eq!(order[0], field, "the text field is first");
+    drop(state);
+}
+
+/// Shift-Tab from the first stop wraps to the last.
+#[gpui::test]
+#[serial]
+fn shift_tab_wraps_from_first_stop_to_last(cx: &mut TestAppContext) {
+    let cfg = tempfile::tempdir().unwrap();
+    let state = tempfile::tempdir().unwrap();
+    set_config_dir(cfg.path());
+    init_components(cx);
+    let harness = enter_async_harness(cx);
+    let _g = harness.enter();
+    let session = build_empty_session(state.path());
+    let (shell, vcx) = open_shell_window(cx, session);
+    vcx.run_until_parked();
+
+    // The field holds focus on open, so one Shift-Tab wraps straight to Cancel.
+    let (_p, _log) = open_prompt_with_log(&shell, vcx);
+    press_shift_tab(vcx);
+    assert_eq!(
+        A11ySnapshot::capture(vcx).focused_label(),
+        Some("Cancel"),
+        "Shift-Tab from the field wraps to the last stop"
+    );
+    drop(state);
+}
+
+/// Focus that has ESCAPED to a background element is pulled back in by the next
+/// Tab — the `None` arm of `overlay::next_index`, and the difference between a
+/// trap and a mere wrap.
+///
+/// The escape is staged with direct `window.focus_next()` calls, which bypass
+/// the keymap entirely and so model the realistic hazard: async code that
+/// focuses something while a modal is up. This is what forced the `Dat0Modal`
+/// key context onto the shell ROOT rather than only the scrim — with it on the
+/// scrim alone, focus was measured walking from one background hero button to
+/// the next with the modal still open.
+///
+/// Not covered, and not coverable by an element-scoped key context: focus set to
+/// NOTHING via `window.blur()`. The dispatch path is then the window root alone,
+/// no element context is in scope, and `Root`'s Tab binding is the only match.
+#[gpui::test]
+#[serial]
+fn tab_snaps_focus_back_into_the_modal(cx: &mut TestAppContext) {
+    let cfg = tempfile::tempdir().unwrap();
+    let state = tempfile::tempdir().unwrap();
+    set_config_dir(cfg.path());
+    init_components(cx);
+    let harness = enter_async_harness(cx);
+    let _g = harness.enter();
+    let session = build_empty_session(state.path());
+    let (shell, vcx) = open_shell_window(cx, session);
+    vcx.run_until_parked();
+
+    let (prompt, _log) = open_prompt_with_log(&shell, vcx);
+    // Force focus out of the modal WITHOUT going through the trap: `focus_next`
+    // is a direct API call, so no keystroke and no binding is involved. Three
+    // hops clears the modal's own three stops.
+    for _ in 0..3 {
+        vcx.update(|window, _app| window.focus_next());
+        vcx.run_until_parked();
+    }
+    let escaped = A11ySnapshot::capture(vcx)
+        .focused_label()
+        .map(str::to_string);
+    assert!(
+        !matches!(escaped.as_deref(), Some("Save") | Some("Cancel")),
+        "precondition: focus really did escape to the background; sits on {escaped:?}"
+    );
+
+    // Now a REAL Tab keystroke, which must route through the trap.
+    press_tab(vcx);
+    vcx.run_until_parked();
+    let landed = vcx.update(|window, app| {
+        prompt
+            .read(app)
+            .focus_order(app)
+            .first()
+            .map(|h| h.is_focused(window))
+            .unwrap_or(false)
+    });
+    assert!(
+        landed,
+        "Tab with focus outside the modal re-enters at the first stop"
+    );
+    drop(state);
+}
+
+/// Escape with the SQL console open closes the MODAL ONLY — the console behind
+/// it stays. (The master plan's named B1 regression: one Escape must not walk
+/// two rungs of the ladder.)
+#[gpui::test]
+#[serial]
+fn escape_over_console_closes_only_the_modal(cx: &mut TestAppContext) {
+    let cfg = tempfile::tempdir().unwrap();
+    let state = tempfile::tempdir().unwrap();
+    set_config_dir(cfg.path());
+    init_components(cx);
+    let harness = enter_async_harness(cx);
+    let _g = harness.enter();
+    let session = build_empty_session(state.path());
+    let (shell, vcx) = open_shell_window(cx, session);
+    vcx.run_until_parked();
+    let (_console, _clog) = open_console_with_log(&shell, vcx);
+
+    let (_p, _log) = open_prompt_with_log(&shell, vcx);
+    tab_until(vcx, "Cancel");
+    vcx.simulate_keystrokes("escape");
+    vcx.run_until_parked();
+    assert!(
+        !vcx.update(|_w, app| shell.read(app).name_prompt_open_for_test()),
+        "the modal closed"
+    );
+    // The console has no `_for_test` visibility shim and this slice must not add
+    // one; assert on what it PAINTS instead. `sql-run` renders "Run" while idle
+    // (`sql_console.rs:826-830`), so the button's presence proves the console is
+    // still mounted behind the dismissed modal.
+    assert!(
+        A11ySnapshot::capture(vcx)
+            .query_by_role(dat0_app::a11y::AccessRole::Button, &dat0_i18n::t("sql.run"),),
+        "the console behind it did NOT close"
+    );
+    drop(state);
+}
+
+/// The modal card emits a real `Dialog` node named by the prompt title —
+/// `AccessRole::Dialog` had no production consumer before B1.
+#[gpui::test]
+#[serial]
+fn modal_emits_a_named_dialog_node(cx: &mut TestAppContext) {
+    let cfg = tempfile::tempdir().unwrap();
+    let state = tempfile::tempdir().unwrap();
+    set_config_dir(cfg.path());
+    init_components(cx);
+    let harness = enter_async_harness(cx);
+    let _g = harness.enter();
+    let session = build_empty_session(state.path());
+    let (shell, vcx) = open_shell_window(cx, session);
+    vcx.run_until_parked();
+
+    let (prompt, _log) = open_prompt_with_log(&shell, vcx);
+    let title = vcx.update(|_w, app| prompt.read(app).title().to_string());
+    let snap = A11ySnapshot::capture(vcx);
+    assert!(
+        snap.query_by_role(dat0_app::a11y::AccessRole::Dialog, &title),
+        "the modal card emits a Dialog node named {title:?}"
+    );
+    drop(state);
+}
+
+/// At most one modal is ever mounted. The three prompt fields are independent
+/// `Option`s, so this invariant is representable-but-forbidden; a debug_assert
+/// in each open path fails loudly if a future flow breaks it.
+///
+/// Load-bearing rather than cosmetic: `render` selects the trapped focus order
+/// with an `or` chain over the same three fields, so a second mounted modal
+/// would silently be the one NOT trapped.
+#[gpui::test]
+#[serial]
+fn at_most_one_modal_is_open(cx: &mut TestAppContext) {
+    let cfg = tempfile::tempdir().unwrap();
+    let state = tempfile::tempdir().unwrap();
+    set_config_dir(cfg.path());
+    init_components(cx);
+    let harness = enter_async_harness(cx);
+    let _g = harness.enter();
+    let session = build_empty_session(state.path());
+    let (shell, vcx) = open_shell_window(cx, session);
+    vcx.run_until_parked();
+
+    assert_eq!(
+        vcx.update(|_w, app| shell.read(app).open_modal_count_for_test()),
+        0,
+        "no modal before opening one"
+    );
+    let (_p, _log) = open_prompt_with_log(&shell, vcx);
+    assert_eq!(
+        vcx.update(|_w, app| shell.read(app).open_modal_count_for_test()),
+        1,
+        "exactly one modal while a prompt is up"
+    );
+    vcx.simulate_keystrokes("escape");
+    vcx.run_until_parked();
+    assert_eq!(
+        vcx.update(|_w, app| shell.read(app).open_modal_count_for_test()),
+        0,
+        "back to zero after dismiss"
+    );
     drop(state);
 }

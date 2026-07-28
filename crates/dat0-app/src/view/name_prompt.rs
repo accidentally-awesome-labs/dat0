@@ -71,7 +71,7 @@ impl NamePrompt {
     }
 
     /// The prompt's focus stops in VISUAL order — the source of truth for
-    /// `overlay::modal_host`'s Tab trap (B1). A render change that reorders the
+    /// `overlay::modal_trap`'s Tab cycle (B1). A render change that reorders the
     /// buttons must update this; `prompt_focus_order_is_field_ok_cancel` in
     /// `tests/modal_trap_nav.rs` guards the head of the list.
     pub fn focus_order(&self, cx: &gpui::App) -> Vec<FocusHandle> {

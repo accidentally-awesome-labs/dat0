@@ -25,6 +25,27 @@
 //! handler catches it unchanged. Upstream binds `escape` only under key context
 //! "Input" (`crates/ui/src/input/state.rs:120`), which is why Escape used to do
 //! nothing once focus left a modal's text field.
+//!
+//! ## Why the trap hangs off the SHELL ROOT, not the scrim
+//!
+//! gpui resolves a keystroke in two independent lookups:
+//!
+//! 1. keystroke → action, using the KEY-CONTEXT STACK
+//!    (`Keymap::bindings_for_input`), built from the focused node's path;
+//! 2. action → handler, using the DISPATCH PATH
+//!    (`Window::dispatch_action_on_node`), walked from the focused node upward.
+//!
+//! Putting the context and the handlers on the scrim satisfies neither lookup
+//! for focus that sits OUTSIDE the modal: the scrim is a SIBLING of the shell's
+//! content, not an ancestor of it. Measured, not assumed — with the trap on the
+//! scrim, focus staged onto a background hero button walked to the next hero
+//! button on a real Tab, because the binding matched, dispatched to no handler,
+//! left `propagate_event` true, and `Root`'s Tab binding won the fallthrough.
+//!
+//! So [`modal_trap`] is applied to the shell ROOT (an ancestor of everything,
+//! including the scrim) and [`modal_host`] is purely visual. The one case no
+//! element-scoped context can recover is focus set to NOTHING
+//! (`window.blur()`), where the dispatch path is the window root alone.
 
 use gpui::{
     AnyElement, App, FocusHandle, InteractiveElement, IntoElement, KeyBinding, ParentElement as _,
@@ -37,8 +58,9 @@ use crate::theme::tokens::{Elevation, ElevationStyled as _};
 
 gpui::actions!(dat0_modal, [ModalTab, ModalTabPrev]);
 
-/// Key context carried by the scrim. Every focus stop inside a modal sits below
-/// it, so the modal-scoped bindings outrank `Root`'s.
+/// Key context carried by the shell root while a modal is mounted. Every focus
+/// stop in the window then sits below it, so the modal-scoped bindings outrank
+/// `Root`'s.
 pub const MODAL_CONTEXT: &str = "Dat0Modal";
 
 /// Bind the modal-scoped keys.
@@ -78,24 +100,35 @@ fn cycle(handles: &[FocusHandle], delta: isize, window: &mut Window, cx: &App) {
     window.focus(&handles[next_index(handles.len(), cur, delta)]);
 }
 
-/// Wrap `content` in a scrim + centered elevation card with a manual Tab trap.
+/// Install the Tab trap on `el`, which MUST be an ancestor of everything the
+/// trap needs to recapture focus from — in practice the shell root. Applied
+/// only while a modal is mounted; with no modal open this is never called, so
+/// the key context is absent and normal Tab navigation is untouched.
 ///
 /// `focus_order` is the modal's stops in VISUAL order and is the trap's only
 /// source of truth — gpui's `tab_index` is global rather than sibling-scoped
 /// (every dat0 `focus_stop` passes 0 and relies on paint order), so the cycle
 /// cannot be expressed as tab-index ordering.
+pub fn modal_trap<E: InteractiveElement>(el: E, focus_order: Vec<FocusHandle>) -> E {
+    let forward = focus_order.clone();
+    let backward = focus_order;
+    el.key_context(MODAL_CONTEXT)
+        .on_action(move |_: &ModalTab, window, app| cycle(&forward, 1, window, app))
+        .on_action(move |_: &ModalTabPrev, window, app| cycle(&backward, -1, window, app))
+}
+
+/// Wrap `content` in a scrim + centered elevation card. Purely visual plus the
+/// `Dialog` a11y node — the keyboard trap lives on the shell root, see
+/// [`modal_trap`] and the module docs.
 ///
 /// `a11y_id` must be `&'static str`: `a11y()` records into the click-id side-map
 /// and chains `debug_selector`.
 pub fn modal_host(
     a11y_id: &'static str,
     title: SharedString,
-    focus_order: Vec<FocusHandle>,
     content: AnyElement,
     cx: &App,
 ) -> impl IntoElement {
-    let forward = focus_order.clone();
-    let backward = focus_order;
     div()
         .absolute()
         .top_0()
@@ -108,9 +141,6 @@ pub fn modal_host(
         // not discard.
         .bg(cx.theme().overlay)
         .occlude()
-        .key_context(MODAL_CONTEXT)
-        .on_action(move |_: &ModalTab, window, app| cycle(&forward, 1, window, app))
-        .on_action(move |_: &ModalTabPrev, window, app| cycle(&backward, -1, window, app))
         .flex()
         .items_center()
         .justify_center()
