@@ -19,7 +19,7 @@
 //!   `Window`). `on_delete` only mutates the session, so it takes just `(id)`.
 
 use gpui::prelude::*;
-use gpui::{App, ParentElement, SharedString, Styled, Window, div};
+use gpui::{App, Hsla, ParentElement, SharedString, Styled, Window, div};
 
 use crate::a11y::A11yExt as _;
 use crate::session::queries::{HistoryEntry, SavedQuery};
@@ -28,9 +28,14 @@ use crate::session::queries::{HistoryEntry, SavedQuery};
 /// newest-first order) of the keyboard-selected row; it gets an active-row ring.
 /// `on_pick` is called with the chosen SQL plus the live `Window`/`App` from the
 /// click, so the caller can load it into a new tab (which needs a `&mut Window`).
+///
+/// `ring` is the active-row ring colour. It is a parameter because this
+/// function has no `App` of its own (A6a); the caller passes
+/// `cx.theme().d0().focus_ring`.
 pub fn render_history_list(
     entries: &[HistoryEntry],
     active: usize,
+    ring: Hsla,
     on_pick: impl Fn(String, &mut Window, &mut App) + 'static + Clone,
 ) -> impl IntoElement {
     div()
@@ -57,9 +62,7 @@ pub fn render_history_list(
                 .child(meta)
                 .on_click(move |_ev, window, cx| on_pick(sql.clone(), window, cx));
             if i == active {
-                row = row
-                    .border_1()
-                    .border_color(gpui::rgb(crate::a11y::FOCUS_RING));
+                row = row.border_1().border_color(ring);
             }
             row
         }))

@@ -7,9 +7,12 @@
 //!
 //! ## Why constructors are banned regardless of argument
 //! The master plan's original sketch banned only the literal form (`rgb(0x`).
-//! That misses `gpui::rgb(crate::a11y::FOCUS_RING)` — five real call sites where
-//! the literal hides one `const` indirection away. Banning the constructor plus
-//! bare 6/8-digit hex catches both halves.
+//! That missed `gpui::rgb(crate::a11y::FOCUS_RING)` — five real call sites,
+//! live when this gate was written, where the literal hid one `const`
+//! indirection away. A6a migrated all five onto `cx.theme().d0().focus_ring`
+//! and deleted the constant, but the rule stays: nothing stops a future slice
+//! from reintroducing the same indirection, and a scanner that only matched
+//! `rgb(0x` would not see it.
 //!
 //! ## Why this file cannot self-match
 //! The pattern table below is source code in `tests/`, and the walk covers `src/`
@@ -43,27 +46,15 @@ const ALLOW_MARKER: &str = "// style-lint: allow(";
 /// SHRINK-ONLY RATCHET. Each A6 sub-slice that migrates a file lowers its number
 /// in the same PR; the gate fails if a count is left too high *or* too low.
 /// A file absent from this table has an allowance of 0.
-const ALLOW: &[(&str, usize)] = &[
-    ("a11y/mod.rs", 2),
-    ("catalog/panel.rs", 4),
-    ("charts/mod.rs", 2),
-    ("charts/panel.rs", 2),
-    ("empty_state.rs", 1),
-    ("error_ux/banner.rs", 4),
-    ("grid/mod.rs", 7),
-    ("onboarding/mod.rs", 2),
-    ("settings_ui/panel.rs", 1),
-    ("view/pipeline_bar.rs", 9),
-    ("view/query_library.rs", 1),
-    ("window.rs", 1),
-];
+const ALLOW: &[(&str, usize)] = &[("window.rs", 1)];
 
 /// Bare `0x` + exactly 6 or 8 hex digits, boundary-guarded on both sides.
 ///
 /// The 6-or-8 anchor is what makes this rule affordable: 2-digit (`0x89` PNG
 /// magic, `0xE2` UTF-8 continuation bytes) and 4-digit (`0xfc00` IPv6 prefixes)
-/// hex stays legal, so the only thing it catches in `src/` today is the one real
-/// color const, `a11y/mod.rs` `FOCUS_RING`.
+/// hex stays legal. `src/` holds no bare colour hex outside the `ALLOW` table
+/// since A6a deleted `a11y/mod.rs`'s `FOCUS_RING`, so this rule now guards
+/// against reintroduction rather than describing anything live.
 fn bare_hex_re() -> Regex {
     Regex::new(r"(?i)(^|[^0-9a-z_])0x[0-9a-f]{6}([0-9a-f]{2})?([^0-9a-f]|$)")
         .expect("bare-hex pattern must compile")

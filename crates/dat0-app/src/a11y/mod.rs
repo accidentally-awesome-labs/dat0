@@ -23,17 +23,19 @@
 //! needed for v1. If a future surface re-renders child views more than once per
 //! forced frame and duplicates appear, reintroduce the generation counter.
 
-use gpui::{App, FocusHandle, InteractiveElement, KeyDownEvent, Styled as _, Window};
-
-/// Focus-ring hue — matches the grid active-cell ring (`grid/mod.rs:566`).
-/// `pub` so the recents list can paint its active-row ring in the same hue.
-pub const FOCUS_RING: u32 = 0x3b82f6;
+use gpui::{App, FocusHandle, Hsla, InteractiveElement, KeyDownEvent, Styled as _, Window};
 
 /// Production a11y: turn an interactive `div` into a real keyboard control —
 /// a tab stop that takes focus, activates on Enter/Space, and paints a focus
 /// ring. Ships in release (this is a genuine a11y fix, not a test no-op). Under
 /// `a11y-capture` it also records `fh → id` into the oracle side-map so a
 /// headless test can name the focused element (see [`focused_label`]).
+///
+/// The ring colour is supplied by the caller as `ring`, normally
+/// `cx.theme().d0().focus_ring` (UI-redesign A6a). It is a parameter rather
+/// than a module constant because a trait default method has no `&App` in
+/// scope and so cannot read the theme itself — and because a hardcoded hue
+/// would not track theme switches or the high-contrast palette.
 ///
 /// Named `focus_stop` (not `focusable`) to avoid clashing with gpui's
 /// `StatefulInteractiveElement::focusable(self)`.
@@ -43,6 +45,7 @@ pub trait FocusStopExt: InteractiveElement + Sized {
         id: &'static str,
         fh: &FocusHandle,
         tab_index: isize,
+        ring: Hsla,
         on_activate: impl Fn(&KeyDownEvent, &mut Window, &mut App) + 'static,
     ) -> Self {
         // The tab-stop/tab-index metadata lives on the FocusHandle, NOT the
@@ -62,7 +65,7 @@ pub trait FocusStopExt: InteractiveElement + Sized {
                     on_activate(ev, window, app);
                 }
             })
-            .focus(|s| s.border_2().border_color(gpui::rgb(FOCUS_RING)))
+            .focus(move |s| s.border_2().border_color(ring))
     }
 }
 impl<T: InteractiveElement + Sized> FocusStopExt for T {}

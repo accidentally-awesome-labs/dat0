@@ -653,6 +653,12 @@ fn banner_renders_title_and_body_content(cx: &mut TestAppContext) {
     use dat0_app::a11y::AccessRole;
     use dat0_app::error_ux::banner::{Banner, render_banner};
 
+    // A6b: `render_banner` reads the accent and tint from the active theme, so
+    // the `gpui_component::Theme` global must exist. The windowed tests get it
+    // via their own `init_components`; this content-only test builds an element
+    // outside any window and so has to install it explicitly.
+    init_components(cx);
+
     const TITLE: &str = "Disk almost full";
     const BODY: &str = "Free up space before importing large files.";
     let banner = Banner::warning_with_body(TITLE, BODY);
@@ -661,8 +667,8 @@ fn banner_renders_title_and_body_content(cx: &mut TestAppContext) {
     // reset the collector immediately before so the captured tree holds ONLY
     // this banner's nodes.
     dat0_app::a11y::reset();
-    cx.update(|_app| {
-        let _ = render_banner(&banner);
+    cx.update(|app| {
+        let _ = render_banner(&banner, app);
     });
     let cap = dat0_app::a11y::take_tree_update();
     let snap = A11ySnapshot {

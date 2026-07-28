@@ -6146,7 +6146,7 @@ impl Render for WorkspaceShell {
                 .children(
                     self.banners
                         .iter()
-                        .map(|b| crate::error_ux::banner::render_banner(b).into_any_element()),
+                        .map(|b| crate::error_ux::banner::render_banner(b, cx).into_any_element()),
                 )
                 .into_any_element()
         });
@@ -6900,6 +6900,7 @@ impl Render for WorkspaceShell {
                                 &self.chart_panel,
                                 self.chart_image.clone(),
                                 (520.0, 360.0),
+                                cx,
                             ))
                     })),
             )

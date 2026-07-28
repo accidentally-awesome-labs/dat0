@@ -31,7 +31,9 @@ use gpui_component::table::{Table, TableState};
 use crate::a11y::{A11yExt as _, AccessRole, FocusStopExt as _};
 use crate::grid::{GridDataSource, GridTableDelegate};
 use crate::query::{ResultTarget, SqlTabMeta};
+use crate::theme::tokens::Dat0Theme as _;
 use crate::window::WorkspaceShell;
+use gpui_component::ActiveTheme as _;
 
 /// Register the SqlConsole-scoped Escape keybinding so a real Escape keypress
 /// reaches the console's `on_action` Escape ladder even when focus is on a
@@ -635,6 +637,10 @@ impl SqlConsole {
 
 impl Render for SqlConsole {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        // A6a: one theme read for every focus ring painted in this render —
+        // the 18 `focus_stop` tab stops below plus the history list's
+        // active-row ring, which takes it as a parameter (it has no `App`).
+        let ring = cx.theme().d0().focus_ring;
         // Drain any SQL queued by the window-level saved-query picker (P5b T8):
         // its pick stashed the SQL via `queue_load` (no `&mut Window` there);
         // `load_into_new_tab` needs the `&mut Window` we now hold. Done before
@@ -758,6 +764,7 @@ impl Render for SqlConsole {
                         "sql-tab-add",
                         &new_tab_fh,
                         0,
+                        ring,
                         cx.listener(|this, _ev: &gpui::KeyDownEvent, window, cx| {
                             this.new_tab(window, cx);
                         }),
@@ -777,6 +784,7 @@ impl Render for SqlConsole {
                 "sql-tabstrip",
                 &tabstrip_fh,
                 0,
+                ring,
                 cx.listener(|_this, _ev: &gpui::KeyDownEvent, _window, _cx| {}),
             )
             .a11y("sql-tabstrip", AccessRole::Button, tabstrip_name)
@@ -835,7 +843,7 @@ impl Render for SqlConsole {
             .py_1()
             .cursor_pointer()
             .child(SharedString::from(run_label.clone()))
-            .focus_stop("sql-run", &run_fh, 0, run_key)
+            .focus_stop("sql-run", &run_fh, 0, ring, run_key)
             .a11y("sql-run", AccessRole::Button, run_label)
             .on_click(cx.listener(|this, _ev, _window, cx| {
                 if this.running {
@@ -868,6 +876,7 @@ impl Render for SqlConsole {
                     "sql-run-pane",
                     &run_pane_fh,
                     0,
+                    ring,
                     cx.listener(|_this, _ev: &gpui::KeyDownEvent, _window, cx| {
                         cx.emit(SqlConsoleEvent::Run {
                             target: ResultTarget::Pane,
@@ -994,7 +1003,7 @@ impl Render for SqlConsole {
                             // The accessible name already comes from the `.a11y`
                             // call below; a second push would duplicate the node.
                             .child(gpui_component::Icon::new(gpui_component::IconName::Close))
-                            .focus_stop("sql-err-dismiss", &err_dismiss_fh, 0, key)
+                            .focus_stop("sql-err-dismiss", &err_dismiss_fh, 0, ring, key)
                             .a11y(
                                 "sql-err-dismiss",
                                 AccessRole::Button,
@@ -1111,6 +1120,7 @@ impl Render for SqlConsole {
                                         "sql-history-close",
                                         &history_close_fh,
                                         0,
+                                        ring,
                                         close_key,
                                     )
                                     .a11y(
@@ -1131,7 +1141,7 @@ impl Render for SqlConsole {
                         div()
                             .flex()
                             .flex_col()
-                            .focus_stop("sql-history-list", &history_list_fh, 0, activate)
+                            .focus_stop("sql-history-list", &history_list_fh, 0, ring, activate)
                             .on_key_down(arrows)
                             .a11y(
                                 "sql-history-list",
@@ -1139,7 +1149,7 @@ impl Render for SqlConsole {
                                 dat0_i18n::t("sql.history"),
                             )
                             .child(crate::view::query_library::render_history_list(
-                                entries, active, on_pick,
+                                entries, active, ring, on_pick,
                             )),
                     )
                     .into_any_element()
@@ -1224,6 +1234,7 @@ impl Render for SqlConsole {
                                         "sql-history",
                                         &history_fh,
                                         0,
+                                        ring,
                                         cx.listener(
                                             |_this, _ev: &gpui::KeyDownEvent, _window, cx| {
                                                 cx.emit(SqlConsoleEvent::ShowHistory);
@@ -1253,6 +1264,7 @@ impl Render for SqlConsole {
                                         "sql-save",
                                         &save_fh,
                                         0,
+                                        ring,
                                         cx.listener(
                                             |_this, _ev: &gpui::KeyDownEvent, _window, cx| {
                                                 cx.emit(SqlConsoleEvent::SaveQuery);
@@ -1282,6 +1294,7 @@ impl Render for SqlConsole {
                                         "sql-saved",
                                         &saved_fh,
                                         0,
+                                        ring,
                                         cx.listener(
                                             |_this, _ev: &gpui::KeyDownEvent, _window, cx| {
                                                 cx.emit(SqlConsoleEvent::ShowSaved);
@@ -1312,6 +1325,7 @@ impl Render for SqlConsole {
                                         "sql-save-as-table",
                                         &save_as_table_fh,
                                         0,
+                                        ring,
                                         cx.listener(
                                             |_this, _ev: &gpui::KeyDownEvent, _window, cx| {
                                                 cx.emit(SqlConsoleEvent::SaveAsTable);
@@ -1346,7 +1360,7 @@ impl Render for SqlConsole {
                                             cx.emit(SqlConsoleEvent::OpenNl2SqlPrompt);
                                         },
                                     );
-                                    chip.focus_stop("nl2sql-chip", &self.nl2sql_focus, 0, key)
+                                    chip.focus_stop("nl2sql-chip", &self.nl2sql_focus, 0, ring, key)
                                         .a11y(
                                             "nl2sql-chip",
                                             AccessRole::Button,
@@ -1378,7 +1392,7 @@ impl Render for SqlConsole {
                                             cx.emit(SqlConsoleEvent::Explain);
                                         },
                                     );
-                                    btn.focus_stop("sql-explain", &self.explain_focus, 0, key)
+                                    btn.focus_stop("sql-explain", &self.explain_focus, 0, ring, key)
                                         .a11y(
                                             "sql-explain",
                                             AccessRole::Button,
@@ -1420,7 +1434,7 @@ impl Render for SqlConsole {
                             .border_1()
                             .cursor_pointer()
                             .child(SharedString::from(dat0_i18n::t("sql.ai.stop")))
-                            .focus_stop("nl2sql-stop", &nl_stop_fh, 0, key)
+                            .focus_stop("nl2sql-stop", &nl_stop_fh, 0, ring, key)
                             .a11y(
                                 "nl2sql-stop",
                                 AccessRole::Button,
@@ -1456,7 +1470,7 @@ impl Render for SqlConsole {
                                     .border_1()
                                     .cursor_pointer()
                                     .child(SharedString::from(dat0_i18n::t("sql.nl2sql.insert")))
-                                    .focus_stop("nl2sql-insert", &nl_insert_fh, 0, insert_key)
+                                    .focus_stop("nl2sql-insert", &nl_insert_fh, 0, ring, insert_key)
                                     .a11y(
                                         "nl2sql-insert",
                                         AccessRole::Button,
@@ -1478,7 +1492,13 @@ impl Render for SqlConsole {
                                     .border_1()
                                     .cursor_pointer()
                                     .child(SharedString::from(dat0_i18n::t("sql.nl2sql.discard")))
-                                    .focus_stop("nl2sql-discard", &nl_discard_fh, 0, discard_key)
+                                    .focus_stop(
+                                        "nl2sql-discard",
+                                        &nl_discard_fh,
+                                        0,
+                                        ring,
+                                        discard_key,
+                                    )
                                     .a11y(
                                         "nl2sql-discard",
                                         AccessRole::Button,
@@ -1515,7 +1535,7 @@ impl Render for SqlConsole {
                             .border_1()
                             .cursor_pointer()
                             .child(SharedString::from(dat0_i18n::t("sql.ai.stop")))
-                            .focus_stop("explain-stop", &explain_stop_fh, 0, key)
+                            .focus_stop("explain-stop", &explain_stop_fh, 0, ring, key)
                             .a11y(
                                 "explain-stop",
                                 AccessRole::Button,
@@ -1538,7 +1558,7 @@ impl Render for SqlConsole {
                             .border_1()
                             .cursor_pointer()
                             .child(SharedString::from(dat0_i18n::t("sql.explain.close")))
-                            .focus_stop("explain-close", &explain_close_fh, 0, key)
+                            .focus_stop("explain-close", &explain_close_fh, 0, ring, key)
                             .a11y(
                                 "explain-close",
                                 AccessRole::Button,

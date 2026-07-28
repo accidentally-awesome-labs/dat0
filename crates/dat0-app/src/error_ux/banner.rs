@@ -158,7 +158,9 @@ pub fn merge_pending(live: &mut Vec<Banner>) {
 }
 
 use crate::a11y::{A11yExt as _, AccessRole};
+use crate::theme::tokens::Dat0Theme as _;
 use gpui::{IntoElement, ParentElement, Styled, div, px};
+use gpui_component::ActiveTheme as _;
 use gpui_component::button::{Button, ButtonVariants as _};
 
 /// Build a clickable button for a stored [`BannerAction`], dispatching its
@@ -194,11 +196,15 @@ fn action_button(act: &BannerAction, primary: bool) -> Button {
 }
 
 /// Render one banner as an inline notice. Kind drives the accent color.
-pub fn render_banner(b: &Banner) -> impl IntoElement {
+///
+/// Takes `cx` because the accent and tint come from the active theme (A6b);
+/// the function has no `App` of its own.
+pub fn render_banner(b: &Banner, cx: &gpui::App) -> impl IntoElement {
+    let d0 = cx.theme().d0();
     let accent = match b.kind {
-        BannerKind::Info => gpui::rgb(0x3b82f6),
-        BannerKind::Warning => gpui::rgb(0xd97706),
-        BannerKind::Error => gpui::rgb(0xdc2626),
+        BannerKind::Info => d0.banner_info,
+        BannerKind::Warning => d0.banner_warning,
+        BannerKind::Error => d0.banner_error,
     };
 
     // Action button row (D-021): rendered only when at least one action is set,
@@ -229,7 +235,7 @@ pub fn render_banner(b: &Banner) -> impl IntoElement {
         .py_2()
         .border_l_4()
         .border_color(accent)
-        .bg(gpui::rgba(0x80808014))
+        .bg(d0.banner_tint)
         .child(
             div()
                 .font_weight(gpui::FontWeight::SEMIBOLD)

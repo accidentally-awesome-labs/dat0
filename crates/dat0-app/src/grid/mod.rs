@@ -17,9 +17,11 @@ use gpui::{
     App, Context, IntoElement, ParentElement, Pixels, Point, SharedString, Styled, WeakEntity,
     Window, div, prelude::*,
 };
+use gpui_component::ActiveTheme as _;
 use gpui_component::table::{Column, TableDelegate, TableState};
 
 use crate::a11y::A11yExt as _;
+use crate::theme::tokens::Dat0Theme as _;
 use renderers::{CellAlignment, type_badge};
 
 // ── Internal drag payload for column-header reorder (T6) ─────────────────────
@@ -62,16 +64,23 @@ impl ReorderDrag {
 }
 
 impl gpui::Render for ReorderDrag {
-    fn render(&mut self, _window: &mut Window, _cx: &mut Context<'_, Self>) -> impl IntoElement {
+    fn render(&mut self, _window: &mut Window, cx: &mut Context<'_, Self>) -> impl IntoElement {
         // Ghost: a small labelled pill that follows the pointer. Offset from the
         // pointer so the drop-target hit test lands on the target rather than on
         // the ghost itself (mirroring the drag_drop.rs example's pl/pt approach).
+        //
+        // A6f: `primary`/`primary_foreground`, NOT A2's mapped `fill_handle`.
+        // The pill paints TEXT on the fill, so it needs a pair gated as a text
+        // pair — `theme_contrast_gate.rs` holds
+        // ("primary.foreground", "primary.background", 4.5) across all three
+        // builtins. `fill_handle` is ring@0.72, tuned by A3 against the
+        // non-text 3:1 threshold, so white-on-it would be ungated.
         div().pl(self.position.x).pt(self.position.y).child(
             div()
                 .px_2()
                 .py_1()
-                .bg(gpui::rgba(0x3b82f6aa))
-                .text_color(gpui::white())
+                .bg(cx.theme().primary)
+                .text_color(cx.theme().primary_foreground)
                 .text_xs()
                 .rounded_md()
                 .child(format!("col {}", self.from)),
@@ -520,8 +529,11 @@ impl TableDelegate for GridTableDelegate {
 
         // Selected-cell tint (lighter than the active ring) so a multi-cell
         // selection is visible for UAT.
+        // A6f: every theme read in `render_td` sits INSIDE a styling branch.
+        // This function runs per visible cell per frame, and `d0()` builds all
+        // 21 fields; an untinted cell — the common case — must pay nothing.
         if is_selected && !is_active {
-            el = el.bg(gpui::rgba(0x3b82f622));
+            el = el.bg(cx.theme().d0().selection_tint);
         }
 
         // T12: Marching-ants dashed border on the boundary cells of the last
@@ -549,7 +561,9 @@ impl TableDelegate for GridTableDelegate {
                 // Dashed green accent, 1-px per visible boundary edge.
                 // `.border_dashed()` sets the style; per-edge width methods
                 // control which edges are visible (0-width edges are invisible).
-                el = el.border_color(gpui::rgb(0x22c55e)).border_dashed();
+                el = el
+                    .border_color(cx.theme().d0().marching_ants)
+                    .border_dashed();
                 if on_top {
                     el = el.border_t_1();
                 }
@@ -568,10 +582,12 @@ impl TableDelegate for GridTableDelegate {
         // Active-cell focus ring: 2-px blue border anchored on the exact cell.
         // Applied after marching-ants so it wins when both apply.
         if is_active {
+            // Two fields, so bind once here rather than deriving twice.
+            let d0 = cx.theme().d0();
             el = el
                 .border_2()
-                .border_color(gpui::rgb(0x3b82f6))
-                .bg(gpui::rgba(0x3b82f611));
+                .border_color(d0.focus_ring)
+                .bg(d0.active_cell_tint);
         }
 
         match cell {
@@ -584,7 +600,7 @@ impl TableDelegate for GridTableDelegate {
                 if display.is_null {
                     // NULL renders dimmed so it reads as "absent value", not the
                     // literal string the user typed.
-                    el = el.text_color(gpui::rgb(0x9ca3af));
+                    el = el.text_color(cx.theme().d0().null_value_fg);
                 }
                 // UAT Gap 2 (test-only): emit the REAL cell value as a content-only
                 // AccessKit `Cell` node so the headless harness can assert *rendered*

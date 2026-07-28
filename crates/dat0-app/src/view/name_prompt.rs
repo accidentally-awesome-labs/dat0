@@ -1,11 +1,13 @@
 //! Reusable single-line name-prompt modal (P5b). Emits the entered name on
 //! confirm, or Cancelled. Used by Save Query + Save as Table.
 use crate::a11y::{A11yExt as _, AccessRole, FocusStopExt as _};
+use crate::theme::tokens::Dat0Theme as _;
 use gpui::prelude::*;
 use gpui::{
     Context, Entity, EventEmitter, FocusHandle, Focusable as _, ParentElement, SharedString,
     Styled, Subscription, Window, div,
 };
+use gpui_component::ActiveTheme as _;
 use gpui_component::input::{Escape, Input, InputEvent, InputState};
 
 #[derive(Debug, Clone)]
@@ -103,6 +105,7 @@ impl Render for NamePrompt {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let ok_fh = self.ok_focus.clone();
         let cancel_fh = self.cancel_focus.clone();
+        let ring = cx.theme().d0().focus_ring;
         div()
             .flex()
             .flex_col()
@@ -131,6 +134,7 @@ impl Render for NamePrompt {
                                 "name-prompt-ok",
                                 &ok_fh,
                                 0,
+                                ring,
                                 cx.listener(|this, _ev: &gpui::KeyDownEvent, _window, cx| {
                                     let v = this.value(cx);
                                     cx.emit(NamePromptEvent::Confirm(v));
@@ -153,6 +157,7 @@ impl Render for NamePrompt {
                                 "name-prompt-cancel",
                                 &cancel_fh,
                                 0,
+                                ring,
                                 cx.listener(|_this, _ev: &gpui::KeyDownEvent, _window, cx| {
                                     cx.emit(NamePromptEvent::Cancel);
                                 }),

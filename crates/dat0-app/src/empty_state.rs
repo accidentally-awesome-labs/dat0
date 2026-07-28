@@ -35,6 +35,8 @@ use gpui::{IntoElement, ParentElement, Styled, div, prelude::*, px};
 // `debug_selector`; in release it is an identity no-op (`AccessRole` resolves to
 // the feature-off stub enum, so this import compiles in both states).
 use crate::a11y::{A11yExt as _, AccessRole, FocusStopExt as _};
+use crate::theme::tokens::Dat0Theme as _;
+use gpui_component::ActiveTheme as _;
 
 /// Which hero variant to render. `Enriched` (first run only) adds the
 /// value-prop band + featured demo CTA above the base hero; `Plain` is the
@@ -141,6 +143,7 @@ impl EmptyState {
         hero: &HeroHandles,
         cx: &mut gpui::Context<crate::window::WorkspaceShell>,
     ) -> gpui::AnyElement {
+        let ring = cx.theme().d0().focus_ring;
         let mode = hero_mode(self.first_run_done);
 
         if band_visible(mode) {
@@ -211,6 +214,7 @@ impl EmptyState {
                                     "hero-take-tour",
                                     hero.get("hero-take-tour"),
                                     0,
+                                    ring,
                                     take_tour_key,
                                 )
                                 // Test-only locator (release no-op): `.a11y` both
@@ -245,6 +249,7 @@ impl EmptyState {
                                     "hero-open-demo",
                                     hero.get("hero-open-demo"),
                                     0,
+                                    ring,
                                     open_demo_key,
                                 )
                                 .a11y(
@@ -317,6 +322,7 @@ impl EmptyState {
         hero: &HeroHandles,
         cx: &mut gpui::Context<crate::window::WorkspaceShell>,
     ) -> gpui::AnyElement {
+        let ring = cx.theme().d0().focus_ring;
         let mut col = div()
             .flex()
             .flex_col()
@@ -344,7 +350,7 @@ impl EmptyState {
                     .flex_col()
                     // Slice 6: real Tab stop + Enter/Space activation, same
                     // static id the `.a11y` node below (and the oracle) uses.
-                    .focus_stop(static_id, hero.get(static_id), 0, key_handler)
+                    .focus_stop(static_id, hero.get(static_id), 0, ring, key_handler)
                     .a11y(static_id, AccessRole::Button, title)
                     .child(div().child(title))
                     .child(div().child(subtitle))
@@ -367,6 +373,7 @@ impl EmptyState {
                     "hero-open-file-samples",
                     hero.get("hero-open-file-samples"),
                     0,
+                    ring,
                     open_key_handler,
                 )
                 .a11y(
@@ -392,6 +399,7 @@ impl EmptyState {
         hero: &HeroHandles,
         cx: &mut gpui::Context<crate::window::WorkspaceShell>,
     ) -> gpui::AnyElement {
+        let ring = cx.theme().d0().focus_ring;
         let recent_entries: Vec<crate::recents::RecentEntry> =
             if let Ok(cfg) = crate::platform::config_dir() {
                 crate::recents::Recents::with_path(cfg.join("recents.json"))
@@ -440,7 +448,7 @@ impl EmptyState {
         let mut list = div()
             .flex()
             .flex_col()
-            .focus_stop("recents-list", hero.get("recents-list"), 0, activate)
+            .focus_stop("recents-list", hero.get("recents-list"), 0, ring, activate)
             .on_key_down(arrows)
             .a11y(
                 "recents-list",
@@ -457,9 +465,7 @@ impl EmptyState {
             });
             let mut row = div().id(id).child(label).on_click(handler);
             if i == active {
-                row = row
-                    .border_2()
-                    .border_color(gpui::rgb(crate::a11y::FOCUS_RING));
+                row = row.border_2().border_color(ring);
             }
             list = list.child(row);
         }
@@ -478,6 +484,7 @@ impl EmptyState {
                 "hero-open-file-recents",
                 hero.get("hero-open-file-recents"),
                 0,
+                ring,
                 open_key_handler,
             )
             .a11y(
