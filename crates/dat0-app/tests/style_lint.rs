@@ -51,7 +51,6 @@ const ALLOW: &[(&str, usize)] = &[
     ("charts/panel.rs", 2),
     ("grid/mod.rs", 7),
     ("onboarding/mod.rs", 2),
-    ("settings_ui/panel.rs", 1),
     ("window.rs", 1),
 ];
 

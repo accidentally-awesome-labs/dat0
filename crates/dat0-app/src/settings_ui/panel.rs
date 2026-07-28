@@ -72,6 +72,9 @@ impl SettingsPanel {
 
     fn render_sidebar(&self, cx: &mut gpui::Context<Self>) -> impl IntoElement {
         let sel = self.selected_section.clone();
+        // A6e: the active-section tint is `selection_tint` — ring at 13% alpha,
+        // the same derivation the grid's selected region uses.
+        let tint = cx.theme().d0().selection_tint;
         div()
             .w(px(200.))
             .flex()
@@ -85,7 +88,7 @@ impl SettingsPanel {
                     .cursor_pointer()
                     .px_3()
                     .py_1()
-                    .when(active, |d| d.bg(gpui::rgba(0x3b82f622)))
+                    .when(active, move |d| d.bg(tint))
                     .child(dat0_i18n::t(s.name_key()))
                     // UAT settings-window slice (T0): `s.id()` is already
                     // `&'static str` (the `SettingsSection::id()` contract), so
