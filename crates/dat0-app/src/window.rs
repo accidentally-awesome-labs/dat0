@@ -1789,6 +1789,11 @@ pub fn run_app(lock: AppLock, initial_paths: Vec<PathBuf>, main_loop: MainLoop) 
         // non-Input transient-bar button (see `register_sql_console_keys`).
         crate::view::sql_console::register_sql_console_keys(cx);
 
+        // Register the `Dat0Modal`-scoped tab/shift-tab/escape bindings (B1) so
+        // the modal focus trap and modal-wide Escape are live in production.
+        // Tests must call this too — see `overlay::register_modal_keys`.
+        crate::overlay::register_modal_keys(cx);
+
         // P3b T12 (D-002 closure): promote dat0's own `crate::theme::Theme`
         // to a `gpui::Global` for the lifetime of the app. The initial id
         // is read from `theme.id` in the persisted settings file (the same

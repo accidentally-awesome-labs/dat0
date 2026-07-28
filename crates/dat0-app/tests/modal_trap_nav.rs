@@ -78,6 +78,10 @@ fn open_shell_window(
 /// bindings (→ `focus_next`/`focus_prev`) are live.
 fn init_components(cx: &mut TestAppContext) {
     cx.update(gpui_component::init);
+    // The harness calls only `gpui_component::init`, so the modal-scoped
+    // bindings production registers in `run_app` are absent unless we add them
+    // here (the carve-out #7 lesson: a green test over a dead key path).
+    cx.update(dat0_app::overlay::register_modal_keys);
 }
 
 /// A tokio runtime kept alive for the whole test so foreground-polled `cx.spawn`
