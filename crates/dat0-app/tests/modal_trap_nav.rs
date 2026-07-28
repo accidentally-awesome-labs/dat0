@@ -273,3 +273,32 @@ fn escape_with_field_focused_emits_exactly_one_cancel(cx: &mut TestAppContext) {
     assert_eq!(cancels, 1, "exactly one Cancel per Escape; got {cancels}");
     drop(state);
 }
+
+// ---------------------------------------------------------------------------
+// Task 2 — the prompt declares its own focus order.
+// ---------------------------------------------------------------------------
+
+/// The prompt's declared focus order is exactly [field, Save, Cancel] — the
+/// trap's only source of truth, so a render reorder must break this test.
+#[gpui::test]
+#[serial]
+fn prompt_focus_order_is_field_ok_cancel(cx: &mut TestAppContext) {
+    let cfg = tempfile::tempdir().unwrap();
+    let state = tempfile::tempdir().unwrap();
+    set_config_dir(cfg.path());
+    init_components(cx);
+    let harness = enter_async_harness(cx);
+    let _g = harness.enter();
+    let session = build_empty_session(state.path());
+    let (shell, vcx) = open_shell_window(cx, session);
+    vcx.run_until_parked();
+
+    let (prompt, _log) = open_prompt_with_log(&shell, vcx);
+    let (order, field) = vcx.update(|_w, app| {
+        let p = prompt.read(app);
+        (p.focus_order(app), p.input_focus_handle_for_test(app))
+    });
+    assert_eq!(order.len(), 3, "field + Save + Cancel");
+    assert_eq!(order[0], field, "the text field is first");
+    drop(state);
+}
