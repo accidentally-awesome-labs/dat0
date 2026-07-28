@@ -373,6 +373,54 @@ convention.
 
 ---
 
+## 6b. AS-BUILT CORRECTIONS (added after execution)
+
+Two claims above were wrong and were corrected by measurement during T3/T4. The sections are left
+as written so the reasoning trail survives; this is what actually shipped.
+
+### 6b.1 The trap hangs off the SHELL ROOT, not the scrim (§2.1, §2.2 corrected)
+
+§2.1 put the `Dat0Modal` key context and the `ModalTab` handlers on the scrim, and §2.2 claimed the
+`None` arm would recover focus that had reached "a stray click on a still-painted background
+element, a programmatic focus from an async completion". **It does not, and cannot, from there.**
+
+gpui runs two independent lookups per keystroke:
+
+1. keystroke → action, via the KEY-CONTEXT STACK (`Keymap::bindings_for_input`);
+2. action → handler, via the DISPATCH PATH walked from the focused node upward
+   (`Window::dispatch_action_on_node`).
+
+The scrim is a **sibling** of the shell's content, so for focus outside the modal neither lookup
+reaches it. Measured: with the trap on the scrim, focus staged onto a background hero button walked
+to the *next* hero button on a real Tab — the binding matched, found no handler, left
+`propagate_event` true, and `Root`'s Tab binding won the fallthrough.
+
+As built, `overlay::modal_trap(el, focus_order)` is applied to the **shell root** via `when_some`,
+and `modal_host` is purely visual (scrim, card, `Dialog` node). Signature as shipped:
+
+```rust
+pub fn modal_trap<E: InteractiveElement>(el: E, focus_order: Vec<FocusHandle>) -> E;
+pub fn modal_host(a11y_id: &'static str, title: SharedString, content: AnyElement, cx: &App)
+    -> impl IntoElement;
+```
+
+This also promoted §2.7's single-modal invariant from hygiene to **load-bearing**: `render` selects
+the trapped focus order with an `or` chain over the same three fields, so a second mounted modal
+would silently be the one NOT trapped. It was pulled forward from T5 into T3 for that reason.
+
+### 6b.2 The trap's one real limit
+
+Focus set to **nothing** (`window.blur()`) is unrecoverable by any element-scoped key context: the
+dispatch path is then the window root alone, so no element context is in scope. The same mechanism
+makes Tab inert from a freshly-opened window before anything is focused — which is why every
+Tab-driven test must click into the shell first (`focus_shell_neutrally`), measured here as eight
+`press_tab` hops moving focus not at all.
+
+This is a pre-existing gpui property, not a regression, and no modal flow reaches it: prompts open
+with the field focused.
+
+---
+
 ## 7. Non-goals
 
 - Export dialog, saved-query picker, filter popover, cell editor — **B2**.
