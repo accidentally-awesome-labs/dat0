@@ -5,6 +5,7 @@
 use super::sections;
 use crate::a11y::{A11yExt as _, AccessRole, FocusStopExt as _};
 use crate::settings::store::SettingsStore;
+use crate::theme::tokens::Dat0Theme as _;
 
 /// Which right-dock panel to toggle in the focused workspace window.
 enum DockKind {
@@ -14,6 +15,7 @@ enum DockKind {
 use gpui::{
     Entity, IntoElement, ParentElement as _, Render, Styled as _, Window, div, prelude::*, px,
 };
+use gpui_component::ActiveTheme as _;
 use gpui_component::Root;
 use gpui_component::input::{Input, InputState};
 
@@ -123,6 +125,7 @@ impl SettingsPanel {
         let key_activate = cx.listener(move |this, _ev: &gpui::KeyDownEvent, _w, cx| {
             this.flip_toggle(set, on, cx);
         });
+        let ring = cx.theme().d0().focus_ring;
         div()
             .id(id)
             .cursor_pointer()
@@ -135,7 +138,7 @@ impl SettingsPanel {
             .child(dat0_i18n::t(label_key))
             // Slice 6: real Tab stop + Enter/Space activation on the stable
             // handle above. Ships unconditionally (genuine a11y fix).
-            .focus_stop(id, &fh, 0, key_activate)
+            .focus_stop(id, &fh, 0, ring, key_activate)
             // UAT settings-window slice (T0): shared by telemetry/workspace/
             // updates toggles, so annotating once here covers all three.
             // Feature OFF (release) → identity no-op.

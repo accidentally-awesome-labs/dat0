@@ -14,9 +14,11 @@
 use crate::a11y::A11yExt as _;
 use crate::a11y::FocusStopExt as _;
 use crate::catalog::nav::{RowKind, visible_rows};
+use crate::theme::tokens::Dat0Theme as _;
 use crate::window::WorkspaceShell;
 use gpui::prelude::*;
 use gpui::{Context, SharedString, div};
+use gpui_component::ActiveTheme as _;
 use std::collections::HashSet;
 
 /// A section header label, e.g. `section_label("Tables", 3) == "Tables (3)"`.
@@ -54,12 +56,14 @@ pub fn render_catalog(
         ws.catalog_nav_key(&key, window, cx);
     });
 
+    let ring = cx.theme().d0().focus_ring;
+
     let mut root = div()
         .flex()
         .flex_col()
         .gap_2()
         .p_2()
-        .focus_stop("catalog-tree", fh, 0, activate)
+        .focus_stop("catalog-tree", fh, 0, ring, activate)
         .on_key_down(arrows)
         .a11y(
             "catalog-tree",
@@ -118,6 +122,7 @@ fn parent_row(
     is_active: bool,
     cx: &mut Context<WorkspaceShell>,
 ) -> gpui::Stateful<gpui::Div> {
+    let ring = cx.theme().d0().focus_ring;
     let chev = if expanded { "▾" } else { "▸" };
     let text = format!("{chev} {alias} ({n_children})");
     let alias_owned = alias.to_string();
@@ -135,9 +140,7 @@ fn parent_row(
             ws.toggle_catalog_parent(alias_owned.clone(), cx);
         }));
     if is_active {
-        row = row
-            .border_2()
-            .border_color(gpui::rgb(crate::a11y::FOCUS_RING));
+        row = row.border_2().border_color(ring);
     }
     row
 }
@@ -152,6 +155,7 @@ fn catalog_row(
     is_active: bool,
     cx: &mut Context<WorkspaceShell>,
 ) -> gpui::Stateful<gpui::Div> {
+    let ring = cx.theme().d0().focus_ring;
     let name = name.to_string();
     let mut row = div()
         .id(SharedString::from(format!("cat-{section}-{name}")))
@@ -168,9 +172,7 @@ fn catalog_row(
         row = row.pl_4();
     }
     if is_active {
-        row = row
-            .border_2()
-            .border_color(gpui::rgb(crate::a11y::FOCUS_RING));
+        row = row.border_2().border_color(ring);
     }
     row
 }

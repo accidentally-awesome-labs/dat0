@@ -15,9 +15,11 @@
 
 use crate::a11y::{A11yExt as _, AccessRole, FocusStopExt as _};
 use crate::ai::Provider;
+use crate::theme::tokens::Dat0Theme as _;
 use crate::window::WorkspaceShell;
 use gpui::prelude::*;
 use gpui::{Context, SharedString, div};
+use gpui_component::ActiveTheme as _;
 
 /// Intent emitted by a panel button, dispatched to
 /// [`WorkspaceShell::handle_ai_panel_event`]. A plain enum (not a GPUI
@@ -267,13 +269,14 @@ fn action_button(
     let key = cx.listener(move |ws, _ev: &gpui::KeyDownEvent, window, cx| {
         ws.handle_ai_panel_event(ev_key.clone(), window, cx);
     });
+    let ring = cx.theme().d0().focus_ring;
     div()
         .id(id)
         .px_2()
         .py_1()
         .border_1()
         .cursor_pointer()
-        .focus_stop(id, fh, 0, key)
+        .focus_stop(id, fh, 0, ring, key)
         .a11y(id, AccessRole::Button, label.to_string())
         .child(label)
         .on_click(click)
