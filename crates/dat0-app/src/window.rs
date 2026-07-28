@@ -6900,6 +6900,7 @@ impl Render for WorkspaceShell {
                                 &self.chart_panel,
                                 self.chart_image.clone(),
                                 (520.0, 360.0),
+                                cx,
                             ))
                     })),
             )

@@ -11,7 +11,9 @@
 //! (plain `div`s with a fixed `bg`) scaled to the data; they are exercised only
 //! in a real window (headless render is untestable), so the pure functions carry
 //! the test weight.
+use crate::theme::tokens::Dat0Theme as _;
 use gpui::{IntoElement, ParentElement, Styled, div, px};
+use gpui_component::ActiveTheme as _;
 
 pub mod data;
 pub mod export;
@@ -67,24 +69,23 @@ pub fn bar_fraction(count: u64, max: u64) -> f64 {
 }
 
 /// Histogram as a row of vertical quads, each scaled to the tallest bin.
-pub fn render_histogram(bins: &[Bin]) -> impl IntoElement {
+pub fn render_histogram(bins: &[Bin], cx: &gpui::App) -> impl IntoElement {
+    // A6g: takes `cx` because the bar fill comes from the theme; this
+    // function has no `App` of its own. Hoisted — it is loop-invariant.
+    let fill = cx.theme().d0().chart_placeholder_a;
     let max = bins.iter().map(|b| b.count).max().unwrap_or(0);
     let mut row = div().flex().flex_row().items_end().gap(px(1.0)).h(px(28.0));
     for b in bins {
         let frac = bar_fraction(b.count, max);
-        row = row.child(
-            div()
-                .w(px(9.0))
-                .h(px((4.0 + frac * 24.0) as f32))
-                .bg(gpui::rgb(0x55bb88)),
-        );
+        row = row.child(div().w(px(9.0)).h(px((4.0 + frac * 24.0) as f32)).bg(fill));
     }
     row
 }
 
 /// Horizontal top-N bars: `(label, count)` → a labelled bar scaled to the max
 /// count in the set.
-pub fn render_topn(items: &[(String, u64)]) -> impl IntoElement {
+pub fn render_topn(items: &[(String, u64)], cx: &gpui::App) -> impl IntoElement {
+    let fill = cx.theme().d0().chart_placeholder_b;
     let max = items.iter().map(|(_, c)| *c).max().unwrap_or(0);
     let mut col = div().flex().flex_col().gap_1();
     for (label, c) in items {
@@ -96,12 +97,7 @@ pub fn render_topn(items: &[(String, u64)]) -> impl IntoElement {
                 .items_center()
                 .gap_2()
                 .child(div().w(px(70.0)).text_size(px(11.0)).child(label.clone()))
-                .child(
-                    div()
-                        .h(px(8.0))
-                        .w(px((6.0 + frac * 80.0) as f32))
-                        .bg(gpui::rgb(0x6699cc)),
-                ),
+                .child(div().h(px(8.0)).w(px((6.0 + frac * 80.0) as f32)).bg(fill)),
         );
     }
     col

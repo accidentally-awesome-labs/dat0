@@ -46,12 +46,7 @@ const ALLOW_MARKER: &str = "// style-lint: allow(";
 /// SHRINK-ONLY RATCHET. Each A6 sub-slice that migrates a file lowers its number
 /// in the same PR; the gate fails if a count is left too high *or* too low.
 /// A file absent from this table has an allowance of 0.
-const ALLOW: &[(&str, usize)] = &[
-    ("charts/mod.rs", 2),
-    ("charts/panel.rs", 2),
-    ("onboarding/mod.rs", 2),
-    ("window.rs", 1),
-];
+const ALLOW: &[(&str, usize)] = &[("window.rs", 1)];
 
 /// Bare `0x` + exactly 6 or 8 hex digits, boundary-guarded on both sides.
 ///

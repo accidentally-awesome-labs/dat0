@@ -147,7 +147,7 @@ pub fn render_inspector(
         let mut visible = div().flex().flex_col().gap_2();
         for card in &cards.visible {
             if let Some(col) = profile.columns.iter().find(|c| c.name == card.source) {
-                visible = visible.child(column_card(col, card, model, false));
+                visible = visible.child(column_card(col, card, model, false, cx));
             }
         }
         root = root.child(visible);
@@ -185,7 +185,7 @@ pub fn render_inspector(
             if model.hidden_expanded {
                 for card in &cards.hidden {
                     if let Some(col) = profile.columns.iter().find(|c| c.name == card.source) {
-                        section = section.child(column_card(col, card, model, true));
+                        section = section.child(column_card(col, card, model, true, cx));
                     }
                 }
             }
@@ -204,6 +204,7 @@ fn column_card(
     card: &RenderCard,
     model: &InspectorModel,
     dimmed: bool,
+    cx: &gpui::App,
 ) -> gpui::Div {
     let header = match &card.original {
         Some(orig) => format!(
@@ -257,9 +258,9 @@ fn column_card(
     // the real source column name, not the renamed label.
     if let Some(extra) = model.extra(&col.name) {
         if let Some(topn) = &extra.topn {
-            card_div = card_div.child(crate::charts::render_topn(topn));
+            card_div = card_div.child(crate::charts::render_topn(topn, cx));
         } else if let Some(bins) = &extra.histogram {
-            card_div = card_div.child(crate::charts::render_histogram(bins));
+            card_div = card_div.child(crate::charts::render_histogram(bins, cx));
         }
     }
     card_div

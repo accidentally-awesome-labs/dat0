@@ -37,6 +37,8 @@ use std::sync::Arc;
 // clickable buttons); in release builds they are identity no-ops (D-015 stays
 // open — this is test instrumentation, not production accessibility).
 use crate::a11y::{A11yExt as _, AccessRole};
+use crate::theme::tokens::Dat0Theme as _;
+use gpui_component::ActiveTheme as _;
 
 use panels::{PANELS, back, is_last, next};
 
@@ -106,7 +108,7 @@ fn present_panel(window: &mut Window, cx: &mut App, index: usize) {
     let last = is_last(index);
     let show_back = index > 0;
 
-    window.open_dialog(cx, move |dialog: Dialog, _w, _cx| {
+    window.open_dialog(cx, move |dialog: Dialog, _w, dialog_cx| {
         // Skip: always available, bottom-left. Dismisses + marks done.
         let skip = Button::new("tour-skip")
             .label(dat0_i18n::t("onboarding.tour.skip"))
@@ -167,16 +169,19 @@ fn present_panel(window: &mut Window, cx: &mut App, index: usize) {
         });
 
         // Dot pager: ● for the current panel, ○ for the rest.
+        // A6g: the two dot colours come from the theme. Read from the dialog's
+        // OWN context — this is a `move` closure, so touching the outer `cx`
+        // would capture a `&mut App` and make it escape the function.
+        // The ●/○ glyphs stay as text: they are their own elements, but no dot
+        // icon was vendored in A5 and inventing one is out of this slice's scope.
+        let d0 = dialog_cx.theme().d0();
+        let (dot_on, dot_off) = (d0.pager_dot_active, d0.pager_dot_inactive);
         let mut pager = h_flex().gap_1();
         for i in 0..PANELS.len() {
             let glyph = if i == index { "●" } else { "○" };
             pager = pager.child(
                 div()
-                    .text_color(if i == index {
-                        gpui::rgb(0xffffff)
-                    } else {
-                        gpui::rgb(0x666666)
-                    })
+                    .text_color(if i == index { dot_on } else { dot_off })
                     .child(glyph),
             );
         }

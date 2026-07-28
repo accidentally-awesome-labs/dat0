@@ -4,9 +4,11 @@
 use crate::a11y::{A11yExt as _, AccessRole};
 use crate::charts::data::PlotTable;
 use crate::charts::spec::{AxisRole, ChartSpec, ChartType, is_numeric};
+use crate::theme::tokens::Dat0Theme as _;
 use gpui::{
     ImageSource, IntoElement, ParentElement, RenderImage, SharedString, Styled, div, img, px,
 };
+use gpui_component::ActiveTheme as _;
 use std::sync::Arc;
 
 /// Which axis roles to show for a type (delegates to ChartType::axes).
@@ -91,11 +93,14 @@ pub fn render_chart_body(
     panel: &ChartPanel,
     image: Option<Arc<RenderImage>>,
     logical: (f32, f32),
+    cx: &gpui::App,
 ) -> impl IntoElement {
+    // A6g: takes `cx` because the error/hint text colours come from the theme.
+    let d0 = cx.theme().d0();
     let body = if let Some(err) = &panel.error {
         div()
             .p_4()
-            .text_color(gpui::rgb(0xcc4444))
+            .text_color(d0.text_error)
             .child(err.clone())
             .into_any_element()
     } else if let Some(ri) = image {
@@ -107,7 +112,7 @@ pub fn render_chart_body(
         let hint = dat0_i18n::t("chart.panel.empty");
         div()
             .p_4()
-            .text_color(gpui::rgb(0x888888))
+            .text_color(d0.text_muted)
             .child(hint.clone())
             .a11y_label(AccessRole::Label, hint)
             .into_any_element()
