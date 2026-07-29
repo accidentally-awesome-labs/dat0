@@ -386,3 +386,121 @@ fn enter_on_export_emits_the_selected_scope_and_format(cx: &mut TestAppContext) 
     );
     drop(state);
 }
+
+// ---------------------------------------------------------------------------
+// Task 3 — the export dialog inside the trap
+// ---------------------------------------------------------------------------
+
+/// The export modal traps Tab: four stops, wrapping, never escaping into the
+/// obscured shell. This is the WCAG 2.4.3 fix for the export dialog — B1 closed
+/// it for the three `NamePrompt` modals only.
+#[gpui::test]
+#[serial]
+fn export_modal_tab_cycles_four_stops(cx: &mut TestAppContext) {
+    let cfg = tempfile::tempdir().unwrap();
+    let state = tempfile::tempdir().unwrap();
+    set_config_dir(cfg.path());
+    init_components(cx);
+    let harness = enter_async_harness(cx);
+    let _g = harness.enter();
+    let session = build_empty_session(state.path());
+    let (shell, vcx) = open_shell_window(cx, session);
+    vcx.run_until_parked();
+    focus_shell_neutrally(vcx);
+
+    let (dialog, _log) = open_export_with_log(&shell, vcx);
+    let (fmt, scope, run, cancel) = vcx.update(|_w, app| {
+        let d = dialog.read(app);
+        (
+            d.format_focus_handle(),
+            d.scope_focus_handle(),
+            d.run_focus_handle(),
+            d.cancel_focus_handle(),
+        )
+    });
+
+    assert!(
+        vcx.update(|window, _app| fmt.is_focused(window)),
+        "the drain opens the modal on its first stop"
+    );
+    for (i, want) in [&scope, &run, &cancel, &fmt].iter().enumerate() {
+        press_tab(vcx);
+        vcx.run_until_parked();
+        assert!(
+            vcx.update(|window, _app| want.is_focused(window)),
+            "Tab hop {} must stay inside the modal and wrap at the end",
+            i + 1
+        );
+    }
+    press_shift_tab(vcx);
+    vcx.run_until_parked();
+    assert!(
+        vcx.update(|window, _app| cancel.is_focused(window)),
+        "Shift-Tab from the first stop wraps to the last"
+    );
+    drop(state);
+}
+
+/// Escape from a non-field stop emits exactly ONE Cancel. Two bindings match
+/// while a modal is up; `on_action` handlers consume by default, but this is
+/// the cell-editor double-fire class and is asserted, not assumed.
+#[gpui::test]
+#[serial]
+fn escape_from_export_emits_exactly_one_cancel(cx: &mut TestAppContext) {
+    let cfg = tempfile::tempdir().unwrap();
+    let state = tempfile::tempdir().unwrap();
+    set_config_dir(cfg.path());
+    init_components(cx);
+    let harness = enter_async_harness(cx);
+    let _g = harness.enter();
+    let session = build_empty_session(state.path());
+    let (shell, vcx) = open_shell_window(cx, session);
+    vcx.run_until_parked();
+    focus_shell_neutrally(vcx);
+
+    let (dialog, log) = open_export_with_log(&shell, vcx);
+    vcx.update(|window, app| window.focus(&dialog.read(app).cancel_focus_handle()));
+    vcx.run_until_parked();
+    vcx.simulate_keystrokes("escape");
+    vcx.run_until_parked();
+
+    assert_eq!(
+        log.borrow()
+            .iter()
+            .filter(|e| matches!(e, ExportEvent::Cancel))
+            .count(),
+        1,
+        "exactly one Cancel per Escape, got {:?}",
+        log.borrow()
+    );
+    assert!(
+        vcx.update(|_w, app| shell.read(app).export_dialog_entity_for_test().is_none()),
+        "Escape dismisses the modal"
+    );
+    drop(state);
+}
+
+/// The modal paints a named `Dialog` a11y node, so `modal_host` is genuinely in
+/// the tree rather than the dialog being mounted bare.
+#[gpui::test]
+#[serial]
+fn export_modal_emits_a_named_dialog_node(cx: &mut TestAppContext) {
+    let cfg = tempfile::tempdir().unwrap();
+    let state = tempfile::tempdir().unwrap();
+    set_config_dir(cfg.path());
+    init_components(cx);
+    let harness = enter_async_harness(cx);
+    let _g = harness.enter();
+    let session = build_empty_session(state.path());
+    let (shell, vcx) = open_shell_window(cx, session);
+    vcx.run_until_parked();
+    focus_shell_neutrally(vcx);
+
+    let (_dialog, _log) = open_export_with_log(&shell, vcx);
+    let snap = A11ySnapshot::capture(vcx);
+    assert!(
+        snap.query_by_role(dat0_app::a11y::AccessRole::Dialog, "Export"),
+        "modal_host must paint a Dialog node named by the modal's title"
+    );
+    drop(state);
+}

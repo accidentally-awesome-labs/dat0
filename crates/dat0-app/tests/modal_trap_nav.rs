@@ -495,20 +495,20 @@ fn at_most_one_modal_is_open(cx: &mut TestAppContext) {
     vcx.run_until_parked();
 
     assert_eq!(
-        vcx.update(|_w, app| shell.read(app).open_modal_count_for_test()),
+        vcx.update(|_w, app| shell.read(app).open_modal_count_for_test(app)),
         0,
         "no modal before opening one"
     );
     let (_p, _log) = open_prompt_with_log(&shell, vcx);
     assert_eq!(
-        vcx.update(|_w, app| shell.read(app).open_modal_count_for_test()),
+        vcx.update(|_w, app| shell.read(app).open_modal_count_for_test(app)),
         1,
         "exactly one modal while a prompt is up"
     );
     vcx.simulate_keystrokes("escape");
     vcx.run_until_parked();
     assert_eq!(
-        vcx.update(|_w, app| shell.read(app).open_modal_count_for_test()),
+        vcx.update(|_w, app| shell.read(app).open_modal_count_for_test(app)),
         0,
         "back to zero after dismiss"
     );
