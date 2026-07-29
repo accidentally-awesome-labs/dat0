@@ -37,6 +37,7 @@ use support::{A11ySnapshot, press_shift_tab, press_tab};
 
 use dat0_app::session::Session;
 use dat0_app::view::export_dialog::{ExportDialog, ExportEvent, ExportScope};
+use dat0_app::view::saved_query_picker::SavedQueryPickerEvent;
 use dat0_app::window::WorkspaceShell;
 use dat0_engine::types::ExportFormat;
 
@@ -501,6 +502,212 @@ fn export_modal_emits_a_named_dialog_node(cx: &mut TestAppContext) {
     assert!(
         snap.query_by_role(dat0_app::a11y::AccessRole::Dialog, "Export"),
         "modal_host must paint a Dialog node named by the modal's title"
+    );
+    drop(state);
+}
+
+// ---------------------------------------------------------------------------
+// Task 4 — the saved-query picker
+// ---------------------------------------------------------------------------
+
+/// Seed two saved queries straight into the session, so the picker has rows
+/// without going through the console's save flow.
+fn seed_saved_queries(session: &Arc<Mutex<Session>>) {
+    use dat0_app::session::queries::SavedQuery;
+    let rows = vec![
+        SavedQuery {
+            id: uuid::Uuid::now_v7(),
+            name: "first".into(),
+            sql: "select 1".into(),
+            saved_at: 1,
+        },
+        SavedQuery {
+            id: uuid::Uuid::now_v7(),
+            name: "second".into(),
+            sql: "select 2".into(),
+            saved_at: 2,
+        },
+    ];
+    session
+        .lock()
+        .set_saved_queries(rows)
+        .expect("seed saved queries");
+}
+
+/// The picker is a listbox: ONE container tab stop, arrows move the active row,
+/// Enter loads it. Never per-row focus handles — the pattern proven by recents
+/// (`empty_state.rs:448`) and the shape B4's command palette needs.
+#[gpui::test]
+#[serial]
+fn picker_arrows_move_active_and_enter_picks(cx: &mut TestAppContext) {
+    let cfg = tempfile::tempdir().unwrap();
+    let state = tempfile::tempdir().unwrap();
+    set_config_dir(cfg.path());
+    init_components(cx);
+    let harness = enter_async_harness(cx);
+    let _g = harness.enter();
+    let session = build_empty_session(state.path());
+    seed_saved_queries(&session);
+    let (shell, vcx) = open_shell_window(cx, session);
+    vcx.run_until_parked();
+    focus_shell_neutrally(vcx);
+
+    vcx.update(|window, app| shell.update(app, |ws, cx| ws.show_saved_picker_for_test(window, cx)));
+    vcx.run_until_parked();
+
+    let picker = vcx
+        .update(|_w, app| shell.read(app).saved_picker_entity_for_test())
+        .expect("picker mounted");
+    let list = vcx.update(|_w, app| picker.read(app).list_focus_handle());
+    assert!(
+        vcx.update(|window, _app| list.is_focused(window)),
+        "the picker opens focused on its list container"
+    );
+    assert_eq!(vcx.update(|_w, app| picker.read(app).active_for_test()), 0);
+
+    let log: Rc<RefCell<Vec<SavedQueryPickerEvent>>> = Rc::new(RefCell::new(Vec::new()));
+    let log2 = log.clone();
+    let sub = vcx.cx.update(|app| {
+        app.subscribe(&picker, move |_p, ev: &SavedQueryPickerEvent, _app| {
+            log2.borrow_mut().push(ev.clone())
+        })
+    });
+    std::mem::forget(sub);
+    vcx.run_until_parked();
+
+    vcx.simulate_keystrokes("down");
+    vcx.run_until_parked();
+    assert_eq!(vcx.update(|_w, app| picker.read(app).active_for_test()), 1);
+    vcx.simulate_keystrokes("down");
+    vcx.run_until_parked();
+    assert_eq!(
+        vcx.update(|_w, app| picker.read(app).active_for_test()),
+        1,
+        "Down CLAMPS at the last row — lists clamp, only radio groups wrap"
+    );
+
+    vcx.simulate_keystrokes("enter");
+    vcx.run_until_parked();
+    assert!(
+        log.borrow()
+            .iter()
+            .any(|e| matches!(e, SavedQueryPickerEvent::Pick(sql) if sql == "select 2")),
+        "Enter picks the ACTIVE row's SQL, got {:?}",
+        log.borrow()
+    );
+    drop(state);
+}
+
+/// Tab cycles the picker's two stops and wraps — the trap covers it exactly
+/// like the export modal, because both derive from `mounted_modals`.
+#[gpui::test]
+#[serial]
+fn picker_tab_cycles_list_and_close(cx: &mut TestAppContext) {
+    let cfg = tempfile::tempdir().unwrap();
+    let state = tempfile::tempdir().unwrap();
+    set_config_dir(cfg.path());
+    init_components(cx);
+    let harness = enter_async_harness(cx);
+    let _g = harness.enter();
+    let session = build_empty_session(state.path());
+    seed_saved_queries(&session);
+    let (shell, vcx) = open_shell_window(cx, session);
+    vcx.run_until_parked();
+    focus_shell_neutrally(vcx);
+
+    vcx.update(|window, app| shell.update(app, |ws, cx| ws.show_saved_picker_for_test(window, cx)));
+    vcx.run_until_parked();
+    let picker = vcx
+        .update(|_w, app| shell.read(app).saved_picker_entity_for_test())
+        .expect("picker mounted");
+    let (list, close) = vcx.update(|_w, app| {
+        let p = picker.read(app);
+        (p.list_focus_handle(), p.close_focus_handle())
+    });
+
+    press_tab(vcx);
+    vcx.run_until_parked();
+    assert!(
+        vcx.update(|window, _app| close.is_focused(window)),
+        "Tab moves from the list to the close button"
+    );
+    press_tab(vcx);
+    vcx.run_until_parked();
+    assert!(
+        vcx.update(|window, _app| list.is_focused(window)),
+        "Tab past the last stop wraps back into the modal"
+    );
+    drop(state);
+}
+
+/// Delete on the active row asks the shell to remove it, and the row is gone on
+/// the next frame because the picker re-reads the session live.
+#[gpui::test]
+#[serial]
+fn picker_delete_removes_the_active_row(cx: &mut TestAppContext) {
+    let cfg = tempfile::tempdir().unwrap();
+    let state = tempfile::tempdir().unwrap();
+    set_config_dir(cfg.path());
+    init_components(cx);
+    let harness = enter_async_harness(cx);
+    let _g = harness.enter();
+    let session = build_empty_session(state.path());
+    seed_saved_queries(&session);
+    let probe = session.clone();
+    let (shell, vcx) = open_shell_window(cx, session);
+    vcx.run_until_parked();
+    focus_shell_neutrally(vcx);
+
+    vcx.update(|window, app| shell.update(app, |ws, cx| ws.show_saved_picker_for_test(window, cx)));
+    vcx.run_until_parked();
+    assert_eq!(probe.lock().saved_queries().len(), 2);
+
+    vcx.simulate_keystrokes("delete");
+    vcx.run_until_parked();
+    assert_eq!(
+        probe.lock().saved_queries().len(),
+        1,
+        "Delete removes the active row from the session"
+    );
+    assert_eq!(
+        probe.lock().saved_queries()[0].name,
+        "second",
+        "the FIRST row was the active one"
+    );
+    drop(state);
+}
+
+/// Escape closes the picker AND hands focus back to where it came from.
+#[gpui::test]
+#[serial]
+fn picker_escape_restores_focus(cx: &mut TestAppContext) {
+    let cfg = tempfile::tempdir().unwrap();
+    let state = tempfile::tempdir().unwrap();
+    set_config_dir(cfg.path());
+    init_components(cx);
+    let harness = enter_async_harness(cx);
+    let _g = harness.enter();
+    let session = build_empty_session(state.path());
+    seed_saved_queries(&session);
+    let (shell, vcx) = open_shell_window(cx, session);
+    vcx.run_until_parked();
+    focus_shell_neutrally(vcx);
+
+    let before = vcx
+        .update(|window, app| window.focused(app))
+        .expect("something focused");
+    vcx.update(|window, app| shell.update(app, |ws, cx| ws.show_saved_picker_for_test(window, cx)));
+    vcx.run_until_parked();
+    vcx.simulate_keystrokes("escape");
+    vcx.run_until_parked();
+
+    assert!(
+        vcx.update(|_w, app| shell.read(app).saved_picker_entity_for_test().is_none()),
+        "Escape dismisses the picker"
+    );
+    assert!(
+        vcx.update(|window, _app| before.is_focused(window)),
+        "dismissing must restore the pre-modal focus"
     );
     drop(state);
 }

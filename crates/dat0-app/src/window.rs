@@ -32,7 +32,6 @@
 //! `Application::run` closure and passed through to `spawn_window`. T17
 //! will assert `registry.lock().len()` to verify window count.
 
-use crate::a11y::A11yExt as _;
 use anyhow::Result;
 use dat0_i18n::t;
 use gpui::{
@@ -2336,11 +2335,15 @@ pub struct WorkspaceShell {
     /// `open_export_dialog` does not have, so its handler cannot be given one.
     /// `render` drains this into `restore_modal_focus`.
     pending_modal_restore: bool,
-    /// Whether the window-level saved-query picker overlay is shown (P5b T8).
-    /// Toggled by `show_saved_picker` (📑) / closed on pick or the overlay's ✕.
-    /// The overlay reads `session.saved_queries()` live at render, so no
-    /// snapshot is stored here — the flag alone gates the overlay.
-    saved_picker_open: bool,
+    /// Currently-mounted saved-query picker (P5b T8, rebuilt as a modal entity
+    /// in B2). `Some` while the picker is open; cleared when its
+    /// `SavedQueryPickerEvent` routes to a pick or a dismiss. The picker reads
+    /// `session.saved_queries()` live, so no snapshot is stored here.
+    saved_picker: Option<Entity<crate::view::saved_query_picker::SavedQueryPicker>>,
+    /// Subscription to the picker's `SavedQueryPickerEvent`. Stored so the
+    /// callback stays registered — a dropped `Subscription` deregisters
+    /// silently (the P4a T10b trap). Cleared alongside `saved_picker`.
+    saved_picker_sub: Option<Subscription>,
     /// Runtime connection state (MotherDuck status + sqlite attachments) for this
     /// window (P5c T6/T10). The persisted projection lives in
     /// `SessionState.attachments` (T7); this is the live UI-facing copy the
@@ -2489,7 +2492,8 @@ impl WorkspaceShell {
             modal_restore_focus: None,
             pending_modal_focus: false,
             pending_modal_restore: false,
-            saved_picker_open: false,
+            saved_picker: None,
+            saved_picker_sub: None,
             connections: Default::default(),
             connections_panel_visible: false,
             catalog_panel_visible: ui.catalog_panel_visible,
@@ -4112,7 +4116,7 @@ impl WorkspaceShell {
             // drained by `SqlConsole::render` with a real `Window`); deleting a
             // row removes it from the session and refreshes the overlay.
             ShowSaved => {
-                self.show_saved_picker(cx);
+                self.show_saved_picker(window, cx);
             }
             // P5b T10: open the shared name modal with the SaveConsoleAsTable
             // intent. Confirm re-reads the statement-under-cursor and CTAS-
@@ -4954,6 +4958,7 @@ impl WorkspaceShell {
         push_modal(&mut v, "md-token-prompt-modal", &self.md_token_prompt, cx);
         push_modal(&mut v, "ai-entry-prompt-modal", &self.ai_entry_prompt, cx);
         push_modal(&mut v, "export-modal", &self.export_dialog, cx);
+        push_modal(&mut v, "saved-picker-modal", &self.saved_picker, cx);
         v
     }
 
@@ -5007,11 +5012,76 @@ impl WorkspaceShell {
         cx.notify();
     }
 
-    /// Open the window-level saved-query picker overlay (P5b T8). The overlay is
-    /// a flag-gated render of `render_saved_picker` over the live
-    /// `session.saved_queries()`, so this just flips the flag.
-    pub(crate) fn show_saved_picker(&mut self, cx: &mut Context<Self>) {
-        self.saved_picker_open = true;
+    /// Mount the saved-query picker modal (P5b T8, rebuilt in B2).
+    ///
+    /// Takes a `&mut Window` — unlike the export dialog, this path has one (its
+    /// only caller is the `ShowSaved` console-event arm, right next to the
+    /// `SaveQuery` arm that already passes `window` to `open_name_prompt`), so
+    /// it captures the restore target and focuses the list directly rather than
+    /// going through the render drain.
+    pub(crate) fn show_saved_picker(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        use crate::view::saved_query_picker::{SavedQueryPicker, SavedQueryPickerEvent};
+        self.modal_restore_focus = window.focused(cx);
+        let session = self.session.clone();
+        let picker = cx.new(|cx| SavedQueryPicker::new(session, cx));
+        // `subscribe_in` (not `subscribe`) so the dismiss path has a `&mut
+        // Window` for the focus restore.
+        let sub = cx.subscribe_in(
+            &picker,
+            window,
+            |ws: &mut Self, _p, ev: &SavedQueryPickerEvent, window, cx| {
+                ws.on_saved_picker_event(ev.clone(), window, cx);
+            },
+        );
+        window.focus(&picker.read(cx).list_focus_handle());
+        self.saved_picker_sub = Some(sub);
+        self.saved_picker = Some(picker);
+        debug_assert!(
+            self.open_modal_count(cx) <= 1,
+            "two modals mounted at once ({}) — B1 assumes a single modal; see \
+             docs/plans/2026-07-28-dat0-ui-redesign-b1-modal-host-design.md §2.7",
+            self.open_modal_count(cx)
+        );
+        cx.notify();
+    }
+
+    /// Route a `SavedQueryPickerEvent`. The picker only READS the session;
+    /// every mutation happens here.
+    fn on_saved_picker_event(
+        &mut self,
+        ev: crate::view::saved_query_picker::SavedQueryPickerEvent,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        use crate::view::saved_query_picker::SavedQueryPickerEvent as E;
+        match ev {
+            E::Pick(sql) => {
+                // Windowless load: the console drains `queue_load` in its own
+                // render, which holds the `&mut Window` that
+                // `load_into_new_tab` needs.
+                if let Some(console) = self.sql_console.clone() {
+                    console.update(cx, |c, cx| c.queue_load(sql, cx));
+                }
+                self.dismiss_saved_picker(window, cx);
+            }
+            E::Delete(id) => {
+                self.delete_named_query(id, cx);
+                // The picker reads the session live, so re-notify it and the
+                // deleted row is gone on its next render.
+                if let Some(p) = self.saved_picker.clone() {
+                    p.update(cx, |_p, cx| cx.notify());
+                }
+                cx.notify();
+            }
+            E::Cancel => self.dismiss_saved_picker(window, cx),
+        }
+    }
+
+    /// Tear the picker down and hand focus back to the pre-modal stop.
+    fn dismiss_saved_picker(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.saved_picker = None;
+        self.saved_picker_sub = None;
+        self.restore_modal_focus(window);
         cx.notify();
     }
 
@@ -6566,88 +6636,6 @@ impl Render for WorkspaceShell {
             crate::overlay::modal_host(m.a11y_id, m.title, m.content, cx).into_any_element()
         });
 
-        // Saved-query picker overlay (P5b T8). Window-level, flag-gated on
-        // `saved_picker_open`; reads `session.saved_queries()` LIVE so a delete
-        // refreshes the list on the next render. Picking a row routes the SQL
-        // through the console's `queue_load` (the console's render drains it with
-        // a real `Window` for `load_into_new_tab`) and closes the overlay.
-        // Deleting calls `delete_named_query` and re-notifies so the list shrinks.
-        // A trailing ✕ closes the overlay.
-        let saved_picker_overlay: Option<gpui::AnyElement> = if self.saved_picker_open {
-            let saved = self.session.lock().saved_queries().to_vec();
-            let ws = cx.entity();
-            let console = self.sql_console.clone();
-            // Pick: route the SQL into a new tab via the console's `queue_load`
-            // (windowless), then close the overlay.
-            let on_pick = {
-                let ws = ws.clone();
-                move |sql: String, app: &mut gpui::App| {
-                    if let Some(console) = console.clone() {
-                        console.update(app, |c, cx| c.queue_load(sql, cx));
-                    }
-                    ws.update(app, |ws, cx| {
-                        ws.saved_picker_open = false;
-                        cx.notify();
-                    });
-                }
-            };
-            // Delete: remove from the session, then re-notify so the LIVE
-            // `saved_queries()` read above re-runs next frame and the row drops.
-            let on_delete = {
-                let ws = ws.clone();
-                move |id: uuid::Uuid, app: &mut gpui::App| {
-                    ws.update(app, |ws, cx| {
-                        ws.delete_named_query(id, cx);
-                        cx.notify();
-                    });
-                }
-            };
-            let close = ws.clone();
-            let picker = div()
-                .absolute()
-                .top_16()
-                .right_2()
-                .w(gpui::px(420.))
-                .max_h(gpui::px(320.))
-                .overflow_hidden()
-                .border_1()
-                .child(
-                    div()
-                        .flex()
-                        .flex_row()
-                        .justify_between()
-                        .items_center()
-                        .px_2()
-                        .py_1()
-                        .border_b_1()
-                        .child(dat0_i18n::t("sql.load_query"))
-                        .child(
-                            div()
-                                .id("sql-saved-close")
-                                .cursor_pointer()
-                                .px_1()
-                                .a11y_label(
-                                    crate::a11y::AccessRole::Label,
-                                    dat0_i18n::t("common.close"),
-                                )
-                                .child(gpui_component::Icon::new(gpui_component::IconName::Close))
-                                .on_click(move |_ev, _window, cx| {
-                                    close.update(cx, |ws, cx| {
-                                        ws.saved_picker_open = false;
-                                        cx.notify();
-                                    });
-                                }),
-                        ),
-                )
-                .child(crate::view::query_library::render_saved_picker(
-                    &saved, on_pick, on_delete,
-                ))
-                .into_any_element();
-            Some(picker)
-        } else {
-            None
-        };
-
         // T10: tab-strip with dirty-dot indicator. Shown whenever a ViewModel
         // is mounted (i.e. a file has been loaded). The "•" glyph appears next
         // to the tab label when `vm.is_dirty()` is true — meaning the active
@@ -7055,7 +7043,6 @@ impl Render for WorkspaceShell {
             )
             .children(popover_overlay)
             .children(editor_overlay)
-            .children(saved_picker_overlay)
             .children(modal_overlay)
             // Mount gpui-component's overlay layers (P7c T8). `Root::render`
             // paints ONLY `self.view`; it does NOT auto-mount the sheet/dialog
@@ -7309,6 +7296,20 @@ impl WorkspaceShell {
         &self,
     ) -> Option<gpui::Entity<crate::view::export_dialog::ExportDialog>> {
         self.export_dialog.clone()
+    }
+
+    /// Mount the saved-query picker. `show_saved_picker` itself is
+    /// `pub(crate)`, and the integration tests are a separate crate.
+    pub fn show_saved_picker_for_test(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.show_saved_picker(window, cx);
+    }
+
+    /// The mounted saved-query picker, so a test can reach its focus handles
+    /// and active index.
+    pub fn saved_picker_entity_for_test(
+        &self,
+    ) -> Option<gpui::Entity<crate::view::saved_query_picker::SavedQueryPicker>> {
+        self.saved_picker.clone()
     }
 }
 
