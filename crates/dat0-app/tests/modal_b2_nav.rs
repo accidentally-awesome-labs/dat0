@@ -711,3 +711,62 @@ fn picker_escape_restores_focus(cx: &mut TestAppContext) {
     );
     drop(state);
 }
+
+// ---------------------------------------------------------------------------
+// Task 6 — the structural invariant
+// ---------------------------------------------------------------------------
+
+/// `open_modal_count` derives from `mounted_modals`, the same list `render`
+/// mounts and traps from, so the two cannot drift apart. B1 kept them as
+/// separate hand-maintained code, which is how a modal could be styled but
+/// silently left untrapped.
+#[gpui::test]
+#[serial]
+fn modal_count_tracks_the_mounted_set(cx: &mut TestAppContext) {
+    let cfg = tempfile::tempdir().unwrap();
+    let state = tempfile::tempdir().unwrap();
+    set_config_dir(cfg.path());
+    init_components(cx);
+    let harness = enter_async_harness(cx);
+    let _g = harness.enter();
+    let session = build_empty_session(state.path());
+    seed_saved_queries(&session);
+    let (shell, vcx) = open_shell_window(cx, session);
+    vcx.run_until_parked();
+    focus_shell_neutrally(vcx);
+
+    assert_eq!(
+        vcx.update(|_w, app| shell.read(app).open_modal_count_for_test(app)),
+        0,
+        "nothing mounted to start"
+    );
+
+    let (_dialog, _log) = open_export_with_log(&shell, vcx);
+    assert_eq!(
+        vcx.update(|_w, app| shell.read(app).open_modal_count_for_test(app)),
+        1,
+        "the export dialog counts — it is in `mounted_modals`, which is also \
+         what feeds the trap"
+    );
+    vcx.simulate_keystrokes("escape");
+    vcx.run_until_parked();
+    assert_eq!(
+        vcx.update(|_w, app| shell.read(app).open_modal_count_for_test(app)),
+        0
+    );
+
+    vcx.update(|window, app| shell.update(app, |ws, cx| ws.show_saved_picker_for_test(window, cx)));
+    vcx.run_until_parked();
+    assert_eq!(
+        vcx.update(|_w, app| shell.read(app).open_modal_count_for_test(app)),
+        1,
+        "…and so does the picker"
+    );
+    vcx.simulate_keystrokes("escape");
+    vcx.run_until_parked();
+    assert_eq!(
+        vcx.update(|_w, app| shell.read(app).open_modal_count_for_test(app)),
+        0
+    );
+    drop(state);
+}
