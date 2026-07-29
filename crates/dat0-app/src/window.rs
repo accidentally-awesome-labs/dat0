@@ -6346,8 +6346,16 @@ impl Render for WorkspaceShell {
             if let Some(fh) = first {
                 self.modal_restore_focus = window.focused(cx);
                 window.focus(&fh);
-                self.pending_modal_focus = false;
             }
+            // Cleared unconditionally, INCLUDING when no modal turned out to be
+            // mounted. A stale flag surviving into a later frame would fire on
+            // the NEXT modal and overwrite `modal_restore_focus` with that
+            // modal's own first stop, so dismissing it would hand focus to a
+            // handle that no longer exists instead of the pre-modal stop. The
+            // open paths make that unreachable today (they `cx.notify()`, and a
+            // dismissal needs user input, which needs a paint); this makes it
+            // unrepresentable rather than merely argued.
+            self.pending_modal_focus = false;
         }
         // …and the mirror image on dismiss (see `pending_modal_restore`).
         if self.pending_modal_restore {
