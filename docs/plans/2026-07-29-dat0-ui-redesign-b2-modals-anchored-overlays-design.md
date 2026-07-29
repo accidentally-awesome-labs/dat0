@@ -354,9 +354,15 @@ one, next to the `SaveQuery` arm that passes `window` to `open_name_prompt`. It
 captures `modal_restore_focus`, builds the entity, focuses `list_focus`
 directly, like the prompts.
 
-**Dismiss.** `export_dialog_sub` moves from `cx.subscribe` to `cx.subscribe_in`
-so the handler has a `&mut Window`; every dismiss arm (Export-complete, Cancel,
-Escape) calls `restore_modal_focus(window)`. Same for the picker's subscription.
+**Dismiss.** The picker's subscription is `cx.subscribe_in`, so its dismiss arms
+call `restore_modal_focus(window)` directly, like the three prompts.
+
+The export dialog **cannot** do that: `cx.subscribe_in` needs a `&mut Window` at
+subscription time and `open_export_dialog` has none — the same constraint that
+forced the drain. Its subscription stays `cx.subscribe`, and the restore rides
+the drain in the opposite direction: a `pending_modal_restore` flag set by every
+arm that clears `export_dialog`, drained by `render` into
+`restore_modal_focus(window)` right after the focus drain.
 
 ### 2.6 What does *not* change
 
