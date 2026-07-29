@@ -2281,6 +2281,20 @@ pub struct WorkspaceShell {
     /// moves focus to the field; `take`n in the dismiss path so a double dismiss
     /// cannot re-focus a stale handle.
     modal_restore_focus: Option<gpui::FocusHandle>,
+    /// Set by a modal open path that has NO `&mut Window` — in practice only
+    /// [`open_export_dialog`](Self::open_export_dialog), which
+    /// `view_actions::dispatch_export` reaches from a bare `&mut App` (the
+    /// window registry stores no focused-window handle, and
+    /// `App::active_window` is the platform's, untrustworthy under
+    /// `TestPlatform`). `render` drains it: it captures the restore target and
+    /// focuses the modal's first stop.
+    ///
+    /// Same shape as `SqlConsole::queue_load` — enqueue windowless, drain in a
+    /// render that holds a real `Window`. LOAD-BEARING: with nothing focused
+    /// the dispatch path is the window root alone and Tab is completely inert
+    /// (B1, measured), so a modal that opens without taking focus is
+    /// keyboard-dead.
+    pending_modal_focus: bool,
     /// Whether the window-level saved-query picker overlay is shown (P5b T8).
     /// Toggled by `show_saved_picker` (📑) / closed on pick or the overlay's ✕.
     /// The overlay reads `session.saved_queries()` live at render, so no
@@ -2432,6 +2446,7 @@ impl WorkspaceShell {
             name_prompt_sql: None,
             name_prompt_intent: None,
             modal_restore_focus: None,
+            pending_modal_focus: false,
             saved_picker_open: false,
             connections: Default::default(),
             connections_panel_visible: false,
@@ -2888,7 +2903,7 @@ impl WorkspaceShell {
             return;
         }
 
-        let dialog = cx.new(|_| ExportDialog::new());
+        let dialog = cx.new(ExportDialog::new);
         // STORE the subscription — callbacks fire silently if the returned
         // Subscription is dropped (P4a T10b post-review lesson; mirrors
         // `on_funnel_click`'s `popover_sub`).
@@ -2897,6 +2912,9 @@ impl WorkspaceShell {
         });
         self.export_dialog_sub = Some(sub);
         self.export_dialog = Some(dialog);
+        // B2: this path has no `Window`, so `render` does the focusing. See
+        // `pending_modal_focus`.
+        self.pending_modal_focus = true;
         cx.notify();
     }
 
@@ -6194,6 +6212,21 @@ pub(crate) fn bounding_rect(cells: &[(usize, usize)]) -> Option<(usize, usize, u
 
 impl Render for WorkspaceShell {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        // B2: drain a windowless modal open (see `pending_modal_focus`). The
+        // handle lookup is sequenced into a local so its immutable borrow ends
+        // before the field writes.
+        if self.pending_modal_focus {
+            let first = self
+                .export_dialog
+                .as_ref()
+                .map(|d| d.read(cx).format_focus_handle());
+            if let Some(fh) = first {
+                self.modal_restore_focus = window.focused(cx);
+                window.focus(&fh);
+                self.pending_modal_focus = false;
+            }
+        }
+
         // Subscribe to Theme global changes once, on the first render. The
         // subscription returns a `Subscription` that must be kept alive
         // (drop = unregister) per `gpui-api-notes.md` §0.A.2.
@@ -7244,6 +7277,31 @@ impl WorkspaceShell {
         &self,
     ) -> Option<gpui::Entity<crate::view::name_prompt::NamePrompt>> {
         self.name_prompt.clone()
+    }
+
+    /// Open the export dialog the way `view_actions::dispatch_export` does —
+    /// with NO `Window`, which is the whole point of the render-drain.
+    ///
+    /// The production path returns early when no `ViewModel` is mounted; a nav
+    /// test has no file loaded, so this builds the entity directly. Everything
+    /// the trap and the keyboard path touch is identical.
+    pub fn open_export_dialog_for_test(&mut self, cx: &mut Context<Self>) {
+        use crate::view::export_dialog::{ExportDialog, ExportEvent};
+        let dialog = cx.new(ExportDialog::new);
+        let sub = cx.subscribe(&dialog, |ws: &mut Self, _dialog, ev: &ExportEvent, cx| {
+            ws.route_export_event(ev.clone(), cx);
+        });
+        self.export_dialog_sub = Some(sub);
+        self.export_dialog = Some(dialog);
+        self.pending_modal_focus = true;
+        cx.notify();
+    }
+
+    /// The mounted export dialog, so a test can reach its focus handles.
+    pub fn export_dialog_entity_for_test(
+        &self,
+    ) -> Option<gpui::Entity<crate::view::export_dialog::ExportDialog>> {
+        self.export_dialog.clone()
     }
 }
 

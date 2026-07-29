@@ -14,14 +14,20 @@
 use dat0_engine::transform::ProjectionColumn;
 use dat0_engine::types::ExportFormat;
 
-use gpui::{Context, EventEmitter, IntoElement, ParentElement, Render, Styled, Window};
+use gpui::{
+    Context, EventEmitter, FocusHandle, IntoElement, ParentElement, Render, Styled, Window, div,
+};
+use gpui_component::ActiveTheme as _;
 use gpui_component::{
     button::{Button, ButtonVariants as _},
     h_flex,
     label::Label,
-    radio::RadioGroup,
+    radio::{Radio, RadioGroup},
     v_flex,
 };
+
+use crate::a11y::{A11yExt as _, AccessRole, FocusStopExt as _};
+use crate::theme::tokens::Dat0Theme as _;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ExportScope {
@@ -88,22 +94,30 @@ pub enum ExportEvent {
 
 /// GPUI entity for the File → Export… dialog.
 ///
-/// Holds the two radio selections (format + scope) as plain state. The radios
-/// drive the selection via their `on_click` handlers; the Export/Cancel buttons
-/// emit [`ExportEvent`] to the subscribed `WorkspaceShell`. No `&mut Window` is
-/// required at construction (the `RadioGroup` widget is `RenderOnce`), so the
-/// entity is safe to build from `cx.new(|_| ExportDialog::new())`.
+/// Holds the two radio selections (format + scope) as plain state, plus the
+/// four focus handles the B2 modal trap cycles over. The handles must be
+/// dat0-owned: gpui-component's `Button` and `Radio` build theirs with
+/// `window.use_keyed_state`, which is keyed by the GLOBAL element-id path, so
+/// they are unreachable from `WorkspaceShell::render` where the trap's
+/// `Vec<FocusHandle>` is assembled.
+///
+/// Still needs no `&mut Window` at construction (the `RadioGroup` widget is
+/// `RenderOnce`), only a `Context` for the handles:
+/// `cx.new(|cx| ExportDialog::new(cx))`.
 pub struct ExportDialog {
     /// 0 = CSV, 1 = JSON, 2 = Parquet (index into [`Self::FORMATS`]).
     format_ix: usize,
     /// 0 = Current view, 1 = Full table (index into [`Self::SCOPES`]).
     scope_ix: usize,
-}
-
-impl Default for ExportDialog {
-    fn default() -> Self {
-        Self::new()
-    }
+    /// The format radio GROUP is one tab stop; arrows move the selection
+    /// within it (the WAI-ARIA radiogroup pattern).
+    format_focus: FocusHandle,
+    /// Ditto for the scope group.
+    scope_focus: FocusHandle,
+    /// The Export button.
+    run_focus: FocusHandle,
+    /// The Cancel button.
+    cancel_focus: FocusHandle,
 }
 
 impl ExportDialog {
@@ -112,11 +126,33 @@ impl ExportDialog {
     const SCOPES: [ExportScope; 2] = [ExportScope::CurrentView, ExportScope::FullTable];
 
     /// Construct a fresh dialog defaulting to CSV + Current view.
-    pub fn new() -> Self {
+    pub fn new(cx: &mut Context<Self>) -> Self {
         Self {
             format_ix: 0,
             scope_ix: 0,
+            format_focus: cx.focus_handle(),
+            scope_focus: cx.focus_handle(),
+            run_focus: cx.focus_handle(),
+            cancel_focus: cx.focus_handle(),
         }
+    }
+
+    /// The format group's focus stop — the modal's FIRST stop, and the one the
+    /// render-drain focuses on open.
+    pub fn format_focus_handle(&self) -> FocusHandle {
+        self.format_focus.clone()
+    }
+    /// The scope group's focus stop.
+    pub fn scope_focus_handle(&self) -> FocusHandle {
+        self.scope_focus.clone()
+    }
+    /// The Export button's focus stop.
+    pub fn run_focus_handle(&self) -> FocusHandle {
+        self.run_focus.clone()
+    }
+    /// The Cancel button's focus stop.
+    pub fn cancel_focus_handle(&self) -> FocusHandle {
+        self.cancel_focus.clone()
     }
 
     /// The currently-selected export format.
@@ -136,13 +172,26 @@ impl Render for ExportDialog {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let format_ix = self.format_ix;
         let scope_ix = self.scope_ix;
+        let ring = cx.theme().d0().focus_ring;
 
         // ── Format radio group (CSV / JSON / Parquet) ──────────────────────
+        //
+        // The children are explicit `Radio`s rather than bare strings so they
+        // can carry `.tab_stop(false)`: the GROUP is the tab stop, not the
+        // individual radios. `RadioGroup::render` overwrites each child's id
+        // with its index but leaves `tab_stop` alone (gpui-component
+        // `radio.rs:333`), so the ids here are cosmetic.
         let format_group = RadioGroup::horizontal("export-format")
             .children([
-                dat0_i18n::t("export.format.csv"),
-                dat0_i18n::t("export.format.json"),
-                dat0_i18n::t("export.format.parquet"),
+                Radio::new("csv")
+                    .label(dat0_i18n::t("export.format.csv"))
+                    .tab_stop(false),
+                Radio::new("json")
+                    .label(dat0_i18n::t("export.format.json"))
+                    .tab_stop(false),
+                Radio::new("parquet")
+                    .label(dat0_i18n::t("export.format.parquet"))
+                    .tab_stop(false),
             ])
             .selected_index(Some(format_ix))
             .on_click(cx.listener(|this, ix: &usize, _window, cx| {
@@ -150,17 +199,55 @@ impl Render for ExportDialog {
                 cx.notify();
             }));
 
+        // ONE tab stop for the whole group. `focus_stop`'s Enter/Space
+        // activation is a deliberate no-op: on a radiogroup the selection IS
+        // the state, and a second submit path from inside a group would
+        // surprise. Arrow selection arrives in T2.
+        let format_stop = div()
+            .focus_stop(
+                "export-format-group",
+                &self.format_focus,
+                0,
+                ring,
+                |_ev, _window, _app| {},
+            )
+            .a11y(
+                "export-format-group",
+                AccessRole::Button,
+                dat0_i18n::t("export.format"),
+            )
+            .child(format_group);
+
         // ── Scope radio group (Current view / Full table) ──────────────────
         let scope_group = RadioGroup::vertical("export-scope")
             .children([
-                dat0_i18n::t("export.scope.current"),
-                dat0_i18n::t("export.scope.full"),
+                Radio::new("current")
+                    .label(dat0_i18n::t("export.scope.current"))
+                    .tab_stop(false),
+                Radio::new("full")
+                    .label(dat0_i18n::t("export.scope.full"))
+                    .tab_stop(false),
             ])
             .selected_index(Some(scope_ix))
             .on_click(cx.listener(|this, ix: &usize, _window, cx| {
                 this.scope_ix = *ix;
                 cx.notify();
             }));
+
+        let scope_stop = div()
+            .focus_stop(
+                "export-scope-group",
+                &self.scope_focus,
+                0,
+                ring,
+                |_ev, _window, _app| {},
+            )
+            .a11y(
+                "export-scope-group",
+                AccessRole::Button,
+                dat0_i18n::t("export.scope"),
+            )
+            .child(scope_group);
 
         // ── Export / Cancel buttons ────────────────────────────────────────
         let entity_run = cx.entity();
@@ -192,9 +279,9 @@ impl Render for ExportDialog {
             .p_4()
             .min_w(gpui::px(320.))
             .child(Label::new(dat0_i18n::t("export.format")))
-            .child(format_group)
+            .child(format_stop)
             .child(Label::new(dat0_i18n::t("export.scope")))
-            .child(scope_group)
+            .child(scope_stop)
             .child(h_flex().gap_2().child(export_btn).child(cancel_btn))
     }
 }
