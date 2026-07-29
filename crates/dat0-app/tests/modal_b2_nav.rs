@@ -36,7 +36,9 @@ use serial_test::serial;
 use support::{A11ySnapshot, press_shift_tab, press_tab};
 
 use dat0_app::session::Session;
+use dat0_app::view::export_dialog::{ExportDialog, ExportEvent, ExportScope};
 use dat0_app::window::WorkspaceShell;
+use dat0_engine::types::ExportFormat;
 
 const BUDGET: u64 = 128 * 1024 * 1024;
 
@@ -230,6 +232,157 @@ fn gate_b_radio_group_is_one_tab_stop(cx: &mut TestAppContext) {
         "one Tab must jump the WHOLE radio group and land on the scope group; \
          landing anywhere else means the radios are still tab stops of their own \
          (they are painted inside the group, so they would come first)"
+    );
+    drop(state);
+}
+
+// ---------------------------------------------------------------------------
+// Task 2 — the export dialog's own keyboard behaviour
+// ---------------------------------------------------------------------------
+
+/// Open the export dialog the windowless way and subscribe to its events.
+/// Returns (dialog, log). The `Subscription` is deliberately leaked for the
+/// test's life (the process is short-lived) — dropping it deregisters silently.
+fn open_export_with_log(
+    shell: &Entity<WorkspaceShell>,
+    vcx: &mut VisualTestContext,
+) -> (Entity<ExportDialog>, Rc<RefCell<Vec<ExportEvent>>>) {
+    vcx.update(|_w, app| shell.update(app, |ws, cx| ws.open_export_dialog_for_test(cx)));
+    vcx.run_until_parked();
+    let dialog = vcx
+        .update(|_w, app| shell.read(app).export_dialog_entity_for_test())
+        .expect("dialog mounted");
+    let log: Rc<RefCell<Vec<ExportEvent>>> = Rc::new(RefCell::new(Vec::new()));
+    let log2 = log.clone();
+    let sub = vcx.cx.update(|app| {
+        app.subscribe(&dialog, move |_d, ev: &ExportEvent, _app| {
+            log2.borrow_mut().push(ev.clone())
+        })
+    });
+    std::mem::forget(sub);
+    vcx.run_until_parked(); // flush the deferred subscription activation
+    (dialog, log)
+}
+
+/// Left/Right cycle the format radio group while it holds focus — the WAI-ARIA
+/// radiogroup pattern: the group is one tab stop and arrows move the selection.
+/// Selection WRAPS here, deliberately unlike the list surfaces, whose arrows
+/// clamp (`empty_state.rs:436-439`).
+#[gpui::test]
+#[serial]
+fn arrows_change_the_export_format(cx: &mut TestAppContext) {
+    let cfg = tempfile::tempdir().unwrap();
+    let state = tempfile::tempdir().unwrap();
+    set_config_dir(cfg.path());
+    init_components(cx);
+    let harness = enter_async_harness(cx);
+    let _g = harness.enter();
+    let session = build_empty_session(state.path());
+    let (shell, vcx) = open_shell_window(cx, session);
+    vcx.run_until_parked();
+    focus_shell_neutrally(vcx);
+
+    let (dialog, _log) = open_export_with_log(&shell, vcx);
+
+    assert_eq!(
+        vcx.update(|_w, app| dialog.read(app).format_for_test()),
+        ExportFormat::Csv,
+        "defaults to CSV"
+    );
+    vcx.simulate_keystrokes("right");
+    vcx.run_until_parked();
+    assert_eq!(
+        vcx.update(|_w, app| dialog.read(app).format_for_test()),
+        ExportFormat::Json,
+        "Right moves to the next format"
+    );
+    vcx.simulate_keystrokes("left left");
+    vcx.run_until_parked();
+    assert_eq!(
+        vcx.update(|_w, app| dialog.read(app).format_for_test()),
+        ExportFormat::Parquet,
+        "Left wraps past the first entry to the last"
+    );
+    drop(state);
+}
+
+/// Up/Down cycle the scope group. Same pattern, vertical layout.
+#[gpui::test]
+#[serial]
+fn arrows_change_the_export_scope(cx: &mut TestAppContext) {
+    let cfg = tempfile::tempdir().unwrap();
+    let state = tempfile::tempdir().unwrap();
+    set_config_dir(cfg.path());
+    init_components(cx);
+    let harness = enter_async_harness(cx);
+    let _g = harness.enter();
+    let session = build_empty_session(state.path());
+    let (shell, vcx) = open_shell_window(cx, session);
+    vcx.run_until_parked();
+    focus_shell_neutrally(vcx);
+
+    let (dialog, _log) = open_export_with_log(&shell, vcx);
+    vcx.update(|window, app| window.focus(&dialog.read(app).scope_focus_handle()));
+    vcx.run_until_parked();
+
+    assert_eq!(
+        vcx.update(|_w, app| dialog.read(app).scope_for_test()),
+        ExportScope::CurrentView
+    );
+    vcx.simulate_keystrokes("down");
+    vcx.run_until_parked();
+    assert_eq!(
+        vcx.update(|_w, app| dialog.read(app).scope_for_test()),
+        ExportScope::FullTable,
+        "Down moves to the next scope"
+    );
+    vcx.simulate_keystrokes("down");
+    vcx.run_until_parked();
+    assert_eq!(
+        vcx.update(|_w, app| dialog.read(app).scope_for_test()),
+        ExportScope::CurrentView,
+        "Down from the last entry wraps to the first"
+    );
+    drop(state);
+}
+
+/// Enter on the Export stop emits the ARROW-SELECTED scope and format, not the
+/// defaults — proves the keyboard path reaches the same state the mouse does.
+#[gpui::test]
+#[serial]
+fn enter_on_export_emits_the_selected_scope_and_format(cx: &mut TestAppContext) {
+    let cfg = tempfile::tempdir().unwrap();
+    let state = tempfile::tempdir().unwrap();
+    set_config_dir(cfg.path());
+    init_components(cx);
+    let harness = enter_async_harness(cx);
+    let _g = harness.enter();
+    let session = build_empty_session(state.path());
+    let (shell, vcx) = open_shell_window(cx, session);
+    vcx.run_until_parked();
+    focus_shell_neutrally(vcx);
+
+    let (dialog, log) = open_export_with_log(&shell, vcx);
+
+    vcx.simulate_keystrokes("right"); // format → Json (drain left focus here)
+    vcx.run_until_parked();
+    vcx.update(|window, app| window.focus(&dialog.read(app).scope_focus_handle()));
+    vcx.simulate_keystrokes("down"); // scope → FullTable
+    vcx.run_until_parked();
+    vcx.update(|window, app| window.focus(&dialog.read(app).run_focus_handle()));
+    vcx.simulate_keystrokes("enter");
+    vcx.run_until_parked();
+
+    assert!(
+        log.borrow().iter().any(|e| matches!(
+            e,
+            ExportEvent::Export {
+                scope: ExportScope::FullTable,
+                format: ExportFormat::Json
+            }
+        )),
+        "Enter on Export must carry the arrow-selected values, got {:?}",
+        log.borrow()
     );
     drop(state);
 }

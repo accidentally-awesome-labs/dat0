@@ -15,11 +15,12 @@ use dat0_engine::transform::ProjectionColumn;
 use dat0_engine::types::ExportFormat;
 
 use gpui::{
-    Context, EventEmitter, FocusHandle, IntoElement, ParentElement, Render, Styled, Window, div,
+    Context, EventEmitter, FocusHandle, InteractiveElement as _, IntoElement, ParentElement,
+    Render, Styled, Window, div,
 };
 use gpui_component::ActiveTheme as _;
+use gpui_component::input::Escape;
 use gpui_component::{
-    button::{Button, ButtonVariants as _},
     h_flex,
     label::Label,
     radio::{Radio, RadioGroup},
@@ -75,6 +76,19 @@ pub fn build_export(
 // ---------------------------------------------------------------------------
 // ExportDialog entity (format radio + scope radio + Export/Cancel)
 // ---------------------------------------------------------------------------
+
+/// Cycle an index within `len`, wrapping in both directions.
+///
+/// Radio groups WRAP (the WAI-ARIA radiogroup convention); the list surfaces
+/// deliberately clamp instead (`empty_state.rs:436-439` uses `.min(len-1)` /
+/// `saturating_sub`). A 2- or 3-item group that dead-ends is worse than one
+/// that cycles.
+fn cycle_ix(cur: usize, len: usize, delta: isize) -> usize {
+    if len == 0 {
+        return 0;
+    }
+    (cur as isize + delta).rem_euclid(len as isize) as usize
+}
 
 /// Event emitted by [`ExportDialog`] when the user presses Export or Cancel.
 ///
@@ -168,6 +182,36 @@ impl ExportDialog {
 
 impl EventEmitter<ExportEvent> for ExportDialog {}
 
+/// B2: the shell mounts, traps and counts every modal from one list keyed on
+/// this trait. The order here IS the Tab cycle — a render change that reorders
+/// the controls must update it; `export_modal_tab_cycles_four_stops` in
+/// `tests/modal_b2_nav.rs` guards it.
+impl crate::overlay::ModalContent for ExportDialog {
+    fn modal_title(&self, _cx: &gpui::App) -> gpui::SharedString {
+        dat0_i18n::t("export.title").into()
+    }
+    fn modal_focus_order(&self, _cx: &gpui::App) -> Vec<FocusHandle> {
+        vec![
+            self.format_focus.clone(),
+            self.scope_focus.clone(),
+            self.run_focus.clone(),
+            self.cancel_focus.clone(),
+        ]
+    }
+}
+
+#[cfg(feature = "a11y-capture")]
+impl ExportDialog {
+    /// The selected format, so a keyboard test can assert what the arrows did.
+    pub fn format_for_test(&self) -> ExportFormat {
+        self.format()
+    }
+    /// The selected scope, likewise.
+    pub fn scope_for_test(&self) -> ExportScope {
+        self.scope()
+    }
+}
+
 impl Render for ExportDialog {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let format_ix = self.format_ix;
@@ -199,10 +243,11 @@ impl Render for ExportDialog {
                 cx.notify();
             }));
 
-        // ONE tab stop for the whole group. `focus_stop`'s Enter/Space
-        // activation is a deliberate no-op: on a radiogroup the selection IS
-        // the state, and a second submit path from inside a group would
-        // surprise. Arrow selection arrives in T2.
+        // ONE tab stop for the whole group; Left/Right move the selection.
+        // `focus_stop`'s Enter/Space activation is a deliberate no-op: on a
+        // radiogroup the selection IS the state, and a second submit path from
+        // inside a group would surprise. Chaining a second `on_key_down` after
+        // `focus_stop` is the established shape (`empty_state.rs:451-452`).
         let format_stop = div()
             .focus_stop(
                 "export-format-group",
@@ -211,6 +256,15 @@ impl Render for ExportDialog {
                 ring,
                 |_ev, _window, _app| {},
             )
+            .on_key_down(cx.listener(|this, ev: &gpui::KeyDownEvent, _window, cx| {
+                let delta = match ev.keystroke.key.as_str() {
+                    "left" => -1,
+                    "right" => 1,
+                    _ => return,
+                };
+                this.format_ix = cycle_ix(this.format_ix, Self::FORMATS.len(), delta);
+                cx.notify();
+            }))
             .a11y(
                 "export-format-group",
                 AccessRole::Button,
@@ -242,6 +296,15 @@ impl Render for ExportDialog {
                 ring,
                 |_ev, _window, _app| {},
             )
+            .on_key_down(cx.listener(|this, ev: &gpui::KeyDownEvent, _window, cx| {
+                let delta = match ev.keystroke.key.as_str() {
+                    "up" => -1,
+                    "down" => 1,
+                    _ => return,
+                };
+                this.scope_ix = cycle_ix(this.scope_ix, Self::SCOPES.len(), delta);
+                cx.notify();
+            }))
             .a11y(
                 "export-scope-group",
                 AccessRole::Button,
@@ -250,38 +313,73 @@ impl Render for ExportDialog {
             .child(scope_group);
 
         // ── Export / Cancel buttons ────────────────────────────────────────
+        //
+        // `overlay::modal_button`, not `gpui_component::Button`: a `Button`
+        // keys its focus handle off the global element-id path, so the handle
+        // could never be collected into `modal_trap`'s `Vec<FocusHandle>`.
+        // Shared with `NamePrompt`, so the two modals cannot drift apart.
         let entity_run = cx.entity();
-        let export_btn = Button::new("export-run")
-            .label(dat0_i18n::t("export.run"))
-            .primary()
-            .on_click(move |_ev, _window, cx| {
-                entity_run.update(cx, |this, cx| {
+        let export_btn = crate::overlay::modal_button(
+            "export-run",
+            dat0_i18n::t("export.run").into(),
+            &self.run_focus,
+            crate::overlay::ModalButton::Primary,
+            cx,
+            move |_window, app| {
+                entity_run.update(app, |this, cx| {
                     cx.emit(ExportEvent::Export {
                         scope: this.scope(),
                         format: this.format(),
                     });
                 });
-            });
+            },
+        );
 
         let entity_cancel = cx.entity();
-        let cancel_btn = Button::new("export-cancel")
-            .label(dat0_i18n::t("export.cancel"))
-            .ghost()
-            .on_click(move |_ev, _window, cx| {
-                entity_cancel.update(cx, |_this, cx| {
+        let cancel_btn = crate::overlay::modal_button(
+            "export-cancel",
+            dat0_i18n::t("export.cancel").into(),
+            &self.cancel_focus,
+            crate::overlay::ModalButton::Ghost,
+            cx,
+            move |_window, app| {
+                entity_cancel.update(app, |_this, cx| {
                     cx.emit(ExportEvent::Cancel);
                 });
-            });
+            },
+        );
 
         // ── Assemble ───────────────────────────────────────────────────────
         v_flex()
             .gap_3()
             .p_4()
             .min_w(gpui::px(320.))
+            // Escape cancels from ANY stop. `overlay::register_modal_keys`
+            // binds `escape` → `gpui_component::input::Escape` under the
+            // `Dat0Modal` key context that `modal_trap` installs on the shell
+            // root, so this ancestor handler catches it; upstream binds
+            // `escape` only under key context "Input", which is why Escape used
+            // to be dead once focus left a text field.
+            .on_action(cx.listener(|_this, _ev: &Escape, _window, cx| {
+                cx.emit(ExportEvent::Cancel);
+            }))
             .child(Label::new(dat0_i18n::t("export.format")))
             .child(format_stop)
             .child(Label::new(dat0_i18n::t("export.scope")))
             .child(scope_stop)
             .child(h_flex().gap_2().child(export_btn).child(cancel_btn))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::cycle_ix;
+
+    #[test]
+    fn cycle_ix_wraps_both_ways() {
+        assert_eq!(cycle_ix(0, 3, 1), 1);
+        assert_eq!(cycle_ix(2, 3, 1), 0, "last wraps to first");
+        assert_eq!(cycle_ix(0, 3, -1), 2, "first wraps to last");
+        assert_eq!(cycle_ix(0, 0, 1), 0, "an empty group cannot panic");
     }
 }
