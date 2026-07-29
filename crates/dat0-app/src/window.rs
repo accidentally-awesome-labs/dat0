@@ -6592,10 +6592,15 @@ impl Render for WorkspaceShell {
 
         // Funnel-click filter popover overlay (T0 / PD-016). Anchored top-right
         // while open; the entity drives its own Apply/Cancel/Clear buttons,
-        // whose `Outcome` routes back via the stored subscription. A later P4b
-        // polish task can anchor it precisely under the clicked funnel icon.
+        // whose `Outcome` routes back via the stored subscription.
+        //
+        // B2 gives it the shared `overlay::anchored_overlay` surface — before
+        // this it painted no background at all and read as floating text over
+        // the grid. `occlude` also stops a click on its padding from reaching
+        // the grid underneath. Anchoring it precisely under the clicked funnel
+        // icon is still open (master plan §6 calls it a stretch goal).
         let popover_overlay: Option<gpui::AnyElement> = self.active_popover.as_ref().map(|p| {
-            div()
+            crate::overlay::anchored_overlay(cx)
                 .absolute()
                 .top_8()
                 .right_4()
@@ -6604,11 +6609,14 @@ impl Render for WorkspaceShell {
         });
 
         // Inline cell-editor overlay (T6). Mounted by `begin_cell_edit` over the
-        // active cell; commits via the stored `cell_editor_sub` subscription. A
-        // later P4b polish task can anchor it precisely over the active cell —
+        // active cell; commits via the stored `cell_editor_sub` subscription.
         // T6 mounts it top-left so the widget is reachable for UAT (T14).
+        //
+        // Same B2 treatment: its own render is a bare `h_flex().gap_1().p_1()`,
+        // so only the inner `Input` had any surface of its own. Anchoring it
+        // over the active cell is still open.
         let editor_overlay: Option<gpui::AnyElement> = self.cell_editor.as_ref().map(|e| {
-            div()
+            crate::overlay::anchored_overlay(cx)
                 .absolute()
                 .top_8()
                 .left_4()
