@@ -207,7 +207,7 @@ fail, it hangs, which is a louder signal than a red assertion.
 |---|---|---|
 | Shape | `1,234 rows × 12 cols` | a data source is mounted |
 | Selection | `84 cells selected` | `selection.has_selection()` |
-| Query | `⏱ 12 ms · local` / `Running…` | a console exists and (is running or has completed a run) |
+| Query | `Query 12 ms · local` / `Query running…` | a console exists and (is running or has completed a run) |
 | Connection | `Local` / `MotherDuck` / `Connecting…` / `Connection error`, `· 2 attached` | always |
 
 Numbers come from `format_count(u64) -> String` (`,` grouping, pure, unit-tested).
@@ -216,9 +216,11 @@ Nouns come from literal i18n keys. The connection string comes from
 `ConnectionStatus` variants (`connections/mod.rs:10`) and appends the attachment count
 from `sqlite()` when non-empty.
 
-Deliberate omissions: the query segment mirrors the console's `⏱ N ms · routing`
-formatting exactly rather than inventing a second phrasing, so the two never look like
-they disagree; `md_databases()` is not shown, because it is only populated after a
+Deliberate omissions: the query segment keeps the console chip's `N ms · routing` tail
+verbatim so the two can never look like they disagree, but drops the chip's `⏱` prefix
+for the word `Query` — the owner's chosen treatment is text-only, and a leading noun
+also disambiguates a bare duration in a row of other numbers. `md_databases()` is not
+shown, because it is only populated after a
 successful Test-connection and would read as `MotherDuck · 0 db` while genuinely
 connected.
 
@@ -303,6 +305,18 @@ backwards-dates it and cargo silently reuses the stale binary), re-run green.
 placeholder segment and run the full `a11y-capture` suite. New `Label` nodes can break
 another test's unique-match query — `has_label` and `query_by_role` panic on duplicate
 matches — and the cheapest moment to discover that is before the content exists.
+
+**T0 RESULT (run 2026-07-30): the gate fired, and not in the predicted way.**
+110 binaries green, one failure: `tests/a11y_spike.rs:96` asserts
+`snap.click_ids.len() == 7` — an exact node count that exists as a *frame-bracket
+double-render proof* for the hero, not as a content assertion. Any added capture site
+breaks it, whatever the label says. So the real hazard was never duplicate labels; it
+was an exact-count invariant in an unrelated file.
+
+The count is legitimately 8 once B3 lands: on the empty-state hero the bar renders its
+connection segment and nothing else (no data source ⇒ no shape, selection, or query
+segment), so it contributes exactly one deterministic site. Task 3 updates the constant
+and its explanatory comment. Nothing else in the suite reacts to a new node.
 
 Local gate (the substitute gate; `cargo test --workspace` and `cargo bench` remain
 unrunnable on this machine, see the dev-workflow memory):

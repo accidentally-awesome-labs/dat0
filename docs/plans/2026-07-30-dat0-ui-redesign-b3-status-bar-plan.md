@@ -769,6 +769,18 @@ the charts dock, closing with `})),` then `),`) and immediately before
 `cx` here is `&mut Context<Self>`, which deref-coerces to the `&App` the fn takes —
 same as the existing `render_banner(b, cx)` call in this file.
 
+- [ ] **Step 3b: Update the hero frame-bracket node count (T0 finding)**
+
+Task 0's gate found exactly one reaction to a new capture site:
+`crates/dat0-app/tests/a11y_spike.rs:96` asserts `snap.click_ids.len() == 7`. That
+assertion is a *double-render proof* — it exists so a frame bracket that renders twice
+shows up as a duplicated node count — so it reacts to any added site regardless of
+label. On the empty-state hero the bar contributes exactly one site (the connection
+segment; no data source ⇒ no shape, selection, or query segment), so the count becomes
+8. Change the `7` to `8`, and extend the comment block above it and the assertion
+message to name the new site. Do not weaken it to a `>=` comparison — the exactness is
+the entire point of the assertion.
+
 - [ ] **Step 4: Build and run the app-level suites**
 
 ```bash
