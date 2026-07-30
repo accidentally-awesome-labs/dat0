@@ -8,8 +8,12 @@
 //! chrome, not a control, so every keyboard-nav cycle count in the suite is
 //! unchanged by construction.
 
+use crate::a11y::{A11yExt as _, AccessRole};
 use crate::connections::routing::Routing;
 use crate::connections::{ConnectionManager, ConnectionStatus};
+use crate::theme::tokens::{Dat0Theme as _, Sp, SpStyled as _, TextRole, TypoStyled as _};
+use gpui::{App, IntoElement, SharedString, div, prelude::*};
+use gpui_component::{ActiveTheme as _, h_flex};
 
 /// What the last SQL run is doing, as far as the status bar is concerned.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -112,6 +116,48 @@ impl StatusBarModel {
         out.push(self.connection.clone());
         out
     }
+}
+
+/// Render the status bar: one muted text segment per [`StatusBarModel::segments`]
+/// entry, separated by a thin vertical rule.
+///
+/// The fill is the plain `background` token. `theme_contrast_gate` gates
+/// `muted.foreground` against `background` at 4.5:1 on all three builtins, while
+/// muted text over a raised fill is recorded there as measuring about 4.0 in
+/// dark — a distinct fill would mean retuning the palette.
+///
+/// Every segment carries a content-only a11y `Label` node. Nothing here is
+/// focusable or clickable: the bar adds no tab stops, so nav cycle counts are
+/// unchanged by construction.
+pub fn render_status_bar(model: &StatusBarModel, cx: &App) -> impl IntoElement {
+    let border = cx.theme().border;
+    let segments = model.segments();
+    let last = segments.len().saturating_sub(1);
+    h_flex()
+        .w_full()
+        .flex_shrink_0()
+        .items_center()
+        .bg(cx.theme().background)
+        .border_t_1()
+        .border_color(border)
+        .px_sp(Sp::S12)
+        .py_sp(Sp::S4)
+        .gap_sp(Sp::S12)
+        .text_role(TextRole::Small)
+        .text_color(cx.theme().d0().text_muted)
+        .children(segments.into_iter().enumerate().map(move |(i, text)| {
+            h_flex()
+                .items_center()
+                .gap_sp(Sp::S12)
+                .child(
+                    div()
+                        .a11y_label(AccessRole::Label, text.clone())
+                        .child(SharedString::from(text)),
+                )
+                .children(
+                    (i < last).then(|| div().w(Sp::S1.pixels()).h(Sp::S12.pixels()).bg(border)),
+                )
+        }))
 }
 
 #[cfg(test)]

@@ -6886,6 +6886,47 @@ impl Render for WorkspaceShell {
             crate::empty_state::HeroHandles { map }
         };
 
+        // B3 status bar. Reads cached scalars only — no query, no I/O, and (per
+        // `SelectionModel::selected_cell_count`'s doc comment) no per-cell work,
+        // which matters because this runs every frame.
+        let status_bar_model = {
+            let rows = self.data_source.as_ref().map(|ds| ds.row_count);
+            let cols = self.data_source.as_ref().map(|ds| {
+                // `column_view` is the POST-projection column list — what the
+                // grid actually paints. It is refreshed on every rebind and
+                // stack change, but fall back to the source's own count rather
+                // than rendering "× 0 cols" if it is ever momentarily empty.
+                if self.column_view.is_empty() {
+                    ds.visible_column_count()
+                } else {
+                    self.column_view.len()
+                }
+            });
+            let selected_cells = self
+                .selection
+                .as_ref()
+                .filter(|s| s.has_selection())
+                .map(|s| s.selected_cell_count());
+            let query = match self.sql_console.as_ref().map(|c| c.read(cx)) {
+                Some(c) if c.running => crate::view::status_bar::QueryStatus::Running,
+                Some(c) => match c.last_elapsed_ms {
+                    Some(ms) => crate::view::status_bar::QueryStatus::Done {
+                        ms,
+                        routing: c.last_routing,
+                    },
+                    None => crate::view::status_bar::QueryStatus::Idle,
+                },
+                None => crate::view::status_bar::QueryStatus::Idle,
+            };
+            crate::view::status_bar::StatusBarModel {
+                rows,
+                cols,
+                selected_cells,
+                query,
+                connection: crate::view::status_bar::describe_connection(&self.connections),
+            }
+        };
+
         div()
             .id("workspace-shell")
             // B1 modal Tab trap. Installed HERE, on the shell root, rather than
@@ -7057,6 +7098,13 @@ impl Render for WorkspaceShell {
                             ))
                     })),
             )
+            // B3: the status bar spans the full width UNDER every dock, so it is
+            // a sibling of the body row rather than a child of it. The three
+            // overlays below are `.absolute()`, so they still paint above it.
+            .child(crate::view::status_bar::render_status_bar(
+                &status_bar_model,
+                cx,
+            ))
             .children(popover_overlay)
             .children(editor_overlay)
             .children(modal_overlay)

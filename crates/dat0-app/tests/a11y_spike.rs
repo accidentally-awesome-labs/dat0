@@ -80,26 +80,37 @@ fn a11y_capture_round_trips_and_click_by_label_opens_tour(cx: &mut TestAppContex
     let snap = A11ySnapshot::capture(vcx);
     // FRAME-BRACKET PROOF (Task-1 Step 8; recount Task 4 — Gap 2 sample-card
     // annotations; recount UAT Slice 6 — keyboard-nav added `.a11y` twins to
-    // the two previously-unannotated hero buttons): the enriched hero now has
-    // exactly SEVEN capture sites — the tagline (`.a11y_label`) +
-    // `hero-take-tour` (`.a11y`) from Task 1, `hero-open-demo` (`.a11y` added
-    // in Slice 6 as the oracle label for its `focus_stop`), the 3 sample
-    // cards' single `.a11y` Button each (Task 4; `sample_column` renders
-    // because this session is empty ⇒ `recents_empty = true`), and
-    // `hero-open-file-samples` (`.a11y` added in Slice 6): 3 + 3 + 1 = 7. If
-    // the forced `refresh()` produced more than one render frame, the
-    // collector would hold duplicate nodes and this count would exceed 7 (and
+    // the two previously-unannotated hero buttons; recount UI-redesign B3 — the
+    // status bar): the enriched hero now has exactly EIGHT capture sites — the
+    // tagline (`.a11y_label`) + `hero-take-tour` (`.a11y`) from Task 1,
+    // `hero-open-demo` (`.a11y` added in Slice 6 as the oracle label for its
+    // `focus_stop`), the 3 sample cards' single `.a11y` Button each (Task 4;
+    // `sample_column` renders because this session is empty ⇒
+    // `recents_empty = true`), `hero-open-file-samples` (`.a11y` added in
+    // Slice 6), and the B3 status bar's connection segment: 3 + 3 + 1 + 1 = 8.
+    //
+    // The status bar contributes exactly ONE site here and always will on this
+    // screen: with no data source mounted it renders its connection segment and
+    // nothing else (no shape, no selection, no query segment). Note this
+    // assertion is a DOUBLE-RENDER proof, not a content check, so it reacts to
+    // any added capture site anywhere in the shell regardless of its label —
+    // which is precisely how B3's mount gate found it. Keep it exact; a `>=`
+    // would throw the proof away.
+    //
+    // If the forced `refresh()` produced more than one render frame, the
+    // collector would hold duplicate nodes and this count would exceed 8 (and
     // the `get_by_label` lookups below would panic with "Found two or more
-    // nodes"). Exactly-7 (confirmed deterministic across repeated runs)
+    // nodes"). Exactly-8 (confirmed deterministic across repeated runs)
     // confirms the reset→refresh→run_until_parked→take bracket still yields
     // one clean frame — no generation counter needed.
     assert_eq!(
         snap.click_ids.len(),
-        7,
-        "expected exactly seven captured nodes (tagline + hero-take-tour + \
-         hero-open-demo + 3 sample-card .a11y buttons + hero-open-file-samples); \
-         a different count means the frame bracket double- or under-rendered, \
-         or the hero annotation count changed"
+        8,
+        "expected exactly eight captured nodes (tagline + hero-take-tour + \
+         hero-open-demo + 3 sample-card .a11y buttons + hero-open-file-samples \
+         + the status bar's connection segment); a different count means the \
+         frame bracket double- or under-rendered, or the hero annotation count \
+         changed"
     );
 
     // Content assertion (finalized API): findable by label, and by role+label.
