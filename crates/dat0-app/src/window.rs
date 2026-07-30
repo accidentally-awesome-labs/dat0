@@ -32,7 +32,6 @@
 //! `Application::run` closure and passed through to `spawn_window`. T17
 //! will assert `registry.lock().len()` to verify window count.
 
-use crate::a11y::A11yExt as _;
 use anyhow::Result;
 use dat0_i18n::t;
 use gpui::{
@@ -2093,6 +2092,41 @@ enum NamePromptIntent {
 /// touch the window; it just stores the new `Arc<GridDataSource>` and asks
 /// the view to re-render via `cx.notify()`. The next frame promotes that
 /// `Arc` into an `Entity<TableState<…>>`.
+/// One mounted modal: everything `render`, the Tab trap and the modal count
+/// need, collected by [`WorkspaceShell::mounted_modals`] (B2).
+struct MountedModal {
+    /// Static id for the `Dialog` a11y node `overlay::modal_host` paints.
+    a11y_id: &'static str,
+    /// Accessible name of that node.
+    title: gpui::SharedString,
+    /// The modal's stops in VISUAL order — the trap's source of truth.
+    focus_order: Vec<gpui::FocusHandle>,
+    /// The modal body, ready to hand to `modal_host`.
+    content: gpui::AnyElement,
+}
+
+/// Push `slot`'s modal onto `out` if it is mounted.
+///
+/// Generic over the entity type so each call monomorphizes — no `dyn`, no
+/// boxing at the slot level. `into_any_element` only WRAPS the entity; it does
+/// not render it, so building this list to count modals is cheap.
+fn push_modal<T: crate::overlay::ModalContent + Render>(
+    out: &mut Vec<MountedModal>,
+    a11y_id: &'static str,
+    slot: &Option<Entity<T>>,
+    cx: &App,
+) {
+    if let Some(entity) = slot {
+        let view = entity.read(cx);
+        out.push(MountedModal {
+            a11y_id,
+            title: view.modal_title(cx),
+            focus_order: view.modal_focus_order(cx),
+            content: entity.clone().into_any_element(),
+        });
+    }
+}
+
 pub struct WorkspaceShell {
     session: Arc<Mutex<Session>>,
     pub(crate) data_source: Option<Arc<GridDataSource>>,
@@ -2281,11 +2315,35 @@ pub struct WorkspaceShell {
     /// moves focus to the field; `take`n in the dismiss path so a double dismiss
     /// cannot re-focus a stale handle.
     modal_restore_focus: Option<gpui::FocusHandle>,
-    /// Whether the window-level saved-query picker overlay is shown (P5b T8).
-    /// Toggled by `show_saved_picker` (📑) / closed on pick or the overlay's ✕.
-    /// The overlay reads `session.saved_queries()` live at render, so no
-    /// snapshot is stored here — the flag alone gates the overlay.
-    saved_picker_open: bool,
+    /// Set by a modal open path that has NO `&mut Window` — in practice only
+    /// [`open_export_dialog`](Self::open_export_dialog), which
+    /// `view_actions::dispatch_export` reaches from a bare `&mut App` (the
+    /// window registry stores no focused-window handle, and
+    /// `App::active_window` is the platform's, untrustworthy under
+    /// `TestPlatform`). `render` drains it: it captures the restore target and
+    /// focuses the modal's first stop.
+    ///
+    /// Same shape as `SqlConsole::queue_load` — enqueue windowless, drain in a
+    /// render that holds a real `Window`. LOAD-BEARING: with nothing focused
+    /// the dispatch path is the window root alone and Tab is completely inert
+    /// (B1, measured), so a modal that opens without taking focus is
+    /// keyboard-dead.
+    pending_modal_focus: bool,
+    /// The mirror image of [`Self::pending_modal_focus`]: set by a dismiss path
+    /// that has no `&mut Window`. Only the export dialog needs it —
+    /// `cx.subscribe_in` requires a `Window` at SUBSCRIPTION time, which
+    /// `open_export_dialog` does not have, so its handler cannot be given one.
+    /// `render` drains this into `restore_modal_focus`.
+    pending_modal_restore: bool,
+    /// Currently-mounted saved-query picker (P5b T8, rebuilt as a modal entity
+    /// in B2). `Some` while the picker is open; cleared when its
+    /// `SavedQueryPickerEvent` routes to a pick or a dismiss. The picker reads
+    /// `session.saved_queries()` live, so no snapshot is stored here.
+    saved_picker: Option<Entity<crate::view::saved_query_picker::SavedQueryPicker>>,
+    /// Subscription to the picker's `SavedQueryPickerEvent`. Stored so the
+    /// callback stays registered — a dropped `Subscription` deregisters
+    /// silently (the P4a T10b trap). Cleared alongside `saved_picker`.
+    saved_picker_sub: Option<Subscription>,
     /// Runtime connection state (MotherDuck status + sqlite attachments) for this
     /// window (P5c T6/T10). The persisted projection lives in
     /// `SessionState.attachments` (T7); this is the live UI-facing copy the
@@ -2432,7 +2490,10 @@ impl WorkspaceShell {
             name_prompt_sql: None,
             name_prompt_intent: None,
             modal_restore_focus: None,
-            saved_picker_open: false,
+            pending_modal_focus: false,
+            pending_modal_restore: false,
+            saved_picker: None,
+            saved_picker_sub: None,
             connections: Default::default(),
             connections_panel_visible: false,
             catalog_panel_visible: ui.catalog_panel_visible,
@@ -2888,7 +2949,7 @@ impl WorkspaceShell {
             return;
         }
 
-        let dialog = cx.new(|_| ExportDialog::new());
+        let dialog = cx.new(ExportDialog::new);
         // STORE the subscription — callbacks fire silently if the returned
         // Subscription is dropped (P4a T10b post-review lesson; mirrors
         // `on_funnel_click`'s `popover_sub`).
@@ -2897,6 +2958,9 @@ impl WorkspaceShell {
         });
         self.export_dialog_sub = Some(sub);
         self.export_dialog = Some(dialog);
+        // B2: this path has no `Window`, so `render` does the focusing. See
+        // `pending_modal_focus`.
+        self.pending_modal_focus = true;
         cx.notify();
     }
 
@@ -2917,6 +2981,8 @@ impl WorkspaceShell {
             ExportEvent::Cancel => {
                 self.export_dialog = None;
                 self.export_dialog_sub = None;
+                // No `Window` on this path — `render` drains the restore.
+                self.pending_modal_restore = true;
                 cx.notify();
             }
         }
@@ -4050,7 +4116,7 @@ impl WorkspaceShell {
             // drained by `SqlConsole::render` with a real `Window`); deleting a
             // row removes it from the session and refreshes the overlay.
             ShowSaved => {
-                self.show_saved_picker(cx);
+                self.show_saved_picker(window, cx);
             }
             // P5b T10: open the shared name modal with the SaveConsoleAsTable
             // intent. Confirm re-reads the statement-under-cursor and CTAS-
@@ -4362,6 +4428,7 @@ impl WorkspaceShell {
         let Some(base_table) = self.base_table() else {
             self.export_dialog = None;
             self.export_dialog_sub = None;
+            self.pending_modal_restore = true;
             cx.notify();
             return;
         };
@@ -4428,6 +4495,8 @@ impl WorkspaceShell {
         // Dismiss the dialog immediately — the save panel + COPY run async.
         self.export_dialog = None;
         self.export_dialog_sub = None;
+        // No `Window` on this path either — `render` drains the restore.
+        self.pending_modal_restore = true;
         cx.notify();
     }
 
@@ -4858,20 +4927,14 @@ impl WorkspaceShell {
         self.name_prompt_intent = Some(intent);
         self.name_prompt = Some(prompt);
         debug_assert!(
-            self.open_modal_count() <= 1,
+            self.open_modal_count(cx) <= 1,
             "two modals mounted at once ({}) — B1 assumes a single modal; see \
              docs/plans/2026-07-28-dat0-ui-redesign-b1-modal-host-design.md §2.7",
-            self.open_modal_count()
+            self.open_modal_count(cx)
         );
         cx.notify();
     }
 
-    /// How many of the three `NamePrompt`-backed modals are currently mounted
-    /// (B1). The fields are independent `Option`s, so two-at-once is
-    /// representable; the invariant is that it never happens, and each open path
-    /// `debug_assert!`s it rather than the app growing a modal stack nothing
-    /// needs.
-    ///
     /// Return focus to the stop that held it before the modal opened (B1). No-op
     /// when nothing was focused (e.g. the modal was opened from a menu action).
     fn restore_modal_focus(&mut self, window: &mut Window) {
@@ -4880,18 +4943,31 @@ impl WorkspaceShell {
         }
     }
 
-    /// Load-bearing for the trap, not just hygiene: `render` picks the trapped
-    /// focus order with an `or` chain over the same three fields, so a second
-    /// mounted modal would silently be the one NOT trapped.
-    pub(crate) fn open_modal_count(&self) -> usize {
-        [
-            self.name_prompt.is_some(),
-            self.md_token_prompt.is_some(),
-            self.ai_entry_prompt.is_some(),
-        ]
-        .iter()
-        .filter(|open| **open)
-        .count()
+    /// EVERY mounted modal, in priority order (B2). The single source of truth:
+    /// the render mount, `overlay::modal_trap`'s focus order and
+    /// [`open_modal_count`](Self::open_modal_count) all derive from this list.
+    ///
+    /// B1 kept three hand-maintained places in sync instead — an `or` chain, a
+    /// count, and the mount site — so a modal added to one but not the others
+    /// was styled by `modal_host` yet silently NOT trapped, and two of the three
+    /// edits were invisible to the compiler. Adding a modal is now ONE line
+    /// here.
+    fn mounted_modals(&self, cx: &App) -> Vec<MountedModal> {
+        let mut v = Vec::new();
+        push_modal(&mut v, "name-prompt-modal", &self.name_prompt, cx);
+        push_modal(&mut v, "md-token-prompt-modal", &self.md_token_prompt, cx);
+        push_modal(&mut v, "ai-entry-prompt-modal", &self.ai_entry_prompt, cx);
+        push_modal(&mut v, "export-modal", &self.export_dialog, cx);
+        push_modal(&mut v, "saved-picker-modal", &self.saved_picker, cx);
+        v
+    }
+
+    /// How many modals are mounted. Load-bearing for the trap, not just
+    /// hygiene: `render` traps `mounted_modals().first()`, so a second mounted
+    /// modal would be the one NOT trapped. Each open path `debug_assert!`s this
+    /// is never > 1, rather than the app growing a modal stack nothing needs.
+    pub(crate) fn open_modal_count(&self, cx: &App) -> usize {
+        self.mounted_modals(cx).len()
     }
 
     /// Route a `NamePromptEvent` from the shared name modal (P5b T8 + T10).
@@ -4936,11 +5012,76 @@ impl WorkspaceShell {
         cx.notify();
     }
 
-    /// Open the window-level saved-query picker overlay (P5b T8). The overlay is
-    /// a flag-gated render of `render_saved_picker` over the live
-    /// `session.saved_queries()`, so this just flips the flag.
-    pub(crate) fn show_saved_picker(&mut self, cx: &mut Context<Self>) {
-        self.saved_picker_open = true;
+    /// Mount the saved-query picker modal (P5b T8, rebuilt in B2).
+    ///
+    /// Takes a `&mut Window` — unlike the export dialog, this path has one (its
+    /// only caller is the `ShowSaved` console-event arm, right next to the
+    /// `SaveQuery` arm that already passes `window` to `open_name_prompt`), so
+    /// it captures the restore target and focuses the list directly rather than
+    /// going through the render drain.
+    pub(crate) fn show_saved_picker(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        use crate::view::saved_query_picker::{SavedQueryPicker, SavedQueryPickerEvent};
+        self.modal_restore_focus = window.focused(cx);
+        let session = self.session.clone();
+        let picker = cx.new(|cx| SavedQueryPicker::new(session, cx));
+        // `subscribe_in` (not `subscribe`) so the dismiss path has a `&mut
+        // Window` for the focus restore.
+        let sub = cx.subscribe_in(
+            &picker,
+            window,
+            |ws: &mut Self, _p, ev: &SavedQueryPickerEvent, window, cx| {
+                ws.on_saved_picker_event(ev.clone(), window, cx);
+            },
+        );
+        window.focus(&picker.read(cx).list_focus_handle());
+        self.saved_picker_sub = Some(sub);
+        self.saved_picker = Some(picker);
+        debug_assert!(
+            self.open_modal_count(cx) <= 1,
+            "two modals mounted at once ({}) — B1 assumes a single modal; see \
+             docs/plans/2026-07-28-dat0-ui-redesign-b1-modal-host-design.md §2.7",
+            self.open_modal_count(cx)
+        );
+        cx.notify();
+    }
+
+    /// Route a `SavedQueryPickerEvent`. The picker only READS the session;
+    /// every mutation happens here.
+    fn on_saved_picker_event(
+        &mut self,
+        ev: crate::view::saved_query_picker::SavedQueryPickerEvent,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        use crate::view::saved_query_picker::SavedQueryPickerEvent as E;
+        match ev {
+            E::Pick(sql) => {
+                // Windowless load: the console drains `queue_load` in its own
+                // render, which holds the `&mut Window` that
+                // `load_into_new_tab` needs.
+                if let Some(console) = self.sql_console.clone() {
+                    console.update(cx, |c, cx| c.queue_load(sql, cx));
+                }
+                self.dismiss_saved_picker(window, cx);
+            }
+            E::Delete(id) => {
+                self.delete_named_query(id, cx);
+                // The picker reads the session live, so re-notify it and the
+                // deleted row is gone on its next render.
+                if let Some(p) = self.saved_picker.clone() {
+                    p.update(cx, |_p, cx| cx.notify());
+                }
+                cx.notify();
+            }
+            E::Cancel => self.dismiss_saved_picker(window, cx),
+        }
+    }
+
+    /// Tear the picker down and hand focus back to the pre-modal stop.
+    fn dismiss_saved_picker(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.saved_picker = None;
+        self.saved_picker_sub = None;
+        self.restore_modal_focus(window);
         cx.notify();
     }
 
@@ -5294,10 +5435,10 @@ impl WorkspaceShell {
         self.md_token_prompt_sub = Some(sub);
         self.md_token_prompt = Some(prompt);
         debug_assert!(
-            self.open_modal_count() <= 1,
+            self.open_modal_count(cx) <= 1,
             "two modals mounted at once ({}) — B1 assumes a single modal; see \
              docs/plans/2026-07-28-dat0-ui-redesign-b1-modal-host-design.md §2.7",
-            self.open_modal_count()
+            self.open_modal_count(cx)
         );
         cx.notify();
     }
@@ -5893,10 +6034,10 @@ impl WorkspaceShell {
         self.ai_entry_prompt_sub = Some(sub);
         self.ai_entry_prompt = Some(prompt);
         debug_assert!(
-            self.open_modal_count() <= 1,
+            self.open_modal_count(cx) <= 1,
             "two modals mounted at once ({}) — B1 assumes a single modal; see \
              docs/plans/2026-07-28-dat0-ui-redesign-b1-modal-host-design.md §2.7",
-            self.open_modal_count()
+            self.open_modal_count(cx)
         );
         cx.notify();
     }
@@ -6194,6 +6335,34 @@ pub(crate) fn bounding_rect(cells: &[(usize, usize)]) -> Option<(usize, usize, u
 
 impl Render for WorkspaceShell {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        // B2: drain a windowless modal open (see `pending_modal_focus`). The
+        // handle lookup is sequenced into a local so its immutable borrow ends
+        // before the field writes.
+        if self.pending_modal_focus {
+            let first = self
+                .mounted_modals(cx)
+                .first()
+                .and_then(|m| m.focus_order.first().cloned());
+            if let Some(fh) = first {
+                self.modal_restore_focus = window.focused(cx);
+                window.focus(&fh);
+            }
+            // Cleared unconditionally, INCLUDING when no modal turned out to be
+            // mounted. A stale flag surviving into a later frame would fire on
+            // the NEXT modal and overwrite `modal_restore_focus` with that
+            // modal's own first stop, so dismissing it would hand focus to a
+            // handle that no longer exists instead of the pre-modal stop. The
+            // open paths make that unreachable today (they `cx.notify()`, and a
+            // dismissal needs user input, which needs a paint); this makes it
+            // unrepresentable rather than merely argued.
+            self.pending_modal_focus = false;
+        }
+        // …and the mirror image on dismiss (see `pending_modal_restore`).
+        if self.pending_modal_restore {
+            self.restore_modal_focus(window);
+            self.pending_modal_restore = false;
+        }
+
         // Subscribe to Theme global changes once, on the first render. The
         // subscription returns a `Subscription` that must be kept alive
         // (drop = unregister) per `gpui-api-notes.md` §0.A.2.
@@ -6431,10 +6600,15 @@ impl Render for WorkspaceShell {
 
         // Funnel-click filter popover overlay (T0 / PD-016). Anchored top-right
         // while open; the entity drives its own Apply/Cancel/Clear buttons,
-        // whose `Outcome` routes back via the stored subscription. A later P4b
-        // polish task can anchor it precisely under the clicked funnel icon.
+        // whose `Outcome` routes back via the stored subscription.
+        //
+        // B2 gives it the shared `overlay::anchored_overlay` surface — before
+        // this it painted no background at all and read as floating text over
+        // the grid. `occlude` also stops a click on its padding from reaching
+        // the grid underneath. Anchoring it precisely under the clicked funnel
+        // icon is still open (master plan §6 calls it a stretch goal).
         let popover_overlay: Option<gpui::AnyElement> = self.active_popover.as_ref().map(|p| {
-            div()
+            crate::overlay::anchored_overlay(cx)
                 .absolute()
                 .top_8()
                 .right_4()
@@ -6443,11 +6617,14 @@ impl Render for WorkspaceShell {
         });
 
         // Inline cell-editor overlay (T6). Mounted by `begin_cell_edit` over the
-        // active cell; commits via the stored `cell_editor_sub` subscription. A
-        // later P4b polish task can anchor it precisely over the active cell —
+        // active cell; commits via the stored `cell_editor_sub` subscription.
         // T6 mounts it top-left so the widget is reachable for UAT (T14).
+        //
+        // Same B2 treatment: its own render is a bare `h_flex().gap_1().p_1()`,
+        // so only the inner `Input` had any surface of its own. Anchoring it
+        // over the active cell is still open.
         let editor_overlay: Option<gpui::AnyElement> = self.cell_editor.as_ref().map(|e| {
-            div()
+            crate::overlay::anchored_overlay(cx)
                 .absolute()
                 .top_8()
                 .left_4()
@@ -6455,155 +6632,25 @@ impl Render for WorkspaceShell {
                 .into_any_element()
         });
 
-        // Export… dialog overlay (P4c T11). Mounted by `open_export_dialog`;
-        // emits `ExportEvent` routed via the stored `export_dialog_sub`
-        // subscription. Centred-ish near the top; a later polish task can centre
-        // it precisely in a modal scrim.
-        let export_overlay: Option<gpui::AnyElement> = self.export_dialog.as_ref().map(|d| {
-            div()
-                .absolute()
-                .top_16()
-                .left_1_2()
-                .child(d.clone())
-                .into_any_element()
+        // B2: every modal — the three `NamePrompt`-backed prompts (Save-query
+        // P5b T8, MotherDuck token P5c T11, AI key/model P9c-1 T9) and the
+        // Export… dialog (P4c T11) — is mounted, trapped and counted from ONE
+        // list. `modal_host` supplies the scrim, the centred card and the
+        // `Dialog` a11y node; the Tab trap hangs off the shell root below,
+        // because gpui picks the ACTION from the key-context stack but the
+        // HANDLER from the dispatch path walked upward from the FOCUSED node,
+        // and a scrim is a sibling of the shell's content (B1, measured).
+        //
+        // At most one modal is ever open (`open_modal_count`), so `first()` is
+        // the live one; a second would be the one NOT trapped, which is why the
+        // open paths `debug_assert!` the invariant.
+        let mut modals = self.mounted_modals(cx);
+        let modal = (!modals.is_empty()).then(|| modals.remove(0));
+        let modal_focus_order: Option<Vec<FocusHandle>> =
+            modal.as_ref().map(|m| m.focus_order.clone());
+        let modal_overlay: Option<gpui::AnyElement> = modal.map(|m| {
+            crate::overlay::modal_host(m.a11y_id, m.title, m.content, cx).into_any_element()
         });
-
-        // Save-query name-prompt modal (P5b T8, re-hosted in B1). Mounted by
-        // `open_name_prompt`; emits `NamePromptEvent` routed via the stored
-        // `name_prompt_sub` subscription (Confirm → save + dismiss, Cancel →
-        // dismiss). `modal_host` supplies the scrim, the centred card, the
-        // `Dialog` a11y node and the Tab trap.
-        let name_prompt_overlay: Option<gpui::AnyElement> = self.name_prompt.as_ref().map(|p| {
-            crate::overlay::modal_host(
-                "name-prompt-modal",
-                p.read(cx).title(),
-                p.clone().into_any_element(),
-                cx,
-            )
-            .into_any_element()
-        });
-
-        // MotherDuck token-entry modal (P5c T11, re-hosted in B1). Mounted by
-        // `open_md_token_prompt`; emits `NamePromptEvent` routed via the stored
-        // `md_token_prompt_sub` subscription (Confirm → store token + connect,
-        // Cancel → dismiss).
-        let md_token_prompt_overlay: Option<gpui::AnyElement> =
-            self.md_token_prompt.as_ref().map(|p| {
-                crate::overlay::modal_host(
-                    "md-token-prompt-modal",
-                    p.read(cx).title(),
-                    p.clone().into_any_element(),
-                    cx,
-                )
-                .into_any_element()
-            });
-
-        // AI key/model entry modal (P9c-1 T9, re-hosted in B1). Mounted by
-        // `open_ai_entry_prompt`; emits `NamePromptEvent` routed via the stored
-        // `ai_entry_prompt_sub` subscription (Confirm → re-dispatch
-        // SetKey/SetModel, Cancel → dismiss).
-        let ai_entry_prompt_overlay: Option<gpui::AnyElement> =
-            self.ai_entry_prompt.as_ref().map(|p| {
-                crate::overlay::modal_host(
-                    "ai-entry-prompt-modal",
-                    p.read(cx).title(),
-                    p.clone().into_any_element(),
-                    cx,
-                )
-                .into_any_element()
-            });
-
-        // B1: the focus order of whichever modal is mounted, hoisted for the
-        // shell root's Tab trap below. At most one is ever open
-        // (`open_modal_count`), so `or` picks the live one rather than merging.
-        let modal_focus_order: Option<Vec<FocusHandle>> = self
-            .name_prompt
-            .as_ref()
-            .or(self.md_token_prompt.as_ref())
-            .or(self.ai_entry_prompt.as_ref())
-            .map(|p| p.read(cx).focus_order(cx));
-
-        // Saved-query picker overlay (P5b T8). Window-level, flag-gated on
-        // `saved_picker_open`; reads `session.saved_queries()` LIVE so a delete
-        // refreshes the list on the next render. Picking a row routes the SQL
-        // through the console's `queue_load` (the console's render drains it with
-        // a real `Window` for `load_into_new_tab`) and closes the overlay.
-        // Deleting calls `delete_named_query` and re-notifies so the list shrinks.
-        // A trailing ✕ closes the overlay.
-        let saved_picker_overlay: Option<gpui::AnyElement> = if self.saved_picker_open {
-            let saved = self.session.lock().saved_queries().to_vec();
-            let ws = cx.entity();
-            let console = self.sql_console.clone();
-            // Pick: route the SQL into a new tab via the console's `queue_load`
-            // (windowless), then close the overlay.
-            let on_pick = {
-                let ws = ws.clone();
-                move |sql: String, app: &mut gpui::App| {
-                    if let Some(console) = console.clone() {
-                        console.update(app, |c, cx| c.queue_load(sql, cx));
-                    }
-                    ws.update(app, |ws, cx| {
-                        ws.saved_picker_open = false;
-                        cx.notify();
-                    });
-                }
-            };
-            // Delete: remove from the session, then re-notify so the LIVE
-            // `saved_queries()` read above re-runs next frame and the row drops.
-            let on_delete = {
-                let ws = ws.clone();
-                move |id: uuid::Uuid, app: &mut gpui::App| {
-                    ws.update(app, |ws, cx| {
-                        ws.delete_named_query(id, cx);
-                        cx.notify();
-                    });
-                }
-            };
-            let close = ws.clone();
-            let picker = div()
-                .absolute()
-                .top_16()
-                .right_2()
-                .w(gpui::px(420.))
-                .max_h(gpui::px(320.))
-                .overflow_hidden()
-                .border_1()
-                .child(
-                    div()
-                        .flex()
-                        .flex_row()
-                        .justify_between()
-                        .items_center()
-                        .px_2()
-                        .py_1()
-                        .border_b_1()
-                        .child(dat0_i18n::t("sql.load_query"))
-                        .child(
-                            div()
-                                .id("sql-saved-close")
-                                .cursor_pointer()
-                                .px_1()
-                                .a11y_label(
-                                    crate::a11y::AccessRole::Label,
-                                    dat0_i18n::t("common.close"),
-                                )
-                                .child(gpui_component::Icon::new(gpui_component::IconName::Close))
-                                .on_click(move |_ev, _window, cx| {
-                                    close.update(cx, |ws, cx| {
-                                        ws.saved_picker_open = false;
-                                        cx.notify();
-                                    });
-                                }),
-                        ),
-                )
-                .child(crate::view::query_library::render_saved_picker(
-                    &saved, on_pick, on_delete,
-                ))
-                .into_any_element();
-            Some(picker)
-        } else {
-            None
-        };
 
         // T10: tab-strip with dirty-dot indicator. Shown whenever a ViewModel
         // is mounted (i.e. a file has been loaded). The "•" glyph appears next
@@ -7012,11 +7059,7 @@ impl Render for WorkspaceShell {
             )
             .children(popover_overlay)
             .children(editor_overlay)
-            .children(export_overlay)
-            .children(name_prompt_overlay)
-            .children(ai_entry_prompt_overlay)
-            .children(saved_picker_overlay)
-            .children(md_token_prompt_overlay)
+            .children(modal_overlay)
             // Mount gpui-component's overlay layers (P7c T8). `Root::render`
             // paints ONLY `self.view`; it does NOT auto-mount the sheet/dialog
             // layers, so without these two lines `open_sheet_at` (the Recovery
@@ -7234,8 +7277,8 @@ impl WorkspaceShell {
     }
 
     /// How many modals are mounted — the B1 single-modal invariant.
-    pub fn open_modal_count_for_test(&self) -> usize {
-        self.open_modal_count()
+    pub fn open_modal_count_for_test(&self, cx: &App) -> usize {
+        self.open_modal_count(cx)
     }
 
     /// The live prompt entity — lets a test subscribe to its `NamePromptEvent`
@@ -7244,6 +7287,45 @@ impl WorkspaceShell {
         &self,
     ) -> Option<gpui::Entity<crate::view::name_prompt::NamePrompt>> {
         self.name_prompt.clone()
+    }
+
+    /// Open the export dialog the way `view_actions::dispatch_export` does —
+    /// with NO `Window`, which is the whole point of the render-drain.
+    ///
+    /// The production path returns early when no `ViewModel` is mounted; a nav
+    /// test has no file loaded, so this builds the entity directly. Everything
+    /// the trap and the keyboard path touch is identical.
+    pub fn open_export_dialog_for_test(&mut self, cx: &mut Context<Self>) {
+        use crate::view::export_dialog::{ExportDialog, ExportEvent};
+        let dialog = cx.new(ExportDialog::new);
+        let sub = cx.subscribe(&dialog, |ws: &mut Self, _dialog, ev: &ExportEvent, cx| {
+            ws.route_export_event(ev.clone(), cx);
+        });
+        self.export_dialog_sub = Some(sub);
+        self.export_dialog = Some(dialog);
+        self.pending_modal_focus = true;
+        cx.notify();
+    }
+
+    /// The mounted export dialog, so a test can reach its focus handles.
+    pub fn export_dialog_entity_for_test(
+        &self,
+    ) -> Option<gpui::Entity<crate::view::export_dialog::ExportDialog>> {
+        self.export_dialog.clone()
+    }
+
+    /// Mount the saved-query picker. `show_saved_picker` itself is
+    /// `pub(crate)`, and the integration tests are a separate crate.
+    pub fn show_saved_picker_for_test(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.show_saved_picker(window, cx);
+    }
+
+    /// The mounted saved-query picker, so a test can reach its focus handles
+    /// and active index.
+    pub fn saved_picker_entity_for_test(
+        &self,
+    ) -> Option<gpui::Entity<crate::view::saved_query_picker::SavedQueryPicker>> {
+        self.saved_picker.clone()
     }
 }
 

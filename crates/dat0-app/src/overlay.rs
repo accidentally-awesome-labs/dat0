@@ -47,14 +47,18 @@
 //! element-scoped context can recover is focus set to NOTHING
 //! (`window.blur()`), where the dispatch path is the window root alone.
 
+use gpui::prelude::FluentBuilder as _;
 use gpui::{
-    AnyElement, App, FocusHandle, InteractiveElement, IntoElement, KeyBinding, ParentElement as _,
-    SharedString, Styled as _, Window, div,
+    AnyElement, App, Div, FocusHandle, InteractiveElement, IntoElement, KeyBinding,
+    ParentElement as _, SharedString, Stateful, StatefulInteractiveElement as _, Styled as _,
+    Window, div,
 };
 use gpui_component::ActiveTheme as _;
 
-use crate::a11y::{A11yExt as _, AccessRole};
-use crate::theme::tokens::{Elevation, ElevationStyled as _};
+use crate::a11y::{A11yExt as _, AccessRole, FocusStopExt as _};
+use crate::theme::tokens::{
+    Dat0Theme as _, Elevation, ElevationStyled as _, Sp, SpStyled as _, TextRole, TypoStyled as _,
+};
 
 gpui::actions!(dat0_modal, [ModalTab, ModalTabPrev]);
 
@@ -152,9 +156,105 @@ pub fn modal_host(
         )
 }
 
+/// What a modal must tell the shell about itself.
+///
+/// Implemented by every modal body, so `window.rs` can mount, trap and count
+/// modals from ONE list. B1 kept three hand-maintained places in sync instead
+/// (an `or` chain, a count, and the mount site), which meant a new modal was
+/// styled by [`modal_host`] but silently NOT trapped unless all three were
+/// edited — two of them invisible to the compiler.
+pub trait ModalContent {
+    /// Accessible name of the `Dialog` node [`modal_host`] paints.
+    fn modal_title(&self, cx: &App) -> SharedString;
+
+    /// The modal's focus stops in VISUAL order — the trap's only source of
+    /// truth, since gpui's `tab_index` is global rather than sibling-scoped.
+    fn modal_focus_order(&self, cx: &App) -> Vec<FocusHandle>;
+}
+
+/// Visual weight of a [`modal_button`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ModalButton {
+    /// The affirmative action — theme `primary` fill.
+    Primary,
+    /// The dismissive action — no fill, `foreground` text.
+    Ghost,
+}
+
+/// A modal's action button: a dat0-owned focus stop, activated by Enter/Space
+/// *and* by click, styled from A2/A3 tokens.
+///
+/// Hand-rolled rather than `gpui_component::Button` because a `Button` builds
+/// its focus handle with `window.use_keyed_state`, which is keyed by the GLOBAL
+/// element-id path (`gpui-0.2.2/src/window.rs:2578` → `with_global_id`): the
+/// handle resolves differently when read from anywhere else, so it can never be
+/// collected into the `Vec<FocusHandle>` [`modal_trap`] needs. `Button::render`
+/// also calls `track_focus` on its own base AFTER any builder chain, so a
+/// chained `.track_focus(&ours)` is simply overwritten.
+///
+/// `Ghost` sets NO background rather than a transparent one: the
+/// transparent-black constructor is banned by `tests/style_lint.rs` — which,
+/// note, also matches the banned name in PROSE, so it cannot be spelled with
+/// its call parens even inside a doc comment (same failure class as the CI
+/// skip marker quoted in a commit body).
+pub fn modal_button(
+    id: &'static str,
+    label: SharedString,
+    fh: &FocusHandle,
+    variant: ModalButton,
+    cx: &App,
+    on_activate: impl Fn(&mut Window, &mut App) + 'static + Clone,
+) -> Stateful<Div> {
+    let theme = cx.theme();
+    let ring = theme.d0().focus_ring;
+    let fg = match variant {
+        ModalButton::Primary => theme.primary_foreground,
+        ModalButton::Ghost => theme.foreground,
+    };
+    let primary_bg = theme.primary;
+    let radius = theme.radius;
+    let keyed = on_activate.clone();
+    div()
+        .id(id)
+        .px_sp(Sp::S12)
+        .py_sp(Sp::S4)
+        .rounded(radius)
+        .text_role(TextRole::Body)
+        .text_color(fg)
+        .cursor_pointer()
+        .when(matches!(variant, ModalButton::Primary), |d| {
+            d.bg(primary_bg)
+        })
+        .focus_stop(id, fh, 0, ring, move |_ev, window, app| keyed(window, app))
+        .a11y(id, AccessRole::Button, label.to_string())
+        .child(label)
+        .on_click(move |_ev, window, app| on_activate(window, app))
+}
+
+/// A non-modal floating surface: elevation card + `occlude`, positioned by the
+/// caller. No scrim and no trap — these overlays stay usable alongside the
+/// shell, unlike [`modal_host`].
+///
+/// `occlude` additionally stops a click on the overlay's own padding from
+/// falling through to the grid underneath.
+pub fn anchored_overlay(cx: &App) -> Div {
+    div().elevation(Elevation::Overlay, cx.theme()).occlude()
+}
+
 #[cfg(test)]
 mod tests {
     use super::next_index;
+
+    /// The two button weights are distinct arms — the styling difference itself
+    /// is exercised by the nav suites (a button that is not a focus stop fails
+    /// the Tab-cycle tests) and by the owed human glance.
+    #[test]
+    fn modal_button_variants_are_distinct() {
+        assert_ne!(
+            std::mem::discriminant(&super::ModalButton::Primary),
+            std::mem::discriminant(&super::ModalButton::Ghost)
+        );
+    }
 
     #[test]
     fn next_index_cycles_forward_with_wrap() {

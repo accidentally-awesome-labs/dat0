@@ -1,13 +1,10 @@
 //! Reusable single-line name-prompt modal (P5b). Emits the entered name on
 //! confirm, or Cancelled. Used by Save Query + Save as Table.
-use crate::a11y::{A11yExt as _, AccessRole, FocusStopExt as _};
-use crate::theme::tokens::Dat0Theme as _;
 use gpui::prelude::*;
 use gpui::{
     Context, Entity, EventEmitter, FocusHandle, Focusable as _, ParentElement, SharedString,
     Styled, Subscription, Window, div,
 };
-use gpui_component::ActiveTheme as _;
 use gpui_component::input::{Escape, Input, InputEvent, InputState};
 
 #[derive(Debug, Clone)]
@@ -114,11 +111,53 @@ impl NamePrompt {
 
 impl EventEmitter<NamePromptEvent> for NamePrompt {}
 
+/// B2: the shell mounts, traps and counts every modal from one list, keyed on
+/// this trait. The inherent [`title`](Self::title) /
+/// [`focus_order`](Self::focus_order) stay as the implementation so B1's call
+/// sites and tests are untouched.
+impl crate::overlay::ModalContent for NamePrompt {
+    fn modal_title(&self, _cx: &gpui::App) -> SharedString {
+        self.title()
+    }
+    fn modal_focus_order(&self, cx: &gpui::App) -> Vec<FocusHandle> {
+        self.focus_order(cx)
+    }
+}
+
 impl Render for NamePrompt {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let ok_fh = self.ok_focus.clone();
         let cancel_fh = self.cancel_focus.clone();
-        let ring = cx.theme().d0().focus_ring;
+        // B2: both buttons come from the shared `overlay::modal_button`, so the
+        // export dialog and this prompt cannot drift apart visually. Ids and
+        // accessible names are unchanged — `tests/modal_trap_nav.rs` navigates
+        // by them. `modal_button` supplies BOTH `focus_stop` and `a11y`, so do
+        // not add a second `.a11y` here (both helpers PUSH a node).
+        let entity_ok = cx.entity();
+        let ok_btn = crate::overlay::modal_button(
+            "name-prompt-ok",
+            SharedString::from("Save"),
+            &ok_fh,
+            crate::overlay::ModalButton::Primary,
+            cx,
+            move |_window, app| {
+                entity_ok.update(app, |this, cx| {
+                    let v = this.value(cx);
+                    cx.emit(NamePromptEvent::Confirm(v));
+                });
+            },
+        );
+        let entity_cancel = cx.entity();
+        let cancel_btn = crate::overlay::modal_button(
+            "name-prompt-cancel",
+            SharedString::from("Cancel"),
+            &cancel_fh,
+            crate::overlay::ModalButton::Ghost,
+            cx,
+            move |_window, app| {
+                entity_cancel.update(app, |_this, cx| cx.emit(NamePromptEvent::Cancel));
+            },
+        );
         div()
             .flex()
             .flex_col()
@@ -136,50 +175,8 @@ impl Render for NamePrompt {
                     .flex()
                     .flex_row()
                     .gap_2()
-                    .child(
-                        div()
-                            .id("name-prompt-ok")
-                            .px_3()
-                            .py_1()
-                            .cursor_pointer()
-                            .child(SharedString::from("Save"))
-                            .focus_stop(
-                                "name-prompt-ok",
-                                &ok_fh,
-                                0,
-                                ring,
-                                cx.listener(|this, _ev: &gpui::KeyDownEvent, _window, cx| {
-                                    let v = this.value(cx);
-                                    cx.emit(NamePromptEvent::Confirm(v));
-                                }),
-                            )
-                            .a11y("name-prompt-ok", AccessRole::Button, "Save")
-                            .on_click(cx.listener(|this, _ev, _window, cx| {
-                                let v = this.value(cx);
-                                cx.emit(NamePromptEvent::Confirm(v));
-                            })),
-                    )
-                    .child(
-                        div()
-                            .id("name-prompt-cancel")
-                            .px_3()
-                            .py_1()
-                            .cursor_pointer()
-                            .child(SharedString::from("Cancel"))
-                            .focus_stop(
-                                "name-prompt-cancel",
-                                &cancel_fh,
-                                0,
-                                ring,
-                                cx.listener(|_this, _ev: &gpui::KeyDownEvent, _window, cx| {
-                                    cx.emit(NamePromptEvent::Cancel);
-                                }),
-                            )
-                            .a11y("name-prompt-cancel", AccessRole::Button, "Cancel")
-                            .on_click(cx.listener(|_this, _ev, _window, cx| {
-                                cx.emit(NamePromptEvent::Cancel);
-                            })),
-                    ),
+                    .child(ok_btn)
+                    .child(cancel_btn),
             )
     }
 }

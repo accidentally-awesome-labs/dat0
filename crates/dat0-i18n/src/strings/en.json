@@ -63,6 +63,7 @@
   "export.scope": "Scope",
   "export.scope.current": "Current view",
   "export.scope.full": "Full table",
+  "export.title": "Export",
   "export.run": "Export",
   "export.cancel": "Cancel",
   "export.done.title": "Export complete",
