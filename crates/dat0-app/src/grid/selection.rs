@@ -181,6 +181,49 @@ impl SelectionModel {
         set.into_iter()
     }
 
+    /// Number of distinct selected cells, computed arithmetically from the
+    /// rectangles: overlapping ranges are counted once, and the cost depends on
+    /// the number of RANGES, never on the number of selected cells.
+    ///
+    /// Deliberately NOT `resolved_cells().count()`. That materialises one set
+    /// entry per selected cell, and [`Self::select_all`] spans the whole grid
+    /// (the model is constructed with `rows = GridDataSource::row_count`), so a
+    /// per-frame caller — the B3 status bar — would build a 20-million-element
+    /// set every frame on a 1M-row table.
+    ///
+    /// Coordinate compression: the rectangles' edges cut the plane into bands,
+    /// and every band-block is either wholly inside a range or wholly outside
+    /// it, so a single [`Self::contains`] probe on the block's lower corner
+    /// decides the whole block.
+    pub fn selected_cell_count(&self) -> usize {
+        if self.ranges.is_empty() {
+            return 0;
+        }
+        let mut rows: Vec<usize> = Vec::with_capacity(self.ranges.len() * 2);
+        let mut cols: Vec<usize> = Vec::with_capacity(self.ranges.len() * 2);
+        for rg in &self.ranges {
+            rows.push(rg.r0.min(rg.r1));
+            rows.push(rg.r0.max(rg.r1).saturating_add(1));
+            cols.push(rg.c0.min(rg.c1));
+            cols.push(rg.c0.max(rg.c1).saturating_add(1));
+        }
+        rows.sort_unstable();
+        rows.dedup();
+        cols.sort_unstable();
+        cols.dedup();
+
+        let mut total: usize = 0;
+        for r_band in rows.windows(2) {
+            for c_band in cols.windows(2) {
+                if self.contains(r_band[0], c_band[0]) {
+                    let cells = (r_band[1] - r_band[0]).saturating_mul(c_band[1] - c_band[0]);
+                    total = total.saturating_add(cells);
+                }
+            }
+        }
+        total
+    }
+
     /// Returns `true` when the selection has at least one range and the context
     /// menu should offer "Delete row(s)". Always `true` when there is any
     /// selection — semantically, any selected cell's row is a deletion candidate
