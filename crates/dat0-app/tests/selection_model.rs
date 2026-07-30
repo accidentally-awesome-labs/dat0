@@ -101,3 +101,78 @@ fn extend_active_clamps_at_edge() {
     assert!(s.contains(2, 1));
     assert!(s.contains(4, 2));
 }
+
+// ---------------------------------------------------------------------------
+// B3: selected_cell_count — exact union area, computed without touching cells.
+// ---------------------------------------------------------------------------
+
+#[test]
+fn selected_cell_count_is_zero_with_no_selection() {
+    let s = SelectionModel::new(10, 10);
+    assert_eq!(s.selected_cell_count(), 0);
+}
+
+#[test]
+fn selected_cell_count_counts_a_single_cell() {
+    let mut s = SelectionModel::new(10, 10);
+    s.click(CellCoord { row: 2, col: 3 });
+    assert_eq!(s.selected_cell_count(), 1);
+}
+
+#[test]
+fn selected_cell_count_counts_a_rectangle() {
+    let mut s = SelectionModel::new(10, 10);
+    s.click(CellCoord { row: 1, col: 1 });
+    s.extend_to(CellCoord { row: 3, col: 4 }); // 3 rows x 4 cols
+    assert_eq!(s.selected_cell_count(), 12);
+}
+
+/// `extend_to` can leave `r0 > r1` / `c0 > c1`; the count must normalise.
+#[test]
+fn selected_cell_count_normalises_a_backwards_rectangle() {
+    let mut s = SelectionModel::new(10, 10);
+    s.click(CellCoord { row: 3, col: 4 });
+    s.extend_to(CellCoord { row: 1, col: 1 });
+    assert_eq!(s.selected_cell_count(), 12);
+}
+
+#[test]
+fn selected_cell_count_sums_disjoint_ranges() {
+    let mut s = SelectionModel::new(10, 10);
+    s.click(CellCoord { row: 0, col: 0 });
+    s.extend_to(CellCoord { row: 1, col: 1 }); // 4
+    s.add_click(CellCoord { row: 5, col: 5 });
+    s.extend_to(CellCoord { row: 5, col: 7 }); // 3
+    assert_eq!(s.selected_cell_count(), 7);
+}
+
+/// The case a sum-of-areas implementation gets wrong: it would return 18.
+#[test]
+fn selected_cell_count_counts_overlapping_ranges_once() {
+    let mut s = SelectionModel::new(10, 10);
+    s.click(CellCoord { row: 0, col: 0 });
+    s.extend_to(CellCoord { row: 2, col: 2 }); // 9
+    s.add_click(CellCoord { row: 1, col: 1 });
+    s.extend_to(CellCoord { row: 3, col: 3 }); // 9, sharing 4
+    assert_eq!(s.selected_cell_count(), 14);
+}
+
+#[test]
+fn selected_cell_count_ignores_a_click_inside_an_existing_range() {
+    let mut s = SelectionModel::new(10, 10);
+    s.click(CellCoord { row: 0, col: 0 });
+    s.extend_to(CellCoord { row: 4, col: 4 }); // 25
+    s.add_click(CellCoord { row: 2, col: 2 }); // already inside
+    assert_eq!(s.selected_cell_count(), 25);
+}
+
+/// The whole reason the method exists. `select_all` spans the entire grid (the
+/// model is built with `rows = GridDataSource::row_count`) and the status bar
+/// reads this EVERY FRAME. A `resolved_cells().count()` implementation would
+/// not fail this test — it would hang it.
+#[test]
+fn selected_cell_count_is_arithmetic_not_per_cell() {
+    let mut s = SelectionModel::new(1_000_000, 20);
+    s.select_all();
+    assert_eq!(s.selected_cell_count(), 20_000_000);
+}
