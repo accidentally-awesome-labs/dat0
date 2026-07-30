@@ -77,6 +77,16 @@ pub fn describe_connection(conns: &ConnectionManager) -> String {
     }
 }
 
+/// Pick the singular or plural noun for `n`.
+///
+/// `dat0_i18n::t` has no plural forms and no interpolation, so the two nouns are
+/// separate keys and the call site chooses. Without this the bar reads "1 cells
+/// selected" in its single most common state — any plain click selects exactly
+/// one cell.
+fn plural(n: u64, one: &'static str, many: &'static str) -> String {
+    dat0_i18n::t(if n == 1 { one } else { many })
+}
+
 impl StatusBarModel {
     /// The bar's segment strings, in render order. Pure, so the entire rendered
     /// text of the bar is assertable with no window.
@@ -86,16 +96,16 @@ impl StatusBarModel {
             out.push(format!(
                 "{} {} × {} {}",
                 format_count(rows),
-                dat0_i18n::t("status.rows"),
+                plural(rows, "status.row", "status.rows"),
                 cols,
-                dat0_i18n::t("status.cols"),
+                plural(cols as u64, "status.col", "status.cols"),
             ));
         }
         if let Some(n) = self.selected_cells.filter(|n| *n > 0) {
             out.push(format!(
                 "{} {}",
                 format_count(n as u64),
-                dat0_i18n::t("status.cells_selected"),
+                plural(n as u64, "status.cell_selected", "status.cells_selected"),
             ));
         }
         match self.query {
@@ -228,6 +238,43 @@ mod tests {
         assert_eq!(
             m.segments(),
             vec!["1,234 rows × 12 cols".to_string(), "Local".to_string()]
+        );
+    }
+
+    /// A plain click selects exactly one cell, so the singular forms are the
+    /// bar's most common state, not an edge case.
+    #[test]
+    fn segments_use_singular_nouns_at_one() {
+        let m = StatusBarModel {
+            rows: Some(1),
+            cols: Some(1),
+            selected_cells: Some(1),
+            query: QueryStatus::Idle,
+            connection: "Local".to_string(),
+        };
+        assert_eq!(
+            m.segments(),
+            vec![
+                "1 row × 1 col".to_string(),
+                "1 cell selected".to_string(),
+                "Local".to_string(),
+            ]
+        );
+    }
+
+    /// Zero takes the plural, as English does ("0 rows").
+    #[test]
+    fn segments_use_plural_nouns_at_zero() {
+        let m = StatusBarModel {
+            rows: Some(0),
+            cols: Some(0),
+            selected_cells: None,
+            query: QueryStatus::Idle,
+            connection: "Local".to_string(),
+        };
+        assert_eq!(
+            m.segments(),
+            vec!["0 rows × 0 cols".to_string(), "Local".to_string()]
         );
     }
 
