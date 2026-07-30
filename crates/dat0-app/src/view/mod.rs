@@ -13,6 +13,7 @@ pub mod query_library;
 pub mod saved_query_picker;
 pub mod sort_header;
 pub mod sql_console;
+pub mod status_bar;
 
 pub use column_view::fold_columns;
 pub use model::{HISTORY_CAP, ViewChange, ViewModel, route_outcome};

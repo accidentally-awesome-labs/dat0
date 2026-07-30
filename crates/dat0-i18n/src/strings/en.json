@@ -310,5 +310,15 @@
   "update.downloading": "Downloading update…",
   "update.failed": "Update failed",
   "settings.window.title": "Settings",
-  "settings.section.placeholder": "This section is coming up in a later step."
+  "settings.section.placeholder": "This section is coming up in a later step.",
+  "status.rows": "rows",
+  "status.cols": "cols",
+  "status.cells_selected": "cells selected",
+  "status.query": "Query",
+  "status.query_running": "Query running…",
+  "status.conn_local": "Local",
+  "status.conn_md": "MotherDuck",
+  "status.conn_connecting": "Connecting…",
+  "status.conn_error": "Connection error",
+  "status.attached": "attached"
 }
