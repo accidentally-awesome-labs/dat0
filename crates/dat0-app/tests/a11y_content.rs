@@ -701,3 +701,95 @@ fn banner_renders_title_and_body_content(cx: &mut TestAppContext) {
         "body text absent from the banner must not render as a Label node"
     );
 }
+
+// ----------------------------------------------------------------------------
+// B3: the status bar renders its segments as AccessKit content.
+// ----------------------------------------------------------------------------
+
+/// Mount a real `WorkspaceShell`, assert the bar paints its connection segment
+/// with no data loaded, then import a two-row, two-column CSV and assert the
+/// shape segment appears.
+///
+/// Duplicate-tolerant `has_label_contains` throughout: the query segment shares
+/// its `N ms · local` tail with the SQL console's own timing chip, so a
+/// unique-match query here would be a latent panic the moment a console is open
+/// in the same window.
+#[gpui::test]
+#[serial]
+fn status_bar_renders_segments_as_a11y_content(cx: &mut TestAppContext) {
+    let cfg = tempfile::tempdir().unwrap();
+    let state = tempfile::tempdir().unwrap();
+    set_config_dir(cfg.path());
+
+    ensure_dispatcher();
+    let harness = enter_async_harness(cx);
+    let _guard = harness.enter();
+    init_components(cx);
+    drain_dispatcher(cx);
+
+    let session = build_empty_session_in(&harness, state.path());
+
+    let csv = state.path().join("bar.csv");
+    std::fs::write(&csv, "a,b\n1,2\n3,4\n").unwrap();
+
+    let (shell, cx) = open_shell_window(cx, Arc::clone(&session));
+    cx.run_until_parked();
+
+    // The bar is mounted unconditionally: with no data source the connection
+    // segment paints alone. This is the "always visible" decision, asserted.
+    let snap = A11ySnapshot::capture(cx);
+    assert!(
+        snap.has_label_contains("Local"),
+        "the connection segment must render before any data is loaded"
+    );
+    assert!(
+        !snap.has_label_contains("rows ×"),
+        "the shape segment must be absent with no data source"
+    );
+
+    let sess = Arc::clone(&session);
+    let csv2 = csv.clone();
+    let task = cx.cx.spawn(async move |_app| {
+        let _ = dat0_app::file_drop::handle_drop(vec![csv2], sess).await;
+    });
+    cx.executor().block_test(task);
+
+    let engine = session.lock().engine.clone();
+    let tables = harness
+        .block_on(async { engine.get_tables().await })
+        .expect("get_tables");
+    let table_name = tables
+        .iter()
+        .map(|t| t.name.clone())
+        .next()
+        .expect("the CSV import must register exactly one table");
+    let ds = harness
+        .block_on(async { GridDataSource::new(Arc::clone(&engine), table_name).await })
+        .expect("GridDataSource::new");
+    shell.update(cx, |view, cx| {
+        view.set_data_source(Arc::new(ds));
+        cx.notify();
+    });
+    cx.run_until_parked();
+
+    // The shape segment reads the source's row count and the post-projection
+    // column list.
+    let snap = A11ySnapshot::capture(cx);
+    assert!(
+        snap.has_label_contains("2 rows × 2 cols"),
+        "the status bar must render the mounted grid's shape"
+    );
+    assert!(
+        snap.has_label_contains("Local"),
+        "the connection segment must survive the data-source mount"
+    );
+    // Nothing is selected and no run has happened, so neither segment exists.
+    assert!(
+        !snap.has_label_contains("cells selected"),
+        "no selection means no selection segment"
+    );
+    assert!(
+        !snap.has_label_contains("Query "),
+        "no completed run means no query segment"
+    );
+}
