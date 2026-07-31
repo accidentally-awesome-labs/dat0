@@ -132,28 +132,57 @@ keys the palette needs behave *differently*, and only one of them is a problem:
 | `enter` | `Enter` action → `state.rs:1168` emits `InputEvent::PressEnter` | Subscribe to `PressEnter` (`name_prompt.rs:47` precedent) |
 | `escape` | `Escape` action → `state.rs:1198` calls `cx.propagate()` on a single-line field | Bubble `on_action(Escape)` on the palette root (`name_prompt.rs:168` precedent) |
 | `tab` | `IndentInline` → `indent.rs:255` propagates when `!mode.is_indentable()` | B1's `modal_trap` on the shell root, unchanged |
-| `up` / `down` | `MoveUp`/`MoveDown` → **`movement.rs:141`, `:163` return on single-line WITHOUT `cx.propagate()`** | ⚠ **`capture_action`** on the palette root + `cx.stop_propagation()` |
+| `up` / `down` | `MoveUp`/`MoveDown` — but see §4.1, they are **not registered at all** on a single-line field | dat0-owned `PaletteUp`/`PaletteDown` bound under key context `"CommandPalette"` |
 
-### 4.1 Why arrows need the capture phase
+### 4.1 Arrows — corrected by the T0 gate
 
-`on_action` handlers consume by default; a handler that returns without `cx.propagate()` ends the
-keystroke. `InputState::up`'s single-line early return does exactly that. Consequences, in order:
+**The pre-T0 draft of this section was wrong, and the fix changes the implementation.** It claimed
+`InputState::up`/`down` consume the keystroke because `input/movement.rs:141` returns on a
+single-line field without `cx.propagate()`, and concluded that only `capture_action` could
+intercept. Measured (§9, gate G2b): a plain bubble handler on the palette root **does** fire.
 
-1. A binding of `"down"` under a `"CommandPalette"` key context is **matched but never reached** —
-   `MoveDown` wins on depth, is handled, and consumes.
-2. An `on_key_down` listener never fires either: action bindings are dispatched *before* key-down
-   listeners, and only a fully unconsumed keystroke reaches `dispatch_key_down_up_event`
-   (B1's finding, `gpui-0.2.2/src/window.rs:3833-3848`).
-3. Re-binding `up`/`down` under context `"Input"` ourselves would win on insertion order — and
-   break arrow keys in the multi-line SQL editor, app-wide. Rejected.
+The reason is one line upstream. `Input::render` registers those two handlers conditionally:
 
-`capture_action` (`gpui-0.2.2/src/elements/div.rs:328`) is the remaining interception point. The
-capture phase walks the dispatch path **root→leaf** and breaks as soon as `propagate_event` goes
-false (`window.rs:4028-4040`), so a capture handler on the palette root sees `MoveDown` *before*
-`InputState`'s bubble handler and can stop it. It is scoped to the palette's subtree, so the SQL
-editor is untouched.
+```rust
+.when(state.mode.is_multi_line(), |this| {
+    this.on_action(window.listener_for(&self.state, InputState::up))
+        .on_action(window.listener_for(&self.state, InputState::down))
+        …
+})                                    // input/input.rs:309-311
+```
 
-**This is the slice's single largest technical risk and gets a T0 hard gate (§7).**
+On a **single-line** field the handlers are never registered, so `MoveUp`/`MoveDown` reach no
+handler and nothing consumes them. The `is_single_line()` early return in `movement.rs` is
+unreachable from a single-line `Input` — it can only be hit by a direct dispatch.
+
+That makes `capture_action` merely *sufficient*. What settles the choice is a hole neither the
+original design nor gates G2/G2b would have caught: **with focus on the results list, the `"Input"`
+key context is not in the stack at all, so `down` never produces `MoveDown` in the first place** —
+and a `capture_action(MoveDown)` handler therefore never runs. Arrows would have been dead from the
+palette's second stop.
+
+So B4 uses the mechanism the master plan specified all along — a dat0-owned action under the
+palette's own key context, the `register_sql_console_keys` precedent:
+
+```rust
+gpui::actions!(dat0_palette, [PaletteUp, PaletteDown]);
+KeyBinding::new("up",   PaletteUp,   Some("CommandPalette"));
+KeyBinding::new("down", PaletteDown, Some("CommandPalette"));
+```
+
+Gate G2c measured both stops:
+
+- **Focus in the field** — two bindings match; `MoveDown` (context `"Input"`) is deeper so it is
+  chosen first, finds no handler, leaves `propagate_event` true, and **the next-best binding wins**
+  (B1's measured fallthrough). `PaletteDown` fires.
+- **Focus on the list** — `"Input"` is absent from the stack, so `PaletteDown` is matched directly.
+
+One mechanism, both stops, no capture phase.
+
+⚠ The in-field half rests on the single-line registration guard above. If the palette's field ever
+became multi-line, `MoveDown` would find a handler, consume, and arrows would go dead **in the field
+only** (the list keeps working). `arrows_move_the_active_row_and_clamp_at_both_ends` drives a real
+keystroke with the field focused, so that regression fails a test rather than shipping.
 
 ### 4.2 Escape ladder
 
@@ -351,3 +380,32 @@ how the owner drives the human glance.
 **Owed human glance** (this slice adds a broadly visible surface): palette card in all 3 themes, HC
 most of all — muted group tag legibility, right-aligned Kbd hint contrast, the active-row ring
 against the card background, and the scroll behaviour when arrowing past the fold.
+
+---
+
+## 9. As-built: T0 gate findings (measured 2026-07-30)
+
+Throwaway probe `tests/palette_t0_probe.rs`, deleted after measurement. All gates ran under
+`--features a11y-capture` against pinned rev `0f0ab35` / gpui 0.2.2.
+
+| Gate | Result |
+|---|---|
+| **G1** `uniform_list` rows in the headless capture tree | ✅ **PASS, with a constraint.** Rows 0-5 captured from a 30-item list in a 120 px box with 20 px rows — i.e. **exactly the visible window, nothing past the fold** (`row 25 captured = false`). Virtualisation is real in the test harness. |
+| **G2** `capture_action` sees `MoveDown` | ✅ fires (hits = 1). Not used — see G2c. |
+| **G2b** bubble handler on the same node | ⚠ **also fires (hits = 1), contradicting the pre-T0 §4.1.** Cause: `Input::render` gates the up/down handler registration on `is_multi_line()` (`input/input.rs:309-311`), so a single-line field registers none. |
+| **G2c** dat0 action under `"CommandPalette"` | ✅ **fires from BOTH stops** — 1 hit with the field focused (next-best-binding fallthrough past `MoveDown`), 2 after also pressing with the list focused. **This is the mechanism B4 ships.** |
+| **G3** ⌘⇧P bound in a test binary | ✅ correctly **un**available before T3 wires `register_command_palette_keys` — confirming the call is load-bearing, not decorative. |
+| **G4** hand-built `ActionRegistry` | ✅ works with no `OnceCell` install, so the entity takes the registry by value. |
+
+**Two consequences for later tasks:**
+
+1. **§4 changed** — arrows are dat0 actions under the palette key context, not `capture_action`. §4.1
+   is rewritten with the measured mechanism.
+2. **Test assertions must target rows the list actually renders.** Off-screen rows are absent from
+   the capture tree, so an assertion on row 25 of 29 fails for a reason that has nothing to do with
+   the palette. Arrowing to a row scrolls it in and *then* it is assertable.
+
+**Process note worth keeping:** G2c only exists because G2b's unexpected result prompted the
+question "does the interception even run when focus is on the list?" — and the honest answer was no.
+The original design would have shipped arrows that die on the palette's second stop, and every test
+written against the first stop would have passed.

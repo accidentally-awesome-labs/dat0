@@ -42,7 +42,16 @@
 
 ---
 
-## Task 0: T0 hard gate — prove the two unproven assumptions
+## Task 0: T0 hard gate — prove the two unproven assumptions ✅ DONE
+
+> **Outcome (2026-07-30): all gates pass, but the design changed.** Full results in design §9.
+> Headline: a bubble handler fires where the design said it could not, because `Input::render`
+> registers the up/down handlers only `.when(is_multi_line())`. Chasing that turned up the real
+> defect — `capture_action(MoveDown)` is **dead when focus is on the results list**, since the
+> "Input" context is absent and no `MoveDown` is produced. B4 therefore ships dat0-owned
+> `PaletteUp`/`PaletteDown` under key context `"CommandPalette"`, measured working from both stops
+> (G2c). `uniform_list` rows DO reach the capture tree, but only the visible window — assertions
+> must target rendered rows. The probe below is kept for the record; it has been run and deleted.
 
 **Files:**
 - Create (throwaway, deleted in step 6): `crates/dat0-app/tests/palette_t0_probe.rs`
@@ -54,7 +63,7 @@
 
 This task writes NO production code. Its output is knowledge plus, if a gate fails, an amended design doc.
 
-- [ ] **Step 1: Write the probe**
+- [x] **Step 1: Write the probe**
 
 ```rust
 //! THROWAWAY T0 probe for slice B4 — deleted in this same task. Proves two
@@ -139,14 +148,14 @@ fn t0_gates(cx: &mut TestAppContext) {
 }
 ```
 
-- [ ] **Step 2: Run G2**
+- [x] **Step 2: Run G2**
 
 Run: `cargo test -p dat0-app --features a11y-capture --test palette_t0_probe -- --nocapture`
 Expected: PASS on the `hits == 1` assertion.
 
 **STOP if it fails:** capture-phase interception does not work as read. Amend the design doc §4.1 with the measured behaviour, and switch the arrow keys to `ctrl-n`/`ctrl-p` bound under a `"CommandPalette"` key context (those are unbound upstream, so no depth contest). Report before continuing.
 
-- [ ] **Step 3: Run G1**
+- [x] **Step 3: Run G1**
 
 Extend the probe's final assertion to query the real snapshot the way `tests/a11y_content.rs` does (copy its `reset → refresh → run_until_parked → take_tree_update` helper verbatim), then assert `probe row 0` is present and — the interesting half — check whether a row well past the fold (say `probe row 25`) is *absent*.
 
@@ -157,7 +166,7 @@ Expected: `probe row 0` present.
 
 **Record either way:** whether off-screen rows are captured. If they are not, every later assertion must target a row the list actually renders — that constraint belongs in the design doc as an as-built note.
 
-- [ ] **Step 4: Prove ⌘⇧P is reachable from a test binary (G3)**
+- [x] **Step 4: Prove ⌘⇧P is reachable from a test binary (G3)**
 
 Add to the probe:
 
@@ -176,7 +185,7 @@ fn t0_g3_palette_chord_is_bound_in_tests(cx: &mut TestAppContext) {
 Run: `cargo test -p dat0-app --test palette_t0_probe -- --nocapture`
 Expected: PASS (the action is unavailable). This is the red half of T3's test — it documents the gap T3 must close.
 
-- [ ] **Step 5: Prove a probe descriptor round-trips (G4)**
+- [x] **Step 5: Prove a probe descriptor round-trips (G4)**
 
 ```rust
 #[test]
@@ -204,7 +213,7 @@ fn t0_g4_probe_descriptor_dispatch_is_observable() {
 Run: `cargo test -p dat0-app --test palette_t0_probe -- --nocapture`
 Expected: PASS.
 
-- [ ] **Step 6: Delete the probe and commit the findings**
+- [x] **Step 6: Delete the probe and commit the findings**
 
 ```bash
 rm crates/dat0-app/tests/palette_t0_probe.rs
@@ -233,9 +242,14 @@ git commit -s -m "docs(theme): B4 T0 gate findings (UI redesign)"
 - Produces:
   - `pub const HIDDEN: &[&str; 6]`
   - `pub const WINDOW_ROUTED: &[&str; 7]`
+  - `pub const PALETTE_CONTEXT: &str = "CommandPalette"`
+  - `gpui::actions!(dat0_palette, [PaletteUp, PaletteDown]);`
+  - `pub fn register_command_palette_keys(cx: &mut App)` — binds ⌘⇧P/⌃⇧P + `up`/`down`
   - `pub fn visible_items(reg: &ActionRegistry, query: &str) -> Vec<ActionDescriptor>`
   - `fn rank(title: &str, query: &str) -> Option<u8>` (private; exercised through `visible_items` and directly from the in-file tests)
   - `pub fn filter(...)` — **unchanged signature and body**
+
+The actions and the registration land HERE, not in T3, because T2's tests press a real `down` key and a binding that does not exist yet makes that a no-op. T1's `register_command_palette_keys` wires ⌘⇧P to the existing `open()` — still the stub logger — and T3 rewrites only `open`'s body.
 
 - [ ] **Step 1: Write the failing tests**
 
@@ -384,6 +398,39 @@ fn rank(title: &str, query: &str) -> Option<u8> {
         return Some(2);
     }
     subsequence_match(&t, &q).then_some(1)
+}
+
+/// Key context carried by the palette's root element. Every stop inside the
+/// modal sits below it, which is what lets [`PaletteUp`]/[`PaletteDown`] match
+/// from the query field AND from the results list.
+pub const PALETTE_CONTEXT: &str = "CommandPalette";
+
+gpui::actions!(dat0_palette, [PaletteUp, PaletteDown]);
+
+/// Bind ⌘⇧P / ⌃⇧P and the palette-scoped arrows.
+///
+/// MUST be called by production (`run_app`) **and** by every test binary's
+/// `init_components` — the harness calls only `gpui_component::init`, so a
+/// prod-only binding is invisible to tests and a green suite can hide a dead
+/// production key path (the carve-out #7 lesson, and the same rule
+/// `overlay::register_modal_keys` carries). T0 gate G3 confirmed the chord is
+/// genuinely unbound in a bare test app today.
+///
+/// The arrows are dat0 actions under [`PALETTE_CONTEXT`] rather than an
+/// interception of upstream's `MoveUp`/`MoveDown`, because with focus on the
+/// results list the "Input" key context is absent and those are never produced
+/// at all (T0 gate G2c). See `view::command_palette`'s module docs.
+pub fn register_command_palette_keys(cx: &mut gpui::App) {
+    #[cfg(target_os = "macos")]
+    let open_ks = "cmd-shift-p";
+    #[cfg(not(target_os = "macos"))]
+    let open_ks = "ctrl-shift-p";
+    cx.bind_keys([
+        gpui::KeyBinding::new(open_ks, crate::menu_macos::OpenCommandPalette, None),
+        gpui::KeyBinding::new("up", PaletteUp, Some(PALETTE_CONTEXT)),
+        gpui::KeyBinding::new("down", PaletteDown, Some(PALETTE_CONTEXT)),
+    ]);
+    cx.on_action(|_a: &crate::menu_macos::OpenCommandPalette, cx: &mut gpui::App| open(cx));
 }
 
 /// The palette's data source: everything that matches `query`, minus [`HIDDEN`],
@@ -573,29 +620,34 @@ Create `crates/dat0-app/src/view/command_palette.rs`:
 //! ranking be unit-tested with no `Window`, the same reason `overlay::next_index`
 //! was extracted in B1.
 //!
-//! ## Why the arrow keys are intercepted in the CAPTURE phase
+//! ## Why the arrows are palette-scoped ACTIONS
 //!
-//! `Input` carries key context "Input", which is the deepest node in the stack,
-//! and gpui sorts matched bindings by context depth descending
-//! (`keymap.rs:165`). So the Input wins the keystroke→action lookup for
-//! `up`/`down` — and `InputState::up`/`down` return early on a single-line field
-//! WITHOUT `cx.propagate()` (`input/movement.rs:141`, `:163`), which CONSUMES
-//! the keystroke. Consequences, all measured at the pinned rev:
+//! `up`/`down` are bound to dat0's own `PaletteUp`/`PaletteDown` under key
+//! context "CommandPalette" (`command_palette::register_command_palette_keys`),
+//! and this file handles them with a plain `on_action`. Both halves were
+//! measured by the T0 gate; neither is obvious:
 //!
-//! - a binding of `"down"` under a palette key context is matched but never
-//!   reached, because `MoveDown` won on depth and was handled;
-//! - an `on_key_down` listener never fires either, since action bindings are
-//!   dispatched before key-down listeners and only a fully unconsumed keystroke
-//!   reaches `dispatch_key_down_up_event` (B1);
-//! - re-binding `up`/`down` under context "Input" ourselves would win on
-//!   insertion order and break arrow keys in the multi-line SQL editor.
+//! - **With focus in the query field**, two bindings match: upstream's
+//!   `MoveDown` under context "Input" (deeper, so gpui chooses it first —
+//!   `keymap.rs:165`) and ours. `MoveDown` finds NO handler, because
+//!   `Input::render` registers `InputState::up`/`down` only
+//!   `.when(state.mode.is_multi_line(), …)` (`input/input.rs:309-311`) and this
+//!   field is single-line. Unhandled leaves `propagate_event` true, so the
+//!   next-best binding — ours — wins.
+//! - **With focus on the results list**, the "Input" context is not in the stack
+//!   at all, so `down` produces `PaletteDown` directly.
 //!
-//! `capture_action` is the remaining interception point: the capture phase walks
-//! the dispatch path root→leaf and stops as soon as `propagate_event` goes false
-//! (`gpui-0.2.2/src/window.rs:4028`), so a handler here runs BEFORE the Input's.
-//! It is scoped to this subtree, so the SQL editor is untouched.
+//! An earlier draft used `capture_action(MoveDown)` instead. It works from the
+//! field and is DEAD on the list, where no `MoveDown` is ever produced — the
+//! kind of hole every test written against the first stop would have missed.
 //!
-//! Enter and Escape need none of that: `enter()` emits `InputEvent::PressEnter`
+//! ⚠ The in-field half rests on that single-line registration guard. If this
+//! field ever became multi-line, `MoveDown` would find a handler, consume, and
+//! arrows would die in the field while still working on the list.
+//! `arrows_move_the_active_row_and_clamp_at_both_ends` drives a real keystroke
+//! with the field focused, so that regression fails a test.
+//!
+//! Enter and Escape need none of this: `enter()` emits `InputEvent::PressEnter`
 //! and `escape()` propagates on a single-line field, exactly as `NamePrompt`
 //! already relies on.
 
@@ -605,7 +657,7 @@ use gpui::{
     Styled, Subscription, UniformListScrollHandle, Window, div, uniform_list,
 };
 use gpui_component::ActiveTheme as _;
-use gpui_component::input::{Escape, Input, InputEvent, InputState, MoveDown, MoveUp};
+use gpui_component::input::{Escape, Input, InputEvent, InputState};
 
 use crate::a11y::{A11yExt as _, AccessRole, FocusStopExt as _};
 use crate::actions::registry::{ActionDescriptor, ActionGroup, ActionId, ActionRegistry};
@@ -825,15 +877,14 @@ impl Render for CommandPalette {
             .flex()
             .flex_col()
             .min_w(gpui::px(520.))
-            .key_context("CommandPalette")
-            // Arrows: capture phase, ahead of the Input — see the module docs.
-            .capture_action(cx.listener(|this, _: &MoveDown, _window, cx| {
+            // This context is what makes the palette-scoped `up`/`down`
+            // bindings match — see the module docs.
+            .key_context(crate::command_palette::PALETTE_CONTEXT)
+            .on_action(cx.listener(|this, _: &crate::command_palette::PaletteDown, _window, cx| {
                 this.move_active(1, cx);
-                cx.stop_propagation();
             }))
-            .capture_action(cx.listener(|this, _: &MoveUp, _window, cx| {
+            .on_action(cx.listener(|this, _: &crate::command_palette::PaletteUp, _window, cx| {
                 this.move_active(-1, cx);
-                cx.stop_propagation();
             }))
             // Escape cancels from any stop. `overlay::register_modal_keys` binds
             // `escape` under the `Dat0Modal` context `modal_trap` installs on the
@@ -884,9 +935,31 @@ Expected: PASS (3 tests).
 Run: `cargo clippy -p dat0-app --all-targets -- -D warnings`
 Expected: exit 0. (`pub const X: &'static [T]` trips `redundant_static_lifetimes`, which is warn-by-default and therefore fatal here — T1 already writes `&[&str; N]`.)
 
-- [ ] **Step 6: Prove the arrow test is not vacuous**
+- [ ] **Step 6: Prove the arrow test is not vacuous — from BOTH stops**
 
-Comment out the `MoveDown` `capture_action` line, `touch` the file, re-run: `arrows_move_the_active_row_and_clamp_at_both_ends` must go RED (active stays 0). Restore, `touch`, re-run: GREEN. **This is the assertion that proves the production key path is live rather than the test driving the model directly.**
+Comment out the `PaletteDown` `on_action` line, `touch` the file, re-run: `arrows_move_the_active_row_and_clamp_at_both_ends` must go RED (active stays 0). Restore, `touch`, re-run: GREEN. **This is the assertion that proves the production key path is live rather than the test driving the model directly.**
+
+Then add the second-stop test, which is the one T0 G2c showed the original design would have failed:
+
+```rust
+#[gpui::test]
+fn arrows_work_with_focus_on_the_results_list_too(cx: &mut TestAppContext) {
+    init_components(cx);
+    let (palette, vcx) = open_palette(cx, probe_registry_with_three());
+    // Move focus off the query field and onto the list container. The "Input"
+    // key context leaves the stack here, so any mechanism keyed on upstream's
+    // MoveDown is dead from this stop.
+    let lf = palette.read_with(vcx, |p, _| p.list_focus_handle_for_test());
+    vcx.update(|window, _cx| window.focus(&lf));
+    vcx.run_until_parked();
+
+    vcx.simulate_keystrokes("down");
+    vcx.run_until_parked();
+    assert_eq!(palette.read_with(vcx, |p, _| p.active_for_test()), 1);
+}
+```
+
+Add `pub fn list_focus_handle_for_test(&self) -> FocusHandle` to the `a11y-capture` accessor block.
 
 - [ ] **Step 7: Commit**
 
@@ -981,31 +1054,11 @@ fn tab_cycles_the_three_stops_and_never_escapes(cx: &mut TestAppContext) {
 Run: `cargo test -p dat0-app --features a11y-capture --test command_palette_nav`
 Expected: FAIL — the chord does nothing, `open_modal_count_for_test` stays 0.
 
-- [ ] **Step 3: Rewrite `open` + add the key registration**
+- [ ] **Step 3: Rewrite `open`**
 
-In `src/command_palette.rs`, replace the `open` function wholesale:
+`register_command_palette_keys` already exists from T1. Replace only the `open` function body:
 
 ```rust
-/// Bind ⌘⇧P / ⌃⇧P and register the handler.
-///
-/// MUST be called by production (`run_app`) **and** by every test binary's
-/// `init_components` — the harness calls only `gpui_component::init`, so a
-/// prod-only binding is invisible to tests and a green suite can hide a dead
-/// production key path (the carve-out #7 lesson, and the same rule
-/// `overlay::register_modal_keys` carries).
-pub fn register_command_palette_keys(cx: &mut gpui::App) {
-    #[cfg(target_os = "macos")]
-    let keystroke = "cmd-shift-p";
-    #[cfg(not(target_os = "macos"))]
-    let keystroke = "ctrl-shift-p";
-    cx.bind_keys([gpui::KeyBinding::new(
-        keystroke,
-        crate::menu_macos::OpenCommandPalette,
-        None,
-    )]);
-    cx.on_action(|_a: &crate::menu_macos::OpenCommandPalette, cx: &mut gpui::App| open(cx));
-}
-
 /// Ask the focused workspace to mount the palette on its next frame.
 ///
 /// The handler stays GLOBAL rather than moving to a shell-root `.on_action`, as
