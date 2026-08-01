@@ -14,6 +14,21 @@
 //! - `recovery.review` — T5 (recovery panel)
 //! - `import.cancel` — T10 (import wizard cancel button)
 //! - `sample_data.retry_taxi` — T8 (empty-state hero re-fires fetch_remote)
+//!
+//! # Keybinding hints (B4)
+//!
+//! `ActionDescriptor::keybinding` is populated for the six ids `window.rs`
+//! actually binds (see `view_actions::hint`); the command palette renders it.
+//! It is descriptive — nothing dispatches from it.
+//!
+//! ⚠ `window.new` deliberately carries NO hint. The obvious guess is ⌘N, but
+//! nothing in `src/` binds it (`grep '"cmd-n"'` is empty): `NewWindow` has a
+//! global `on_action` handler and a File-menu item, but no `KeyBinding`, so
+//! macOS derives no key equivalent and ⌘N does nothing. That is a real gap —
+//! the same class as the dead menu items PRs #59/#60 fixed, one layer down —
+//! and it wants its own slice with a reachability assertion rather than a hint
+//! that lies about it. `sql.new_tab` / `sql.close_tab` are hint-less on purpose
+//! too (`window.rs` notes they avoid colliding with the editor's own keymap).
 
 use std::sync::Arc;
 

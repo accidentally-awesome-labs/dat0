@@ -18,6 +18,23 @@ use std::sync::Arc;
 use super::builtin::ids;
 use super::registry::{ActionDescriptor, ActionGroup, ActionId, ActionRegistry, RegisterError};
 
+/// A keystroke HINT for the command palette (B4).
+///
+/// Descriptive only — nothing dispatches from `ActionDescriptor::keybinding`.
+/// `window.rs` owns the real `bind_keys` calls; each caller below names its
+/// binding site so a reader can check the two against each other. `parse`
+/// failure degrades to no hint, which is why
+/// `keybinding_hints_parse_and_cover_exactly_the_bound_actions` asserts the
+/// exact set rather than just "some hints exist".
+fn hint(mac: &str, other: &str) -> Option<gpui::Keystroke> {
+    let s = if cfg!(target_os = "macos") {
+        mac
+    } else {
+        other
+    };
+    gpui::Keystroke::parse(s).ok()
+}
+
 /// Register `view.undo` and `view.redo` onto `reg`.
 ///
 /// Called from [`super::builtin::register_all`] at app boot. Returns
@@ -28,7 +45,8 @@ pub fn register(reg: &ActionRegistry) -> Result<(), RegisterError> {
         id: ActionId::from(ids::VIEW_UNDO),
         title: "Undo".into(),
         group: ActionGroup::Edit,
-        keybinding: None, // keybind wired in window.rs (bind_keys + on_action)
+        // Hint only; bound at window.rs `bind_keys` (Undo/Redo block).
+        keybinding: hint("cmd-z", "ctrl-z"),
         dispatch: Arc::new(|app| {
             dispatch_undo(app);
         }),
@@ -38,7 +56,8 @@ pub fn register(reg: &ActionRegistry) -> Result<(), RegisterError> {
         id: ActionId::from(ids::VIEW_REDO),
         title: "Redo".into(),
         group: ActionGroup::Edit,
-        keybinding: None, // keybind wired in window.rs (bind_keys + on_action)
+        // Hint only; bound at window.rs `bind_keys` (Undo/Redo block).
+        keybinding: hint("cmd-shift-z", "ctrl-shift-z"),
         dispatch: Arc::new(|app| {
             dispatch_redo(app);
         }),
@@ -48,7 +67,8 @@ pub fn register(reg: &ActionRegistry) -> Result<(), RegisterError> {
         id: ActionId::from(ids::VIEW_EXPORT),
         title: "Export…".into(),
         group: ActionGroup::File,
-        keybinding: None, // keybind wired in window.rs (bind_keys + on_action)
+        // Hint only; bound at window.rs `bind_keys` (Export block).
+        keybinding: hint("cmd-e", "ctrl-e"),
         dispatch: Arc::new(|app| {
             dispatch_export(app);
         }),
@@ -66,7 +86,8 @@ pub fn register(reg: &ActionRegistry) -> Result<(), RegisterError> {
         id: ActionId::from(ids::CONSOLE_TOGGLE),
         title: dat0_i18n::t("sql.console_toggle"),
         group: ActionGroup::Navigation,
-        keybinding: None, // keybind: Cmd+Shift+C (view-scoped, window.rs)
+        // Hint only; bound at window.rs `bind_keys` (SQL console block).
+        keybinding: hint("cmd-shift-c", "ctrl-shift-c"),
         dispatch: Arc::new(|_app| {
             // Needs `&mut Window` (lazily builds + shows the console). Reached via
             // the Cmd+Shift+C keybind / View-menu item (view-scoped handler).
@@ -107,7 +128,8 @@ pub fn register(reg: &ActionRegistry) -> Result<(), RegisterError> {
         id: ActionId::from(ids::SQL_RUN),
         title: dat0_i18n::t("sql.run"),
         group: ActionGroup::Edit,
-        keybinding: None, // keybind: Cmd+Enter (view-scoped, window.rs)
+        // Hint only; bound at window.rs `bind_keys` (SQL console block).
+        keybinding: hint("cmd-enter", "ctrl-enter"),
         dispatch: Arc::new(|app| {
             dispatch_sql_run(app);
         }),
@@ -117,7 +139,8 @@ pub fn register(reg: &ActionRegistry) -> Result<(), RegisterError> {
         id: ActionId::from(ids::SQL_CANCEL),
         title: dat0_i18n::t("sql.cancel"),
         group: ActionGroup::Edit,
-        keybinding: None, // keybind: Cmd+. (view-scoped, window.rs)
+        // Hint only; bound at window.rs `bind_keys` (SQL console block).
+        keybinding: hint("cmd-.", "ctrl-."),
         dispatch: Arc::new(|app| {
             dispatch_sql_cancel(app);
         }),
