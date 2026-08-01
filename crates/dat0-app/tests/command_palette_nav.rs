@@ -446,3 +446,128 @@ fn tab_stays_inside_the_palette(cx: &mut TestAppContext) {
         );
     }
 }
+
+// ---------------------------------------------------------------------------
+// Router suite (T4): the seven Window-blocked ids that shipped as breadcrumbs.
+// ---------------------------------------------------------------------------
+
+/// A tokio runtime kept alive for the whole test.
+///
+/// LOAD-BEARING for anything that routes `console.toggle`: `toggle_sql_console`
+/// calls `refresh_completion_snapshot`, which does a bare `tokio::spawn` and
+/// panics with "there is no reactor running" outside a runtime context. Same
+/// trap the AI-config nav slice hit.
+struct AsyncHarness {
+    #[allow(dead_code)]
+    rt: tokio::runtime::Runtime,
+}
+
+fn enter_async_harness(cx: &mut TestAppContext) -> AsyncHarness {
+    let rt = tokio::runtime::Builder::new_multi_thread()
+        .enable_all()
+        .build()
+        .expect("tokio runtime");
+    cx.executor().allow_parking();
+    AsyncHarness { rt }
+}
+
+/// The gate that keeps `WINDOW_ROUTED` honest. A listed id with no arm would be
+/// shown in the palette and silently do nothing — the exact defect this slice
+/// exists to avoid.
+#[gpui::test]
+#[serial]
+fn every_window_routed_id_is_actually_handled(cx: &mut TestAppContext) {
+    let harness = enter_async_harness(cx);
+    let _guard = harness.rt.enter();
+    let tmp = tempfile::tempdir().expect("tempdir");
+    set_config_dir(tmp.path());
+    init_components(cx);
+    let session = build_empty_session(tmp.path());
+    let (shell, vcx) = open_shell_window(cx, session);
+    vcx.run_until_parked();
+    install_shell_globals(&shell);
+
+    for id in dat0_app::command_palette::WINDOW_ROUTED {
+        let handled = shell.update_in(vcx, |ws, window, cx| {
+            ws.run_palette_action_for_test(&ActionId::from(*id), window, cx)
+        });
+        vcx.run_until_parked();
+        assert!(
+            handled,
+            "{id} is listed as window-routed but the router ignores it"
+        );
+        // Some arms open a modal; dismiss it so the next iteration starts clean
+        // and the single-modal invariant is never violated across the loop.
+        shell.update_in(vcx, |ws, window, cx| {
+            ws.dismiss_all_modals_for_test(window, cx)
+        });
+        vcx.run_until_parked();
+    }
+}
+
+#[gpui::test]
+#[serial]
+fn an_unrouted_id_falls_through_to_the_registry(cx: &mut TestAppContext) {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    set_config_dir(tmp.path());
+    init_components(cx);
+    let session = build_empty_session(tmp.path());
+    let (shell, vcx) = open_shell_window(cx, session);
+    vcx.run_until_parked();
+    install_shell_globals(&shell);
+
+    let handled = shell.update_in(vcx, |ws, window, cx| {
+        ws.run_palette_action_for_test(&ActionId::from("settings.open"), window, cx)
+    });
+    assert!(
+        !handled,
+        "a live App-path action must NOT be claimed by the router"
+    );
+}
+
+/// The payoff test: before B4 this id logged "handled view-scoped (needs
+/// Window); no-op from App path" and nothing happened.
+#[gpui::test]
+#[serial]
+fn running_console_toggle_from_the_palette_mounts_the_console(cx: &mut TestAppContext) {
+    let harness = enter_async_harness(cx);
+    let _guard = harness.rt.enter();
+    let tmp = tempfile::tempdir().expect("tempdir");
+    set_config_dir(tmp.path());
+    init_components(cx);
+    let session = build_empty_session(tmp.path());
+    let (shell, vcx) = open_shell_window(cx, session);
+    vcx.run_until_parked();
+    install_shell_globals(&shell);
+
+    assert!(
+        !shell.read_with(vcx, |s, _| s.sql_console_is_mounted_for_test()),
+        "precondition: no console yet"
+    );
+    shell.update_in(vcx, |ws, window, cx| {
+        ws.run_palette_action_for_test(&ActionId::from("console.toggle"), window, cx);
+    });
+    vcx.run_until_parked();
+    assert!(
+        shell.read_with(vcx, |s, _| s.sql_console_is_mounted_for_test()),
+        "the breadcrumb dispatch would have left this unmounted — that is the \
+         whole point of B4's router"
+    );
+}
+
+/// Both lists name real registry ids. A typo'd or stale entry would otherwise
+/// sit there doing nothing, which is what the lists exist to prevent.
+#[test]
+fn listed_ids_are_all_really_registered() {
+    let reg = ActionRegistry::new();
+    dat0_app::actions::builtin::register_all(&reg).expect("register_all");
+    for id in dat0_app::command_palette::HIDDEN
+        .iter()
+        .chain(dat0_app::command_palette::WINDOW_ROUTED.iter())
+    {
+        assert!(
+            reg.contains(id),
+            "{id} is listed but not registered — stale id"
+        );
+    }
+}

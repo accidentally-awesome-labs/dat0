@@ -5132,16 +5132,63 @@ impl WorkspaceShell {
     }
 
     /// Run a `WINDOW_ROUTED` palette command with the `&mut Window` the registry
-    /// closure cannot have, returning whether this id was ours. **T4 fills in the
-    /// arms** — until then every id falls through to the registry path, which is
-    /// exactly today's behaviour, so nothing regresses in between.
+    /// closure cannot have, returning whether this id was ours.
+    ///
+    /// These seven descriptors have shipped since P5a/P5b as breadcrumbs — their
+    /// dispatch bodies literally say *"handled view-scoped (needs Window); no-op
+    /// from App path"* — because `DispatchFn` is `Fn(&mut App)` and the work
+    /// needs a `Window`. The palette is a modal INSIDE the window, so it has
+    /// one, and every arm below calls the same shell method the corresponding
+    /// console event or menu item already calls. The palette is a third entry
+    /// point, not a second implementation.
+    ///
+    /// `false` means "not mine", and the caller falls back to the registry
+    /// closure — an unknown id must never be silently swallowed.
+    ///
+    /// The ids here are exactly [`crate::command_palette::WINDOW_ROUTED`];
+    /// `every_window_routed_id_is_actually_handled` fails if the two drift.
+    ///
+    /// The console-dependent arms no-op when no console is mounted, mirroring
+    /// the existing `SqlConsoleEvent` arms. They still return `true`: the id IS
+    /// routed, there was simply nothing to act on.
     pub(crate) fn run_palette_action(
         &mut self,
-        _id: &crate::actions::ActionId,
-        _window: &mut Window,
-        _cx: &mut Context<Self>,
+        id: &crate::actions::ActionId,
+        window: &mut Window,
+        cx: &mut Context<Self>,
     ) -> bool {
-        false
+        use crate::actions::builtin::ids;
+        match id.as_str() {
+            ids::CONSOLE_TOGGLE => self.toggle_sql_console(window, cx),
+            ids::SQL_NEW_TAB => {
+                if let Some(c) = self.sql_console.clone() {
+                    c.update(cx, |c, cx| c.new_tab(window, cx));
+                }
+            }
+            ids::SQL_HISTORY => {
+                if let Some(c) = self.sql_console.clone() {
+                    let entries = self.session.lock().query_history().to_vec();
+                    c.update(cx, |c, cx| c.show_history(entries, cx));
+                }
+            }
+            ids::SQL_SAVE_QUERY => {
+                if let Some(c) = self.sql_console.clone() {
+                    let sql = c.read(cx).active_sql_and_cursor(cx).0;
+                    self.open_name_prompt(sql, window, cx);
+                }
+            }
+            ids::SQL_LOAD_QUERY => self.show_saved_picker(window, cx),
+            ids::SQL_SAVE_AS_TABLE => self.open_name_prompt_with(
+                "Save as table…",
+                "",
+                NamePromptIntent::SaveConsoleAsTable,
+                window,
+                cx,
+            ),
+            ids::VIEW_SAVE_AS_TABLE => self.open_save_view_as_table(window, cx),
+            _ => return false,
+        }
+        true
     }
 
     /// Route a `SavedQueryPickerEvent`. The picker only READS the session;
@@ -7448,6 +7495,34 @@ impl WorkspaceShell {
         &self,
     ) -> Option<gpui::Entity<crate::view::command_palette::CommandPalette>> {
         self.command_palette.clone()
+    }
+
+    /// Unmount every modal and restore focus, so a test that walks several
+    /// routed commands in a loop never violates the single-modal invariant
+    /// between iterations. Mirrors what each dismiss arm does, minus the
+    /// per-modal event routing.
+    pub fn dismiss_all_modals_for_test(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.name_prompt = None;
+        self.name_prompt_sub = None;
+        self.md_token_prompt = None;
+        self.md_token_prompt_sub = None;
+        self.ai_entry_prompt = None;
+        self.ai_entry_prompt_sub = None;
+        self.export_dialog = None;
+        self.export_dialog_sub = None;
+        self.saved_picker = None;
+        self.saved_picker_sub = None;
+        self.command_palette = None;
+        self.command_palette_sub = None;
+        self.restore_modal_focus(window);
+        debug_assert_eq!(self.open_modal_count(cx), 0, "a modal slot was missed");
+        cx.notify();
+    }
+
+    /// Whether the SQL console is mounted — proves a routed `console.toggle`
+    /// did real work rather than logging a breadcrumb.
+    pub fn sql_console_is_mounted_for_test(&self) -> bool {
+        self.sql_console.is_some()
     }
 
     /// Run a palette command through the production router (B4 T4).
