@@ -1317,33 +1317,16 @@ pub fn register_menu_action_handlers(cx: &mut App) {
         spawn_window(cx, state_root, registry);
     });
 
-    // Wire Cmd-Shift-P (macOS) / Ctrl-Shift-P (Linux) → OpenCommandPalette
-    // action (P3b T6). `bind_keys` registers the keystroke against the
-    // global keymap; `on_action` registers the handler. Both fire the
-    // same `OpenCommandPalette` action so the menu-item click and the
-    // keystroke path converge on `command_palette::open`.
+    // Cmd-Shift-P / Ctrl-Shift-P → OpenCommandPalette, plus the palette-scoped
+    // arrows (B4). Moved into `command_palette::register_command_palette_keys`
+    // so the TEST harness can call the identical function — the bindings used to
+    // live only here, which meant no test binary had them and a keystroke test
+    // would have passed vacuously (measured by the B4 T0 gate).
     //
-    // The Linux menu module doesn't exist yet (the comment above flags
-    // "Linux Cmd-N is P3b"), but `OpenCommandPalette` is declared in
-    // `menu_macos.rs` unconditionally so we can bind it on Linux too —
-    // the handler still resolves and the keystroke fires even without a
-    // visible menu item.
-    {
-        #[cfg(target_os = "macos")]
-        let keystroke = "cmd-shift-p";
-        #[cfg(not(target_os = "macos"))]
-        let keystroke = "ctrl-shift-p";
-        cx.bind_keys([gpui::KeyBinding::new(
-            keystroke,
-            crate::menu_macos::OpenCommandPalette,
-            None,
-        )]);
-        cx.on_action(
-            |_action: &crate::menu_macos::OpenCommandPalette, cx: &mut App| {
-                crate::command_palette::open(cx);
-            },
-        );
-    }
+    // `OpenCommandPalette` is declared unconditionally in `menu_macos.rs`, so
+    // this binds on Linux too even though the Linux menu module does not exist:
+    // the handler resolves and the keystroke fires without a visible menu item.
+    crate::command_palette::register_command_palette_keys(cx);
 
     // Wire Cmd-Z / Ctrl-Z → Undo, Cmd-Shift-Z / Ctrl-Shift-Z → Redo (P4a T7).
     // `Undo` and `Redo` are gpui action stubs declared in `menu_macos.rs`
@@ -2344,6 +2327,17 @@ pub struct WorkspaceShell {
     /// callback stays registered — a dropped `Subscription` deregisters
     /// silently (the P4a T10b trap). Cleared alongside `saved_picker`.
     saved_picker_sub: Option<Subscription>,
+    /// The command palette modal (B4). `Some` while it is open.
+    command_palette: Option<Entity<crate::view::command_palette::CommandPalette>>,
+    /// Subscription to the palette's `CommandPaletteEvent`. Stored for the same
+    /// reason as `saved_picker_sub`; cleared alongside `command_palette`.
+    command_palette_sub: Option<Subscription>,
+    /// Set by `command_palette::open`, which reaches this shell from a bare
+    /// `&mut App` (the global ⌘⇧P handler) and so has no `Window` —
+    /// `InputState::new` needs one. Drained at the TOP of `render`, before the
+    /// [`pending_modal_focus`](Self::pending_modal_focus) block, so the palette
+    /// is mounted in time for that block to focus its first stop this frame.
+    pending_palette_open: bool,
     /// Runtime connection state (MotherDuck status + sqlite attachments) for this
     /// window (P5c T6/T10). The persisted projection lives in
     /// `SessionState.attachments` (T7); this is the live UI-facing copy the
@@ -2494,6 +2488,9 @@ impl WorkspaceShell {
             pending_modal_restore: false,
             saved_picker: None,
             saved_picker_sub: None,
+            command_palette: None,
+            command_palette_sub: None,
+            pending_palette_open: false,
             connections: Default::default(),
             connections_panel_visible: false,
             catalog_panel_visible: ui.catalog_panel_visible,
@@ -4959,6 +4956,7 @@ impl WorkspaceShell {
         push_modal(&mut v, "ai-entry-prompt-modal", &self.ai_entry_prompt, cx);
         push_modal(&mut v, "export-modal", &self.export_dialog, cx);
         push_modal(&mut v, "saved-picker-modal", &self.saved_picker, cx);
+        push_modal(&mut v, "command-palette-modal", &self.command_palette, cx);
         v
     }
 
@@ -5043,6 +5041,107 @@ impl WorkspaceShell {
             self.open_modal_count(cx)
         );
         cx.notify();
+    }
+
+    /// Ask for the command palette on the next frame (B4).
+    ///
+    /// Windowless by construction: the only caller is the global ⌘⇧P handler in
+    /// `command_palette::open`, which reaches this shell through
+    /// `focused_workspace_weak` with nothing but a `&mut App`.
+    pub(crate) fn request_command_palette(&mut self, cx: &mut Context<Self>) {
+        self.pending_palette_open = true;
+        cx.notify();
+    }
+
+    /// Mount the palette. Called from `render`, which is where the `&mut Window`
+    /// that `InputState::new` needs comes from.
+    fn mount_command_palette(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        use crate::view::command_palette::{CommandPalette, CommandPaletteEvent};
+        let Some(reg) = crate::window_registry::action_registry().cloned() else {
+            tracing::warn!("command palette: no ActionRegistry installed; not opening");
+            return;
+        };
+        let palette = cx.new(|cx| CommandPalette::new(reg, window, cx));
+        // `subscribe_in` (not `subscribe`) so the dismiss path has a `&mut
+        // Window` for the focus restore and for the routed actions.
+        let sub = cx.subscribe_in(
+            &palette,
+            window,
+            |ws: &mut Self, _p, ev: &CommandPaletteEvent, window, cx| {
+                ws.on_command_palette_event(ev.clone(), window, cx);
+            },
+        );
+        self.command_palette_sub = Some(sub);
+        self.command_palette = Some(palette);
+        debug_assert!(
+            self.open_modal_count(cx) <= 1,
+            "two modals mounted at once ({}) — B1 assumes a single modal; see \
+             docs/plans/2026-07-28-dat0-ui-redesign-b1-modal-host-design.md §2.7",
+            self.open_modal_count(cx)
+        );
+    }
+
+    /// Route a `CommandPaletteEvent` (B4).
+    ///
+    /// ⚠ ORDER IS LOAD-BEARING: dismiss BEFORE running, for two independent
+    /// reasons. `sql.save_query` and `sql.save_as_table` open a `NamePrompt`, and
+    /// with the palette still mounted that is two modals — which the
+    /// `debug_assert!` above rejects and which would leave the second one
+    /// untrapped in release. And `InputState::enter` propagates on a single-line
+    /// field, so the Enter that got us here also drops a `"\n"` into the query
+    /// buffer; unmounting first means that buffer is never rendered again
+    /// (gpui's text system panics on a newline in single-line text).
+    fn on_command_palette_event(
+        &mut self,
+        ev: crate::view::command_palette::CommandPaletteEvent,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        use crate::view::command_palette::CommandPaletteEvent as E;
+        let run = match ev {
+            E::Run(id) => Some(id),
+            E::Cancel => None,
+        };
+        self.command_palette = None;
+        self.command_palette_sub = None;
+        self.restore_modal_focus(window);
+        let Some(id) = run else {
+            cx.notify();
+            return;
+        };
+        if !self.run_palette_action(&id, window, cx) {
+            // Not window-routed: the registry closure is the real handler.
+            //
+            // ⚠ It MUST be deferred. We are inside this shell's own update, and
+            // most registry closures reach the focused workspace right back
+            // (`dispatch_undo`, `dispatch_export`, `dispatch_visualize`, …) —
+            // calling one synchronously panics with "cannot read WorkspaceShell
+            // while it is already being updated". `App::defer` runs it once this
+            // update has finished, outside any entity borrow. Measured, not
+            // theorised: `enter_runs_a_command_through_the_real_keymap` panicked
+            // exactly this way before the defer went in.
+            match crate::window_registry::action_registry().and_then(|r| r.get(&id)) {
+                Some(desc) => {
+                    let dispatch = desc.dispatch.clone();
+                    cx.defer(move |app| dispatch(app));
+                }
+                None => tracing::warn!("command palette: no descriptor for {id}"),
+            }
+        }
+        cx.notify();
+    }
+
+    /// Run a `WINDOW_ROUTED` palette command with the `&mut Window` the registry
+    /// closure cannot have, returning whether this id was ours. **T4 fills in the
+    /// arms** — until then every id falls through to the registry path, which is
+    /// exactly today's behaviour, so nothing regresses in between.
+    pub(crate) fn run_palette_action(
+        &mut self,
+        _id: &crate::actions::ActionId,
+        _window: &mut Window,
+        _cx: &mut Context<Self>,
+    ) -> bool {
+        false
     }
 
     /// Route a `SavedQueryPickerEvent`. The picker only READS the session;
@@ -6335,6 +6434,20 @@ pub(crate) fn bounding_rect(cells: &[(usize, usize)]) -> Option<(usize, usize, u
 
 impl Render for WorkspaceShell {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        // B4: build the palette here, where a `Window` exists. Deliberately
+        // BEFORE the `pending_modal_focus` block below — that block then finds
+        // the palette in `mounted_modals()` and focuses its first stop (the
+        // query field) in this same frame, rather than a frame later.
+        if self.pending_palette_open {
+            // Cleared unconditionally, for the same reason `pending_modal_focus`
+            // is: a stale flag surviving into a later frame would re-open the
+            // palette over whatever modal is up then.
+            self.pending_palette_open = false;
+            if self.command_palette.is_none() {
+                self.mount_command_palette(window, cx);
+                self.pending_modal_focus = true;
+            }
+        }
         // B2: drain a windowless modal open (see `pending_modal_focus`). The
         // handle lookup is sequenced into a local so its immutable borrow ends
         // before the field writes.
@@ -7327,6 +7440,24 @@ impl WorkspaceShell {
     /// How many modals are mounted — the B1 single-modal invariant.
     pub fn open_modal_count_for_test(&self, cx: &App) -> usize {
         self.open_modal_count(cx)
+    }
+
+    /// The live command palette (B4), so a test can read its active row or
+    /// assert it is mounted/dismissed.
+    pub fn command_palette_for_test(
+        &self,
+    ) -> Option<gpui::Entity<crate::view::command_palette::CommandPalette>> {
+        self.command_palette.clone()
+    }
+
+    /// Run a palette command through the production router (B4 T4).
+    pub fn run_palette_action_for_test(
+        &mut self,
+        id: &crate::actions::ActionId,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> bool {
+        self.run_palette_action(id, window, cx)
     }
 
     /// The live prompt entity — lets a test subscribe to its `NamePromptEvent`

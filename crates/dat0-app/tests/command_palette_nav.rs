@@ -23,11 +23,17 @@
 mod support;
 
 use std::cell::RefCell;
+use std::path::Path;
 use std::rc::Rc;
 use std::sync::Arc;
 
 use gpui::{AppContext as _, Entity, FocusHandle, TestAppContext, VisualTestContext};
 use gpui_component::Root;
+use parking_lot::Mutex;
+use serial_test::serial;
+
+use dat0_app::session::Session;
+use dat0_app::window::WorkspaceShell;
 
 use dat0_app::actions::registry::{ActionDescriptor, ActionGroup, ActionId, ActionRegistry};
 use dat0_app::view::command_palette::{CommandPalette, CommandPaletteEvent};
@@ -42,6 +48,18 @@ fn init_components(cx: &mut TestAppContext) {
     cx.update(gpui_component::init);
     cx.update(dat0_app::overlay::register_modal_keys);
     cx.update(dat0_app::command_palette::register_command_palette_keys);
+}
+
+/// Install the two process-wide singletons production sets up in `spawn_window`
+/// and `main`: the focused-workspace weak handle (how `command_palette::open`
+/// finds this shell from a bare `&mut App`) and the `ActionRegistry` (what the
+/// palette lists). Both are `OnceCell`-backed, so this is idempotent across the
+/// serial tests in this binary.
+fn install_shell_globals(shell: &Entity<WorkspaceShell>) {
+    dat0_app::window_registry::install_focused_workspace(shell.downgrade().into());
+    let reg = ActionRegistry::new();
+    dat0_app::actions::builtin::register_all(&reg).expect("register_all");
+    dat0_app::window_registry::install_action_registry(reg);
 }
 
 /// Three descriptors with known titles and ids, so ordering assertions do not
@@ -219,4 +237,212 @@ fn rows_render_their_titles_as_a11y_content(cx: &mut TestAppContext) {
         !snap.has_label_any("Delta"),
         "negative control: a title that was never registered must be absent"
     );
+}
+
+// ---------------------------------------------------------------------------
+// Shell-mounted suite (T3): the production shape — real ⌘⇧P, real modal host,
+// real Tab trap, real focus restore.
+// ---------------------------------------------------------------------------
+
+const BUDGET: u64 = 128 * 1024 * 1024;
+
+/// Point `config_dir()` at `dir` for the rest of this (serial) test.
+fn set_config_dir(dir: &Path) {
+    // SAFETY: tests are `#[serial]`, so no other thread races this process-global
+    // write; each test sets it before doing anything that reads `config_dir()`.
+    unsafe { std::env::set_var("DAT0_CONFIG_DIR", dir) };
+}
+
+/// Build a real, EMPTY in-memory session inside a dedicated multi-thread tokio
+/// runtime (`Session::new` is async + uses `spawn_blocking`).
+fn build_empty_session(state_root: &Path) -> Arc<Mutex<Session>> {
+    let rt = tokio::runtime::Builder::new_multi_thread()
+        .enable_all()
+        .build()
+        .expect("tokio runtime");
+    let sess = rt
+        .block_on(Session::new(state_root, BUDGET))
+        .expect("Session::new");
+    Arc::new(Mutex::new(sess))
+}
+
+/// Open a real ACTIVATED window whose root is a `gpui_component::Root` wrapping
+/// a fresh `WorkspaceShell` (mirrors production `open_window_view`).
+fn open_shell_window(
+    cx: &mut TestAppContext,
+    session: Arc<Mutex<Session>>,
+) -> (Entity<WorkspaceShell>, &mut VisualTestContext) {
+    let slot: Rc<RefCell<Option<Entity<WorkspaceShell>>>> = Rc::new(RefCell::new(None));
+    let slot2 = slot.clone();
+    let (_root, vcx) = cx.add_window_view(move |window, cx| {
+        window.activate_window();
+        let shell = cx.new(|c| WorkspaceShell::new(session, c));
+        *slot2.borrow_mut() = Some(shell.clone());
+        Root::new(shell, window, cx)
+    });
+    let shell = slot.borrow().clone().expect("shell captured");
+    (shell, vcx)
+}
+
+/// Focus the shell the way a real keyboard user does: click a neutral spot in
+/// the enriched band's top row, then PROVE the click landed on the shell's own
+/// focus handle and not a wired hero button (copied from `modal_b2_nav.rs`).
+///
+/// LOAD-BEARING for any Tab-driven test: with NOTHING focused the dispatch path
+/// is the window root alone, so not even `Root`'s own "tab" binding matches and
+/// Tab is completely inert.
+fn focus_shell_neutrally(cx: &mut VisualTestContext) {
+    let tt_bounds = cx
+        .debug_bounds("hero-take-tour")
+        .expect("hero-take-tour must be painted");
+    let focus_pt = gpui::point(tt_bounds.origin.x - gpui::px(60.), tt_bounds.center().y);
+    cx.simulate_click(focus_pt, gpui::Modifiers::none());
+    cx.run_until_parked();
+    assert!(
+        cx.update(|window, app| window.focused(app).is_some()),
+        "clicking into the workspace must focus something (precondition for Tab)"
+    );
+}
+
+/// Press the real chord. `command_palette::open` resolves the focused workspace
+/// through `window_registry`, so the shell must be installed there first.
+fn press_palette_chord(vcx: &mut VisualTestContext) {
+    #[cfg(target_os = "macos")]
+    vcx.simulate_keystrokes("cmd-shift-p");
+    #[cfg(not(target_os = "macos"))]
+    vcx.simulate_keystrokes("ctrl-shift-p");
+    vcx.run_until_parked();
+}
+
+#[gpui::test]
+#[serial]
+fn cmd_shift_p_opens_the_palette_from_the_shell(cx: &mut TestAppContext) {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    set_config_dir(tmp.path());
+    init_components(cx);
+    let session = build_empty_session(tmp.path());
+    let (shell, vcx) = open_shell_window(cx, session);
+    vcx.run_until_parked();
+    install_shell_globals(&shell);
+    focus_shell_neutrally(vcx);
+
+    assert_eq!(
+        shell.read_with(vcx, |s, cx| s.open_modal_count_for_test(cx)),
+        0
+    );
+    press_palette_chord(vcx);
+    assert_eq!(
+        shell.read_with(vcx, |s, cx| s.open_modal_count_for_test(cx)),
+        1,
+        "the palette is the mounted modal"
+    );
+    assert!(shell.read_with(vcx, |s, _| s.command_palette_for_test().is_some()));
+
+    // The card renders, and it is the palette's.
+    let snap = A11ySnapshot::capture(vcx);
+    assert!(snap.query_by_role(dat0_app::a11y::AccessRole::Dialog, "Command Palette"));
+}
+
+#[gpui::test]
+#[serial]
+fn escape_dismisses_the_palette_and_restores_focus(cx: &mut TestAppContext) {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    set_config_dir(tmp.path());
+    init_components(cx);
+    let session = build_empty_session(tmp.path());
+    let (shell, vcx) = open_shell_window(cx, session);
+    vcx.run_until_parked();
+    install_shell_globals(&shell);
+    focus_shell_neutrally(vcx);
+
+    let before = vcx.update(|window, app| window.focused(app));
+    press_palette_chord(vcx);
+    assert_eq!(
+        shell.read_with(vcx, |s, cx| s.open_modal_count_for_test(cx)),
+        1
+    );
+
+    vcx.simulate_keystrokes("escape");
+    vcx.run_until_parked();
+    assert_eq!(
+        shell.read_with(vcx, |s, cx| s.open_modal_count_for_test(cx)),
+        0,
+        "Escape must dismiss"
+    );
+    assert_eq!(
+        vcx.update(|window, app| window.focused(app)),
+        before,
+        "focus must return to where it was before the palette opened"
+    );
+}
+
+/// The production Enter path, driven by a REAL keystroke — the coverage the
+/// standalone `enter_emits_run_for_the_active_row` deliberately trades away.
+/// Here the shell dismisses on Run, so the stray newline `InputState::enter`
+/// leaves in the buffer dies with the unmounted modal instead of panicking the
+/// next frame.
+#[gpui::test]
+#[serial]
+fn enter_runs_a_command_through_the_real_keymap(cx: &mut TestAppContext) {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    set_config_dir(tmp.path());
+    init_components(cx);
+    let session = build_empty_session(tmp.path());
+    let (shell, vcx) = open_shell_window(cx, session);
+    vcx.run_until_parked();
+    install_shell_globals(&shell);
+    focus_shell_neutrally(vcx);
+
+    press_palette_chord(vcx);
+    assert_eq!(
+        shell.read_with(vcx, |s, cx| s.open_modal_count_for_test(cx)),
+        1
+    );
+
+    vcx.simulate_keystrokes("enter");
+    vcx.run_until_parked();
+    assert_eq!(
+        shell.read_with(vcx, |s, cx| s.open_modal_count_for_test(cx)),
+        0,
+        "Enter must run the active row and dismiss — if this hangs at 1, the \
+         stray newline is about to panic the text system on the next frame"
+    );
+}
+
+/// Tab must cycle the palette's three stops and never escape into the obscured
+/// shell behind it (B1's WCAG 2.4.3 trap, inherited for free by being in
+/// `mounted_modals`).
+#[gpui::test]
+#[serial]
+fn tab_stays_inside_the_palette(cx: &mut TestAppContext) {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    set_config_dir(tmp.path());
+    init_components(cx);
+    let session = build_empty_session(tmp.path());
+    let (shell, vcx) = open_shell_window(cx, session);
+    vcx.run_until_parked();
+    install_shell_globals(&shell);
+    focus_shell_neutrally(vcx);
+
+    press_palette_chord(vcx);
+    let palette = shell
+        .read_with(vcx, |s, _| s.command_palette_for_test())
+        .expect("palette mounted");
+    let stops: Vec<gpui::FocusHandle> = palette.read_with(vcx, |p, cx| {
+        use dat0_app::overlay::ModalContent as _;
+        p.modal_focus_order(cx)
+    });
+    assert_eq!(stops.len(), 3, "input, list, close");
+
+    // Four Tabs from the first stop return to it. A Tab that leaked into the
+    // shell would land on a handle that is not in this list.
+    for _ in 0..4 {
+        vcx.simulate_keystrokes("tab");
+        vcx.run_until_parked();
+        let focused = vcx.update(|window, app| window.focused(app));
+        assert!(
+            focused.is_some_and(|f| stops.contains(&f)),
+            "Tab escaped the palette"
+        );
+    }
 }

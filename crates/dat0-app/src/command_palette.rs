@@ -156,9 +156,29 @@ pub fn visible_items(reg: &ActionRegistry, query: &str) -> Vec<ActionDescriptor>
 
 /// Ask the focused workspace to mount the palette on its next frame.
 ///
-/// Rewritten in B4 T3 — until then this is the P3b breadcrumb.
-pub fn open(_app: &mut gpui::App) {
-    tracing::info!("command_palette::open invoked — mount lands in B4 T3");
+/// The ⌘⇧P handler stays GLOBAL rather than moving onto the shell root, as the
+/// UI-redesign master plan suggested. B1 measured that with NOTHING focused the
+/// dispatch path is the window root alone — eight Tab hops from a fresh window
+/// moved focus not at all — so a shell-root handler would be silently dead on
+/// exactly the window state where ⌘⇧P is most likely to be a user's first
+/// keystroke.
+///
+/// This path has no `Window`, and `InputState::new` needs one, so it sets a flag
+/// that `WorkspaceShell::render` drains — B2's export-dialog idiom, where focus
+/// set from inside `render` is proven to stick.
+pub fn open(app: &mut gpui::App) {
+    let Some(weak) = crate::window_registry::focused_workspace_weak() else {
+        tracing::warn!("command_palette::open — no focused workspace; skipping");
+        return;
+    };
+    let Some(shell) = weak
+        .upgrade()
+        .and_then(|e| e.downcast::<crate::window::WorkspaceShell>().ok())
+    else {
+        tracing::warn!("command_palette::open — focused entity is not a WorkspaceShell");
+        return;
+    };
+    shell.update(app, |ws, cx| ws.request_command_palette(cx));
 }
 
 #[cfg(test)]
