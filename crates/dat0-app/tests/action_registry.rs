@@ -160,3 +160,42 @@ fn edit_actions_are_registered() {
         assert!(reg.contains(id), "missing {id}");
     }
 }
+
+/// Every hint must parse, and the SET must be exactly the ids `window.rs`
+/// binds. A typo would silently degrade to no hint, which looks identical to
+/// "this command has no shortcut" — hence asserting the exact set rather than
+/// "some hints exist".
+///
+/// `window.new` is absent on purpose: nothing in `src/` binds cmd-n, so a ⌘N
+/// hint would be a lie. See `actions/builtin.rs`'s module docs.
+#[test]
+fn keybinding_hints_parse_and_cover_exactly_the_bound_actions() {
+    let reg = dat0_app::actions::registry::ActionRegistry::new();
+    dat0_app::actions::builtin::register_all(&reg).expect("register_all");
+
+    let with_hints: std::collections::BTreeMap<String, String> = reg
+        .iter()
+        .filter_map(|d| {
+            d.keybinding
+                .map(|k| (d.id.as_str().to_string(), k.to_string()))
+        })
+        .collect();
+
+    assert_eq!(
+        with_hints.keys().map(|s| s.as_str()).collect::<Vec<_>>(),
+        vec![
+            "console.toggle",
+            "sql.cancel",
+            "sql.run",
+            "view.export",
+            "view.redo",
+            "view.undo",
+        ],
+        "hint set drifted from the actions window.rs actually binds"
+    );
+    // Every hint rendered non-empty — `Keystroke::parse` failure would have
+    // produced `None` above, but an empty Display would be just as useless.
+    for (id, rendered) in &with_hints {
+        assert!(!rendered.is_empty(), "{id} rendered an empty hint");
+    }
+}

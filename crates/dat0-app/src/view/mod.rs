@@ -1,6 +1,7 @@
 //! Per-tab view state: active Transformation stack + undo cursor + active view name.
 
 pub mod column_view;
+pub mod command_palette;
 pub mod crash_report;
 pub mod distinct_values;
 pub mod export_dialog;
