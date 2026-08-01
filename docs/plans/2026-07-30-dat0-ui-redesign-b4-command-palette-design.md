@@ -409,3 +409,56 @@ Throwaway probe `tests/palette_t0_probe.rs`, deleted after measurement. All gate
 question "does the interception even run when focus is on the list?" — and the honest answer was no.
 The original design would have shipped arrows that die on the palette's second stop, and every test
 written against the first stop would have passed.
+
+---
+
+## 10. As-built
+
+Implemented inline across T0-T6, one commit per task. Six deviations, all measured rather than
+argued:
+
+1. **§4 arrows** — dat0 actions under `"CommandPalette"`, not `capture_action`. See §9 / G2c.
+2. **`uniform_list` needs its height on the LIST**, not only on its wrapper. It derives its visible
+   range from its own bounds; without one it renders exactly one row, which looks identical to "the
+   a11y capture is broken". (Unrelated but worth pairing: a plain text child pushes no capture node,
+   so the group tag is correctly absent from the tree.)
+3. **⚠ The registry fallback must be DEFERRED.** `on_command_palette_event` runs inside the shell's
+   own update, and most registry closures (`dispatch_undo`, `dispatch_export`, `dispatch_visualize`,
+   …) resolve the focused workspace and touch it again — so calling one synchronously panics
+   `cannot read WorkspaceShell while it is already being updated`. Roughly two-thirds of palette
+   commands would have crashed on Enter. Fixed with `App::defer`, which runs the closure after the
+   update completes. **Found by the shell-mounted Enter test; the standalone one could not have
+   caught it, because with no shell subscribed nothing re-entered.**
+4. **⚠ ⌘⇧P had to become inert while another modal is open** — it is a GLOBAL binding, so it fires
+   over a NamePrompt or the export dialog, and mounting on top made two modals: `render` traps only
+   `mounted_modals().first()`, so the second would be untrapped in release, and the `debug_assert!`
+   panics in debug. Guarded at the render drain. **Found by the T6 cross-cutting pass, not by any
+   per-task test** — the Nth time that pass has caught what per-task review structurally cannot
+   (A3's two muted greys, B2's "1 cells selected", B3's singular nouns).
+5. **Enter cannot be driven by keystroke against a STANDALONE palette.** `InputState::enter` calls
+   `cx.propagate()` on a single-line field (`state.rs:1166`), so the keystroke continues into text
+   insertion and leaves a `"\n"` in the buffer; the next render panics in gpui's text system.
+   `NamePrompt` survives only because its modal unmounts first. The standalone test therefore drives
+   Enter by action with its reason documented, and the shell-mounted test drives a real ⏎ through
+   the production path. This also means **dismiss-before-dispatch is load-bearing for two
+   independent reasons**, not just the single-modal assert.
+6. **Console-touching tests need the tokio harness** — `toggle_sql_console` →
+   `refresh_completion_snapshot` does a bare `tokio::spawn` and panics "there is no reactor running"
+   outside a runtime. Same trap the AI-config nav slice hit.
+
+**Test-design rule learned in T1, worth reusing:** when asserting a sort with a tie-break, choose
+data where the tie-break *contradicts* the primary key. The first ordering test passed with the
+word-boundary tier deliberately collapsed into the prefix tier, because its titles happened to sort
+alphabetically in the same order they scored — it was testing the tie-break and calling it a test of
+the score.
+
+**Final local gate:** `cargo fmt --all --check` clean; `cargo clippy --workspace --all-targets -D
+warnings` exit 0; **112 test binaries ok / 0 failed across all three feature combos** (plain,
+`a11y-capture`, `a11y-capture,gallery`); `style_lint` 4/4 with the ratchet unchanged at
+`[("window.rs", 1)]`; `a11y_spike`'s exact node count still 8 (the palette correctly paints nothing
+on the empty hero); `grid/` and the session schema untouched; `cargo build -p dat0-app --bin dat0`
+succeeds.
+
+**Not fixed here, recorded instead:** the ⌘N gap (§5.4), and `tests/action_registry.rs`'s
+`builtins_register_thirty_four` which has asserted 35 for some time — a stale name, left alone
+rather than renamed mid-slice.

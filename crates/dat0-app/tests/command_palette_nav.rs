@@ -571,3 +571,40 @@ fn listed_ids_are_all_really_registered() {
         );
     }
 }
+
+/// ⌘⇧P is a GLOBAL binding, so it fires even while another modal owns the
+/// screen. Mounting the palette on top would make two modals — the second one
+/// untrapped in release, and a `debug_assert!` panic in debug.
+#[gpui::test]
+#[serial]
+fn the_chord_is_inert_while_another_modal_is_open(cx: &mut TestAppContext) {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    set_config_dir(tmp.path());
+    init_components(cx);
+    let session = build_empty_session(tmp.path());
+    let (shell, vcx) = open_shell_window(cx, session);
+    vcx.run_until_parked();
+    install_shell_globals(&shell);
+    focus_shell_neutrally(vcx);
+
+    // Open a NamePrompt first (the shell's own test opener).
+    shell.update_in(vcx, |ws, window, cx| {
+        ws.open_name_prompt_for_test(window, cx);
+    });
+    vcx.run_until_parked();
+    assert_eq!(
+        shell.read_with(vcx, |s, cx| s.open_modal_count_for_test(cx)),
+        1
+    );
+
+    press_palette_chord(vcx);
+    assert_eq!(
+        shell.read_with(vcx, |s, cx| s.open_modal_count_for_test(cx)),
+        1,
+        "the palette must not stack on top of an open modal"
+    );
+    assert!(
+        shell.read_with(vcx, |s, _| s.command_palette_for_test().is_none()),
+        "the palette specifically must be the one that did not mount"
+    );
+}

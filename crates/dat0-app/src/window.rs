@@ -6490,9 +6490,18 @@ impl Render for WorkspaceShell {
             // is: a stale flag surviving into a later frame would re-open the
             // palette over whatever modal is up then.
             self.pending_palette_open = false;
-            if self.command_palette.is_none() {
+            // ⚠ ⌘⇧P is a GLOBAL binding, so it fires even while another modal
+            // owns the screen (a NamePrompt, the export dialog, …). Mounting on
+            // top would make two modals: `render` traps only `mounted_modals()
+            // .first()`, so the second one would be UNTRAPPED in release, and
+            // the `debug_assert!` in `mount_command_palette` panics in debug.
+            // Measured — `the_chord_is_inert_while_another_modal_is_open`
+            // panicked before this guard existed.
+            if self.open_modal_count(cx) == 0 {
                 self.mount_command_palette(window, cx);
                 self.pending_modal_focus = true;
+            } else {
+                tracing::debug!("command palette: another modal is open; ignoring ⌘⇧P");
             }
         }
         // B2: drain a windowless modal open (see `pending_modal_focus`). The
