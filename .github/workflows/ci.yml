@@ -114,13 +114,33 @@ jobs:
       # measure the failing thing ON the failing platform rather than to reason
       # across from the other one.
       #
-      # macOS headroom has fallen one way for four slices (A5 -0.5, B1 -0.3,
-      # B5 -0.5 Gi) and B5's own main run finished at DISK[after-live-ai] 4.1 Gi
+      # macOS headroom had fallen one way for four slices (A5 -0.5, B1 -0.3,
+      # B5 -0.5 Gi) and B5's main run finished at DISK[after-live-ai] 4.1 Gi
       # against the 2.9 Gi that forced the #65 hotfix — with B6-B8 adding six
-      # more dock panels. So this measures it. Compare macOS DISK[after-test]
-      # against B5's PR-run baseline: after-test 6.2 Gi, job-end 4.5 Gi
-      # (PR run 30729823048). If it buys nothing on macOS, revert to the
-      # conditional and record the measurement rather than repeating it.
+      # more dock panels. So #75 measured it, and the exemption was wrong by
+      # more than an order of magnitude:
+      #
+      #                       macOS baseline (B5 PR)   macOS with debug=0 (#75)
+      #   DISK[after-test]            6.2 Gi                   18 Gi
+      #   DISK[after-live-ai]         4.5 Gi                   17 Gi
+      #   target/ at after-test        33 G                     20 G
+      #
+      # ~13 G of tree, i.e. +12.5 Gi of job-end headroom, from one env var. The
+      # line tables were never in the executables (the paragraph above is right
+      # about that) — they were in `deps/*.o`, which is most of what `target/`
+      # weighs. Linux was the CONTROL and did not move by a single reading
+      # (after-test 96G avail / 20G target on both runs), and note macOS now
+      # lands at the SAME 20G tree as Linux, which is what you would expect if
+      # `.o` debug info was the entire difference.
+      #
+      # ⚠ DO NOT "fix" bench disk by adding `--target` to the bench step (a
+      # lever these files carried for four slices): both DISK readings are taken
+      # BEFORE the bench runs, and the bench's own `rm -rf target/<triple>` takes
+      # the runner from 4.1 Gi to 38 Gi free before it compiles anything. To make
+      # `--target` reuse a tree you must delete that reclaim, which is what
+      # creates the 38 Gi — leaving the bench at ~4.1 Gi carrying the debug tree
+      # and still rebuilding release DuckDB. That is the P5c runner death the
+      # reclaim exists to prevent. See the bench steps at the end of this job.
       CARGO_PROFILE_DEV_DEBUG: 0
     steps:
       - uses: actions/checkout@v5
