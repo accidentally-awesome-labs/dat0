@@ -132,6 +132,10 @@ fn open_shell_window(
 /// bindings (→ `focus_next`/`focus_prev`) are live.
 fn init_components(cx: &mut TestAppContext) {
     cx.update(gpui_component::init);
+    // B5: the dock panel registry is prod-only otherwise (the harness calls
+    // only `gpui_component::init`), and a registration absent under test is
+    // silently absent — the `register_modal_keys` lesson.
+    cx.update(dat0_app::panels::register_panels);
 }
 
 /// True iff a dialog is currently on the window's `Root` stack (the onboarding
@@ -581,6 +585,10 @@ fn open_settings_panel(
     settings_path: PathBuf,
 ) -> (Entity<SettingsPanel>, &mut VisualTestContext) {
     cx.update(gpui_component::init);
+    // B5: the dock panel registry is prod-only otherwise (the harness calls
+    // only `gpui_component::init`), and a registration absent under test is
+    // silently absent — the `register_modal_keys` lesson.
+    cx.update(dat0_app::panels::register_panels);
     let slot: Rc<RefCell<Option<Entity<SettingsPanel>>>> = Rc::new(RefCell::new(None));
     let slot2 = slot.clone();
     let (_root, vcx) = cx.add_window_view(move |window, cx| {

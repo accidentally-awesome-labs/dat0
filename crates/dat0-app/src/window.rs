@@ -1776,6 +1776,10 @@ pub fn run_app(lock: AppLock, initial_paths: Vec<PathBuf>, main_loop: MainLoop) 
         // Tests must call this too — see `overlay::register_modal_keys`.
         crate::overlay::register_modal_keys(cx);
 
+        // B5: register the dock panels so `DockArea::load` can resolve them by
+        // name (B9). Tests must call this too — see `panels::register_panels`.
+        crate::panels::register_panels(cx);
+
         // P3b T12 (D-002 closure): promote dat0's own `crate::theme::Theme`
         // to a `gpui::Global` for the lifetime of the app. The initial id
         // is read from `theme.id` in the persisted settings file (the same
@@ -2118,6 +2122,14 @@ pub struct WorkspaceShell {
     /// Rebuilt when `data_source` is swapped (e.g., user drops a second
     /// file). `None` until the first data source lands.
     table_state: Option<Entity<TableState<GridTableDelegate>>>,
+    /// B5: the `DockArea` hosting the grid center. Built lazily on the first
+    /// render because `DockArea::new` needs a `&mut Window`, which only exists
+    /// inside `render` — the same constraint that makes `table_state` a lazy
+    /// promotion.
+    dock_area: Option<Entity<gpui_component::dock::DockArea>>,
+    /// B5: the center panel. Held across frames; rebuilding it per frame would
+    /// mint a fresh entity every render and throw away the panel's identity.
+    grid_panel: Option<Entity<crate::panels::grid_panel::GridPanel>>,
     /// Theme observer subscription, kept alive for the lifetime of the
     /// view. Per `docs/internal/gpui-api-notes.md` §0.A.4 the `Theme`
     /// global is app-scoped; switching theme in one window notifies every
@@ -2455,6 +2467,8 @@ impl WorkspaceShell {
             session,
             data_source: None,
             table_state: None,
+            dock_area: None,
+            grid_panel: None,
             theme_subscription: None,
             view_model: None,
             active_popover: None,
@@ -6758,6 +6772,37 @@ impl Render for WorkspaceShell {
             }
         }
 
+        // B5: lazily build the DockArea and its center GridPanel. `DockArea::new`
+        // needs a `&mut Window`, available only here — the same reason the
+        // `table_state` promotion above lives in `render`.
+        //
+        // The center is `DockItem::Panel`, NOT `DockItem::Tabs`. `Tabs` renders a
+        // `TabPanel`, which ALWAYS paints a title bar: under `PanelStyle::Auto` a
+        // single visible panel gets a 30px title row rather than no chrome. It
+        // also wraps the panel in a scroll container plus a cached element and
+        // marks the container a tab group — a nested scroll around a virtualized
+        // `Table`, a cached child against the single-frame a11y capture, and a
+        // tab group that reorders Tab traversal. `DockItem::Panel` renders the
+        // panel's raw view instead, putting ZERO elements between this shell and
+        // the `Table`. Measured by the B5 T0 chrome gate: panel-body bounds equal
+        // host bounds, same origin and same height.
+        if self.dock_area.is_none() {
+            let weak_shell = cx.entity().downgrade();
+            let panel = cx.new(|_| crate::panels::grid_panel::GridPanel::new(weak_shell));
+            let dock = cx.new(|cx| {
+                let mut dock =
+                    gpui_component::dock::DockArea::new("dat0-workspace", Some(1), window, cx);
+                // v1 is resize + collapse only, never drag-rearrange. With
+                // `DockItem::Panel` there is no tab bar to drag; this is for B6+.
+                dock.set_locked(true, window, cx);
+                dock
+            });
+            let item = gpui_component::dock::DockItem::panel(Arc::new(panel.clone()));
+            dock.update(cx, |dock, cx| dock.set_center(item, window, cx));
+            self.grid_panel = Some(panel);
+            self.dock_area = Some(dock);
+        }
+
         let session = Arc::clone(&self.session);
 
         let drop_listener = cx.listener(move |_view, paths: &ExternalPaths, _window, cx| {
@@ -6772,7 +6817,10 @@ impl Render for WorkspaceShell {
             .detach();
         });
 
-        let body = self.render_grid_body(cx);
+        // B5: the grid center is rendered by `GridPanel` inside the DockArea now
+        // (`render_grid_body` is the panel's delegate target), so `render` only
+        // hands the dock to the body row.
+        let dock_el = self.dock_area.clone();
 
         // Slice 6 Task 3: is a REAL grid mounted this frame (as opposed to the
         // "Loading grid…" placeholder or the empty-state hero)? Mirrors the
@@ -7259,7 +7307,7 @@ impl Render for WorkspaceShell {
                                 cx,
                             ))
                     }))
-                    .child(div().flex_1().child(body))
+                    .child(div().flex_1().children(dock_el))
                     // Inspector right dock last → Catalog | Connections | body | Inspector.
                     .children(self.inspector_panel_visible.then(|| {
                         div()
@@ -7318,6 +7366,12 @@ impl Render for WorkspaceShell {
 // test module.
 #[cfg(feature = "a11y-capture")]
 impl WorkspaceShell {
+    /// B5: has the shell built its DockArea? The dock is an implementation
+    /// detail of `render`, and the integration tests live in another crate.
+    pub fn dock_mounted_for_test(&self) -> bool {
+        self.dock_area.is_some()
+    }
+
     pub fn chart_bind_for_test(&mut self, source: String, cols: Vec<(String, String)>) {
         self.chart_panel.bind(source, cols);
         self.chart_panel_visible = true;
