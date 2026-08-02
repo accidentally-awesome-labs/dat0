@@ -398,3 +398,89 @@ count comes back a multiple of 8, the generation counter at `a11y/mod.rs:24`
 before anything else proceeds. Gates 1 and 3 being green makes the ordering safe:
 neither T1 (a verbatim code move) nor T2 (one element swap) is wasted work if the
 capture needs a generation counter on top.
+
+---
+
+## 10. As-built (2026-08-01)
+
+Six commits off `f389dc0`: design `85fe14a` + plan `f2bcfa6` + T0 findings
+`0393be2` → T1 `172cd70` → T2 `c384bbd` → T3 `49a3d9a` → T4 `22503cc` →
+whole-branch-review fix `d610f12`. Executed inline (no subagents).
+
+### 10.1 What shipped
+
+- `src/panels/{mod.rs,grid_panel.rs}` — `register_panels` + the thin `GridPanel`
+  (one `WeakEntity<WorkspaceShell>` field, `PANEL_NAME = "GridPanel"`,
+  `Focusable` returning the shell's root handle).
+- `WorkspaceShell::render_grid_body` — the old `body` match, moved verbatim.
+- `WorkspaceShell::grid_focus_handle` + `dock_mounted_for_test` (a11y-capture).
+- Shell fields `dock_area` / `grid_panel`, lazily built in `render`;
+  `set_locked(true)`; center `DockItem::panel(GridPanel)`.
+- One body-row edit: `.child(div().flex_1().children(dock_el))`.
+- Coverage stated in `a11y_content`, `keyboard_nav`, `a11y_spike`. Zero new test
+  binaries; the suite stayed at **112**.
+- `benches/grid_scroll.rs` module doc records what it cannot measure.
+
+### 10.2 The whole-branch review finding — a real regression, invisible to tests
+
+Booting the app and diffing the log against a `main` build (not any test) found
+that **the first-run tour stopped appearing**: `onboarding::open` logged
+"no active window; cannot show tour" on this branch and nothing at all on main,
+where it opens silently.
+
+`onboarding::open` asked for `App::active_window()`, the PLATFORM's notion,
+which is `None` until the OS activates the window. The tour is dispatched from
+the first render, so whether it wins is a race on which main-loop turn drains
+the dispatcher. B5 made that race lose: `set_center` notifies, the notify pumps
+an extra early frame, and the queued closure ran one turn sooner than before —
+ahead of activation.
+
+Fixed by falling back to the first live window in `WindowRegistry`, which knows
+the window exists as soon as it is registered, independent of OS activation.
+
+★★ **The reusable lesson: five green test binaries covered this tour and every
+one of them stayed green through the regression, because under `TestPlatform`
+`active_window()` is already `Some` — the harness cannot express the failure.**
+Any dat0 code branching on `App::active_window()` is untestable headlessly and
+should read the registry instead. (B2 already recorded that `App::active_window`
+is untrustworthy under TestPlatform; this is the first time it cost real
+behaviour.) A retry loop would NOT have been a fix — it would only re-roll the
+same race.
+
+### 10.3 Known delta, for the human glance
+
+`DockArea::render` applies `overflow_hidden` at three nesting levels
+(`dock/mod.rs:1094,1129,1134`); the plain `div().flex_1()` it replaced applied
+none. At any window size where the center's content fits — every test runs at
+1920×1080, and normal use is far above the threshold — this is invisible, and
+for the `Table` it changes nothing because the widget manages its own viewport.
+**In a very small window, hero content that used to bleed past its box is now
+clipped.** Clipping is the better behaviour for a dock center, so this is
+recorded rather than fought (it cannot be turned off without forking upstream) —
+but it is the one place B5's "no visible change" claim is qualified, and the
+narrow-window case belongs in the glance.
+
+### 10.4 Verification
+
+Local gate all green: `fmt --check` clean; `clippy --workspace --all-targets
+-D warnings` exit 0; **112 / 112 / 112** test binaries ok across
+{plain, a11y-capture, a11y-capture+gallery}; `style_lint` 4/4 with the ratchet
+unchanged at `[("window.rs", 1)]`; `--bin dat0` builds and boots.
+`git diff f389dc0...HEAD --stat` is EMPTY for `src/grid`, `src/session` and
+`crates/dat0-i18n`.
+
+`cargo test --workspace` and `cargo bench` remain unrunnable on this machine
+(macOS 27 / Xcode 26.6 vs vendored DuckDB Thrift; reproduces on `main`).
+
+### 10.5 Owed
+
+- **Human glance**, and for this slice it is a DIFF-THE-PIXELS check rather than
+  a feel check: hero, grid and all five fixed docks must look identical to
+  `f389dc0` in all 3 themes. Plus the two B5-specific items: a **narrow window**
+  (§10.3) and a **file drop onto the grid area** (the dock's absolute canvas now
+  sits between the shell root's `on_drop` and the grid; no window-level
+  drag-drop test exists).
+- Still carried from B4: that slice's own palette glance.
+- Post-merge: watch the main run, verify the bench at STEP level and download the
+  artifact — while remembering §5, which says the number is a `render_cell`
+  watchdog reading and not evidence about this slice.
