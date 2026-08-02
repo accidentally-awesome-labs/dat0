@@ -6475,6 +6475,30 @@ impl WorkspaceShell {
             .clone()
     }
 
+    /// B6: the Inspector panel's element tree, extracted from the body row's
+    /// `.w_72()` block so [`crate::panels::inspector_panel::InspectorPanel`]
+    /// can call it.
+    ///
+    /// The sizing and left border the block used to carry are the dock's job
+    /// now, and the inspector's own title row moved into `InspectorPanel::title`
+    /// so the dock's 30px title bar does not show the word twice.
+    pub(crate) fn render_inspector_body(
+        &mut self,
+        cx: &mut gpui::Context<Self>,
+    ) -> gpui::AnyElement {
+        crate::inspector::panel::render_inspector(&self.inspector, self.inspector_projection(), cx)
+    }
+
+    /// B6: the Inspector's visibility, read by `InspectorPanel::visible`.
+    ///
+    /// The bool stays the single source of truth and the dock derives from it —
+    /// see `sync_right_dock`. Deliberately a getter rather than making the field
+    /// `pub(crate)`: the panel lives in another module and a getter keeps the
+    /// direction of the dependency legible.
+    pub(crate) fn inspector_visible(&self) -> bool {
+        self.inspector_panel_visible
+    }
+
     /// B5: the grid center's element tree — the real `Table`, the promotion
     /// placeholder, or the empty-state hero.
     ///

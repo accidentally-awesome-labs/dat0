@@ -30,15 +30,11 @@ pub fn render_inspector(
     projection: Option<ProjectionContext>,
     cx: &mut Context<WorkspaceShell>,
 ) -> gpui::AnyElement {
-    // Content-only locator (release no-op): `.a11y_label` emits a `Role::Label`
-    // AccessKit node under the `a11y-capture` feature so the headless UAT can
-    // assert the dock's title text (UAT Gap 2). Not clickable.
-    let title = dat0_i18n::t("inspector.title");
-    let mut root = div().flex().flex_col().gap_2().p_2().child(
-        div()
-            .a11y_label(AccessRole::Label, title.clone())
-            .child(SharedString::from(title)),
-    );
+    // B6: the "Inspector" title row moved to `InspectorPanel::title`, which
+    // renders it in the dock's 30px title bar. Keeping it here too would show
+    // the word twice. Its content-only `.a11y_label` locator moved with it, so
+    // the accessible name is relocated rather than dropped.
+    let mut root = div().flex().flex_col().gap_2().p_2();
 
     // Overview line: target name + (rows · cols) when cached, else a placeholder.
     let overview = match (&model.target_table, model.cached()) {
