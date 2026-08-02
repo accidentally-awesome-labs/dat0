@@ -308,6 +308,16 @@ fn grid_renders_cell_values_as_a11y_cells(cx: &mut TestAppContext) {
     // each real value has `count_label >= 1`. The exact multiplicity is a
     // gpui-component `Table` implementation detail and is deliberately NOT
     // asserted (that would be a fragile coupling).
+    // B5: everything below now travels through the dock — `DockArea` →
+    // `DockItem::Panel` → `GridPanel` → `WorkspaceShell::render_grid_body` →
+    // `Table`. Stated here because this is the only test in the tree that
+    // asserts the REAL virtualized grid's rendered cell text, so it is what
+    // would catch a dock that mounts and paints a hollow center.
+    assert!(
+        cx.update(|_window, app| shell.read(app).dock_mounted_for_test()),
+        "the mounted grid is no longer rendering through the dock"
+    );
+
     let snap = A11ySnapshot::capture(cx);
     for v in ["1", "2", "3", "4"] {
         assert!(
