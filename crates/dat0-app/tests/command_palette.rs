@@ -51,3 +51,31 @@ fn palette_fuzzy_matches_subsequence() {
         "fuzzy 'nw' must match 'New Window': {titles:?}"
     );
 }
+
+/// UI-redesign B6 moves the chart export buttons into the dock title bar, where
+/// upstream forces `tab_stop(false)` (`tab_panel.rs:454`). These two
+/// descriptors are what keeps chart export reachable from the keyboard, so
+/// their presence in the palette is load-bearing rather than cosmetic.
+///
+/// They are deliberately NOT in `HIDDEN`: that list is for actions dead by
+/// construction, whereas these work whenever a chart is rendered — exactly
+/// `view.copy`'s situation.
+#[test]
+fn chart_export_actions_are_visible_in_the_palette() {
+    let reg = ActionRegistry::new();
+    dat0_app::actions::builtin::register_all(&reg).unwrap();
+
+    let titles: Vec<String> = dat0_app::command_palette::visible_items(&reg, "export chart")
+        .into_iter()
+        .map(|d| d.title)
+        .collect();
+
+    assert!(
+        titles.iter().any(|t| t == "Export Chart as PNG"),
+        "chart.export.png must be reachable from the palette; got {titles:?}"
+    );
+    assert!(
+        titles.iter().any(|t| t == "Export Chart as SVG"),
+        "chart.export.svg must be reachable from the palette; got {titles:?}"
+    );
+}

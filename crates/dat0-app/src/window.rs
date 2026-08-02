@@ -4033,7 +4033,7 @@ impl WorkspaceShell {
     /// Open the native save panel and export the current chart to PNG (`png =
     /// true`) or SVG. No-op when there's no rendered data yet — the live
     /// `chart_panel.spec` + `data` carry everything `export_*` needs (P9a T7).
-    fn export_chart(&mut self, png: bool, cx: &mut gpui::Context<Self>) {
+    pub(crate) fn export_chart(&mut self, png: bool, cx: &mut gpui::Context<Self>) {
         let Some(data) = self.chart_panel.data.clone() else {
             return;
         };

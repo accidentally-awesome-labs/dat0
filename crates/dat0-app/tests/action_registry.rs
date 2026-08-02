@@ -76,7 +76,7 @@ fn lookup_returns_descriptor() {
 }
 
 #[test]
-fn builtins_register_thirty_four() {
+fn builtins_register_the_expected_count() {
     let reg = ActionRegistry::new();
     dat0_app::actions::builtin::register_all(&reg).unwrap();
     // Ten from P3b/P4a + seven from P4b T9 (copy/cut/paste/fill_down/set_null/set_value/delete_rows)
@@ -88,7 +88,14 @@ fn builtins_register_thirty_four() {
     // + one from P9a T7 (chart.visualize — the right-dock chart panel toggle) = 33.
     // + one from P9c-1 T9 (ai.panel.open — the left-dock AI panel toggle) = 34.
     // + one from P11a T7 (onboarding.take_tour — tour re-entry for palette) = 35.
-    assert_eq!(reg.count(), 35);
+    // + two from UI-redesign B6 (chart.export.png/svg — the keyboard path for
+    //   export, whose buttons move to the dock title bar where upstream forces
+    //   tab_stop(false)) = 37.
+    //
+    // The name deliberately carries no number: it said "thirty_four" while
+    // asserting 35, and a count in a test name rots on the next slice that adds
+    // an action. The ledger above is the real record.
+    assert_eq!(reg.count(), 37);
     let titles: Vec<String> = reg.iter().map(|d| d.title).collect();
     assert!(titles.contains(&"New Window".to_string()));
     assert!(titles.contains(&"Open Settings".to_string()));

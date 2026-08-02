@@ -239,6 +239,8 @@
   "chart.save.done.title": "Chart saved",
   "chart.export.png": "PNG",
   "chart.export.svg": "SVG",
+  "chart.export.png.command": "Export Chart as PNG",
+  "chart.export.svg.command": "Export Chart as SVG",
   "chart.axis.x": "X",
   "chart.axis.y": "Y",
   "chart.axis.group": "Group",
