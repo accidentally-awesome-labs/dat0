@@ -135,8 +135,34 @@ Each holds exactly one field, `shell: WeakEntity<WorkspaceShell>`, and:
 (`"Charts"`, plural, matching the View menu) is the one new key —
 `chart.panel.title` is `"Chart"` singular and is already interpolated into the
 body's chart-type button, so it is not reused here. A5's lesson applies: JSON
-silently overwrites duplicate keys, so the new key must be confirmed absent
-before it is added.
+silently overwrites duplicate keys; `charts.title` was confirmed absent before
+being added to this design.
+
+### 4.1 Amendment — the inspector already draws its own title
+
+Found while planning against the tree, not at design time.
+`inspector::panel::render_inspector` opens with its own title row —
+`div().a11y_label(AccessRole::Label, "Inspector").child("Inspector")`
+(`inspector/panel.rs:37-40`) — which the new 30px title bar would duplicate on
+screen.
+
+⇒ **the inspector body extraction drops that title row**, and
+`InspectorPanel::title()` returns `div().a11y_label(AccessRole::Label, t).child(t)`
+rather than a bare `SharedString`. Three reasons this is the right shape:
+
+- No test asserts the inspector title text today (verified by grep across
+  `tests/` and `src/`), so nothing is repointed under duress.
+- The accessible name survives in the capture tree — moving it, not deleting
+  it — which keeps T0's exact node count **neutral**: one label leaves the
+  body, one arrives in the title bar. A net-zero count is a much sharper
+  signal than a count that moved for two reasons at once.
+- The title bar is rendered *outside* the `.cached()` wrapper (only
+  `active-panel` → `tab-content` is cached, `tab_panel.rs:851-861`), so an
+  a11y node emitted from `title()` is not exposed to the caching risk that
+  §8 tracks for the bodies.
+
+Per A5's rule, `a11y_label()` **pushes** a node rather than setting an
+attribute, so this must be the only label on that element — it is.
 
 Both are registered in `panels::register_panels`, whose builders keep B5's
 shell-less-degradation contract (`WeakEntity::new_invalid()` → empty render,
@@ -224,11 +250,14 @@ registered, also visible, also a no-op without a selection.
 
 ## 7. Shell changes
 
-- Two verbatim extractions, mirroring B5's `render_grid_body`:
+- Two extractions, mirroring B5's `render_grid_body`:
   `render_inspector_body(&mut self, cx) -> AnyElement` from the `.w_72()`
   block (`window.rs:7312-7321`) and `render_charts_body(&mut self, cx)` from
   the `.w(px(560.))` block (`:7323-7336`), each **minus** its sizing/border
-  wrapper, which the dock now owns.
+  wrapper, which the dock now owns. Verbatim except for the two changes this
+  design already justifies: the inspector's own title row moves into
+  `InspectorPanel::title()` (§4.1) and the two chart export buttons move into
+  `ChartsPanel::toolbar_buttons()` (§6).
 - Both `.children(..)` blocks are deleted from the body row.
 - New fields: `inspector_panel` / `charts_panel` (`Option<Entity<..>>`, built
   in the same lazy block as the dock) and `right_dock_state: (bool, bool)`.
