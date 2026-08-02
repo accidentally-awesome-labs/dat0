@@ -6,6 +6,7 @@
 //! of thing from a free render fn: it is an entity with a stable `panel_name`
 //! that `DockArea::load` resolves through a global registry (B9).
 
+pub mod charts_panel;
 pub mod grid_panel;
 pub mod inspector_panel;
 
@@ -38,6 +39,14 @@ pub fn register_panels(cx: &mut App) {
             Box::new(
                 cx.new(|_| inspector_panel::InspectorPanel::new(gpui::WeakEntity::new_invalid())),
             )
+        },
+    );
+
+    gpui_component::dock::register_panel(
+        cx,
+        charts_panel::ChartsPanel::PANEL_NAME,
+        |_dock_area, _state, _info, _window, cx| {
+            Box::new(cx.new(|_| charts_panel::ChartsPanel::new(gpui::WeakEntity::new_invalid())))
         },
     );
 }

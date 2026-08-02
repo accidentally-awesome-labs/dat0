@@ -232,6 +232,7 @@
   "package.replay.done.title": "Package replayed",
   "package.replay.failed.title": "Replay package failed",
   "chart.visualize": "Visualize",
+  "charts.title": "Charts",
   "chart.panel.title": "Chart",
   "chart.panel.empty": "Select columns to render a chart",
   "chart.save": "Save",

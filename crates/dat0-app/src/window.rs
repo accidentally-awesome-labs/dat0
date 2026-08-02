@@ -3976,17 +3976,6 @@ impl WorkspaceShell {
             row = row.child(btn);
         }
 
-        // ── Export buttons (PNG / SVG) ─────────────────────────────────────
-        let png_btn = Button::new("chart-export-png")
-            .label(dat0_i18n::t("chart.export.png"))
-            .on_click(cx.listener(|ws, _ev, _window, cx| {
-                ws.export_chart(true, cx);
-            }));
-        let svg_btn = Button::new("chart-export-svg")
-            .label(dat0_i18n::t("chart.export.svg"))
-            .on_click(cx.listener(|ws, _ev, _window, cx| {
-                ws.export_chart(false, cx);
-            }));
         // ── Save button (P9a-2) ────────────────────────────────────────────
         // Disabled until a chart is renderable (a source is bound AND at least
         // one axis is picked), so an empty chart can never be saved. Mirrors the
@@ -4001,9 +3990,11 @@ impl WorkspaceShell {
                 ws.open_chart_save_prompt(window, cx);
             }));
 
-        // Clicking export with no rendered data is a silent no-op
-        // (`export_chart` guards on `chart_panel.data`).
-        row.child(png_btn).child(svg_btn).child(save_btn)
+        // B6: PNG/SVG export moved to `ChartsPanel::toolbar_buttons` — the
+        // dock's 30px title bar. Save stays here: its `disabled` state reads
+        // correctly at body size, and it opens a name prompt rather than a file
+        // dialog, so it is not an "export" affordance.
+        row.child(save_btn)
     }
 
     /// Open the shared name-prompt overlay to save the currently-bound chart
@@ -6487,6 +6478,32 @@ impl WorkspaceShell {
         cx: &mut gpui::Context<Self>,
     ) -> gpui::AnyElement {
         crate::inspector::panel::render_inspector(&self.inspector, self.inspector_projection(), cx)
+    }
+
+    /// B6: the Charts panel's element tree, extracted from the body row's
+    /// `.w(px(560.))` block so [`crate::panels::charts_panel::ChartsPanel`] can
+    /// call it.
+    ///
+    /// The width and left border the block carried are the dock's job now, and
+    /// the two export buttons moved to `ChartsPanel::toolbar_buttons`.
+    pub(crate) fn render_charts_body(&mut self, cx: &mut gpui::Context<Self>) -> gpui::AnyElement {
+        div()
+            .flex()
+            .flex_col()
+            .size_full()
+            .child(self.render_chart_toolbar(cx))
+            .child(crate::charts::panel::render_chart_body(
+                &self.chart_panel,
+                self.chart_image.clone(),
+                (520.0, 360.0),
+                cx,
+            ))
+            .into_any_element()
+    }
+
+    /// B6: the Charts panel's visibility, read by `ChartsPanel::visible`.
+    pub(crate) fn chart_visible(&self) -> bool {
+        self.chart_panel_visible
     }
 
     /// B6: the Inspector's visibility, read by `InspectorPanel::visible`.
