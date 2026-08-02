@@ -34,6 +34,7 @@ pub mod menu_macos;
 pub mod onboarding;
 pub mod overlay;
 pub mod package;
+pub mod panels;
 pub mod platform;
 pub mod query;
 pub mod recents;
