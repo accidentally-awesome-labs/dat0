@@ -337,3 +337,64 @@ the dock binds no `escape`); no i18n keys (nothing new is user-visible).
 - Hero and focus-handle migration into the panel — B7.
 - A real frame-level bench — D-013's perf runner.
 - Any visible change whatsoever. If the owner can see B5, B5 is wrong.
+
+---
+
+## 9. As-built: T0 gate findings (measured 2026-08-01)
+
+Probe: `crates/dat0-app/tests/b5_t0_probe.rs`, throwaway, deleted before this
+commit. Two of the three gates ran as designed; the third is re-sequenced for
+the reason recorded below.
+
+### Gate 1 — update-through re-entrancy: **GREEN**
+
+A child entity created inside its parent's `render` calls
+`parent.update(cx, |p, _| { p.renders += 1; … })` from inside its own `render`.
+Measured over two forced frames (`add_window_view` → `run_until_parked` →
+`window.refresh()` → `run_until_parked`): the counter reached **2**, the child
+body painted (`debug_bounds` resolved), and no lease panic occurred.
+
+⇒ **The primary mechanism holds.** `GridPanel::render` may call
+`shell.update(cx, |ws, cx| ws.render_grid_body(cx))` directly. The §3.2 data-
+snapshot fallback is NOT needed and is not built.
+
+The reason this was in doubt is worth keeping: B4 hit
+"cannot read WorkspaceShell while it is already being updated" when a registry
+closure re-entered the shell from inside a `Context<WorkspaceShell>` update, and
+the fix was `App::defer`. The difference is *when*: gpui has finished the
+parent's `render` lease by the time a child view's element is laid out, so the
+descendant's update is not re-entrant. A closure dispatched *during* the parent's
+own update still is. Both facts are now measured rather than assumed.
+
+### Gate 3 — chrome absence under `DockItem::Panel`: **GREEN**
+
+A `DockArea` with `set_locked(true)` and `set_center(DockItem::panel(probe))`,
+hosted in a full-window `div`:
+
+```
+host = Bounds { origin: (0px, 0px), size: 1920px × 1080px }
+body = Bounds { origin: (0px, 0px), size: 1920px × 1080px }
+```
+
+Same origin, same height — the panel body is not pushed down by a title bar and
+loses no vertical space to one. Asserted, not eyeballed: the probe fails if
+`body.origin.y != host.origin.y` or `body.size.height != host.size.height`.
+
+⇒ §2.1 holds as read from the source. `DockItem::Panel` is the zero-chrome mount.
+
+### Gate 2 — single-frame a11y capture: **re-sequenced, not skipped**
+
+The gate as designed wanted a cheap probe mounting the grid body under a dock
+*before* T1/T2. There is no such probe: any faithful version needs the panel to
+render the real grid body, which IS the T1 extraction plus the T2 mount. A stub
+panel rendering an empty `div` would blank the grid and turn a dozen unrelated
+suites red, drowning the one signal the gate exists to read.
+
+⇒ Gate 2 runs as **T2 Step 10** instead — the full `--features a11y-capture`
+suite against the real mount, with `tests/a11y_spike.rs`'s exact node count (8)
+as the double-render proof. The STOP clause is unchanged and still armed: if the
+count comes back a multiple of 8, the generation counter at `a11y/mod.rs:24`
+(bump on `begin_frame()`, keep only max-gen nodes) gets built as its own task
+before anything else proceeds. Gates 1 and 3 being green makes the ordering safe:
+neither T1 (a verbatim code move) nor T2 (one element swap) is wasted work if the
+capture needs a generation counter on top.
