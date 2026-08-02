@@ -20,6 +20,27 @@
 //! the P10 perf-budget runner per spec line 819. See
 //! `docs/internal/p3-bench-baselines.md` for the recorded numbers + the
 //! headless-vs-Table comparison plan.
+//!
+//! ⚠ UI-redesign B5 ruling — WHAT THIS BENCH DOES NOT MEASURE.
+//!
+//! This harness calls `renderers::render_cell` in a plain loop over a synthetic
+//! Arrow batch. It never builds a `Window`, a `WorkspaceShell`, or the
+//! `gpui_component::Table` widget, so it is blind to everything about how the
+//! grid is MOUNTED: the `TableDelegate`, `render_td`, the per-cell theme reads
+//! inside it, and the whole element tree above the table. Its sensitivity
+//! surface is `render_cell` plus Arrow column access, and nothing else.
+//!
+//! Consequently the A5 and A6 readings — "the bench held with `grid/mod.rs` in
+//! the diff" — were measuring something that structurally could not contain
+//! those changes. They are not evidence of no regression; they are evidence of
+//! nothing, and must not be cited as reassurance.
+//!
+//! B5 (DockArea adoption) keeps this bench as a `render_cell` watchdog, which
+//! it genuinely is — that function is on the per-cell hot path — and bases its
+//! own no-regression claim on structure instead: `grid/mod.rs` is byte-
+//! untouched, and `DockItem::Panel` puts zero elements between the shell and the
+//! `Table` (measured: panel-body bounds equal host bounds). Real per-frame
+//! timing remains D-013's perf runner, which already owns it as a P10-exit gap.
 
 use criterion::{Criterion, Throughput, black_box, criterion_group, criterion_main};
 use dat0_app::grid::renderers::render_cell;
