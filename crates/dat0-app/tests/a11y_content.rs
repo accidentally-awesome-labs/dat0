@@ -164,6 +164,10 @@ fn open_sql_console_window(
 /// renders gpui-component widgets — the grid uses `Table`).
 fn init_components(cx: &mut TestAppContext) {
     cx.update(gpui_component::init);
+    // B5: the dock panel registry is prod-only otherwise (the harness calls
+    // only `gpui_component::init`), and a registration absent under test is
+    // silently absent — the `register_modal_keys` lesson.
+    cx.update(dat0_app::panels::register_panels);
 }
 
 /// Process-global `MainLoop`; the dispatcher lives in `window_registry`'s
@@ -304,6 +308,16 @@ fn grid_renders_cell_values_as_a11y_cells(cx: &mut TestAppContext) {
     // each real value has `count_label >= 1`. The exact multiplicity is a
     // gpui-component `Table` implementation detail and is deliberately NOT
     // asserted (that would be a fragile coupling).
+    // B5: everything below now travels through the dock — `DockArea` →
+    // `DockItem::Panel` → `GridPanel` → `WorkspaceShell::render_grid_body` →
+    // `Table`. Stated here because this is the only test in the tree that
+    // asserts the REAL virtualized grid's rendered cell text, so it is what
+    // would catch a dock that mounts and paints a hollow center.
+    assert!(
+        cx.update(|_window, app| shell.read(app).dock_mounted_for_test()),
+        "the mounted grid is no longer rendering through the dock"
+    );
+
     let snap = A11ySnapshot::capture(cx);
     for v in ["1", "2", "3", "4"] {
         assert!(
@@ -791,5 +805,42 @@ fn status_bar_renders_segments_as_a11y_content(cx: &mut TestAppContext) {
     assert!(
         !snap.has_label_contains("Query "),
         "no completed run means no query segment"
+    );
+}
+
+/// B5: the grid center renders through a `DockArea` → `DockItem::Panel` →
+/// `GridPanel`, which delegates back into `WorkspaceShell::render_grid_body`.
+///
+/// Two assertions, and both are load-bearing. The dock MOUNT is observed through
+/// an `a11y-capture` shim because the dock is an implementation detail of
+/// `render` and this is a different crate. On its own that shim would be
+/// satisfied by a dock nobody renders, so the second assertion demands that the
+/// body still paints THROUGH it: `hero-take-tour` is a hero control built inside
+/// `render_grid_body`, so its geometry resolving proves the panel indirection
+/// actually reached the shell's body code.
+#[gpui::test]
+#[serial]
+fn grid_center_renders_through_the_dock_panel(cx: &mut TestAppContext) {
+    let cfg = tempfile::tempdir().unwrap();
+    let state = tempfile::tempdir().unwrap();
+    set_config_dir(cfg.path());
+
+    ensure_dispatcher();
+    let harness = enter_async_harness(cx);
+    let _guard = harness.enter();
+    init_components(cx);
+    drain_dispatcher(cx);
+
+    let session = build_empty_session_in(&harness, state.path());
+    let (shell, cx) = open_shell_window(cx, session);
+    cx.run_until_parked();
+
+    assert!(
+        cx.update(|_window, app| shell.read(app).dock_mounted_for_test()),
+        "the shell rendered without building its DockArea"
+    );
+    assert!(
+        cx.debug_bounds("hero-take-tour").is_some(),
+        "the grid center painted nothing through the dock panel"
     );
 }

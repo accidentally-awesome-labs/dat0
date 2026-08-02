@@ -132,6 +132,10 @@ fn open_shell_window(
 /// bindings (→ `focus_next`/`focus_prev`) are live.
 fn init_components(cx: &mut TestAppContext) {
     cx.update(gpui_component::init);
+    // B5: the dock panel registry is prod-only otherwise (the harness calls
+    // only `gpui_component::init`), and a registration absent under test is
+    // silently absent — the `register_modal_keys` lesson.
+    cx.update(dat0_app::panels::register_panels);
 }
 
 /// True iff a dialog is currently on the window's `Root` stack (the onboarding
@@ -581,6 +585,10 @@ fn open_settings_panel(
     settings_path: PathBuf,
 ) -> (Entity<SettingsPanel>, &mut VisualTestContext) {
     cx.update(gpui_component::init);
+    // B5: the dock panel registry is prod-only otherwise (the harness calls
+    // only `gpui_component::init`), and a registration absent under test is
+    // silently absent — the `register_modal_keys` lesson.
+    cx.update(dat0_app::panels::register_panels);
     let slot: Rc<RefCell<Option<Entity<SettingsPanel>>>> = Rc::new(RefCell::new(None));
     let slot2 = slot.clone();
     let (_root, vcx) = cx.add_window_view(move |window, cx| {
@@ -980,6 +988,18 @@ fn grid_tab_reach_then_arrow_moves_active_cell(cx: &mut TestAppContext) {
 
     let (shell, cx) = open_shell_window(cx, Arc::clone(&session));
     cx.run_until_parked();
+
+    // B5: the grid now renders inside a `DockArea` → `DockItem::Panel` →
+    // `GridPanel`, which delegates back into `WorkspaceShell::render_grid_body`.
+    // The shell ROOT keeps the focus handle and the arrow-key handler, so this
+    // test is the proof that the dock indirection broke neither: it Tabs to the
+    // grid and drives real arrow keystrokes through the production keymap. If a
+    // later slice moves the focus handle into the panel (B7 owns that), this is
+    // the test that must be re-read rather than re-blessed.
+    assert!(
+        cx.update(|_window, app| shell.read(app).dock_mounted_for_test()),
+        "grid keyboard nav is no longer exercising the dock path"
+    );
 
     // MUST flush + close the first-run auto-show tour dialog before doing
     // anything else — exactly the T0/T1 baseline dance above. Skipping this

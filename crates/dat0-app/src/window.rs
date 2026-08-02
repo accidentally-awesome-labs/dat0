@@ -1776,6 +1776,10 @@ pub fn run_app(lock: AppLock, initial_paths: Vec<PathBuf>, main_loop: MainLoop) 
         // Tests must call this too — see `overlay::register_modal_keys`.
         crate::overlay::register_modal_keys(cx);
 
+        // B5: register the dock panels so `DockArea::load` can resolve them by
+        // name (B9). Tests must call this too — see `panels::register_panels`.
+        crate::panels::register_panels(cx);
+
         // P3b T12 (D-002 closure): promote dat0's own `crate::theme::Theme`
         // to a `gpui::Global` for the lifetime of the app. The initial id
         // is read from `theme.id` in the persisted settings file (the same
@@ -2118,6 +2122,14 @@ pub struct WorkspaceShell {
     /// Rebuilt when `data_source` is swapped (e.g., user drops a second
     /// file). `None` until the first data source lands.
     table_state: Option<Entity<TableState<GridTableDelegate>>>,
+    /// B5: the `DockArea` hosting the grid center. Built lazily on the first
+    /// render because `DockArea::new` needs a `&mut Window`, which only exists
+    /// inside `render` — the same constraint that makes `table_state` a lazy
+    /// promotion.
+    dock_area: Option<Entity<gpui_component::dock::DockArea>>,
+    /// B5: the center panel. Held across frames; rebuilding it per frame would
+    /// mint a fresh entity every render and throw away the panel's identity.
+    grid_panel: Option<Entity<crate::panels::grid_panel::GridPanel>>,
     /// Theme observer subscription, kept alive for the lifetime of the
     /// view. Per `docs/internal/gpui-api-notes.md` §0.A.4 the `Theme`
     /// global is app-scoped; switching theme in one window notifies every
@@ -2455,6 +2467,8 @@ impl WorkspaceShell {
             session,
             data_source: None,
             table_state: None,
+            dock_area: None,
+            grid_panel: None,
             theme_subscription: None,
             view_model: None,
             active_popover: None,
@@ -6460,6 +6474,142 @@ impl WorkspaceShell {
             .or_insert_with(|| cx.focus_handle())
             .clone()
     }
+
+    /// B5: the grid center's element tree — the real `Table`, the promotion
+    /// placeholder, or the empty-state hero.
+    ///
+    /// Extracted from `render` VERBATIM so [`crate::panels::grid_panel::GridPanel`]
+    /// can call it: the panel is a thin wrapper and this shell still owns every
+    /// piece of grid state. It takes `&mut self` because the hero arm mints the
+    /// hero focus handles through `hero_focus_handle` and can flip
+    /// `tour_auto_shown`.
+    pub(crate) fn render_grid_body(&mut self, cx: &mut gpui::Context<Self>) -> gpui::AnyElement {
+        // `Table<D>` and the empty-state hero are different concrete
+        // types, so we widen every arm with `.into_any_element()` to
+        // satisfy `impl IntoElement`'s single-return-type requirement.
+        //
+        // P3b T7 adds the empty-state hero branch: when no data source is
+        // mounted (or the mounted source is empty), pick between the
+        // "samples picker" hero (recents empty) and the recents-only hero
+        // (recents non-empty). Recents emptiness is read directly from
+        // disk here so the view doesn't need a plumbed-in `Arc<Mutex<Recents>>`
+        // — `Recents::with_path` is a cheap JSON read and the empty-state
+        // render is not on the per-row hot path.
+        match (self.data_source.as_ref(), self.table_state.as_ref()) {
+            (Some(ds), Some(state)) if !ds.is_empty() => {
+                // Real Table mount — closes the P3a T10 placeholder.
+                // Per `docs/internal/gpui-table-api-notes.md` §3:
+                //   `Table::new(state: &Entity<TableState<D>>) -> Self`
+                // Theming flows implicitly via `cx.theme()` inside the
+                // widget (spike §1.3); no prop to pass.
+                let table = Table::new(state).stripe(true).bordered(true);
+
+                // T9: mount the selection-aware right-click context menu on the
+                // grid body. `ContextMenuExt::context_menu` requires
+                // `ParentElement + Styled`, which the `Table` (a `RenderOnce`
+                // widget) does not implement directly — so we wrap it in a
+                // `div` and hang the menu off that. `build_menu` snapshots the
+                // current selection flag and captures a weak handle to this
+                // shell so the items dispatch into the live edit handlers.
+                use crate::grid::context_menu::{ContextMenuExt, build_menu};
+                let ws_weak = cx.entity().downgrade();
+                // Use the active cell's column as the fallback for "Delete
+                // Column" when no column selection is active (body-level menu;
+                // the header right-click handler passes the header's col_ix
+                // directly when that wiring lands in a later task).
+                let active_col = self.selection.as_ref().map(|s| s.active().col).unwrap_or(0);
+                let menu_builder = build_menu(ws_weak, self.selection.as_ref(), active_col);
+                div()
+                    .size_full()
+                    .child(table)
+                    .context_menu(menu_builder)
+                    .into_any_element()
+            }
+            (Some(_), None) => {
+                // Data source landed but TableState hasn't been promoted
+                // yet (the next frame promotes it). Brief placeholder.
+                div().child("Loading grid…").into_any_element()
+            }
+            // Either no data source, or a data source with zero rows —
+            // both fall back to the empty-state hero. `recents_empty`
+            // toggles the right-column content (samples vs. recents).
+            _ => {
+                // One config_dir() call feeds both recents and the
+                // first_run_done read. On any error (config dir unavailable
+                // OR settings parse failure) both default conservatively:
+                // recents=empty, first_run_done=true (suppresses tour).
+                let (recents_empty, first_run_done) = match crate::platform::config_dir() {
+                    Ok(cfg) => {
+                        let re = Recents::with_path(cfg.join("recents.json"))
+                            .list()
+                            .is_empty();
+                        let frd = crate::settings::store::SettingsStore::with_path(
+                            cfg.join("settings.toml"),
+                        )
+                        .load_or_default()
+                        .map(|s| s.first_run_done)
+                        .unwrap_or(true); // suppress tour on load error
+                        (re, frd)
+                    }
+                    Err(_) => (true, true),
+                };
+
+                // One-shot auto-open: schedule the tour exactly once per
+                // process. `tour_auto_shown` is set SYNCHRONOUSLY before
+                // scheduling so that subsequent render frames (which
+                // re-enter this branch before `first_run_done` persists)
+                // cannot re-queue a second open. The dispatcher hop defers
+                // `onboarding::open` out of the render frame, mirroring the
+                // `about::open` pattern (`window_registry::dispatcher()` +
+                // `dispatcher.dispatch`).
+                if !self.tour_auto_shown && crate::empty_state::should_auto_tour(first_run_done) {
+                    self.tour_auto_shown = true;
+                    if let Some(dispatcher) = crate::window_registry::dispatcher() {
+                        let _ = dispatcher.dispatch(|cx: &mut gpui::App| {
+                            crate::onboarding::open(cx);
+                        });
+                    }
+                }
+
+                // Pre-register the stable per-hero-button focus handles on the
+                // persistent shell, then hand them down to the transient
+                // `EmptyState` (which must NOT mint focus handles — it is rebuilt
+                // every frame, so a fresh handle each render would lose focus on
+                // the harness's forced re-render). Slice 6. Registering all five
+                // fixed ids unconditionally is fine — `HeroHandles::get` is only
+                // invoked by whichever branch actually renders (`sample_column`
+                // looks up `hero-open-file-samples`, `recents_column` looks up
+                // `hero-open-file-recents`; only one of the two ever runs per
+                // frame), so both branches always find their handles pre-registered.
+                let hero_ids: [&'static str; 5] = [
+                    "hero-take-tour",
+                    "hero-open-demo",
+                    "hero-open-file-samples",
+                    "hero-open-file-recents",
+                    "recents-list",
+                ];
+                let mut map = std::collections::HashMap::new();
+                for id in hero_ids {
+                    map.insert(id, self.hero_focus_handle(id, cx));
+                }
+                for entry in crate::sample_data::entries() {
+                    let id = crate::empty_state::sample_static_id(&entry.kind);
+                    map.insert(id, self.hero_focus_handle(id, cx));
+                }
+                let hero = crate::empty_state::HeroHandles { map };
+                EmptyState::new(recents_empty, first_run_done, self.recents_active)
+                    .render(&hero, cx)
+            }
+        }
+    }
+
+    /// B5: the shell's root focus handle — the grid's tab stop and the host of
+    /// the arrow-key handler. `GridPanel::focus_handle` returns this so a focus
+    /// request routed at the panel lands on the real grid rather than on an
+    /// untracked handle that would silently swallow it.
+    pub(crate) fn grid_focus_handle(&self) -> gpui::FocusHandle {
+        self.focus_handle.clone()
+    }
 }
 
 /// Inclusive bounding rectangle `(r0, c0, r1, c1)` over a set of `(row, col)`
@@ -6622,6 +6772,37 @@ impl Render for WorkspaceShell {
             }
         }
 
+        // B5: lazily build the DockArea and its center GridPanel. `DockArea::new`
+        // needs a `&mut Window`, available only here — the same reason the
+        // `table_state` promotion above lives in `render`.
+        //
+        // The center is `DockItem::Panel`, NOT `DockItem::Tabs`. `Tabs` renders a
+        // `TabPanel`, which ALWAYS paints a title bar: under `PanelStyle::Auto` a
+        // single visible panel gets a 30px title row rather than no chrome. It
+        // also wraps the panel in a scroll container plus a cached element and
+        // marks the container a tab group — a nested scroll around a virtualized
+        // `Table`, a cached child against the single-frame a11y capture, and a
+        // tab group that reorders Tab traversal. `DockItem::Panel` renders the
+        // panel's raw view instead, putting ZERO elements between this shell and
+        // the `Table`. Measured by the B5 T0 chrome gate: panel-body bounds equal
+        // host bounds, same origin and same height.
+        if self.dock_area.is_none() {
+            let weak_shell = cx.entity().downgrade();
+            let panel = cx.new(|_| crate::panels::grid_panel::GridPanel::new(weak_shell));
+            let dock = cx.new(|cx| {
+                let mut dock =
+                    gpui_component::dock::DockArea::new("dat0-workspace", Some(1), window, cx);
+                // v1 is resize + collapse only, never drag-rearrange. With
+                // `DockItem::Panel` there is no tab bar to drag; this is for B6+.
+                dock.set_locked(true, window, cx);
+                dock
+            });
+            let item = gpui_component::dock::DockItem::panel(Arc::new(panel.clone()));
+            dock.update(cx, |dock, cx| dock.set_center(item, window, cx));
+            self.grid_panel = Some(panel);
+            self.dock_area = Some(dock);
+        }
+
         let session = Arc::clone(&self.session);
 
         let drop_listener = cx.listener(move |_view, paths: &ExternalPaths, _window, cx| {
@@ -6636,123 +6817,10 @@ impl Render for WorkspaceShell {
             .detach();
         });
 
-        // `Table<D>` and the empty-state hero are different concrete
-        // types, so we widen every arm with `.into_any_element()` to
-        // satisfy `impl IntoElement`'s single-return-type requirement.
-        //
-        // P3b T7 adds the empty-state hero branch: when no data source is
-        // mounted (or the mounted source is empty), pick between the
-        // "samples picker" hero (recents empty) and the recents-only hero
-        // (recents non-empty). Recents emptiness is read directly from
-        // disk here so the view doesn't need a plumbed-in `Arc<Mutex<Recents>>`
-        // — `Recents::with_path` is a cheap JSON read and the empty-state
-        // render is not on the per-row hot path.
-        let body = match (self.data_source.as_ref(), self.table_state.as_ref()) {
-            (Some(ds), Some(state)) if !ds.is_empty() => {
-                // Real Table mount — closes the P3a T10 placeholder.
-                // Per `docs/internal/gpui-table-api-notes.md` §3:
-                //   `Table::new(state: &Entity<TableState<D>>) -> Self`
-                // Theming flows implicitly via `cx.theme()` inside the
-                // widget (spike §1.3); no prop to pass.
-                let table = Table::new(state).stripe(true).bordered(true);
-
-                // T9: mount the selection-aware right-click context menu on the
-                // grid body. `ContextMenuExt::context_menu` requires
-                // `ParentElement + Styled`, which the `Table` (a `RenderOnce`
-                // widget) does not implement directly — so we wrap it in a
-                // `div` and hang the menu off that. `build_menu` snapshots the
-                // current selection flag and captures a weak handle to this
-                // shell so the items dispatch into the live edit handlers.
-                use crate::grid::context_menu::{ContextMenuExt, build_menu};
-                let ws_weak = cx.entity().downgrade();
-                // Use the active cell's column as the fallback for "Delete
-                // Column" when no column selection is active (body-level menu;
-                // the header right-click handler passes the header's col_ix
-                // directly when that wiring lands in a later task).
-                let active_col = self.selection.as_ref().map(|s| s.active().col).unwrap_or(0);
-                let menu_builder = build_menu(ws_weak, self.selection.as_ref(), active_col);
-                div()
-                    .size_full()
-                    .child(table)
-                    .context_menu(menu_builder)
-                    .into_any_element()
-            }
-            (Some(_), None) => {
-                // Data source landed but TableState hasn't been promoted
-                // yet (the next frame promotes it). Brief placeholder.
-                div().child("Loading grid…").into_any_element()
-            }
-            // Either no data source, or a data source with zero rows —
-            // both fall back to the empty-state hero. `recents_empty`
-            // toggles the right-column content (samples vs. recents).
-            _ => {
-                // One config_dir() call feeds both recents and the
-                // first_run_done read. On any error (config dir unavailable
-                // OR settings parse failure) both default conservatively:
-                // recents=empty, first_run_done=true (suppresses tour).
-                let (recents_empty, first_run_done) = match crate::platform::config_dir() {
-                    Ok(cfg) => {
-                        let re = Recents::with_path(cfg.join("recents.json"))
-                            .list()
-                            .is_empty();
-                        let frd = crate::settings::store::SettingsStore::with_path(
-                            cfg.join("settings.toml"),
-                        )
-                        .load_or_default()
-                        .map(|s| s.first_run_done)
-                        .unwrap_or(true); // suppress tour on load error
-                        (re, frd)
-                    }
-                    Err(_) => (true, true),
-                };
-
-                // One-shot auto-open: schedule the tour exactly once per
-                // process. `tour_auto_shown` is set SYNCHRONOUSLY before
-                // scheduling so that subsequent render frames (which
-                // re-enter this branch before `first_run_done` persists)
-                // cannot re-queue a second open. The dispatcher hop defers
-                // `onboarding::open` out of the render frame, mirroring the
-                // `about::open` pattern (`window_registry::dispatcher()` +
-                // `dispatcher.dispatch`).
-                if !self.tour_auto_shown && crate::empty_state::should_auto_tour(first_run_done) {
-                    self.tour_auto_shown = true;
-                    if let Some(dispatcher) = crate::window_registry::dispatcher() {
-                        let _ = dispatcher.dispatch(|cx: &mut gpui::App| {
-                            crate::onboarding::open(cx);
-                        });
-                    }
-                }
-
-                // Pre-register the stable per-hero-button focus handles on the
-                // persistent shell, then hand them down to the transient
-                // `EmptyState` (which must NOT mint focus handles — it is rebuilt
-                // every frame, so a fresh handle each render would lose focus on
-                // the harness's forced re-render). Slice 6. Registering all five
-                // fixed ids unconditionally is fine — `HeroHandles::get` is only
-                // invoked by whichever branch actually renders (`sample_column`
-                // looks up `hero-open-file-samples`, `recents_column` looks up
-                // `hero-open-file-recents`; only one of the two ever runs per
-                // frame), so both branches always find their handles pre-registered.
-                let hero_ids: [&'static str; 5] = [
-                    "hero-take-tour",
-                    "hero-open-demo",
-                    "hero-open-file-samples",
-                    "hero-open-file-recents",
-                    "recents-list",
-                ];
-                let mut map = std::collections::HashMap::new();
-                for id in hero_ids {
-                    map.insert(id, self.hero_focus_handle(id, cx));
-                }
-                for entry in crate::sample_data::entries() {
-                    let id = crate::empty_state::sample_static_id(&entry.kind);
-                    map.insert(id, self.hero_focus_handle(id, cx));
-                }
-                let hero = crate::empty_state::HeroHandles { map };
-                EmptyState::new(recents_empty, first_run_done, self.recents_active)
-                    .render(&hero, cx)
-            }
-        };
+        // B5: the grid center is rendered by `GridPanel` inside the DockArea now
+        // (`render_grid_body` is the panel's delegate target), so `render` only
+        // hands the dock to the body row.
+        let dock_el = self.dock_area.clone();
 
         // Slice 6 Task 3: is a REAL grid mounted this frame (as opposed to the
         // "Loading grid…" placeholder or the empty-state hero)? Mirrors the
@@ -7239,7 +7307,7 @@ impl Render for WorkspaceShell {
                                 cx,
                             ))
                     }))
-                    .child(div().flex_1().child(body))
+                    .child(div().flex_1().children(dock_el))
                     // Inspector right dock last → Catalog | Connections | body | Inspector.
                     .children(self.inspector_panel_visible.then(|| {
                         div()
@@ -7298,6 +7366,12 @@ impl Render for WorkspaceShell {
 // test module.
 #[cfg(feature = "a11y-capture")]
 impl WorkspaceShell {
+    /// B5: has the shell built its DockArea? The dock is an implementation
+    /// detail of `render`, and the integration tests live in another crate.
+    pub fn dock_mounted_for_test(&self) -> bool {
+        self.dock_area.is_some()
+    }
+
     pub fn chart_bind_for_test(&mut self, source: String, cols: Vec<(String, String)>) {
         self.chart_panel.bind(source, cols);
         self.chart_panel_visible = true;

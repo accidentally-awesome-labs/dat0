@@ -97,6 +97,17 @@ fn a11y_capture_round_trips_and_click_by_label_opens_tour(cx: &mut TestAppContex
     // which is precisely how B3's mount gate found it. Keep it exact; a `>=`
     // would throw the proof away.
     //
+    // UI-redesign B5 RECOUNT — the count is UNCHANGED at 8, and that is the
+    // finding. B5 re-parents the grid center under a `DockArea` →
+    // `DockItem::Panel` → `GridPanel`, and the master plan's top risk for the
+    // whole B5-B8 workstream was that a dock re-renders its children twice per
+    // forced frame, which would duplicate every node below and break the
+    // bracket this assertion proves. It does not: `DockItem::Panel` renders the
+    // panel's raw view with no cached-element wrapper. The generation-counter
+    // fallback sketched in `src/a11y/mod.rs` stays unbuilt. B6-B8 add real docks
+    // (which DO wrap panels in `TabPanel` chrome, including a `.cached()` child)
+    // — each must re-run this file and treat any movement as the signal.
+    //
     // If the forced `refresh()` produced more than one render frame, the
     // collector would hold duplicate nodes and this count would exceed 8 (and
     // the `get_by_label` lookups below would panic with "Found two or more

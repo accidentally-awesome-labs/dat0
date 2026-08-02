@@ -47,13 +47,37 @@ use panels::{PANELS, back, is_last, next};
 /// per-panel chrome (Back/Next/Skip) drives navigation from inside the dialog
 /// body, so only this first panel needs the `App`→`Window` hop.
 pub fn open(cx: &mut App) {
-    if let Some(handle) = cx.active_window() {
+    // `App::active_window()` is the PLATFORM's notion of "active", and it is
+    // `None` until the OS has actually activated the window. The first-run tour
+    // is dispatched from the first render, so whether it wins depends on which
+    // main-loop turn the dispatcher drains the closure on — a race that had been
+    // silently winning until UI-redesign B5 made it lose: the DockArea's
+    // `set_center` notifies, that notify pumps an extra early frame, the queued
+    // tour ran one turn sooner than before, and first-run onboarding stopped
+    // appearing with only a WARN in the log to show for it.
+    //
+    // `WindowRegistry` knows the window exists as soon as it is registered,
+    // independent of OS activation, so it is the deterministic fallback. Note a
+    // retry loop would NOT have been a fix — it would only have re-rolled the
+    // same race.
+    let handle = cx.active_window().or_else(first_registered_window);
+    if let Some(handle) = handle {
         let _ = handle.update(cx, move |_root: AnyView, window: &mut Window, cx| {
             present_panel(window, cx, 0);
         });
     } else {
-        tracing::warn!("onboarding::open: no active window; cannot show tour");
+        tracing::warn!("onboarding::open: no window at all; cannot show tour");
     }
+}
+
+/// The gpui handle of the first live registered window, if any.
+///
+/// Used only as the activation-race fallback in [`open`] — every other caller
+/// already holds a `Window`.
+fn first_registered_window() -> Option<gpui::AnyWindowHandle> {
+    let registry = crate::window_registry::window_registry()?;
+    let registry = registry.lock();
+    registry.live_windows().find_map(|w| w.gpui_handle)
 }
 
 /// Open the tour from a caller that may already be INSIDE a `window.update` of
