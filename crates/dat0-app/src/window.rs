@@ -419,6 +419,25 @@ const PACKAGE_BUDGET: u64 = 1024 * 1024 * 1024;
 const INSPECTOR_DOCK_WIDTH: f32 = 288.0;
 const CHARTS_DOCK_WIDTH: f32 = 560.0;
 
+/// B7: which left-dock panel is showing.
+///
+/// The three shell bools remain the storage; this names the choice they encode
+/// so that every transition can go through one place
+/// ([`WorkspaceShell::activate_left_panel`]) and the at-most-one-visible
+/// invariant can be structural.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum LeftPanel {
+    Catalog,
+    Connections,
+    Ai,
+}
+
+impl LeftPanel {
+    /// `&[T; N]`, not `&'static [T]` — the latter trips
+    /// `clippy::redundant_static_lifetimes` under `-D warnings` (A5).
+    pub const ALL: &[LeftPanel; 3] = &[LeftPanel::Catalog, LeftPanel::Connections, LeftPanel::Ai];
+}
+
 /// `ExportPackage` handler: save the FOCUSED live workspace to a `.dat0` package.
 ///
 /// Opens the native save panel (`*.dat0`), then off the GPUI main thread maps the
@@ -5637,11 +5656,10 @@ impl WorkspaceShell {
     /// persisted `AiSettings` and probe the keychain for whether a key is set for
     /// the selected provider (the key value itself is never read into state).
     pub(crate) fn toggle_ai_panel(&mut self, cx: &mut gpui::Context<Self>) {
-        self.ai_panel_visible = !self.ai_panel_visible;
-        if self.ai_panel_visible {
-            self.hydrate_ai_panel();
-        }
-        cx.notify();
+        // B7: AI is one of three mutually-exclusive left panels now. The
+        // hydrate-on-open this used to do lives in `activate_left_panel`. The
+        // method name is kept so its callers (the AI menu action) are untouched.
+        self.activate_left_panel(LeftPanel::Ai, cx);
     }
 
     /// Load the AI-panel draft from persisted settings + keychain key-presence.
@@ -6572,6 +6590,63 @@ impl WorkspaceShell {
         self.inspector_panel_visible
     }
 
+    /// B7: the ONLY writer of the three left-panel bools.
+    ///
+    /// Being the only writer is what makes the at-most-one-visible invariant
+    /// structural rather than a convention every call site has to remember.
+    /// Upstream paints a horizontal tab bar the moment two panels in a
+    /// `DockItem::tabs` are visible (`tab_panel.rs:623-625`), which would put a
+    /// second selector right beside the activity rail.
+    fn set_left_panel_exclusive(&mut self, target: Option<LeftPanel>) {
+        self.catalog_panel_visible = target == Some(LeftPanel::Catalog);
+        self.connections_panel_visible = target == Some(LeftPanel::Connections);
+        self.ai_panel_visible = target == Some(LeftPanel::Ai);
+    }
+
+    /// B7: is this left panel the one currently showing?
+    pub fn left_panel_visible(&self, p: LeftPanel) -> bool {
+        match p {
+            LeftPanel::Catalog => self.catalog_panel_visible,
+            LeftPanel::Connections => self.connections_panel_visible,
+            LeftPanel::Ai => self.ai_panel_visible,
+        }
+    }
+
+    /// B7: the open left panel, or `None` when the dock is collapsed.
+    pub fn open_left_panel(&self) -> Option<LeftPanel> {
+        LeftPanel::ALL
+            .iter()
+            .copied()
+            .find(|p| self.left_panel_visible(*p))
+    }
+
+    /// B7: the user-facing left-panel transition, and the only one production
+    /// code should call.
+    ///
+    /// Activating the panel that is already open collapses the dock — the
+    /// VSCode behaviour — and it falls out of the invariant rather than being a
+    /// special case.
+    ///
+    /// The per-panel side effects that used to live in the individual toggle
+    /// handlers moved here so that no entry point can lose them: Catalog
+    /// refreshes so the dock always shows fresh tables, AI hydrates its draft
+    /// from settings plus keychain.
+    pub fn activate_left_panel(&mut self, target: LeftPanel, cx: &mut gpui::Context<Self>) {
+        let already_open = self.left_panel_visible(target);
+        self.set_left_panel_exclusive((!already_open).then_some(target));
+        if !already_open {
+            match target {
+                LeftPanel::Catalog => self.refresh_catalog(cx),
+                LeftPanel::Ai => self.hydrate_ai_panel(),
+                LeftPanel::Connections => {}
+            }
+        }
+        // Only `catalog_panel_visible` is persisted (session v10); the other two
+        // have always defaulted false at construction.
+        self.persist_dock_ui();
+        cx.notify();
+    }
+
     /// B5: the grid center's element tree — the real `Table`, the promotion
     /// placeholder, or the empty-state hero.
     ///
@@ -7370,19 +7445,16 @@ impl Render for WorkspaceShell {
             // ── Connections panel toggle (P5c T11) ────────────────────────────
             .on_action(cx.listener(
                 |ws: &mut Self, _: &crate::menu_macos::ConnectionsToggle, _window, cx| {
-                    ws.connections_panel_visible = !ws.connections_panel_visible;
-                    cx.notify();
+                    // B7: one of three mutually-exclusive left panels now.
+                    ws.activate_left_panel(LeftPanel::Connections, cx);
                 },
             ))
             // ── Catalog panel toggle (P6a T7) ─────────────────────────────────
             .on_action(cx.listener(
                 |ws: &mut Self, _: &crate::menu_macos::CatalogToggle, _window, cx| {
-                    ws.catalog_panel_visible = !ws.catalog_panel_visible;
-                    // Refresh on open so the dock always shows fresh tables.
-                    ws.refresh_catalog(cx);
-                    // Persist the dock visibility (session v8 `ui`).
-                    ws.persist_dock_ui();
-                    cx.notify();
+                    // B7: the refresh-on-open and the persist both moved into
+                    // `activate_left_panel`, so no entry point can lose them.
+                    ws.activate_left_panel(LeftPanel::Catalog, cx);
                 },
             ))
             // ── Inspector panel toggle (P6a T9) ───────────────────────────────
@@ -7562,13 +7634,17 @@ impl WorkspaceShell {
     /// Seed an `md:`-origin `TableInfo` to populate the "Cloud" group.
     pub fn seed_catalog_tree_for_test(&mut self, tables: Vec<dat0_engine::TableInfo>) {
         self.catalog_tree = crate::catalog::CatalogTree::build(&tables);
-        self.catalog_panel_visible = true;
+        // B7: through the single writer, so the at-most-one-visible invariant
+        // holds for tests too — but NOT through `activate_left_panel`, whose
+        // `refresh_catalog` is exactly what this shim exists to bypass.
+        self.set_left_panel_exclusive(Some(LeftPanel::Catalog));
     }
     /// Show the Connections dock and hand back the `ConnectionManager` so the test
     /// can drive `set_md_status` / `set_md_test_result` / `set_md_databases` (all
     /// already `pub`). No live connection, token, or keychain touched.
     pub fn open_connections_for_test(&mut self) -> &mut crate::connections::ConnectionManager {
-        self.connections_panel_visible = true;
+        // B7: via the single writer — see `seed_catalog_tree_for_test`.
+        self.set_left_panel_exclusive(Some(LeftPanel::Connections));
         &mut self.connections
     }
     /// Build + show the SQL console, then seed the timing chip's elapsed + routing
@@ -7662,7 +7738,10 @@ impl WorkspaceShell {
     #[cfg(feature = "a11y-capture")]
     pub fn seed_ai_panel_for_test(&mut self, panel: crate::ai::panel::AiPanel) {
         self.ai_panel = panel;
-        self.ai_panel_visible = true;
+        // B7: NOT `activate_left_panel` — that calls `hydrate_ai_panel`, which
+        // probes the OS keychain plus settings.toml and is the hermeticity trap
+        // this shim exists to avoid.
+        self.set_left_panel_exclusive(Some(LeftPanel::Ai));
     }
     /// Read the AI dock's draft `enabled` flag (proves Enter-operability flipped it).
     #[cfg(feature = "a11y-capture")]
