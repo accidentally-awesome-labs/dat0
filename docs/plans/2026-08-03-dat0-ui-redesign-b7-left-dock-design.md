@@ -535,3 +535,74 @@ B7 itself will owe, in all three themes and high contrast most of all:
 - tooltip legibility and placement;
 - a narrow window, where the rail plus a 384 px dock plus an 848 px right dock
   can exceed the viewport.
+
+## 15. As-built (2026-08-03)
+
+Merged shape matches the design except where noted. Local gate: fmt clean,
+`clippy --workspace --all-targets -D warnings` exit 0, **115 binaries × 3 feature
+combos, 0 failures**, `style_lint` ratchet unchanged at `[("window.rs", 1)]`,
+`src/grid` and `src/session` byte-identical to main, and the built binary boots
+with a log identical to a `main` build apart from the config-dir path.
+
+### 15.1 ⚠⚠ The one real design change: split, not tabs
+
+**§4 said `DockItem::tabs` of three. As built it is `DockItem::split` of three
+single-panel `DockItem::tab`s** — the fallback §3 retained, adopted for a reason
+nobody predicted.
+
+`DockItem::tabs` **cannot be constructed from inside `WorkspaceShell::render` at
+all**. It calls `TabPanel::add_panel` once per panel, and every add after the
+first runs `set_active_ix`, which does real work and ends up calling
+`Panel::visible` → `shell.read(cx)`. The shell is already leased by its own
+`render`, so it panics: *"cannot read WorkspaceShell while it is already being
+updated"*. All ten `left_dock` tests failed identically, which is what made the
+cause obvious.
+
+A single-panel `DockItem::tab` never trips it, because `set_active_ix`
+early-returns when the index is unchanged (`tab_panel.rs:208-211`) — **which is
+exactly why B6's two-panel right dock was fine, and why B6 could not have
+discovered this.**
+
+The tab-group cost that motivated tabs is moot: the at-most-one invariant means
+at most one child is ever visible, so at most one group is ever populated, and a
+hidden child collapses and yields its space (`stack_panel.rs:427-431`). T0's
+measurements still apply — they were taken against real dock chrome.
+
+### 15.2 What matched the prediction exactly
+
+- `a11y_spike` 8 → **12**, the rail's four `.a11y` sites. The relocated panel
+  titles contribute none, because `a11y_label` records `click_id: None`.
+- All five declared focus-migration gates stayed green with nine handles now
+  inside dock chrome: `catalog_nav`, `ai_nav`, `keyboard_nav`, `a11y_content`,
+  `sql_console_transient_nav`.
+- Zero new colour literals; the ratchet never moved.
+
+### 15.3 Smaller as-builts
+
+- **`tests/left_dock.rs` needs an ambient tokio runtime where `right_dock.rs`
+  needed none.** The Catalog arm of `activate_left_panel` reaches
+  `refresh_catalog`'s `tokio::spawn`, which panics with "there is no reactor
+  running" under a bare `TestAppContext`. `ai_nav`'s `enter_async_harness` was
+  copied in. This is a consequence of centralising the side effects, and it is
+  the right trade: no entry point can lose the refresh.
+- **Two `keyboard_nav` hero tests were updated, not worked around.** The rail is
+  now the first tab stop on every screen — it is a sibling of the `DockArea` and
+  precedes it in document order, and the hero lives inside the dock since B5. A
+  real product change, so the expected sequences gained `rail.title`.
+- **A test was measurably vacuous and is now documented as such.**
+  `never_two_panel_names_in_the_tree_at_once` stayed GREEN under T2's
+  non-vacuity probe while four siblings went red, because only the catalog
+  contributed a named node at that point. It gained teeth at T4 when the
+  Connections and AI titles moved into `Panel::title` with labels, and the probe
+  was re-run there to confirm. **Recording the weakness beat deleting or
+  trusting the test.**
+- `LEFT_DOCK_WIDTH` and the three `*_visible()` getters had to be introduced in
+  the commit that first uses them: `-D warnings` makes an unused const or method
+  a hard error, so a "declare now, use next commit" split does not build.
+
+### 15.4 Owed human glance (unchanged from §14)
+
+Nothing in the local gate can see pixels. §14's list stands, with one addition
+from 15.1: with only one panel ever visible, the split's **resize splitter now
+sits between the open panel and the grid** — worth a look that dragging it feels
+right and that B9 will have something sane to persist.
