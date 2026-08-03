@@ -69,8 +69,11 @@ pub fn render_catalog(
             "catalog-tree",
             crate::a11y::AccessRole::Button,
             dat0_i18n::t("catalog.title"),
-        )
-        .child(div().child(SharedString::from(dat0_i18n::t("catalog.title"))));
+        );
+    // B7: the "Catalog" title row moved into `CatalogPanel::title` — the dock
+    // paints a 30px title bar above this body, so keeping both would show the
+    // word twice. The `.a11y` above STAYS: it is the tree's accessible name and
+    // `catalog_nav` resolves the focus oracle through it.
 
     // Header `(n)` = TOP-LEVEL node count (an attach = 1 parent), collapse-
     // independent — keeps the Slice-5 "Cloud (1)" teeth semantics.

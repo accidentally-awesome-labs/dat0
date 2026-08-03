@@ -196,7 +196,7 @@ pub fn render_connections(
         .flex_col()
         .gap_2()
         .p_2()
-        .child(div().child(SharedString::from(dat0_i18n::t("connections.title"))))
+        // B7: the title row moved into `ConnectionsPanel::title` (dock chrome).
         .child(md_section)
         .child(files_section)
         .into_any_element()

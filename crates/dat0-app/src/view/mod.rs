@@ -1,5 +1,6 @@
 //! Per-tab view state: active Transformation stack + undo cursor + active view name.
 
+pub mod activity_rail;
 pub mod column_view;
 pub mod command_palette;
 pub mod crash_report;

@@ -700,10 +700,16 @@ impl Render for SqlConsole {
         // ── Tab strip ──────────────────────────────────────────────────────
         // Each tab is a clickable label (→ set active + Persist) with a small
         // "✕" close glyph (→ `close_tab`, which keeps ≥1 tab). A trailing "+"
-        // appends a fresh tab via `new_tab`. No `.tooltip()` helper exists at
-        // this gpui-component rev (T9), so the glyphs are the affordance; the
+        // appends a fresh tab via `new_tab`. The glyphs are the affordance; the
         // `sql.new_tab` / `sql.close_tab` i18n strings (T5) back a later tooltip
         // polish task.
+        //
+        // ⚠ CORRECTED AT B7: this used to claim no `.tooltip()` helper exists at
+        // this gpui-component rev. One does — gpui core has `.tooltip()` on
+        // `StatefulInteractiveElement` (`div.rs:1161`) and gpui-component ships a
+        // `Tooltip` view at `gpui_component::tooltip::Tooltip` (not re-exported
+        // at its crate root). `view/activity_rail.rs` uses both. These buttons
+        // simply have not been given one yet.
         let tab_count = self.tabs.len();
         let tab_strip = div()
             .id("sql-tabstrip")
@@ -858,10 +864,10 @@ impl Render for SqlConsole {
         let run_caret: gpui::AnyElement = if self.running {
             div().into_any_element()
         } else {
-            // No `.tooltip()` helper exists at this gpui-component rev, so the
-            // caret itself is the affordance for "Run in results pane"
+            // The caret itself is the affordance for "Run in results pane"
             // (`dat0_i18n::t("sql.run_in_pane")`, from T5). A later polish task
-            // can add a hover tooltip / full PopupMenu.
+            // can add a hover tooltip / full PopupMenu — and, corrected at B7,
+            // `.tooltip()` IS available at this rev (see the tab strip above).
             div()
                 .id("sql-run-pane")
                 .px_2()

@@ -353,6 +353,12 @@ fn hero_tab_cycle_visits_every_button(cx: &mut TestAppContext) {
     let samples = dat0_app::sample_data::entries();
     assert_eq!(samples.len(), 3, "precondition: exactly 3 sample entries");
     let expected: Vec<String> = vec![
+        // B7: the activity rail is the first tab stop on every screen. It is a
+        // sibling of the DockArea and precedes it in document order, and the
+        // hero now lives INSIDE the dock (B5 re-parented the grid center), so
+        // the rail is reached before any hero button. One container stop for
+        // the whole rail — the listbox pattern — not one per icon.
+        dat0_app::dat0_i18n::t("rail.title"),
         dat0_app::dat0_i18n::t("hero.take_tour"),
         dat0_app::dat0_i18n::t("hero.demo.cta"),
         samples[0].title.to_string(),
@@ -438,6 +444,7 @@ fn hero_enter_activates_open_demo(cx: &mut TestAppContext) {
 
     focus_shell_neutrally(cx);
 
+    press_tab(cx); // B7: activity-rail (the first stop on every screen)
     press_tab(cx); // hero-take-tour
     press_tab(cx); // hero-open-demo
     let snap = A11ySnapshot::capture(cx);

@@ -19,7 +19,7 @@ use gpui::{AssetSource, Result, SharedString};
 use gpui_component::IconNamed;
 use rust_embed::RustEmbed;
 
-/// dat0's own icon files. Five Lucide SVGs that `gpui-component-assets` does
+/// dat0's own icon files. Eight Lucide SVGs that `gpui-component-assets` does
 /// not bundle at the pinned rev.
 ///
 /// The `include` filter is load-bearing: `assets/` also holds `chinook.sqlite`,
@@ -70,17 +70,23 @@ pub enum Dat0IconName {
     Layers,
     Bookmark,
     History,
+    Database,
+    Plug,
+    Sparkles,
 }
 
 impl Dat0IconName {
     /// Every variant — the tests and the gallery iterate this so a new icon
     /// cannot be added without being covered and displayed.
-    pub const ALL: &[Dat0IconName; 5] = &[
+    pub const ALL: &[Dat0IconName; 8] = &[
         Dat0IconName::Filter,
         Dat0IconName::Play,
         Dat0IconName::Layers,
         Dat0IconName::Bookmark,
         Dat0IconName::History,
+        Dat0IconName::Database,
+        Dat0IconName::Plug,
+        Dat0IconName::Sparkles,
     ];
 }
 
@@ -94,6 +100,10 @@ impl IconNamed for Dat0IconName {
             Self::Layers => "icons/layers.svg",
             Self::Bookmark => "icons/bookmark.svg",
             Self::History => "icons/clock.svg",
+            // B7: the activity rail's three items.
+            Self::Database => "icons/database.svg",
+            Self::Plug => "icons/plug.svg",
+            Self::Sparkles => "icons/sparkles.svg",
         }
         .into()
     }

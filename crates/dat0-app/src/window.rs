@@ -419,6 +419,34 @@ const PACKAGE_BUDGET: u64 = 1024 * 1024 * 1024;
 const INSPECTOR_DOCK_WIDTH: f32 = 288.0;
 const CHARTS_DOCK_WIDTH: f32 = 560.0;
 
+/// B7: the left dock's fixed width.
+///
+/// Fixed because `set_left_dock` may be called only once — it leaks
+/// subscriptions, see the mount site — and `DockArea` keeps `left_dock` private
+/// with no size setter. 384 rather than the 256 each hand-rolled dock used:
+/// with one panel showing at a time the old sum has no meaning, and the catalog
+/// tree reads better with the extra room.
+const LEFT_DOCK_WIDTH: f32 = 384.0;
+
+/// B7: which left-dock panel is showing.
+///
+/// The three shell bools remain the storage; this names the choice they encode
+/// so that every transition can go through one place
+/// ([`WorkspaceShell::activate_left_panel`]) and the at-most-one-visible
+/// invariant can be structural.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum LeftPanel {
+    Catalog,
+    Connections,
+    Ai,
+}
+
+impl LeftPanel {
+    /// `&[T; N]`, not `&'static [T]` — the latter trips
+    /// `clippy::redundant_static_lifetimes` under `-D warnings` (A5).
+    pub const ALL: &[LeftPanel; 3] = &[LeftPanel::Catalog, LeftPanel::Connections, LeftPanel::Ai];
+}
+
 /// `ExportPackage` handler: save the FOCUSED live workspace to a `.dat0` package.
 ///
 /// Opens the native save panel (`*.dat0`), then off the GPUI main thread maps the
@@ -2145,6 +2173,16 @@ pub struct WorkspaceShell {
     /// B6: the `(inspector, charts)` visibility the right dock was last
     /// reconciled to, so `sync_right_dock` does work only on an actual change.
     right_dock_state: (bool, bool),
+    /// B7: the (catalog, connections, ai) visibility triple the left dock was
+    /// last reconciled to, so `sync_left_dock` does work only on a real change.
+    left_dock_state: (bool, bool, bool),
+    /// B7: the activity rail's KEYBOARD cursor — an index into
+    /// `view::activity_rail::ITEMS`. Independent of which panel is open: the
+    /// cursor still exists when the dock is collapsed.
+    rail_cursor: usize,
+    catalog_panel: Option<Entity<crate::panels::catalog_panel::CatalogPanel>>,
+    connections_panel: Option<Entity<crate::panels::connections_panel::ConnectionsPanel>>,
+    ai_dock_panel: Option<Entity<crate::panels::ai_dock_panel::AiDockPanel>>,
     /// Theme observer subscription, kept alive for the lifetime of the
     /// view. Per `docs/internal/gpui-api-notes.md` §0.A.4 the `Theme`
     /// global is app-scoped; switching theme in one window notifies every
@@ -2487,6 +2525,11 @@ impl WorkspaceShell {
             inspector_panel: None,
             charts_panel: None,
             right_dock_state: (false, false),
+            left_dock_state: (false, false, false),
+            rail_cursor: 0,
+            catalog_panel: None,
+            connections_panel: None,
+            ai_dock_panel: None,
             theme_subscription: None,
             view_model: None,
             active_popover: None,
@@ -5637,11 +5680,10 @@ impl WorkspaceShell {
     /// persisted `AiSettings` and probe the keychain for whether a key is set for
     /// the selected provider (the key value itself is never read into state).
     pub(crate) fn toggle_ai_panel(&mut self, cx: &mut gpui::Context<Self>) {
-        self.ai_panel_visible = !self.ai_panel_visible;
-        if self.ai_panel_visible {
-            self.hydrate_ai_panel();
-        }
-        cx.notify();
+        // B7: AI is one of three mutually-exclusive left panels now. The
+        // hydrate-on-open this used to do lives in `activate_left_panel`. The
+        // method name is kept so its callers (the AI menu action) are untouched.
+        self.activate_left_panel(LeftPanel::Ai, cx);
     }
 
     /// Load the AI-panel draft from persisted settings + keychain key-presence.
@@ -6519,6 +6561,37 @@ impl WorkspaceShell {
     /// the old fixed docks exactly; one panel open is wider than it used to be,
     /// and the user can drag it back — which B9's `dock_layout` blob will then
     /// persist.
+    /// B7: reconcile the LEFT dock with the three visibility bools, which are
+    /// the single source of truth. Mirrors `sync_right_dock` exactly — runs in
+    /// `render` because `toggle_dock` needs a `&mut Window`, guarded by a state
+    /// tuple so it acts only on a real change, and it never re-runs
+    /// `set_left_dock` (which leaks; see the mount site).
+    ///
+    /// WHICH panel shows is `Panel::visible`, read straight off these bools, so
+    /// this only has to decide whether the dock as a whole is open. With the
+    /// at-most-one invariant there is never more than one visible panel for
+    /// upstream to choose between.
+    fn sync_left_dock(&mut self, window: &mut gpui::Window, cx: &mut gpui::Context<Self>) {
+        let want = (
+            self.catalog_panel_visible,
+            self.connections_panel_visible,
+            self.ai_panel_visible,
+        );
+        if want == self.left_dock_state {
+            return;
+        }
+        self.left_dock_state = want;
+        let Some(dock) = self.dock_area.clone() else {
+            return;
+        };
+        let want_open = want.0 || want.1 || want.2;
+        dock.update(cx, |dock, cx| {
+            if dock.is_dock_open(gpui_component::dock::DockPlacement::Left, cx) != want_open {
+                dock.toggle_dock(gpui_component::dock::DockPlacement::Left, window, cx);
+            }
+        });
+    }
+
     fn sync_right_dock(&mut self, window: &mut gpui::Window, cx: &mut gpui::Context<Self>) {
         let want = (self.inspector_panel_visible, self.chart_panel_visible);
         if want == self.right_dock_state {
@@ -6570,6 +6643,161 @@ impl WorkspaceShell {
     /// direction of the dependency legible.
     pub(crate) fn inspector_visible(&self) -> bool {
         self.inspector_panel_visible
+    }
+
+    /// B7: the Catalog panel's element tree, extracted from the body row so
+    /// [`crate::panels::catalog_panel::CatalogPanel`] can call it.
+    ///
+    /// `&mut self` because `hero_focus_handle` needs it. Minting the
+    /// `catalog-tree` handle HERE rather than threading one in keeps it on the
+    /// shell's `hero_focus` map, so the same `FocusHandle` instance lands on the
+    /// same element after the move to the dock — which is what keeps
+    /// `catalog_nav` meaningful across this slice.
+    pub(crate) fn render_catalog_body(&mut self, cx: &mut gpui::Context<Self>) -> gpui::AnyElement {
+        let catalog_fh = self.hero_focus_handle("catalog-tree", cx);
+        crate::catalog::panel::render_catalog(
+            &self.catalog_tree,
+            &self.catalog_collapsed,
+            self.catalog_active,
+            &catalog_fh,
+            cx,
+        )
+    }
+
+    /// B7: the Connections panel's element tree, extracted from the body row.
+    pub(crate) fn render_connections_body(
+        &mut self,
+        cx: &mut gpui::Context<Self>,
+    ) -> gpui::AnyElement {
+        crate::connections::panel::render_connections(&self.connections, cx)
+    }
+
+    /// B7: the AI dock's element tree, extracted from the body row.
+    ///
+    /// Registering all eight ids unconditionally is fine — `HeroHandles::get` is
+    /// only invoked by whichever buttons actually render, and `ai-key-forget` is
+    /// only looked up when `key_set`.
+    pub(crate) fn render_ai_body(&mut self, cx: &mut gpui::Context<Self>) -> gpui::AnyElement {
+        let ai_handles = {
+            let ids: [&'static str; 8] = [
+                "ai-toggle-enabled",
+                "ai-provider-cycle",
+                "ai-key-set",
+                "ai-key-forget",
+                "ai-model-set",
+                "ai-toggle-advanced",
+                "ai-toggle-sample-rows",
+                "ai-test-connection",
+            ];
+            let mut map = std::collections::HashMap::new();
+            for id in ids {
+                map.insert(id, self.hero_focus_handle(id, cx));
+            }
+            crate::empty_state::HeroHandles { map }
+        };
+        crate::ai::panel::render_ai_panel(&self.ai_panel, &ai_handles, cx)
+    }
+
+    /// B7: read by `CatalogPanel::visible`. A getter rather than a `pub(crate)`
+    /// field keeps the direction of the dependency legible (B6).
+    pub(crate) fn catalog_visible(&self) -> bool {
+        self.catalog_panel_visible
+    }
+
+    /// B7: read by `ConnectionsPanel::visible`.
+    pub(crate) fn connections_visible(&self) -> bool {
+        self.connections_panel_visible
+    }
+
+    /// B7: read by `AiDockPanel::visible`.
+    pub(crate) fn ai_visible(&self) -> bool {
+        self.ai_panel_visible
+    }
+
+    /// B7: move the rail's keyboard cursor. Clamps rather than wraps, matching
+    /// the catalog tree.
+    pub(crate) fn rail_move_cursor(&mut self, delta: isize, cx: &mut gpui::Context<Self>) {
+        let len = crate::view::activity_rail::ITEMS.len() as isize;
+        let next = (self.rail_cursor as isize + delta).clamp(0, len - 1);
+        self.rail_cursor = next as usize;
+        cx.notify();
+    }
+
+    /// B7: activate the panel under the cursor. Enter on the panel that is
+    /// already open collapses the dock, matching what a click does.
+    pub(crate) fn rail_activate_cursor(&mut self, cx: &mut gpui::Context<Self>) {
+        let target = crate::view::activity_rail::ITEMS[self.rail_cursor].panel;
+        self.activate_left_panel(target, cx);
+    }
+
+    /// B7: a click both moves the cursor and activates, so the two never drift
+    /// after a mouse interaction.
+    pub(crate) fn rail_click(&mut self, index: usize, cx: &mut gpui::Context<Self>) {
+        self.rail_cursor = index.min(crate::view::activity_rail::ITEMS.len() - 1);
+        self.rail_activate_cursor(cx);
+    }
+
+    /// B7: the rail's keyboard cursor, for `tests/left_dock.rs`.
+    #[cfg(feature = "a11y-capture")]
+    pub fn rail_cursor_for_test(&self) -> usize {
+        self.rail_cursor
+    }
+
+    /// B7: the ONLY writer of the three left-panel bools.
+    ///
+    /// Being the only writer is what makes the at-most-one-visible invariant
+    /// structural rather than a convention every call site has to remember.
+    /// Upstream paints a horizontal tab bar the moment two panels in a
+    /// `DockItem::tabs` are visible (`tab_panel.rs:623-625`), which would put a
+    /// second selector right beside the activity rail.
+    fn set_left_panel_exclusive(&mut self, target: Option<LeftPanel>) {
+        self.catalog_panel_visible = target == Some(LeftPanel::Catalog);
+        self.connections_panel_visible = target == Some(LeftPanel::Connections);
+        self.ai_panel_visible = target == Some(LeftPanel::Ai);
+    }
+
+    /// B7: is this left panel the one currently showing?
+    pub fn left_panel_visible(&self, p: LeftPanel) -> bool {
+        match p {
+            LeftPanel::Catalog => self.catalog_panel_visible,
+            LeftPanel::Connections => self.connections_panel_visible,
+            LeftPanel::Ai => self.ai_panel_visible,
+        }
+    }
+
+    /// B7: the open left panel, or `None` when the dock is collapsed.
+    pub fn open_left_panel(&self) -> Option<LeftPanel> {
+        LeftPanel::ALL
+            .iter()
+            .copied()
+            .find(|p| self.left_panel_visible(*p))
+    }
+
+    /// B7: the user-facing left-panel transition, and the only one production
+    /// code should call.
+    ///
+    /// Activating the panel that is already open collapses the dock — the
+    /// VSCode behaviour — and it falls out of the invariant rather than being a
+    /// special case.
+    ///
+    /// The per-panel side effects that used to live in the individual toggle
+    /// handlers moved here so that no entry point can lose them: Catalog
+    /// refreshes so the dock always shows fresh tables, AI hydrates its draft
+    /// from settings plus keychain.
+    pub fn activate_left_panel(&mut self, target: LeftPanel, cx: &mut gpui::Context<Self>) {
+        let already_open = self.left_panel_visible(target);
+        self.set_left_panel_exclusive((!already_open).then_some(target));
+        if !already_open {
+            match target {
+                LeftPanel::Catalog => self.refresh_catalog(cx),
+                LeftPanel::Ai => self.hydrate_ai_panel(),
+                LeftPanel::Connections => {}
+            }
+        }
+        // Only `catalog_panel_visible` is persisted (session v10); the other two
+        // have always defaulted false at construction.
+        self.persist_dock_ui();
+        cx.notify();
     }
 
     /// B5: the grid center's element tree — the real `Table`, the promotion
@@ -6939,12 +7167,81 @@ impl Render for WorkspaceShell {
             });
             self.right_dock_state = want;
 
+            // B7: the left dock — three panels of which the at-most-one
+            // invariant keeps exactly zero or one visible at a time.
+            //
+            // ⚠⚠ THIS IS A SPLIT OF THREE SINGLE-PANEL TABS, NOT ONE
+            // `DockItem::tabs` OF THREE, and the reason is re-entrancy rather
+            // than layout. `DockItem::tabs` calls `TabPanel::add_panel` per
+            // panel, and every add after the first calls `set_active_ix`, which
+            // does real work and ends up reading `Panel::visible` — which reads
+            // THIS shell. All of it runs inside `WorkspaceShell::render`, where
+            // the shell is already leased, so it panics with "cannot read
+            // WorkspaceShell while it is already being updated". A single-panel
+            // `DockItem::tab` never hits it because `set_active_ix(0)`
+            // early-returns when the index is unchanged (`tab_panel.rs:208-211`)
+            // — which is exactly why B6's two-panel right dock was fine.
+            //
+            // The split costs one `.tab_group()` per child instead of one total,
+            // but that is moot here: the invariant means at most ONE child is
+            // ever visible, so at most one group is ever populated. A hidden
+            // child collapses and yields its space to its sibling
+            // (`stack_panel.rs:427-431`), so the visible panel gets the full
+            // dock width and the result is what the rail model wants.
+            let catalog =
+                cx.new(|_| crate::panels::catalog_panel::CatalogPanel::new(weak_shell.clone()));
+            let connections = cx.new(|_| {
+                crate::panels::connections_panel::ConnectionsPanel::new(weak_shell.clone())
+            });
+            let ai_dock =
+                cx.new(|_| crate::panels::ai_dock_panel::AiDockPanel::new(weak_shell.clone()));
+            let left = gpui_component::dock::DockItem::split(
+                gpui::Axis::Horizontal,
+                vec![
+                    gpui_component::dock::DockItem::tab(catalog.clone(), &weak_dock, window, cx)
+                        .size(gpui::px(LEFT_DOCK_WIDTH)),
+                    gpui_component::dock::DockItem::tab(
+                        connections.clone(),
+                        &weak_dock,
+                        window,
+                        cx,
+                    )
+                    .size(gpui::px(LEFT_DOCK_WIDTH)),
+                    gpui_component::dock::DockItem::tab(ai_dock.clone(), &weak_dock, window, cx)
+                        .size(gpui::px(LEFT_DOCK_WIDTH)),
+                ],
+                &weak_dock,
+                window,
+                cx,
+            );
+
+            // ⚠ `set_left_dock` leaks exactly like `set_right_dock` above: it
+            // runs `subscribe_item`, which pushes onto `_subscriptions` and
+            // recurses over the item tree (`dock/mod.rs:955-963`), and nothing
+            // ever removes them. Called EXACTLY ONCE; `sync_left_dock` only ever
+            // toggles.
+            let want_left = (
+                self.catalog_panel_visible,
+                self.connections_panel_visible,
+                self.ai_panel_visible,
+            );
+            let left_open = want_left.0 || want_left.1 || want_left.2;
+            dock.update(cx, |dock, cx| {
+                dock.set_left_dock(left, Some(gpui::px(LEFT_DOCK_WIDTH)), left_open, window, cx);
+            });
+            self.left_dock_state = want_left;
+
+            self.catalog_panel = Some(catalog);
+            self.connections_panel = Some(connections);
+            self.ai_dock_panel = Some(ai_dock);
+
             self.grid_panel = Some(panel);
             self.inspector_panel = Some(inspector);
             self.charts_panel = Some(charts);
             self.dock_area = Some(dock);
         }
 
+        self.sync_left_dock(window, cx);
         self.sync_right_dock(window, cx);
 
         let session = Arc::clone(&self.session);
@@ -7238,34 +7535,14 @@ impl Render for WorkspaceShell {
             .tab_index(0)
             .tab_stop(grid_visible);
 
-        // Catalog-tree slice: the panel container's stable focus handle (one
-        // tab stop for the whole panel). Hoisted here — `hero_focus_handle`
-        // needs `&mut self`, unavailable inside the `.children(..)` closures.
-        let catalog_fh = self.hero_focus_handle("catalog-tree", cx);
-
-        // AI-config-nav slice: stable per-button focus handles for the AI dock, minted
-        // on the persistent shell (hero_focus map) and threaded into `render_ai_panel`.
-        // Hoisted here — `hero_focus_handle` needs `&mut self`, unavailable inside the
-        // `.children(..)` render closures. Registering all 8 ids unconditionally is
-        // fine (`HeroHandles::get` is only invoked by whichever buttons actually render;
-        // `ai-key-forget` is only looked up when `key_set`).
-        let ai_handles = {
-            let ids: [&'static str; 8] = [
-                "ai-toggle-enabled",
-                "ai-provider-cycle",
-                "ai-key-set",
-                "ai-key-forget",
-                "ai-model-set",
-                "ai-toggle-advanced",
-                "ai-toggle-sample-rows",
-                "ai-test-connection",
-            ];
-            let mut map = std::collections::HashMap::new();
-            for id in ids {
-                map.insert(id, self.hero_focus_handle(id, cx));
-            }
-            crate::empty_state::HeroHandles { map }
-        };
+        // B7: the activity rail. Built here because `hero_focus_handle` needs
+        // `&mut self`, which is unavailable inside the body row's builder chain.
+        // Always rendered, including on the first-run hero — it is chrome, and
+        // it is how a user with no data yet reaches Connections.
+        let rail_fh = self.hero_focus_handle("activity-rail", cx);
+        let rail_cursor = self.rail_cursor;
+        let rail_open = self.open_left_panel();
+        let rail = crate::view::activity_rail::render_rail(rail_cursor, rail_open, &rail_fh, cx);
 
         // B3 status bar. Reads cached scalars only — no query, no I/O, and (per
         // `SelectionModel::selected_cell_count`'s doc comment) no per-cell work,
@@ -7370,19 +7647,16 @@ impl Render for WorkspaceShell {
             // ── Connections panel toggle (P5c T11) ────────────────────────────
             .on_action(cx.listener(
                 |ws: &mut Self, _: &crate::menu_macos::ConnectionsToggle, _window, cx| {
-                    ws.connections_panel_visible = !ws.connections_panel_visible;
-                    cx.notify();
+                    // B7: one of three mutually-exclusive left panels now.
+                    ws.activate_left_panel(LeftPanel::Connections, cx);
                 },
             ))
             // ── Catalog panel toggle (P6a T7) ─────────────────────────────────
             .on_action(cx.listener(
                 |ws: &mut Self, _: &crate::menu_macos::CatalogToggle, _window, cx| {
-                    ws.catalog_panel_visible = !ws.catalog_panel_visible;
-                    // Refresh on open so the dock always shows fresh tables.
-                    ws.refresh_catalog(cx);
-                    // Persist the dock visibility (session v8 `ui`).
-                    ws.persist_dock_ui();
-                    cx.notify();
+                    // B7: the refresh-on-open and the persist both moved into
+                    // `activate_left_panel`, so no entry point can lose them.
+                    ws.activate_left_panel(LeftPanel::Catalog, cx);
                 },
             ))
             // ── Inspector panel toggle (P6a T9) ───────────────────────────────
@@ -7422,40 +7696,13 @@ impl Render for WorkspaceShell {
                     .flex()
                     .flex_row()
                     .flex_1()
-                    // Catalog dock first → order is Catalog | Connections | body.
-                    .children(self.catalog_panel_visible.then(|| {
-                        div()
-                            .w_64()
-                            .border_r_1()
-                            .child(crate::catalog::panel::render_catalog(
-                                &self.catalog_tree,
-                                &self.catalog_collapsed,
-                                self.catalog_active,
-                                &catalog_fh,
-                                cx,
-                            ))
-                    }))
-                    .children(self.connections_panel_visible.then(|| {
-                        div().w_64().border_r_1().child(
-                            crate::connections::panel::render_connections(&self.connections, cx),
-                        )
-                    }))
-                    // AI panel left dock (P9c-1 T9) → … | Connections | AI | body.
-                    .children(self.ai_panel_visible.then(|| {
-                        div()
-                            .w_64()
-                            .border_r_1()
-                            .child(crate::ai::panel::render_ai_panel(
-                                &self.ai_panel,
-                                &ai_handles,
-                                cx,
-                            ))
-                    }))
-                    // B6: the Inspector and Charts right docks used to be two
-                    // more hand-rolled `.children(..)` blocks here. They are now
-                    // real `DockArea` panels living INSIDE `dock_el`, so the
-                    // dock renders `body | Inspector | Charts` itself and this
-                    // row only has left docks left to place.
+                    // B6 moved the Inspector and Charts right docks into the
+                    // DockArea; B7 moved the Catalog, Connections and AI left
+                    // docks the same way. Every dock now lives inside `dock_el`,
+                    // which renders `Catalog | body | Inspector | Charts`
+                    // itself, so this row has nothing of its own left to place.
+                    // The activity rail joins it at T5.
+                    .child(rail)
                     .child(div().flex_1().children(dock_el)),
             )
             // B3: the status bar spans the full width UNDER every dock, so it is
@@ -7510,6 +7757,19 @@ impl WorkspaceShell {
     /// B6: is the right dock open? Derived from the dock itself rather than the
     /// bools, so a test asserting on it is checking that `sync_right_dock`
     /// actually ran — not just re-reading the input it was given.
+    /// B7: the DOCK's own open flag, deliberately not the bools the test wrote
+    /// — re-reading those would prove only that assignment works, not that
+    /// `sync_left_dock` ran.
+    pub fn left_dock_open_for_test(&self, cx: &gpui::App) -> bool {
+        self.dock_area
+            .as_ref()
+            .map(|d| {
+                d.read(cx)
+                    .is_dock_open(gpui_component::dock::DockPlacement::Left, cx)
+            })
+            .unwrap_or(false)
+    }
+
     pub fn right_dock_open_for_test(&self, cx: &gpui::App) -> bool {
         self.dock_area
             .as_ref()
@@ -7562,13 +7822,17 @@ impl WorkspaceShell {
     /// Seed an `md:`-origin `TableInfo` to populate the "Cloud" group.
     pub fn seed_catalog_tree_for_test(&mut self, tables: Vec<dat0_engine::TableInfo>) {
         self.catalog_tree = crate::catalog::CatalogTree::build(&tables);
-        self.catalog_panel_visible = true;
+        // B7: through the single writer, so the at-most-one-visible invariant
+        // holds for tests too — but NOT through `activate_left_panel`, whose
+        // `refresh_catalog` is exactly what this shim exists to bypass.
+        self.set_left_panel_exclusive(Some(LeftPanel::Catalog));
     }
     /// Show the Connections dock and hand back the `ConnectionManager` so the test
     /// can drive `set_md_status` / `set_md_test_result` / `set_md_databases` (all
     /// already `pub`). No live connection, token, or keychain touched.
     pub fn open_connections_for_test(&mut self) -> &mut crate::connections::ConnectionManager {
-        self.connections_panel_visible = true;
+        // B7: via the single writer — see `seed_catalog_tree_for_test`.
+        self.set_left_panel_exclusive(Some(LeftPanel::Connections));
         &mut self.connections
     }
     /// Build + show the SQL console, then seed the timing chip's elapsed + routing
@@ -7662,7 +7926,10 @@ impl WorkspaceShell {
     #[cfg(feature = "a11y-capture")]
     pub fn seed_ai_panel_for_test(&mut self, panel: crate::ai::panel::AiPanel) {
         self.ai_panel = panel;
-        self.ai_panel_visible = true;
+        // B7: NOT `activate_left_panel` — that calls `hydrate_ai_panel`, which
+        // probes the OS keychain plus settings.toml and is the hermeticity trap
+        // this shim exists to avoid.
+        self.set_left_panel_exclusive(Some(LeftPanel::Ai));
     }
     /// Read the AI dock's draft `enabled` flag (proves Enter-operability flipped it).
     #[cfg(feature = "a11y-capture")]
