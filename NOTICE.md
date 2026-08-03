@@ -26,13 +26,15 @@ here by hand.
 - **86 icons** ship via the `gpui-component-assets` crate (listed in the
   generated section below as an Apache-2.0 dependency; the artwork inside it is
   Lucide's).
-- **5 icons** are vendored directly into `crates/dat0-app/assets/icons/`:
-  `funnel.svg`, `play.svg`, `layers.svg`, `bookmark.svg`, `clock.svg`.
+- **8 icons** are vendored directly into `crates/dat0-app/assets/icons/`:
+  `funnel.svg`, `play.svg`, `layers.svg`, `bookmark.svg`, `clock.svg`,
+  `database.svg`, `plug.svg`, `sparkles.svg`.
 
 Lucide is dual-licensed. Most icons are ISC; icons derived from the Feather
 project are MIT (Copyright (c) 2013-present Cole Bemis). dat0 ships icons under
-both — `clock`, `x`, `check` and the `chevron-*` family are among the
-Feather-derived set. The complete upstream license text covering both, including
+both — `clock`, `database`, `x`, `check` and the `chevron-*` family are among the
+Feather-derived set (`plug` and `sparkles` are not: they do not appear in the
+authoritative list below). The complete upstream license text covering both, including
 the authoritative list of Feather-derived icons, is vendored verbatim at
 `crates/dat0-app/assets/icons/LICENSE-lucide`.
 
