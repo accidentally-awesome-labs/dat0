@@ -378,3 +378,164 @@ fn catalog_body_content_reaches_the_capture_through_the_dock(cx: &mut TestAppCon
         "the catalog body's section headers must render inside the dock"
     );
 }
+
+// ---------------------------------------------------------------------------
+// T6: the activity rail's keyboard surface
+// ---------------------------------------------------------------------------
+
+fn rail_cursor(shell: &Entity<WorkspaceShell>, vcx: &mut VisualTestContext) -> usize {
+    vcx.cx.update(|app| shell.read(app).rail_cursor_for_test())
+}
+
+/// Focus the rail by Tab-walking to it.
+///
+/// Every keystroke here goes through `simulate_keystrokes`, i.e. through the
+/// real KEYMAP — never `dispatch_action`. Dispatching the action bypasses the
+/// keymap, so a green test can hide a completely dead production key path; that
+/// is how a broken Escape ladder once shipped past five reviews.
+///
+/// A fresh window has nothing focused, and with nothing focused the dispatch
+/// path is the window root alone, so Tab is completely inert (B1). Click into
+/// the shell first.
+fn focus_the_rail(vcx: &mut VisualTestContext) {
+    let tt_bounds = vcx
+        .debug_bounds("hero-take-tour")
+        .expect("hero-take-tour must be painted");
+    let focus_pt = gpui::point(tt_bounds.origin.x - gpui::px(60.), tt_bounds.center().y);
+    vcx.simulate_click(focus_pt, gpui::Modifiers::none());
+    vcx.run_until_parked();
+
+    let want = dat0_app::dat0_i18n::t("rail.title");
+    for _ in 0..24 {
+        support::press_tab(vcx);
+        vcx.run_until_parked();
+        let snap = A11ySnapshot::capture(vcx);
+        if snap.focused_label() == Some(want.as_str()) {
+            return;
+        }
+    }
+    panic!("the activity rail was never reached by Tab");
+}
+
+#[gpui::test]
+#[serial]
+fn tab_reaches_the_rail(cx: &mut TestAppContext) {
+    let harness = enter_async_harness(cx);
+    let _guard = harness.enter();
+    let (_shell, vcx) = boot(cx);
+    focus_the_rail(vcx);
+}
+
+#[gpui::test]
+#[serial]
+fn arrows_move_the_cursor_and_clamp(cx: &mut TestAppContext) {
+    let harness = enter_async_harness(cx);
+    let _guard = harness.enter();
+    let (shell, vcx) = boot(cx);
+    focus_the_rail(vcx);
+
+    assert_eq!(rail_cursor(&shell, vcx), 0, "the cursor starts at the top");
+
+    vcx.simulate_keystrokes("down");
+    vcx.run_until_parked();
+    assert_eq!(rail_cursor(&shell, vcx), 1);
+
+    vcx.simulate_keystrokes("down down");
+    vcx.run_until_parked();
+    assert_eq!(
+        rail_cursor(&shell, vcx),
+        2,
+        "the cursor clamps at the last item rather than wrapping"
+    );
+
+    vcx.simulate_keystrokes("up up up");
+    vcx.run_until_parked();
+    assert_eq!(rail_cursor(&shell, vcx), 0, "and clamps at the first");
+}
+
+#[gpui::test]
+#[serial]
+fn enter_activates_the_panel_under_the_cursor(cx: &mut TestAppContext) {
+    let harness = enter_async_harness(cx);
+    let _guard = harness.enter();
+    let (shell, vcx) = boot(cx);
+    focus_the_rail(vcx);
+
+    vcx.simulate_keystrokes("down enter");
+    settle(vcx);
+    assert_eq!(
+        vcx.cx.update(|app| shell.read(app).open_left_panel()),
+        Some(LeftPanel::Connections),
+        "Enter on cursor index 1 opens Connections"
+    );
+    assert!(left_dock_open(&shell, vcx));
+
+    // Enter again on the same item collapses, matching the mouse.
+    vcx.simulate_keystrokes("enter");
+    settle(vcx);
+    assert_eq!(
+        vcx.cx.update(|app| shell.read(app).open_left_panel()),
+        None,
+        "Enter on the OPEN panel collapses the dock"
+    );
+    assert!(!left_dock_open(&shell, vcx));
+}
+
+/// Design §10 R7: collapsing while focus is inside the panel must not orphan
+/// focus. This is the `ai-key-forget` lesson — activating a control unmounted
+/// the element tracking its own handle, and the keyboard user landed nowhere.
+#[gpui::test]
+#[serial]
+fn collapsing_from_the_rail_leaves_focus_somewhere_live(cx: &mut TestAppContext) {
+    let harness = enter_async_harness(cx);
+    let _guard = harness.enter();
+    let (shell, vcx) = boot(cx);
+    focus_the_rail(vcx);
+
+    vcx.simulate_keystrokes("enter");
+    settle(vcx);
+    assert_eq!(
+        vcx.cx.update(|app| shell.read(app).open_left_panel()),
+        Some(LeftPanel::Catalog)
+    );
+
+    vcx.simulate_keystrokes("enter");
+    settle(vcx);
+    assert!(!left_dock_open(&shell, vcx));
+
+    // Focus must still be live: the rail itself is never unmounted, so the stop
+    // the user activated from is still there.
+    let snap = A11ySnapshot::capture(vcx);
+    assert_eq!(
+        snap.focused_label(),
+        Some(dat0_app::dat0_i18n::t("rail.title").as_str()),
+        "focus must stay on the rail after it collapses the dock"
+    );
+}
+
+/// A click must move the cursor as well as activate, so keyboard and mouse
+/// cannot drift out of sync.
+#[gpui::test]
+#[serial]
+fn clicking_an_item_moves_the_cursor_too(cx: &mut TestAppContext) {
+    let harness = enter_async_harness(cx);
+    let _guard = harness.enter();
+    let (shell, vcx) = boot(cx);
+
+    let bounds = vcx
+        .debug_bounds("rail-ai")
+        .expect("the AI rail item must be painted");
+    vcx.simulate_click(bounds.center(), gpui::Modifiers::none());
+    settle(vcx);
+
+    assert_eq!(
+        vcx.cx.update(|app| shell.read(app).open_left_panel()),
+        Some(LeftPanel::Ai),
+        "clicking the AI item opens the AI panel"
+    );
+    assert_eq!(
+        rail_cursor(&shell, vcx),
+        2,
+        "and leaves the keyboard cursor on the item that was clicked"
+    );
+}
