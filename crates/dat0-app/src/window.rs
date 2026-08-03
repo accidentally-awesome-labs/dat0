@@ -2176,6 +2176,10 @@ pub struct WorkspaceShell {
     /// B7: the (catalog, connections, ai) visibility triple the left dock was
     /// last reconciled to, so `sync_left_dock` does work only on a real change.
     left_dock_state: (bool, bool, bool),
+    /// B7: the activity rail's KEYBOARD cursor — an index into
+    /// `view::activity_rail::ITEMS`. Independent of which panel is open: the
+    /// cursor still exists when the dock is collapsed.
+    rail_cursor: usize,
     catalog_panel: Option<Entity<crate::panels::catalog_panel::CatalogPanel>>,
     connections_panel: Option<Entity<crate::panels::connections_panel::ConnectionsPanel>>,
     ai_dock_panel: Option<Entity<crate::panels::ai_dock_panel::AiDockPanel>>,
@@ -2522,6 +2526,7 @@ impl WorkspaceShell {
             charts_panel: None,
             right_dock_state: (false, false),
             left_dock_state: (false, false, false),
+            rail_cursor: 0,
             catalog_panel: None,
             connections_panel: None,
             ai_dock_panel: None,
@@ -6709,6 +6714,35 @@ impl WorkspaceShell {
         self.ai_panel_visible
     }
 
+    /// B7: move the rail's keyboard cursor. Clamps rather than wraps, matching
+    /// the catalog tree.
+    pub(crate) fn rail_move_cursor(&mut self, delta: isize, cx: &mut gpui::Context<Self>) {
+        let len = crate::view::activity_rail::ITEMS.len() as isize;
+        let next = (self.rail_cursor as isize + delta).clamp(0, len - 1);
+        self.rail_cursor = next as usize;
+        cx.notify();
+    }
+
+    /// B7: activate the panel under the cursor. Enter on the panel that is
+    /// already open collapses the dock, matching what a click does.
+    pub(crate) fn rail_activate_cursor(&mut self, cx: &mut gpui::Context<Self>) {
+        let target = crate::view::activity_rail::ITEMS[self.rail_cursor].panel;
+        self.activate_left_panel(target, cx);
+    }
+
+    /// B7: a click both moves the cursor and activates, so the two never drift
+    /// after a mouse interaction.
+    pub(crate) fn rail_click(&mut self, index: usize, cx: &mut gpui::Context<Self>) {
+        self.rail_cursor = index.min(crate::view::activity_rail::ITEMS.len() - 1);
+        self.rail_activate_cursor(cx);
+    }
+
+    /// B7: the rail's keyboard cursor, for `tests/left_dock.rs`.
+    #[cfg(feature = "a11y-capture")]
+    pub fn rail_cursor_for_test(&self) -> usize {
+        self.rail_cursor
+    }
+
     /// B7: the ONLY writer of the three left-panel bools.
     ///
     /// Being the only writer is what makes the at-most-one-visible invariant
@@ -7501,6 +7535,15 @@ impl Render for WorkspaceShell {
             .tab_index(0)
             .tab_stop(grid_visible);
 
+        // B7: the activity rail. Built here because `hero_focus_handle` needs
+        // `&mut self`, which is unavailable inside the body row's builder chain.
+        // Always rendered, including on the first-run hero — it is chrome, and
+        // it is how a user with no data yet reaches Connections.
+        let rail_fh = self.hero_focus_handle("activity-rail", cx);
+        let rail_cursor = self.rail_cursor;
+        let rail_open = self.open_left_panel();
+        let rail = crate::view::activity_rail::render_rail(rail_cursor, rail_open, &rail_fh, cx);
+
         // B3 status bar. Reads cached scalars only — no query, no I/O, and (per
         // `SelectionModel::selected_cell_count`'s doc comment) no per-cell work,
         // which matters because this runs every frame.
@@ -7659,6 +7702,7 @@ impl Render for WorkspaceShell {
                     // which renders `Catalog | body | Inspector | Charts`
                     // itself, so this row has nothing of its own left to place.
                     // The activity rail joins it at T5.
+                    .child(rail)
                     .child(div().flex_1().children(dock_el)),
             )
             // B3: the status bar spans the full width UNDER every dock, so it is

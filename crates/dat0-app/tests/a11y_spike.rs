@@ -108,18 +108,28 @@ fn a11y_capture_round_trips_and_click_by_label_opens_tour(cx: &mut TestAppContex
     // (which DO wrap panels in `TabPanel` chrome, including a `.cached()` child)
     // — each must re-run this file and treat any movement as the signal.
     //
+    // UI-redesign B7 RECOUNT — 8 → 12, and the four new nodes are all the
+    // activity rail: `activity-rail` (its one listbox container stop) plus
+    // `rail-catalog`, `rail-connections` and `rail-ai`. The rail is chrome, so
+    // it renders on the hero too. The LEFT DOCK itself contributes nothing here:
+    // a fresh workspace shows no left panel, so the dock is closed. Predicted at
+    // T0 from the rail's four `.a11y` sites and confirmed exactly — only `.a11y`
+    // records a click-id, `.a11y_label` records `click_id: None`, which is why
+    // the three relocated panel titles do not appear in this number.
+    //
     // If the forced `refresh()` produced more than one render frame, the
-    // collector would hold duplicate nodes and this count would exceed 8 (and
+    // collector would hold duplicate nodes and this count would exceed 12 (and
     // the `get_by_label` lookups below would panic with "Found two or more
-    // nodes"). Exactly-8 (confirmed deterministic across repeated runs)
+    // nodes"). Exactly-12 (confirmed deterministic across repeated runs)
     // confirms the reset→refresh→run_until_parked→take bracket still yields
     // one clean frame — no generation counter needed.
     assert_eq!(
         snap.click_ids.len(),
-        8,
-        "expected exactly eight captured nodes (tagline + hero-take-tour + \
+        12,
+        "expected exactly twelve captured nodes (tagline + hero-take-tour + \
          hero-open-demo + 3 sample-card .a11y buttons + hero-open-file-samples \
-         + the status bar's connection segment); a different count means the \
+         + the status bar's connection segment + the activity rail's container \
+         and 3 items); a different count means the \
          frame bracket double- or under-rendered, or the hero annotation count \
          changed"
     );
