@@ -410,6 +410,15 @@ fn promote_focused_into(cx: &mut App, target: PathBuf) {
 /// divergence.
 const PACKAGE_BUDGET: u64 = 1024 * 1024 * 1024;
 
+/// B6: the right dock's per-panel widths, in logical pixels.
+///
+/// Carried over verbatim from the hand-rolled fixed docks these replaced
+/// (`.w_72()` = 288 and `.w(px(560.))`), so no combination of open panels
+/// changes how much room the grid gets. `sync_right_dock` sums them when both
+/// are visible.
+const INSPECTOR_DOCK_WIDTH: f32 = 288.0;
+const CHARTS_DOCK_WIDTH: f32 = 560.0;
+
 /// `ExportPackage` handler: save the FOCUSED live workspace to a `.dat0` package.
 ///
 /// Opens the native save panel (`*.dat0`), then off the GPUI main thread maps the
@@ -2130,6 +2139,12 @@ pub struct WorkspaceShell {
     /// B5: the center panel. Held across frames; rebuilding it per frame would
     /// mint a fresh entity every render and throw away the panel's identity.
     grid_panel: Option<Entity<crate::panels::grid_panel::GridPanel>>,
+    /// B6: the right dock's two panels, built lazily alongside the dock.
+    inspector_panel: Option<Entity<crate::panels::inspector_panel::InspectorPanel>>,
+    charts_panel: Option<Entity<crate::panels::charts_panel::ChartsPanel>>,
+    /// B6: the `(inspector, charts)` visibility the right dock was last
+    /// reconciled to, so `sync_right_dock` does work only on an actual change.
+    right_dock_state: (bool, bool),
     /// Theme observer subscription, kept alive for the lifetime of the
     /// view. Per `docs/internal/gpui-api-notes.md` §0.A.4 the `Theme`
     /// global is app-scoped; switching theme in one window notifies every
@@ -2469,6 +2484,9 @@ impl WorkspaceShell {
             table_state: None,
             dock_area: None,
             grid_panel: None,
+            inspector_panel: None,
+            charts_panel: None,
+            right_dock_state: (false, false),
             theme_subscription: None,
             view_model: None,
             active_popover: None,
@@ -3976,17 +3994,6 @@ impl WorkspaceShell {
             row = row.child(btn);
         }
 
-        // ── Export buttons (PNG / SVG) ─────────────────────────────────────
-        let png_btn = Button::new("chart-export-png")
-            .label(dat0_i18n::t("chart.export.png"))
-            .on_click(cx.listener(|ws, _ev, _window, cx| {
-                ws.export_chart(true, cx);
-            }));
-        let svg_btn = Button::new("chart-export-svg")
-            .label(dat0_i18n::t("chart.export.svg"))
-            .on_click(cx.listener(|ws, _ev, _window, cx| {
-                ws.export_chart(false, cx);
-            }));
         // ── Save button (P9a-2) ────────────────────────────────────────────
         // Disabled until a chart is renderable (a source is bound AND at least
         // one axis is picked), so an empty chart can never be saved. Mirrors the
@@ -4001,9 +4008,11 @@ impl WorkspaceShell {
                 ws.open_chart_save_prompt(window, cx);
             }));
 
-        // Clicking export with no rendered data is a silent no-op
-        // (`export_chart` guards on `chart_panel.data`).
-        row.child(png_btn).child(svg_btn).child(save_btn)
+        // B6: PNG/SVG export moved to `ChartsPanel::toolbar_buttons` — the
+        // dock's 30px title bar. Save stays here: its `disabled` state reads
+        // correctly at body size, and it opens a name prompt rather than a file
+        // dialog, so it is not an "export" affordance.
+        row.child(save_btn)
     }
 
     /// Open the shared name-prompt overlay to save the currently-bound chart
@@ -4033,7 +4042,7 @@ impl WorkspaceShell {
     /// Open the native save panel and export the current chart to PNG (`png =
     /// true`) or SVG. No-op when there's no rendered data yet — the live
     /// `chart_panel.spec` + `data` carry everything `export_*` needs (P9a T7).
-    fn export_chart(&mut self, png: bool, cx: &mut gpui::Context<Self>) {
+    pub(crate) fn export_chart(&mut self, png: bool, cx: &mut gpui::Context<Self>) {
         let Some(data) = self.chart_panel.data.clone() else {
             return;
         };
@@ -6475,6 +6484,94 @@ impl WorkspaceShell {
             .clone()
     }
 
+    /// B6: the Inspector panel's element tree, extracted from the body row's
+    /// `.w_72()` block so [`crate::panels::inspector_panel::InspectorPanel`]
+    /// can call it.
+    ///
+    /// The sizing and left border the block used to carry are the dock's job
+    /// now, and the inspector's own title row moved into `InspectorPanel::title`
+    /// so the dock's 30px title bar does not show the word twice.
+    pub(crate) fn render_inspector_body(
+        &mut self,
+        cx: &mut gpui::Context<Self>,
+    ) -> gpui::AnyElement {
+        crate::inspector::panel::render_inspector(&self.inspector, self.inspector_projection(), cx)
+    }
+
+    /// B6: reconcile the right dock with the visibility bools, which are the
+    /// single source of truth.
+    ///
+    /// This lives in `render` rather than in the toggles because both the dock's
+    /// open state and its size need a `&mut Window`, and `toggle_chart_panel`
+    /// has only a `Context`. Reconciling here also means every
+    /// `a11y-capture` test shim that writes a bool directly keeps working with
+    /// no shim change at all: they write, the next frame reconciles.
+    ///
+    /// Which panel shows is `Panel::visible`, read straight off these bools, so
+    /// this only has to decide whether the dock as a whole is open — a hidden
+    /// panel's `resizable_panel` already collapses and yields its space to its
+    /// sibling (`stack_panel.rs:427-431`).
+    ///
+    /// It uses `toggle_dock`, which just flips `Dock::open` and re-subscribes
+    /// nothing. The dock's WIDTH is deliberately fixed at construction: sizing
+    /// it per visible-combination would mean re-running `set_right_dock`, whose
+    /// `subscribe_item` leaks (see the mount site). So both panels open matches
+    /// the old fixed docks exactly; one panel open is wider than it used to be,
+    /// and the user can drag it back — which B9's `dock_layout` blob will then
+    /// persist.
+    fn sync_right_dock(&mut self, window: &mut gpui::Window, cx: &mut gpui::Context<Self>) {
+        let want = (self.inspector_panel_visible, self.chart_panel_visible);
+        if want == self.right_dock_state {
+            return;
+        }
+        self.right_dock_state = want;
+        let Some(dock) = self.dock_area.clone() else {
+            return;
+        };
+        let want_open = want.0 || want.1;
+        dock.update(cx, |dock, cx| {
+            if dock.is_dock_open(gpui_component::dock::DockPlacement::Right, cx) != want_open {
+                dock.toggle_dock(gpui_component::dock::DockPlacement::Right, window, cx);
+            }
+        });
+    }
+
+    /// B6: the Charts panel's element tree, extracted from the body row's
+    /// `.w(px(560.))` block so [`crate::panels::charts_panel::ChartsPanel`] can
+    /// call it.
+    ///
+    /// The width and left border the block carried are the dock's job now, and
+    /// the two export buttons moved to `ChartsPanel::toolbar_buttons`.
+    pub(crate) fn render_charts_body(&mut self, cx: &mut gpui::Context<Self>) -> gpui::AnyElement {
+        div()
+            .flex()
+            .flex_col()
+            .size_full()
+            .child(self.render_chart_toolbar(cx))
+            .child(crate::charts::panel::render_chart_body(
+                &self.chart_panel,
+                self.chart_image.clone(),
+                (520.0, 360.0),
+                cx,
+            ))
+            .into_any_element()
+    }
+
+    /// B6: the Charts panel's visibility, read by `ChartsPanel::visible`.
+    pub(crate) fn chart_visible(&self) -> bool {
+        self.chart_panel_visible
+    }
+
+    /// B6: the Inspector's visibility, read by `InspectorPanel::visible`.
+    ///
+    /// The bool stays the single source of truth and the dock derives from it —
+    /// see `sync_right_dock`. Deliberately a getter rather than making the field
+    /// `pub(crate)`: the panel lives in another module and a getter keeps the
+    /// direction of the dependency legible.
+    pub(crate) fn inspector_visible(&self) -> bool {
+        self.inspector_panel_visible
+    }
+
     /// B5: the grid center's element tree — the real `Table`, the promotion
     /// placeholder, or the empty-state hero.
     ///
@@ -6788,7 +6885,7 @@ impl Render for WorkspaceShell {
         // host bounds, same origin and same height.
         if self.dock_area.is_none() {
             let weak_shell = cx.entity().downgrade();
-            let panel = cx.new(|_| crate::panels::grid_panel::GridPanel::new(weak_shell));
+            let panel = cx.new(|_| crate::panels::grid_panel::GridPanel::new(weak_shell.clone()));
             let dock = cx.new(|cx| {
                 let mut dock =
                     gpui_component::dock::DockArea::new("dat0-workspace", Some(1), window, cx);
@@ -6799,9 +6896,56 @@ impl Render for WorkspaceShell {
             });
             let item = gpui_component::dock::DockItem::panel(Arc::new(panel.clone()));
             dock.update(cx, |dock, cx| dock.set_center(item, window, cx));
+
+            // B6: the right dock's split, built once and re-used. Its children
+            // MUST come from `DockItem::tab`, not `DockItem::panel` —
+            // `StackPanel::insert_panel` hard-asserts that a split's children
+            // are a `TabPanel` or a `StackPanel` (`stack_panel.rs:106-112`), so
+            // the 30px title bar is structural here rather than a style choice.
+            //
+            // The dock itself is attached by `sync_right_dock` below, which owns
+            // both its size and its open state.
+            let weak_dock = dock.downgrade();
+            let inspector =
+                cx.new(|_| crate::panels::inspector_panel::InspectorPanel::new(weak_shell.clone()));
+            let charts =
+                cx.new(|_| crate::panels::charts_panel::ChartsPanel::new(weak_shell.clone()));
+            let right = gpui_component::dock::DockItem::split(
+                gpui::Axis::Horizontal,
+                vec![
+                    gpui_component::dock::DockItem::tab(inspector.clone(), &weak_dock, window, cx)
+                        .size(gpui::px(INSPECTOR_DOCK_WIDTH)),
+                    gpui_component::dock::DockItem::tab(charts.clone(), &weak_dock, window, cx)
+                        .size(gpui::px(CHARTS_DOCK_WIDTH)),
+                ],
+                &weak_dock,
+                window,
+                cx,
+            );
+
+            // ⚠ `set_right_dock` is called EXACTLY ONCE, here, and must stay
+            // that way. It runs `subscribe_item`, which `push`es onto the
+            // `DockArea`'s `_subscriptions` and recurses over the whole split
+            // (`dock/mod.rs:955-963`); nothing ever removes those. Calling it
+            // again per toggle — which is what dynamic dock widths would need,
+            // since `DockArea` keeps `right_dock` private and exposes no size
+            // setter — leaks ~3 subscriptions every time, forever, each one
+            // spawning its own task on subsequent `LayoutChanged` events.
+            // `sync_right_dock` therefore only ever opens and closes.
+            let want = (self.inspector_panel_visible, self.chart_panel_visible);
+            let width = INSPECTOR_DOCK_WIDTH + CHARTS_DOCK_WIDTH;
+            dock.update(cx, |dock, cx| {
+                dock.set_right_dock(right, Some(gpui::px(width)), want.0 || want.1, window, cx);
+            });
+            self.right_dock_state = want;
+
             self.grid_panel = Some(panel);
+            self.inspector_panel = Some(inspector);
+            self.charts_panel = Some(charts);
             self.dock_area = Some(dock);
         }
+
+        self.sync_right_dock(window, cx);
 
         let session = Arc::clone(&self.session);
 
@@ -7307,33 +7451,12 @@ impl Render for WorkspaceShell {
                                 cx,
                             ))
                     }))
-                    .child(div().flex_1().children(dock_el))
-                    // Inspector right dock last → Catalog | Connections | body | Inspector.
-                    .children(self.inspector_panel_visible.then(|| {
-                        div()
-                            .w_72()
-                            .border_l_1()
-                            .child(crate::inspector::panel::render_inspector(
-                                &self.inspector,
-                                self.inspector_projection(),
-                                cx,
-                            ))
-                    }))
-                    // Charts right dock (P9a T7) → … | Inspector | Charts.
-                    .children(self.chart_panel_visible.then(|| {
-                        div()
-                            .w(gpui::px(560.0))
-                            .border_l_1()
-                            .flex()
-                            .flex_col()
-                            .child(self.render_chart_toolbar(cx))
-                            .child(crate::charts::panel::render_chart_body(
-                                &self.chart_panel,
-                                self.chart_image.clone(),
-                                (520.0, 360.0),
-                                cx,
-                            ))
-                    })),
+                    // B6: the Inspector and Charts right docks used to be two
+                    // more hand-rolled `.children(..)` blocks here. They are now
+                    // real `DockArea` panels living INSIDE `dock_el`, so the
+                    // dock renders `body | Inspector | Charts` itself and this
+                    // row only has left docks left to place.
+                    .child(div().flex_1().children(dock_el)),
             )
             // B3: the status bar spans the full width UNDER every dock, so it is
             // a sibling of the body row rather than a child of it. The three
@@ -7370,6 +7493,31 @@ impl WorkspaceShell {
     /// detail of `render`, and the integration tests live in another crate.
     pub fn dock_mounted_for_test(&self) -> bool {
         self.dock_area.is_some()
+    }
+
+    /// B6: hide both right-dock panels — the reverse of the `seed_*` /
+    /// `chart_bind_*` helpers above, which only ever show them.
+    ///
+    /// Without a way to drive the reconcile loop DOWN as well as up, a
+    /// `sync_right_dock` that could only ever open the dock would pass every
+    /// other test in `tests/right_dock.rs`.
+    pub fn hide_right_dock_panels_for_test(&mut self, cx: &mut Context<Self>) {
+        self.inspector_panel_visible = false;
+        self.chart_panel_visible = false;
+        cx.notify();
+    }
+
+    /// B6: is the right dock open? Derived from the dock itself rather than the
+    /// bools, so a test asserting on it is checking that `sync_right_dock`
+    /// actually ran — not just re-reading the input it was given.
+    pub fn right_dock_open_for_test(&self, cx: &gpui::App) -> bool {
+        self.dock_area
+            .as_ref()
+            .map(|d| {
+                d.read(cx)
+                    .is_dock_open(gpui_component::dock::DockPlacement::Right, cx)
+            })
+            .unwrap_or(false)
     }
 
     pub fn chart_bind_for_test(&mut self, source: String, cols: Vec<(String, String)>) {

@@ -58,6 +58,11 @@ pub mod ids {
     pub const VIEW_DELETE_COLUMN: &str = "view.delete_column";
     // P4c T11: File → Export… dialog.
     pub const VIEW_EXPORT: &str = "view.export";
+    // UI-redesign B6: chart export. The dock title bar's own PNG/SVG buttons
+    // are forced `tab_stop(false)` by upstream (`tab_panel.rs:454`), so these
+    // descriptors are chart export's only keyboard path.
+    pub const CHART_EXPORT_PNG: &str = "chart.export.png";
+    pub const CHART_EXPORT_SVG: &str = "chart.export.svg";
     // P9a T7: Charts → Visualize (toggle the right-dock chart panel).
     pub const CHART_VISUALIZE: &str = "chart.visualize";
     // P5a T11: SQL Console entry points (toggle / run / cancel / tab lifecycle).

@@ -111,6 +111,38 @@ pub fn register(reg: &ActionRegistry) -> Result<(), RegisterError> {
         }),
     })?;
 
+    // UI-redesign B6: chart export as PNG / SVG.
+    //
+    // These exist because B6 moves the two export buttons out of the chart body
+    // and into the dock's title bar via `Panel::toolbar_buttons`, where upstream
+    // stamps `.tab_stop(false)` on every button (`tab_panel.rs:454`) — title-bar
+    // controls are mouse-only by construction. Without these descriptors chart
+    // export would have no keyboard path at all.
+    //
+    // Deliberately NOT in `command_palette::HIDDEN`: that list is for actions
+    // dead by construction (a tracing breadcrumb for a body, or an argument a
+    // fuzzy search box cannot supply). These work whenever a chart is rendered
+    // and no-op otherwise, which is exactly `view.copy`'s situation.
+    reg.register(ActionDescriptor {
+        id: ActionId::from(ids::CHART_EXPORT_PNG),
+        title: dat0_i18n::t("chart.export.png.command"),
+        group: ActionGroup::File,
+        keybinding: None, // also on the Charts panel title bar (mouse-only)
+        dispatch: Arc::new(|app| {
+            dispatch_chart_export(app, true);
+        }),
+    })?;
+
+    reg.register(ActionDescriptor {
+        id: ActionId::from(ids::CHART_EXPORT_SVG),
+        title: dat0_i18n::t("chart.export.svg.command"),
+        group: ActionGroup::File,
+        keybinding: None, // also on the Charts panel title bar (mouse-only)
+        dispatch: Arc::new(|app| {
+            dispatch_chart_export(app, false);
+        }),
+    })?;
+
     // P9c-1 T9: AI panel toggle. Like CHART_VISUALIZE, the toggle works from
     // `cx` alone (hydrates from settings + a keychain key-presence probe), so the
     // App-path dispatch CAN do the work via `focused_workspace` + `toggle_ai_panel`.
@@ -223,6 +255,20 @@ pub fn dispatch_visualize(app: &mut gpui::App) {
         return;
     };
     workspace.update(app, |ws, cx| ws.toggle_chart_panel(cx));
+}
+
+/// Dispatch body for `chart.export.png` / `chart.export.svg` (UI-redesign B6).
+///
+/// A no-op when no chart has rendered yet — `export_chart` guards on
+/// `chart_panel.data`. That is `view.copy`'s precedent (registered, visible,
+/// inert without a selection), not the dead-menu-item defect PRs #59/#60 fixed:
+/// the action does real work in every state where the work is meaningful.
+pub fn dispatch_chart_export(app: &mut gpui::App, png: bool) {
+    let Some(workspace) = focused_workspace(app) else {
+        tracing::debug!(png, "chart.export: no focused workspace");
+        return;
+    };
+    workspace.update(app, |ws, cx| ws.export_chart(png, cx));
 }
 
 /// Dispatch body for `ai.panel.open` (P9c-1 T9). Toggles the focused workspace's
