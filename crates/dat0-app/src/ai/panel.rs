@@ -231,7 +231,7 @@ pub fn render_ai_panel(
         .flex_col()
         .gap_2()
         .p_2()
-        .child(div().child(SharedString::from(dat0_i18n::t("ai.title"))))
+        // B7: the title row moved into `AiDockPanel::title` (dock chrome).
         .child(enabled_row)
         .child(provider_row)
         .child(key_row)

@@ -419,6 +419,15 @@ const PACKAGE_BUDGET: u64 = 1024 * 1024 * 1024;
 const INSPECTOR_DOCK_WIDTH: f32 = 288.0;
 const CHARTS_DOCK_WIDTH: f32 = 560.0;
 
+/// B7: the left dock's fixed width.
+///
+/// Fixed because `set_left_dock` may be called only once — it leaks
+/// subscriptions, see the mount site — and `DockArea` keeps `left_dock` private
+/// with no size setter. 384 rather than the 256 each hand-rolled dock used:
+/// with one panel showing at a time the old sum has no meaning, and the catalog
+/// tree reads better with the extra room.
+const LEFT_DOCK_WIDTH: f32 = 384.0;
+
 /// B7: which left-dock panel is showing.
 ///
 /// The three shell bools remain the storage; this names the choice they encode
@@ -2164,6 +2173,12 @@ pub struct WorkspaceShell {
     /// B6: the `(inspector, charts)` visibility the right dock was last
     /// reconciled to, so `sync_right_dock` does work only on an actual change.
     right_dock_state: (bool, bool),
+    /// B7: the (catalog, connections, ai) visibility triple the left dock was
+    /// last reconciled to, so `sync_left_dock` does work only on a real change.
+    left_dock_state: (bool, bool, bool),
+    catalog_panel: Option<Entity<crate::panels::catalog_panel::CatalogPanel>>,
+    connections_panel: Option<Entity<crate::panels::connections_panel::ConnectionsPanel>>,
+    ai_dock_panel: Option<Entity<crate::panels::ai_dock_panel::AiDockPanel>>,
     /// Theme observer subscription, kept alive for the lifetime of the
     /// view. Per `docs/internal/gpui-api-notes.md` §0.A.4 the `Theme`
     /// global is app-scoped; switching theme in one window notifies every
@@ -2506,6 +2521,10 @@ impl WorkspaceShell {
             inspector_panel: None,
             charts_panel: None,
             right_dock_state: (false, false),
+            left_dock_state: (false, false, false),
+            catalog_panel: None,
+            connections_panel: None,
+            ai_dock_panel: None,
             theme_subscription: None,
             view_model: None,
             active_popover: None,
@@ -6537,6 +6556,37 @@ impl WorkspaceShell {
     /// the old fixed docks exactly; one panel open is wider than it used to be,
     /// and the user can drag it back — which B9's `dock_layout` blob will then
     /// persist.
+    /// B7: reconcile the LEFT dock with the three visibility bools, which are
+    /// the single source of truth. Mirrors `sync_right_dock` exactly — runs in
+    /// `render` because `toggle_dock` needs a `&mut Window`, guarded by a state
+    /// tuple so it acts only on a real change, and it never re-runs
+    /// `set_left_dock` (which leaks; see the mount site).
+    ///
+    /// WHICH panel shows is `Panel::visible`, read straight off these bools, so
+    /// this only has to decide whether the dock as a whole is open. With the
+    /// at-most-one invariant there is never more than one visible panel for
+    /// upstream to choose between.
+    fn sync_left_dock(&mut self, window: &mut gpui::Window, cx: &mut gpui::Context<Self>) {
+        let want = (
+            self.catalog_panel_visible,
+            self.connections_panel_visible,
+            self.ai_panel_visible,
+        );
+        if want == self.left_dock_state {
+            return;
+        }
+        self.left_dock_state = want;
+        let Some(dock) = self.dock_area.clone() else {
+            return;
+        };
+        let want_open = want.0 || want.1 || want.2;
+        dock.update(cx, |dock, cx| {
+            if dock.is_dock_open(gpui_component::dock::DockPlacement::Left, cx) != want_open {
+                dock.toggle_dock(gpui_component::dock::DockPlacement::Left, window, cx);
+            }
+        });
+    }
+
     fn sync_right_dock(&mut self, window: &mut gpui::Window, cx: &mut gpui::Context<Self>) {
         let want = (self.inspector_panel_visible, self.chart_panel_visible);
         if want == self.right_dock_state {
@@ -7083,12 +7133,81 @@ impl Render for WorkspaceShell {
             });
             self.right_dock_state = want;
 
+            // B7: the left dock — three panels of which the at-most-one
+            // invariant keeps exactly zero or one visible at a time.
+            //
+            // ⚠⚠ THIS IS A SPLIT OF THREE SINGLE-PANEL TABS, NOT ONE
+            // `DockItem::tabs` OF THREE, and the reason is re-entrancy rather
+            // than layout. `DockItem::tabs` calls `TabPanel::add_panel` per
+            // panel, and every add after the first calls `set_active_ix`, which
+            // does real work and ends up reading `Panel::visible` — which reads
+            // THIS shell. All of it runs inside `WorkspaceShell::render`, where
+            // the shell is already leased, so it panics with "cannot read
+            // WorkspaceShell while it is already being updated". A single-panel
+            // `DockItem::tab` never hits it because `set_active_ix(0)`
+            // early-returns when the index is unchanged (`tab_panel.rs:208-211`)
+            // — which is exactly why B6's two-panel right dock was fine.
+            //
+            // The split costs one `.tab_group()` per child instead of one total,
+            // but that is moot here: the invariant means at most ONE child is
+            // ever visible, so at most one group is ever populated. A hidden
+            // child collapses and yields its space to its sibling
+            // (`stack_panel.rs:427-431`), so the visible panel gets the full
+            // dock width and the result is what the rail model wants.
+            let catalog =
+                cx.new(|_| crate::panels::catalog_panel::CatalogPanel::new(weak_shell.clone()));
+            let connections = cx.new(|_| {
+                crate::panels::connections_panel::ConnectionsPanel::new(weak_shell.clone())
+            });
+            let ai_dock =
+                cx.new(|_| crate::panels::ai_dock_panel::AiDockPanel::new(weak_shell.clone()));
+            let left = gpui_component::dock::DockItem::split(
+                gpui::Axis::Horizontal,
+                vec![
+                    gpui_component::dock::DockItem::tab(catalog.clone(), &weak_dock, window, cx)
+                        .size(gpui::px(LEFT_DOCK_WIDTH)),
+                    gpui_component::dock::DockItem::tab(
+                        connections.clone(),
+                        &weak_dock,
+                        window,
+                        cx,
+                    )
+                    .size(gpui::px(LEFT_DOCK_WIDTH)),
+                    gpui_component::dock::DockItem::tab(ai_dock.clone(), &weak_dock, window, cx)
+                        .size(gpui::px(LEFT_DOCK_WIDTH)),
+                ],
+                &weak_dock,
+                window,
+                cx,
+            );
+
+            // ⚠ `set_left_dock` leaks exactly like `set_right_dock` above: it
+            // runs `subscribe_item`, which pushes onto `_subscriptions` and
+            // recurses over the item tree (`dock/mod.rs:955-963`), and nothing
+            // ever removes them. Called EXACTLY ONCE; `sync_left_dock` only ever
+            // toggles.
+            let want_left = (
+                self.catalog_panel_visible,
+                self.connections_panel_visible,
+                self.ai_panel_visible,
+            );
+            let left_open = want_left.0 || want_left.1 || want_left.2;
+            dock.update(cx, |dock, cx| {
+                dock.set_left_dock(left, Some(gpui::px(LEFT_DOCK_WIDTH)), left_open, window, cx);
+            });
+            self.left_dock_state = want_left;
+
+            self.catalog_panel = Some(catalog);
+            self.connections_panel = Some(connections);
+            self.ai_dock_panel = Some(ai_dock);
+
             self.grid_panel = Some(panel);
             self.inspector_panel = Some(inspector);
             self.charts_panel = Some(charts);
             self.dock_area = Some(dock);
         }
 
+        self.sync_left_dock(window, cx);
         self.sync_right_dock(window, cx);
 
         let session = Arc::clone(&self.session);
@@ -7382,27 +7501,6 @@ impl Render for WorkspaceShell {
             .tab_index(0)
             .tab_stop(grid_visible);
 
-        // B7 T3a: the three left docks' element trees. Built here rather than
-        // inside the body row's `.children(..)` closures because each takes
-        // `&mut self` (they mint focus handles through `hero_focus_handle`), and
-        // a closure capturing `&mut self` cannot live inside a `self`-rooted
-        // builder chain.
-        let catalog_block = self.catalog_panel_visible.then(|| {
-            div()
-                .w_64()
-                .border_r_1()
-                .child(self.render_catalog_body(cx))
-        });
-        let connections_block = self.connections_panel_visible.then(|| {
-            div()
-                .w_64()
-                .border_r_1()
-                .child(self.render_connections_body(cx))
-        });
-        let ai_block = self
-            .ai_panel_visible
-            .then(|| div().w_64().border_r_1().child(self.render_ai_body(cx)));
-
         // B3 status bar. Reads cached scalars only — no query, no I/O, and (per
         // `SelectionModel::selected_cell_count`'s doc comment) no per-cell work,
         // which matters because this runs every frame.
@@ -7555,20 +7653,12 @@ impl Render for WorkspaceShell {
                     .flex()
                     .flex_row()
                     .flex_1()
-                    // Catalog dock first → order is Catalog | Connections | body.
-                    // B7 T3a: each block's element tree moved into a
-                    // `render_*_body` method so the panels can call it; the
-                    // `.w_64().border_r_1()` wrapper stays here until T4 hands
-                    // sizing and borders to the dock.
-                    .children(catalog_block)
-                    .children(connections_block)
-                    // AI panel left dock (P9c-1 T9) → … | Connections | AI | body.
-                    .children(ai_block)
-                    // B6: the Inspector and Charts right docks used to be two
-                    // more hand-rolled `.children(..)` blocks here. They are now
-                    // real `DockArea` panels living INSIDE `dock_el`, so the
-                    // dock renders `body | Inspector | Charts` itself and this
-                    // row only has left docks left to place.
+                    // B6 moved the Inspector and Charts right docks into the
+                    // DockArea; B7 moved the Catalog, Connections and AI left
+                    // docks the same way. Every dock now lives inside `dock_el`,
+                    // which renders `Catalog | body | Inspector | Charts`
+                    // itself, so this row has nothing of its own left to place.
+                    // The activity rail joins it at T5.
                     .child(div().flex_1().children(dock_el)),
             )
             // B3: the status bar spans the full width UNDER every dock, so it is
@@ -7623,6 +7713,19 @@ impl WorkspaceShell {
     /// B6: is the right dock open? Derived from the dock itself rather than the
     /// bools, so a test asserting on it is checking that `sync_right_dock`
     /// actually ran — not just re-reading the input it was given.
+    /// B7: the DOCK's own open flag, deliberately not the bools the test wrote
+    /// — re-reading those would prove only that assignment works, not that
+    /// `sync_left_dock` ran.
+    pub fn left_dock_open_for_test(&self, cx: &gpui::App) -> bool {
+        self.dock_area
+            .as_ref()
+            .map(|d| {
+                d.read(cx)
+                    .is_dock_open(gpui_component::dock::DockPlacement::Left, cx)
+            })
+            .unwrap_or(false)
+    }
+
     pub fn right_dock_open_for_test(&self, cx: &gpui::App) -> bool {
         self.dock_area
             .as_ref()

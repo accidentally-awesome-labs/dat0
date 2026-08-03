@@ -238,7 +238,9 @@ fn the_ai_shim_respects_the_invariant(cx: &mut TestAppContext) {
 /// this one GREEN. The reason is that only the catalog contributes a named node
 /// today — the Connections and AI panels draw their titles as bare children,
 /// which contribute nothing to the capture (A5). It grows teeth at T4, when both
-/// titles move into `Panel::title` with an `a11y_label`. Re-run the probe then.
+/// titles move into `Panel::title` with an `a11y_label`.
+///
+/// ✅ RE-PROBED AT T4 and it now fails under the additive writer, as intended.
 #[gpui::test]
 #[serial]
 fn never_two_panel_names_in_the_tree_at_once(cx: &mut TestAppContext) {
@@ -262,4 +264,117 @@ fn never_two_panel_names_in_the_tree_at_once(cx: &mut TestAppContext) {
             "with {target:?} active, {named} panel names are in the tree at once"
         );
     }
+}
+
+// ---------------------------------------------------------------------------
+// T4: the dock itself
+// ---------------------------------------------------------------------------
+
+fn left_dock_open(shell: &Entity<WorkspaceShell>, vcx: &mut VisualTestContext) -> bool {
+    vcx.cx
+        .update(|app| shell.read(app).left_dock_open_for_test(app))
+}
+
+#[gpui::test]
+#[serial]
+fn left_dock_is_closed_when_every_panel_is_hidden(cx: &mut TestAppContext) {
+    let harness = enter_async_harness(cx);
+    let _guard = harness.enter();
+    let (shell, vcx) = boot(cx);
+
+    assert!(
+        vcx.cx.update(|app| shell.read(app).dock_mounted_for_test()),
+        "the DockArea should be built on the first render"
+    );
+    assert!(
+        !left_dock_open(&shell, vcx),
+        "a fresh workspace shows no left panel, so the dock must be closed"
+    );
+}
+
+#[gpui::test]
+#[serial]
+fn activating_a_panel_opens_the_dock_and_titles_it(cx: &mut TestAppContext) {
+    let harness = enter_async_harness(cx);
+    let _guard = harness.enter();
+    let (shell, vcx) = boot(cx);
+
+    activate(&shell, vcx, LeftPanel::Connections);
+
+    assert!(
+        left_dock_open(&shell, vcx),
+        "sync_left_dock must open the dock when a panel becomes visible"
+    );
+    let snap = A11ySnapshot::capture(vcx);
+    assert_eq!(
+        snap.count_label(&dat0_app::dat0_i18n::t("connections.title")),
+        1,
+        "the dock's title bar names the panel exactly once"
+    );
+}
+
+#[gpui::test]
+#[serial]
+fn collapsing_closes_the_dock_again(cx: &mut TestAppContext) {
+    let harness = enter_async_harness(cx);
+    let _guard = harness.enter();
+    let (shell, vcx) = boot(cx);
+
+    activate(&shell, vcx, LeftPanel::Catalog);
+    assert!(left_dock_open(&shell, vcx));
+
+    activate(&shell, vcx, LeftPanel::Catalog);
+    assert!(
+        !left_dock_open(&shell, vcx),
+        "collapsing the last visible panel must close the dock"
+    );
+}
+
+/// Design §7.4's collision, asserted rather than assumed. `query_by_role` panics
+/// on a duplicate match, so a panel title that duplicates a body node would take
+/// whole suites down rather than fail one assertion.
+#[gpui::test]
+#[serial]
+fn each_panel_name_resolves_without_a_duplicate(cx: &mut TestAppContext) {
+    let harness = enter_async_harness(cx);
+    let _guard = harness.enter();
+    let (shell, vcx) = boot(cx);
+
+    for (panel, key) in [
+        (LeftPanel::Catalog, "catalog.title"),
+        (LeftPanel::Connections, "connections.title"),
+        (LeftPanel::Ai, "ai.title"),
+    ] {
+        activate(&shell, vcx, panel);
+        let snap = A11ySnapshot::capture(vcx);
+        assert_eq!(
+            snap.count_label(&dat0_app::dat0_i18n::t(key)),
+            1,
+            "{key} must name exactly one node while {panel:?} is open"
+        );
+    }
+}
+
+/// The catalog's own content must still reach the capture THROUGH the dock —
+/// the panel is a delegate, so a broken delegation would render an empty dock
+/// with a correct title bar and every title assertion above would still pass.
+#[gpui::test]
+#[serial]
+fn catalog_body_content_reaches_the_capture_through_the_dock(cx: &mut TestAppContext) {
+    let harness = enter_async_harness(cx);
+    let _guard = harness.enter();
+    let (shell, vcx) = boot(cx);
+
+    vcx.cx.update(|app| {
+        shell.update(app, |ws, _cx| ws.seed_catalog_tree_for_test(Vec::new()));
+    });
+    settle(vcx);
+
+    let snap = A11ySnapshot::capture(vcx);
+    // `visible_rows`' section headers are rendered by the BODY, not the title
+    // bar, so finding one proves the delegation ran.
+    assert!(
+        snap.count_label("Tables (0)") > 0,
+        "the catalog body's section headers must render inside the dock"
+    );
 }
