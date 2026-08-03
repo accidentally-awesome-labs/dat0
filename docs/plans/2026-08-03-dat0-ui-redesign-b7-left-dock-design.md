@@ -456,6 +456,52 @@ Runs first, on a throwaway probe, and its findings are committed before T1.
 Per B6, no chrome/double-render spike is needed: that question is settled and
 `tests/dock_chrome_spike.rs` stands as its regression guard.
 
+## 12b. T0 as-built (2026-08-03)
+
+**Verdict: GO.** `DockItem::tabs` stands; the `DockItem::split` fallback is not
+needed. Spike: `crates/dat0-app/tests/left_dock_spike.rs`, six probes, all green.
+
+| Probe | Result |
+|---|---|
+| P1 multi-stop reachability | **PASS** — all three stops in a docked panel are Tab-reachable. B6 only ever proved this for ONE stop. |
+| P1d escape (added mid-gate) | **PASS** — `host-stop → a-1 → a-2 → a-3 → host-stop`. Tab enters the group and returns to a stop outside the `DockArea`. No keyboard trap. Proven non-vacuous: removing the outside stop makes it red. |
+| P2 document order | **PASS** — stops are visited in document order, so `catalog_nav` / `ai_nav` order assertions should hold. |
+| P3 title row vs tab bar | **PASS** — one visible panel yields one title and hidden panels contribute none. Its **control** (two visible → two titles) proves the assertion is not vacuous: without it, P3 would pass under either branch. |
+| P4 capture baseline | `a11y_spike` is **8** today and unchanged by the dock. The rail adds four `.a11y` sites, so Task 5 sets **12**. |
+| P5 tooltip | **PASS**, with two corrections below. |
+
+### The two findings that corrected the design
+
+**1. `Tooltip` is not at gpui-component's crate root.** `lib.rs:66` is a bare
+`pub mod tooltip;`, so the path is **`gpui_component::tooltip::Tooltip`**, and
+`.tooltip()` lives on `StatefulInteractiveElement` — the element needs `.id()`
+first **and** that trait imported. §7.4's plan compiled only after both fixes.
+
+**2. A focus stop inside the CENTER panel does not register as a tab stop.** This
+one first read as a keyboard trap and nearly failed the gate. Staging focus inside
+the docked panel showed Tab cycling `a-1 → a-2 → a-3 → a-1`, never reaching the
+center probe — which looks exactly like WCAG 2.1.2. It is not. A stop rendered
+inside a `DockItem::panel` center is **captured by the a11y snapshot but absent
+from the tab-stop order**, so there was nothing outside the group to escape to and
+`next()` was wrapping to the global first (`tab_stop.rs:130`). The follow-up walk
+staged on the center then showed `center → a-1`, which looks like traversal but is
+the `tab_node_for_focus_id → None → next(None)` fallback (`tab_stop.rs:123-125`) —
+an unknown focus id restarting from the beginning. Both readings were artifacts of
+the probe, not behaviour of the dock.
+
+**The lesson, and it generalises:** a Tab-walk probe is only meaningful if the
+reference point outside the group is itself a registered tab stop. Introducing
+`host-stop` — a stop outside the `DockArea` entirely, the analogue of the activity
+rail — is what made the question answerable at all. **Two consecutive probes
+"passed" while measuring nothing**, and the second one's output was the more
+convincing of the two.
+
+Production is unaffected by the center quirk: the grid's tab stop lives on the
+shell's root element, outside the dock, which is why
+`keyboard_nav::grid_tab_reach_then_arrow_moves_active_cell` has stayed green since
+B5. It is recorded here because any future slice that puts a focus stop inside the
+center panel will find it unreachable.
+
 ## 13. Local gate
 
 Unchanged from B6, plus one binary:
