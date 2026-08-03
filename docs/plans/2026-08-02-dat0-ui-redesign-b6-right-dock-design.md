@@ -312,6 +312,74 @@ found, and this slice touches the shell.
 
 ---
 
+## 9b. As-built — what the tree contradicted
+
+Six commits off `c4b3aba`: T0 `ee3c8cb` · T1 `1e6fd9e` · T2 `9d8c7e8` · T3
+`b7ec7f4` · T4 `27c03e6` · T5 `a2603ce` (design `4cc64b1`, plan `6bd227f`).
+
+**T0's answer: the chrome is transparent.** Baseline (bare `DockItem::Panel`
+center) `(center 1, right 0)`; with the right dock `(center 1, right 1)`. No
+generation counter needed — the fallback at `a11y/mod.rs:24` stays unbuilt for a
+third slice running. A `focus_stop` inside dock chrome is still Tab-reachable.
+
+**Deviation 1 (owner-approved): the dock width is FIXED at 848, not
+per-combination.** §5's "width tracks the visible set" is not safely
+implementable at this rev. `DockArea` keeps `right_dock` private and exposes no
+size setter, so changing the width means re-running `set_right_dock` — and that
+calls `subscribe_item`, which `push`es onto `DockArea::_subscriptions` and
+recurses over the whole split (`dock/mod.rs:955-963`) with nothing ever removing
+them. Per-toggle resizing would leak ~3 subscriptions every time, permanently,
+each later spawning its own task per `LayoutChanged`. `set_right_dock` is
+therefore called exactly once at mount, and `sync_right_dock` uses `toggle_dock`
+(`:763`), which re-subscribes nothing. Both panels open is identical to the old
+fixed docks; one panel open is wider than before, draggable back by the user,
+and B9's `dock_layout` blob will persist that.
+
+**Deviation 2: opening a dock duplicated the ENTIRE a11y capture, and the fix
+is in the harness.** `Dock::set_open` defers `set_collapsed`, so the frame that
+opens the dock schedules deferred work; `run_until_parked` drains it inside the
+capture bracket, a second frame is drawn, and every node is collected twice.
+Measured on `chart_uat_window::save_chart_shows_toast_and_persists`:
+`count_label("Chart saved") == 2` AND `count_label("Charts") == 2` — a
+shell-level toast and a dock-level title duplicated together, which is what
+shows this is a whole-tree re-render rather than anything about chrome.
+`A11ySnapshot::capture` now pumps one throwaway settle frame before resetting
+the collector. `a11y_spike`'s exact-8 proof still passes, so this masks nothing:
+a view that genuinely renders twice within one frame still duplicates.
+
+⇒ **the general lesson, which outlives B6: the single-frame capture bracket was
+only ever single-frame for surfaces that schedule no deferred work.** Any
+`cx.defer`/`defer_in` on a render path would have produced the same whole-tree
+duplication.
+
+**Deviation 3: the inspector already drew its own title** (§4.1, found while
+planning). Moved into `InspectorPanel::title` rather than deleted, keeping the
+node count net-neutral.
+
+**Deviation 4: a bare gpui-component `Button` contributes NOTHING to the
+capture tree.** The export buttons were invisible to the oracle — and would have
+been invisible to a screen reader — until given an explicit `.a11y(..)`. Since
+they are the whole mouse affordance for export after B6, they now carry real
+accessible names. Same root cause as a T0 finding: the focus oracle resolves a
+name by joining the focused handle's static id against a captured node's
+`click_id`, so `.a11y_label` (which records `click_id: None`) leaves a focused
+element unnameable.
+
+**Deviation 5: the registry count ratchet needed updating** (35 → 37), which the
+plan's "existing tests pass unmodified" rule flagged for a decision. It is a
+running-tally ledger designed to be updated per slice; its name also said
+`thirty_four` while asserting 35, so the number was dropped from the name.
+
+**Not reproduced:** no `chart_uat_window` / `chart_panel_wiring` /
+`a11y_content` test needed editing for the panel moves themselves, and
+`src/session` + `src/grid` are byte-identical to `main`.
+
+**Verified:** fmt; `clippy --workspace --all-targets -D warnings`; **114**
+binaries green across plain / `a11y-capture` / `a11y-capture,gallery`;
+`style_lint` ratchet unchanged at `[("window.rs", 1)]`; and the binary boots
+with a log **byte-identical to a `main` build** (timestamps and uuids stripped)
+— the B5 check that caught the first-run tour regression.
+
 ## 10. Owed human glance
 
 B6 is visibly different: two 30px title bars with ⋯ menus, a resizable divider,
