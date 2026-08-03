@@ -7495,6 +7495,18 @@ impl WorkspaceShell {
         self.dock_area.is_some()
     }
 
+    /// B6: hide both right-dock panels — the reverse of the `seed_*` /
+    /// `chart_bind_*` helpers above, which only ever show them.
+    ///
+    /// Without a way to drive the reconcile loop DOWN as well as up, a
+    /// `sync_right_dock` that could only ever open the dock would pass every
+    /// other test in `tests/right_dock.rs`.
+    pub fn hide_right_dock_panels_for_test(&mut self, cx: &mut Context<Self>) {
+        self.inspector_panel_visible = false;
+        self.chart_panel_visible = false;
+        cx.notify();
+    }
+
     /// B6: is the right dock open? Derived from the dock itself rather than the
     /// bools, so a test asserting on it is checking that `sync_right_dock`
     /// actually ran — not just re-reading the input it was given.

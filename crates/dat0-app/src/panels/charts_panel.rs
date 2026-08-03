@@ -114,8 +114,16 @@ impl ChartsPanel {
     /// body toolbar had too.
     fn export_button(&self, id: &'static str, label_key: &str, png: bool) -> Button {
         let shell = self.shell.clone();
+        let label = dat0_i18n::t(label_key);
         Button::new(id)
-            .label(dat0_i18n::t(label_key))
+            .label(label.clone())
+            // A bare gpui-component `Button` contributes NOTHING to the capture
+            // tree — only an explicit `.a11y`/`.a11y_label` pushes a node. These
+            // two are the entire mouse affordance for export after B6, so they
+            // get a real accessible name rather than being invisible to both the
+            // oracle and any future screen reader. `Button` implements
+            // `InteractiveElement`, so this chains directly (A5).
+            .a11y(id, AccessRole::Button, label)
             .on_click(move |_ev, _window, app| {
                 if let Some(ws) = shell.upgrade() {
                     ws.update(app, |ws, cx| ws.export_chart(png, cx));
