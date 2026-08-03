@@ -6643,6 +6643,22 @@ impl WorkspaceShell {
         crate::ai::panel::render_ai_panel(&self.ai_panel, &ai_handles, cx)
     }
 
+    /// B7: read by `CatalogPanel::visible`. A getter rather than a `pub(crate)`
+    /// field keeps the direction of the dependency legible (B6).
+    pub(crate) fn catalog_visible(&self) -> bool {
+        self.catalog_panel_visible
+    }
+
+    /// B7: read by `ConnectionsPanel::visible`.
+    pub(crate) fn connections_visible(&self) -> bool {
+        self.connections_panel_visible
+    }
+
+    /// B7: read by `AiDockPanel::visible`.
+    pub(crate) fn ai_visible(&self) -> bool {
+        self.ai_panel_visible
+    }
+
     /// B7: the ONLY writer of the three left-panel bools.
     ///
     /// Being the only writer is what makes the at-most-one-visible invariant
