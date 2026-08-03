@@ -76,7 +76,35 @@ impl A11ySnapshot {
     /// frame with `run_until_parked`, and snapshot the emitted tree. This is the
     /// frame-reset bracket the Task-1 spike proved yields exactly one clean frame
     /// under `TestPlatform`.
+    ///
+    /// # The settle pass (UI-redesign B6)
+    ///
+    /// The bracket above is only single-frame if nothing schedules DEFERRED work
+    /// during the render it forces. If something does, `run_until_parked` drains
+    /// it, that work dirties a view, a SECOND frame is drawn inside the same
+    /// bracket, and every node in the tree is collected twice — not just the
+    /// nodes near whatever deferred.
+    ///
+    /// B6 hit this for real: opening a dock goes through `Dock::set_open`, which
+    /// defers `set_collapsed` (`dock/mod.rs`, `cx.defer_in`). Measured on
+    /// `chart_uat_window::save_chart_shows_toast_and_persists`, the frame where
+    /// the dock opened reported `count_label("Chart saved") == 2` and
+    /// `count_label("Charts") == 2` — a SHELL-level toast and a dock-level panel
+    /// title duplicated together, which is what shows this is a whole-tree
+    /// re-render rather than anything about the dock's chrome. (`tests/
+    /// dock_chrome_spike.rs` separately proves the chrome itself is clean.)
+    ///
+    /// So: pump one throwaway frame FIRST to drain any pending deferred work,
+    /// and only then reset and capture. The capture pass then sees a settled
+    /// tree and renders it exactly once. This does not paper over a real
+    /// double-render bug — a view that genuinely renders twice per frame still
+    /// duplicates, which is what `a11y_spike`'s exact-count assertion watches.
     pub fn capture(cx: &mut VisualTestContext) -> Self {
+        // Settle pass: drain deferred work scheduled by whatever the test just
+        // did, so it cannot land inside the measured frame below.
+        cx.update(|window, _app| window.refresh());
+        cx.run_until_parked();
+
         dat0_app::a11y::reset();
         cx.update(|window, _app| window.refresh());
         cx.run_until_parked();
