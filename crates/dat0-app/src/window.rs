@@ -6590,6 +6590,59 @@ impl WorkspaceShell {
         self.inspector_panel_visible
     }
 
+    /// B7: the Catalog panel's element tree, extracted from the body row so
+    /// [`crate::panels::catalog_panel::CatalogPanel`] can call it.
+    ///
+    /// `&mut self` because `hero_focus_handle` needs it. Minting the
+    /// `catalog-tree` handle HERE rather than threading one in keeps it on the
+    /// shell's `hero_focus` map, so the same `FocusHandle` instance lands on the
+    /// same element after the move to the dock — which is what keeps
+    /// `catalog_nav` meaningful across this slice.
+    pub(crate) fn render_catalog_body(&mut self, cx: &mut gpui::Context<Self>) -> gpui::AnyElement {
+        let catalog_fh = self.hero_focus_handle("catalog-tree", cx);
+        crate::catalog::panel::render_catalog(
+            &self.catalog_tree,
+            &self.catalog_collapsed,
+            self.catalog_active,
+            &catalog_fh,
+            cx,
+        )
+    }
+
+    /// B7: the Connections panel's element tree, extracted from the body row.
+    pub(crate) fn render_connections_body(
+        &mut self,
+        cx: &mut gpui::Context<Self>,
+    ) -> gpui::AnyElement {
+        crate::connections::panel::render_connections(&self.connections, cx)
+    }
+
+    /// B7: the AI dock's element tree, extracted from the body row.
+    ///
+    /// Registering all eight ids unconditionally is fine — `HeroHandles::get` is
+    /// only invoked by whichever buttons actually render, and `ai-key-forget` is
+    /// only looked up when `key_set`.
+    pub(crate) fn render_ai_body(&mut self, cx: &mut gpui::Context<Self>) -> gpui::AnyElement {
+        let ai_handles = {
+            let ids: [&'static str; 8] = [
+                "ai-toggle-enabled",
+                "ai-provider-cycle",
+                "ai-key-set",
+                "ai-key-forget",
+                "ai-model-set",
+                "ai-toggle-advanced",
+                "ai-toggle-sample-rows",
+                "ai-test-connection",
+            ];
+            let mut map = std::collections::HashMap::new();
+            for id in ids {
+                map.insert(id, self.hero_focus_handle(id, cx));
+            }
+            crate::empty_state::HeroHandles { map }
+        };
+        crate::ai::panel::render_ai_panel(&self.ai_panel, &ai_handles, cx)
+    }
+
     /// B7: the ONLY writer of the three left-panel bools.
     ///
     /// Being the only writer is what makes the at-most-one-visible invariant
@@ -7313,34 +7366,26 @@ impl Render for WorkspaceShell {
             .tab_index(0)
             .tab_stop(grid_visible);
 
-        // Catalog-tree slice: the panel container's stable focus handle (one
-        // tab stop for the whole panel). Hoisted here — `hero_focus_handle`
-        // needs `&mut self`, unavailable inside the `.children(..)` closures.
-        let catalog_fh = self.hero_focus_handle("catalog-tree", cx);
-
-        // AI-config-nav slice: stable per-button focus handles for the AI dock, minted
-        // on the persistent shell (hero_focus map) and threaded into `render_ai_panel`.
-        // Hoisted here — `hero_focus_handle` needs `&mut self`, unavailable inside the
-        // `.children(..)` render closures. Registering all 8 ids unconditionally is
-        // fine (`HeroHandles::get` is only invoked by whichever buttons actually render;
-        // `ai-key-forget` is only looked up when `key_set`).
-        let ai_handles = {
-            let ids: [&'static str; 8] = [
-                "ai-toggle-enabled",
-                "ai-provider-cycle",
-                "ai-key-set",
-                "ai-key-forget",
-                "ai-model-set",
-                "ai-toggle-advanced",
-                "ai-toggle-sample-rows",
-                "ai-test-connection",
-            ];
-            let mut map = std::collections::HashMap::new();
-            for id in ids {
-                map.insert(id, self.hero_focus_handle(id, cx));
-            }
-            crate::empty_state::HeroHandles { map }
-        };
+        // B7 T3a: the three left docks' element trees. Built here rather than
+        // inside the body row's `.children(..)` closures because each takes
+        // `&mut self` (they mint focus handles through `hero_focus_handle`), and
+        // a closure capturing `&mut self` cannot live inside a `self`-rooted
+        // builder chain.
+        let catalog_block = self.catalog_panel_visible.then(|| {
+            div()
+                .w_64()
+                .border_r_1()
+                .child(self.render_catalog_body(cx))
+        });
+        let connections_block = self.connections_panel_visible.then(|| {
+            div()
+                .w_64()
+                .border_r_1()
+                .child(self.render_connections_body(cx))
+        });
+        let ai_block = self
+            .ai_panel_visible
+            .then(|| div().w_64().border_r_1().child(self.render_ai_body(cx)));
 
         // B3 status bar. Reads cached scalars only — no query, no I/O, and (per
         // `SelectionModel::selected_cell_count`'s doc comment) no per-cell work,
@@ -7495,34 +7540,14 @@ impl Render for WorkspaceShell {
                     .flex_row()
                     .flex_1()
                     // Catalog dock first → order is Catalog | Connections | body.
-                    .children(self.catalog_panel_visible.then(|| {
-                        div()
-                            .w_64()
-                            .border_r_1()
-                            .child(crate::catalog::panel::render_catalog(
-                                &self.catalog_tree,
-                                &self.catalog_collapsed,
-                                self.catalog_active,
-                                &catalog_fh,
-                                cx,
-                            ))
-                    }))
-                    .children(self.connections_panel_visible.then(|| {
-                        div().w_64().border_r_1().child(
-                            crate::connections::panel::render_connections(&self.connections, cx),
-                        )
-                    }))
+                    // B7 T3a: each block's element tree moved into a
+                    // `render_*_body` method so the panels can call it; the
+                    // `.w_64().border_r_1()` wrapper stays here until T4 hands
+                    // sizing and borders to the dock.
+                    .children(catalog_block)
+                    .children(connections_block)
                     // AI panel left dock (P9c-1 T9) → … | Connections | AI | body.
-                    .children(self.ai_panel_visible.then(|| {
-                        div()
-                            .w_64()
-                            .border_r_1()
-                            .child(crate::ai::panel::render_ai_panel(
-                                &self.ai_panel,
-                                &ai_handles,
-                                cx,
-                            ))
-                    }))
+                    .children(ai_block)
                     // B6: the Inspector and Charts right docks used to be two
                     // more hand-rolled `.children(..)` blocks here. They are now
                     // real `DockArea` panels living INSIDE `dock_el`, so the
