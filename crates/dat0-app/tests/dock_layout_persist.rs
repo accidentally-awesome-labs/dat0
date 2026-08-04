@@ -498,3 +498,81 @@ fn no_persisted_layout_means_the_mount_constants(cx: &mut TestAppContext) {
         848.0
     );
 }
+
+#[gpui::test]
+#[serial]
+fn a_persisted_open_console_comes_back_at_its_height(cx: &mut TestAppContext) {
+    let h = enter_async_harness(cx);
+    let _g = h.enter();
+    let (shell, vcx, _session) = reopen_with_layout(
+        cx,
+        DockLayout {
+            console_open: true,
+            bottom_size: Some(420),
+            ..DockLayout::default()
+        },
+    );
+
+    let dock = shell
+        .read_with(&vcx.cx, |ws, _| ws.dock_area_for_test())
+        .expect("dock area exists");
+    assert!(
+        dock.read_with(&vcx.cx, |d, app| d.is_dock_open(DockPlacement::Bottom, app)),
+        "the console dock reopened"
+    );
+    assert_eq!(
+        live_size(&shell, vcx, |m| m.bottom_dock.map(|d| d.size)),
+        420.0,
+        "the persisted console height was honoured, not SQL_CONSOLE_DOCK_HEIGHT"
+    );
+}
+
+#[gpui::test]
+#[serial]
+fn a_restored_console_is_still_toggleable(cx: &mut TestAppContext) {
+    // The restore path mounts the console outside toggle_sql_console, so the
+    // toggle must still find it built and take the open/close branch rather
+    // than trying to mount a second one.
+    let h = enter_async_harness(cx);
+    let _g = h.enter();
+    let (shell, vcx, _session) = reopen_with_layout(
+        cx,
+        DockLayout {
+            console_open: true,
+            ..DockLayout::default()
+        },
+    );
+
+    toggle_console(&shell, vcx);
+    let dock = shell
+        .read_with(&vcx.cx, |ws, _| ws.dock_area_for_test())
+        .expect("dock area exists");
+    assert!(
+        !dock.read_with(&vcx.cx, |d, app| d.is_dock_open(DockPlacement::Bottom, app)),
+        "the first toggle after a restore CLOSES rather than re-mounting"
+    );
+
+    toggle_console(&shell, vcx);
+    assert!(
+        dock.read_with(&vcx.cx, |d, app| d.is_dock_open(DockPlacement::Bottom, app)),
+        "and it reopens"
+    );
+}
+
+#[gpui::test]
+#[serial]
+fn a_fresh_session_mounts_no_bottom_dock_at_all(cx: &mut TestAppContext) {
+    // B8 mounts the bottom dock lazily so a user who never opens the console
+    // never sees upstream's 29px collapsed title bar, and so the first-run hero
+    // is untouched. Restoring must not cost that.
+    let h = enter_async_harness(cx);
+    let _g = h.enter();
+    let (shell, vcx, _session) = boot(cx);
+
+    if let Some(dock) = shell.read_with(&vcx.cx, |ws, _| ws.dock_area_for_test()) {
+        assert!(
+            !dock.read_with(&vcx.cx, |d, _app| d.has_dock(DockPlacement::Bottom)),
+            "no bottom dock exists at all on a fresh session"
+        );
+    }
+}

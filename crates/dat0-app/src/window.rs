@@ -3116,102 +3116,117 @@ impl WorkspaceShell {
     ///
     /// [`SqlConsole`]: crate::view::sql_console::SqlConsole
     /// [`SqlConsoleEvent`]: crate::view::sql_console::SqlConsoleEvent
+    /// B8/B9: build the SQL console, subscribe to it, register the close-flush
+    /// hook and mount the bottom dock. Idempotent — returns immediately if the
+    /// console already exists.
+    ///
+    /// Extracted from [`toggle_sql_console`](Self::toggle_sql_console) at B9,
+    /// because the restore path needs the same mount from a second call site and
+    /// copying it would leave two mounts to keep in step.
+    ///
+    /// `dock` is passed in rather than re-derived: one caller is
+    /// `ensure_dock_area` itself, mid-build, which must not re-enter. `height`
+    /// is a parameter for the same reason — a restored console mounts at its
+    /// persisted height, not the constant.
+    fn mount_sql_console(
+        &mut self,
+        dock: &gpui::Entity<gpui_component::dock::DockArea>,
+        height: f32,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if self.sql_console.is_some() {
+            return;
+        }
+        let (persisted, active) = {
+            let s = self.session.lock();
+            (s.sql_tabs().to_vec(), s.active_sql_tab())
+        };
+        // Ensure the per-window autocomplete snapshot exists, then clone it
+        // into the console so every tab's provider shares one `RefCell`
+        // (P5b T2). The refresh below populates `tables` off the engine.
+        let snapshot = self
+            .sql_snapshot
+            .get_or_insert_with(crate::query::completion::new_shared_snapshot)
+            .clone();
+        let console = cx.new(|cx| {
+            crate::view::sql_console::SqlConsole::new(
+                &persisted,
+                active,
+                snapshot.clone(),
+                window,
+                cx,
+            )
+        });
+        // `subscribe_in` (not `subscribe`) so the event callback receives a
+        // live `&mut Window` — the Save-query path (`SaveQuery`) builds a
+        // `NamePrompt` whose single-line `InputState` needs one eagerly
+        // (P5b T8). The window is valid because the subscription fires inside
+        // a window update.
+        let sub = cx.subscribe_in(
+            &console,
+            window,
+            |ws: &mut Self, console, ev: &crate::view::sql_console::SqlConsoleEvent, window, cx| {
+                ws.on_sql_console_event(console.clone(), ev.clone(), window, cx);
+            },
+        );
+        self.sql_console_sub = Some(sub);
+        // Hydrate ai_ready on the freshly-built console.
+        let ready = self.ai_ready();
+        console.update(cx, |c, _cx| c.ai_ready = ready);
+        self.sql_console = Some(console.clone());
+
+        // B8: mount the bottom dock, open.
+        //
+        // ⚠ `set_bottom_dock` is called EXACTLY ONCE, here, and must stay
+        // that way. It runs `subscribe_item`, which pushes onto the
+        // `DockArea`'s `_subscriptions` and recurses over the item tree
+        // (`dock/mod.rs:955-963`); nothing ever removes them. Every later
+        // open and close goes through `toggle_dock` below, which
+        // re-subscribes nothing. Same constraint as `set_left_dock` and
+        // `set_right_dock` — see `ensure_dock_area`.
+        //
+        // Mounted LAZILY rather than beside the left and right docks
+        // because upstream keeps a CLOSED bottom dock on screen at
+        // `h(px(29.))` so its title bar can be clicked to reopen
+        // (`dock.rs:372-380`). Building it here means a user who never
+        // opens the console never sees that bar — the first-run hero is
+        // untouched.
+        //
+        // A bare `DockItem::tab`, with no enclosing split: the bottom dock
+        // holds exactly one panel, and that is also the only shape immune
+        // to B7's `set_active_ix` re-entrancy panic (see
+        // `ensure_dock_area`, which this is called from).
+        let weak_dock = dock.downgrade();
+        let item = gpui_component::dock::DockItem::tab(console.clone(), &weak_dock, window, cx);
+        dock.update(cx, |dock, cx| {
+            dock.set_bottom_dock(item, Some(gpui::px(height)), true, window, cx);
+        });
+
+        // Persist the console one last time on window close (P5a T10). This
+        // is a best-effort backstop ON TOP OF the guaranteed per-mutation
+        // persists (Run / tab add / close / active-switch each emit
+        // `Persist` → `set_sql_tabs` → disk), so disk is already current;
+        // the close hook flushes any edit-buffer text typed since the last
+        // mutation. Registered once, the first time the console is built
+        // (we hold the only `&mut Window` here). `should_close` returns
+        // `true` so the default close proceeds.
+        if !self.sql_console_close_hooked {
+            self.sql_console_close_hooked = true;
+            let ws_weak = cx.entity().downgrade();
+            window.on_window_should_close(cx, move |_window, app| {
+                if let Some(ws) = ws_weak.upgrade() {
+                    ws.update(app, |ws, cx| ws.persist_sql_console(cx));
+                }
+                true
+            });
+        }
+    }
+
     pub(crate) fn toggle_sql_console(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let dock = self.ensure_dock_area(window, cx);
         if self.sql_console.is_none() {
-            let (persisted, active) = {
-                let s = self.session.lock();
-                (s.sql_tabs().to_vec(), s.active_sql_tab())
-            };
-            // Ensure the per-window autocomplete snapshot exists, then clone it
-            // into the console so every tab's provider shares one `RefCell`
-            // (P5b T2). The refresh below populates `tables` off the engine.
-            let snapshot = self
-                .sql_snapshot
-                .get_or_insert_with(crate::query::completion::new_shared_snapshot)
-                .clone();
-            let console = cx.new(|cx| {
-                crate::view::sql_console::SqlConsole::new(
-                    &persisted,
-                    active,
-                    snapshot.clone(),
-                    window,
-                    cx,
-                )
-            });
-            // `subscribe_in` (not `subscribe`) so the event callback receives a
-            // live `&mut Window` — the Save-query path (`SaveQuery`) builds a
-            // `NamePrompt` whose single-line `InputState` needs one eagerly
-            // (P5b T8). The window is valid because the subscription fires inside
-            // a window update.
-            let sub = cx.subscribe_in(
-                &console,
-                window,
-                |ws: &mut Self,
-                 console,
-                 ev: &crate::view::sql_console::SqlConsoleEvent,
-                 window,
-                 cx| {
-                    ws.on_sql_console_event(console.clone(), ev.clone(), window, cx);
-                },
-            );
-            self.sql_console_sub = Some(sub);
-            // Hydrate ai_ready on the freshly-built console.
-            let ready = self.ai_ready();
-            console.update(cx, |c, _cx| c.ai_ready = ready);
-            self.sql_console = Some(console.clone());
-
-            // B8: mount the bottom dock, open.
-            //
-            // ⚠ `set_bottom_dock` is called EXACTLY ONCE, here, and must stay
-            // that way. It runs `subscribe_item`, which pushes onto the
-            // `DockArea`'s `_subscriptions` and recurses over the item tree
-            // (`dock/mod.rs:955-963`); nothing ever removes them. Every later
-            // open and close goes through `toggle_dock` below, which
-            // re-subscribes nothing. Same constraint as `set_left_dock` and
-            // `set_right_dock` — see `ensure_dock_area`.
-            //
-            // Mounted LAZILY rather than beside the left and right docks
-            // because upstream keeps a CLOSED bottom dock on screen at
-            // `h(px(29.))` so its title bar can be clicked to reopen
-            // (`dock.rs:372-380`). Building it here means a user who never
-            // opens the console never sees that bar — the first-run hero is
-            // untouched.
-            //
-            // A bare `DockItem::tab`, with no enclosing split: the bottom dock
-            // holds exactly one panel, and that is also the only shape immune
-            // to B7's `set_active_ix` re-entrancy panic (see
-            // `ensure_dock_area`, which this is called from).
-            let weak_dock = dock.downgrade();
-            let item = gpui_component::dock::DockItem::tab(console.clone(), &weak_dock, window, cx);
-            dock.update(cx, |dock, cx| {
-                dock.set_bottom_dock(
-                    item,
-                    Some(gpui::px(SQL_CONSOLE_DOCK_HEIGHT)),
-                    true,
-                    window,
-                    cx,
-                );
-            });
-
-            // Persist the console one last time on window close (P5a T10). This
-            // is a best-effort backstop ON TOP OF the guaranteed per-mutation
-            // persists (Run / tab add / close / active-switch each emit
-            // `Persist` → `set_sql_tabs` → disk), so disk is already current;
-            // the close hook flushes any edit-buffer text typed since the last
-            // mutation. Registered once, the first time the console is built
-            // (we hold the only `&mut Window` here). `should_close` returns
-            // `true` so the default close proceeds.
-            if !self.sql_console_close_hooked {
-                self.sql_console_close_hooked = true;
-                let ws_weak = cx.entity().downgrade();
-                window.on_window_should_close(cx, move |_window, app| {
-                    if let Some(ws) = ws_weak.upgrade() {
-                        ws.update(app, |ws, cx| ws.persist_sql_console(cx));
-                    }
-                    true
-                });
-            }
+            self.mount_sql_console(&dock, SQL_CONSOLE_DOCK_HEIGHT, window, cx);
         } else {
             dock.update(cx, |dock, cx| {
                 dock.toggle_dock(gpui_component::dock::DockPlacement::Bottom, window, cx);
@@ -6885,7 +6900,31 @@ impl WorkspaceShell {
             self.grid_panel = Some(panel);
             self.inspector_panel = Some(inspector);
             self.charts_panel = Some(charts);
-            self.dock_area = Some(dock);
+            self.dock_area = Some(dock.clone());
+
+            // B9: restore an open console at its persisted height.
+            //
+            // The bottom dock stays LAZY for everyone else. B8 mounts it on the
+            // first console open because upstream keeps a CLOSED bottom dock on
+            // screen at `h(px(29.))` so its title bar can be clicked to reopen
+            // (`dock.rs:372-380`) — so a user who never opens the console must
+            // never see that bar, and the first-run hero carries no persisted
+            // layout, which is what keeps the hero untouched.
+            //
+            // Mounting here, during the first render, was the slice's top risk:
+            // it is exactly where B7's `set_active_ix` → `Panel::visible` →
+            // `shell.read` re-entrancy panic lives. T0 probe 3 measured it and
+            // found it absent — a single-panel `DockItem::tab` early-returns
+            // from `set_active_ix(0)` (`tab_panel.rs:208-211`), and that
+            // immunity holds at the earliest moment this can run.
+            if let Some(l) = self.restored_layout.clone().filter(|l| l.console_open) {
+                let height = crate::session::dock_layout::clamped_size(
+                    l.bottom_size,
+                    SQL_CONSOLE_DOCK_HEIGHT,
+                    f32::from(viewport.height),
+                );
+                self.mount_sql_console(&dock, height, window, cx);
+            }
         }
 
         self.dock_area.clone().expect("built directly above")
