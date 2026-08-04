@@ -1650,11 +1650,16 @@ pub fn register_menu_action_handlers(cx: &mut App) {
     });
 }
 
-/// Best-effort flush of the focused workspace's SQL-console edit buffer to
-/// disk — the same persist the `on_window_should_close` backstop runs on the
-/// OS close-button path. Used by the menu Quit / Close Window handlers, whose
-/// paths (`platform.quit()` / `Window::remove_window`) never fire that hook.
-/// No-op when no workspace is registered or the entity is gone.
+/// Best-effort flush of the focused workspace's SQL-console edit buffer AND its
+/// dock layout to disk — the same persists the `on_window_should_close` backstop
+/// runs on the OS close-button path. Used by the menu Quit / Close Window
+/// handlers, whose paths (`platform.quit()` / `Window::remove_window`) never
+/// fire that hook. No-op when no workspace is registered or the entity is gone.
+///
+/// ⚠ The layout flush is what captures a dock RESIZE (B9). Resizing is a pure
+/// upstream mouse drag: it runs no dat0 code and emits no event — `Dock` is not
+/// an `EventEmitter` at all — so a resize never followed by a dock toggle would
+/// otherwise never reach disk. This is the only place that catches it.
 fn flush_focused_workspace_sql(cx: &mut App) {
     let Some(ws) = crate::window_registry::focused_workspace_weak()
         .and_then(|w| w.upgrade())
@@ -1662,7 +1667,10 @@ fn flush_focused_workspace_sql(cx: &mut App) {
     else {
         return;
     };
-    ws.update(cx, |ws, cx| ws.persist_sql_console(cx));
+    ws.update(cx, |ws, cx| {
+        ws.persist_sql_console(cx);
+        ws.persist_dock_layout(cx);
+    });
 }
 
 /// Launch the dat0 desktop application.
@@ -3202,6 +3210,11 @@ impl WorkspaceShell {
         if self.catalog_panel_visible {
             self.refresh_catalog(cx);
         }
+        // v11: persist the console's open state and height. Runs after both
+        // branches so it observes the toggle, and after the `sql_console_visible`
+        // read above for the same reason that read is sound — `Dock::set_open`
+        // assigns `open` synchronously.
+        self.persist_dock_layout(cx);
         cx.notify();
     }
 
@@ -3905,6 +3918,9 @@ impl WorkspaceShell {
     /// bare name then re-quote it with `quote_ident`.
     pub(crate) fn toggle_chart_panel(&mut self, cx: &mut gpui::Context<Self>) {
         self.chart_panel_visible = !self.chart_panel_visible;
+        // v11 is the first schema to persist chart-panel visibility at all —
+        // v10's `ui` carried only the catalog and inspector bools.
+        self.persist_dock_layout(cx);
         if self.chart_panel_visible {
             if let Some(base) = self.base_table() {
                 let bare = bare_table_name(&base);
@@ -4324,6 +4340,66 @@ impl WorkspaceShell {
         };
         if let Err(e) = self.session.lock().set_ui(ui) {
             tracing::warn!(error = %e, "persist_dock_ui: set_ui failed");
+        }
+    }
+
+    /// B9: the live dock layout — what is open, and how big.
+    ///
+    /// Sizes come from `DockArea::dump()` because that is the ONLY public route
+    /// to them at rev `0f0ab35`: `DockArea` keeps `left_dock` / `right_dock` /
+    /// `bottom_dock` private with no getter, so `Dock::size()` — which is `pub`
+    /// — is unreachable from here. Everything else in the dump, including the
+    /// whole `center`, is discarded by `DumpMirror`, which has no field for it.
+    ///
+    /// Open state does NOT come from the dump for the left and right docks: the
+    /// shell's own bools are the source of truth those docks are reconciled
+    /// against each frame (`sync_left_dock` / `sync_right_dock`), so reading the
+    /// dock back would just observe the previous frame's reconciliation. The
+    /// console is the exception — B8 deleted its shell bool and derives
+    /// visibility from the dock itself, because upstream owns two toggle paths
+    /// dat0 does not.
+    pub(crate) fn current_dock_layout(
+        &self,
+        cx: &gpui::App,
+    ) -> crate::session::dock_layout::DockLayout {
+        use crate::session::dock_layout::{DockLayout, mirror_from_dump, size_to_persist};
+
+        let mirror = self
+            .dock_area
+            .as_ref()
+            .and_then(|dock| serde_json::to_value(dock.read(cx).dump(cx)).ok())
+            .map(|v| mirror_from_dump(&v))
+            .unwrap_or_default();
+
+        DockLayout {
+            left_panel: self.open_left_panel(),
+            left_size: mirror.left_dock.and_then(|d| size_to_persist(d.size)),
+            inspector_visible: self.inspector_panel_visible,
+            charts_visible: self.chart_panel_visible,
+            right_size: mirror.right_dock.and_then(|d| size_to_persist(d.size)),
+            console_open: mirror.bottom_dock.is_some_and(|d| d.open),
+            bottom_size: mirror.bottom_dock.and_then(|d| size_to_persist(d.size)),
+        }
+    }
+
+    /// B9: persist the live dock layout to `session.json`.
+    ///
+    /// Called from the sites that already persist dock UI, plus the Quit /
+    /// CloseWindow flush. Open and close need no upstream event — every one of
+    /// them goes through dat0's own toggles — but SIZE is a pure upstream mouse
+    /// drag with no dat0 code in the loop, which is what makes the close
+    /// backstop load-bearing rather than belt-and-braces: it is the only thing
+    /// that captures a resize not followed by any toggle.
+    ///
+    /// ⚠ `DockEvent::LayoutChanged` is NOT usable for this, and the master plan
+    /// was wrong to propose it: `Dock` is not an `EventEmitter` at all
+    /// (`dock/dock.rs` contains zero `cx.emit`; `resize` and `set_open` only
+    /// `cx.notify()`), so neither a resize nor an open/close ever emits it. Its
+    /// only sources are `StackPanel` and `TabPanel`.
+    pub(crate) fn persist_dock_layout(&self, cx: &gpui::App) {
+        let layout = self.current_dock_layout(cx);
+        if let Err(e) = self.session.lock().set_dock_layout(Some(layout)) {
+            tracing::warn!(error = %e, "persist_dock_layout: set_dock_layout failed");
         }
     }
 
@@ -7040,9 +7116,11 @@ impl WorkspaceShell {
                 LeftPanel::Connections => {}
             }
         }
-        // Only `catalog_panel_visible` is persisted (session v10); the other two
-        // have always defaulted false at construction.
+        // Session v11 persists the whole rail choice, not just the catalog:
+        // `dock_layout.left_panel` is `Option<LeftPanel>`, so the at-most-one
+        // invariant is unrepresentable-if-violated on the wire.
         self.persist_dock_ui();
+        self.persist_dock_layout(cx);
         cx.notify();
     }
 
@@ -7756,8 +7834,9 @@ impl Render for WorkspaceShell {
             .on_action(cx.listener(
                 |ws: &mut Self, _: &crate::menu_macos::InspectorToggle, _window, cx| {
                     ws.inspector_panel_visible = !ws.inspector_panel_visible;
-                    // Persist the dock visibility (session v8 `ui`).
+                    // Persist the dock visibility (session v8 `ui`, v11 layout).
                     ws.persist_dock_ui();
+                    ws.persist_dock_layout(cx);
                     cx.notify();
                 },
             ))
@@ -7898,6 +7977,17 @@ impl WorkspaceShell {
     /// no debug selector.
     pub fn dock_area_for_test(&self) -> Option<gpui::Entity<gpui_component::dock::DockArea>> {
         self.dock_area.clone()
+    }
+
+    /// B9: the menu / palette Charts toggle, for tests.
+    ///
+    /// [`chart_bind_for_test`](Self::chart_bind_for_test) assigns
+    /// `chart_panel_visible` directly — the a11y-shim pattern, where a test
+    /// writes the bool and the next frame reconciles the dock. That bypasses
+    /// [`toggle_chart_panel`](Self::toggle_chart_panel) and therefore also
+    /// bypasses the layout persist inside it, so it cannot exercise this path.
+    pub fn toggle_chart_panel_for_test(&mut self, cx: &mut Context<Self>) {
+        self.toggle_chart_panel(cx);
     }
 
     pub fn chart_bind_for_test(&mut self, source: String, cols: Vec<(String, String)>) {
