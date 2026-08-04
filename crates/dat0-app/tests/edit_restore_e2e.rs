@@ -163,16 +163,17 @@ async fn edit_delete_filter_round_trip_through_v3_session() {
         charts: Vec::new(),
         attachments: Vec::new(),
         ui: Default::default(),
+        dock_layout: None,
     };
     std::fs::write(&session_json, serde_json::to_vec_pretty(&state).unwrap()).unwrap();
 
     // The on-disk file must declare the current schema version.
     let raw = std::fs::read_to_string(&session_json).unwrap();
     assert!(
-        raw.contains("\"schema_version\": 10") || raw.contains("\"schema_version\":10"),
-        "session.json must declare schema_version 10"
+        raw.contains("\"schema_version\": 11") || raw.contains("\"schema_version\":11"),
+        "session.json must declare schema_version 11"
     );
-    assert_eq!(SESSION_SCHEMA_VERSION, 10, "current schema must be v10");
+    assert_eq!(SESSION_SCHEMA_VERSION, 11, "current schema must be v11");
 
     // --- Phase 4: simulate crash + reload via migrate::load ---
     drop(vm);
