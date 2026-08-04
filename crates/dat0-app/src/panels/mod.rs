@@ -13,6 +13,7 @@ pub mod charts_panel;
 pub mod connections_panel;
 pub mod grid_panel;
 pub mod inspector_panel;
+pub mod sql_console_panel;
 
 use gpui::{App, AppContext as _};
 
@@ -80,6 +81,28 @@ pub fn register_panels(cx: &mut App) {
         ai_dock_panel::AiDockPanel::PANEL_NAME,
         |_dock_area, _state, _info, _window, cx| {
             Box::new(cx.new(|_| ai_dock_panel::AiDockPanel::new(gpui::WeakEntity::new_invalid())))
+        },
+    );
+
+    // B8: the bottom dock. Same degraded contract as the six above, but the
+    // console is a real stateful entity rather than a shell delegate, so the
+    // placeholder hands back a console over ZERO persisted tabs and its own
+    // fresh autocomplete snapshot — `SqlConsole::new` falls back to a single
+    // empty tab. B9 replaces all seven with builders that resolve the live
+    // shell and the real session.
+    gpui_component::dock::register_panel(
+        cx,
+        crate::view::sql_console::SqlConsole::PANEL_NAME,
+        |_dock_area, _state, _info, window, cx| {
+            Box::new(cx.new(|cx| {
+                crate::view::sql_console::SqlConsole::new(
+                    &[],
+                    None,
+                    crate::query::completion::new_shared_snapshot(),
+                    window,
+                    cx,
+                )
+            }))
         },
     );
 }

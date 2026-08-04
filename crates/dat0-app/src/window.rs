@@ -428,6 +428,15 @@ const CHARTS_DOCK_WIDTH: f32 = 560.0;
 /// tree reads better with the extra room.
 const LEFT_DOCK_WIDTH: f32 = 384.0;
 
+/// B8: the SQL console bottom dock's initial height.
+///
+/// 320 rather than the 260 the fixed strip used: the console now shares the
+/// centre column's vertical space with the grid instead of spanning the whole
+/// window above it, and it gained a 30px title bar of its own. Unlike the side
+/// docks this is only an INITIAL height — the bottom dock ships upstream's
+/// resize handle, and B9 will persist whatever the user drags it to.
+const SQL_CONSOLE_DOCK_HEIGHT: f32 = 320.0;
+
 /// B7: which left-dock panel is showing.
 ///
 /// The three shell bools remain the storage; this names the choice they encode
@@ -2319,10 +2328,6 @@ pub struct WorkspaceShell {
     /// [`SqlConsoleEvent`]: crate::view::sql_console::SqlConsoleEvent
     #[allow(dead_code)] // keep-alive: storing the Subscription is the read
     pub(crate) sql_console_sub: Option<Subscription>,
-    /// Whether the SQL Console panel is currently shown. Toggled by
-    /// `toggle_sql_console`; the render gate respects this independently of
-    /// whether `sql_console` is `Some`.
-    pub(crate) sql_console_visible: bool,
     /// Whether the window-close `Persist` backstop has been registered (P5a
     /// T10). Set the first time the console is built so the
     /// `on_window_should_close` hook is installed exactly once per window.
@@ -2550,7 +2555,6 @@ impl WorkspaceShell {
             export_dialog_sub: None,
             sql_console: None,
             sql_console_sub: None,
-            sql_console_visible: false,
             sql_console_close_hooked: false,
             active_query_cancel: None,
             sql_snapshot: None,
@@ -3069,15 +3073,18 @@ impl WorkspaceShell {
     /// per-tab code editors) and subscribes to its [`SqlConsoleEvent`]. The
     /// subscription is STORED in `sql_console_sub` — a dropped `Subscription`
     /// deregisters the callback silently (the P4a T10b trap). Subsequent
-    /// toggles just flip `sql_console_visible` without tearing the console
-    /// down, preserving the editor buffers.
+    /// toggles just open and close the dock without tearing the console down,
+    /// preserving the editor buffers.
     ///
-    /// Run/Cancel are wired in P5a T6/T7; for now the event handler only
-    /// services `Persist`.
+    /// B8: the console lives in the `DockArea`'s BOTTOM dock rather than a
+    /// fixed strip above the grid, and the dock's own open flag is the single
+    /// source of truth for visibility — see
+    /// [`sql_console_visible`](Self::sql_console_visible).
     ///
     /// [`SqlConsole`]: crate::view::sql_console::SqlConsole
     /// [`SqlConsoleEvent`]: crate::view::sql_console::SqlConsoleEvent
     pub(crate) fn toggle_sql_console(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let dock = self.ensure_dock_area(window, cx);
         if self.sql_console.is_none() {
             let (persisted, active) = {
                 let s = self.session.lock();
@@ -3119,8 +3126,40 @@ impl WorkspaceShell {
             // Hydrate ai_ready on the freshly-built console.
             let ready = self.ai_ready();
             console.update(cx, |c, _cx| c.ai_ready = ready);
-            self.sql_console = Some(console);
-            self.sql_console_visible = true;
+            self.sql_console = Some(console.clone());
+
+            // B8: mount the bottom dock, open.
+            //
+            // ⚠ `set_bottom_dock` is called EXACTLY ONCE, here, and must stay
+            // that way. It runs `subscribe_item`, which pushes onto the
+            // `DockArea`'s `_subscriptions` and recurses over the item tree
+            // (`dock/mod.rs:955-963`); nothing ever removes them. Every later
+            // open and close goes through `toggle_dock` below, which
+            // re-subscribes nothing. Same constraint as `set_left_dock` and
+            // `set_right_dock` — see `ensure_dock_area`.
+            //
+            // Mounted LAZILY rather than beside the left and right docks
+            // because upstream keeps a CLOSED bottom dock on screen at
+            // `h(px(29.))` so its title bar can be clicked to reopen
+            // (`dock.rs:372-380`). Building it here means a user who never
+            // opens the console never sees that bar — the first-run hero is
+            // untouched.
+            //
+            // A bare `DockItem::tab`, with no enclosing split: the bottom dock
+            // holds exactly one panel, and that is also the only shape immune
+            // to B7's `set_active_ix` re-entrancy panic (see
+            // `ensure_dock_area`, which this is called from).
+            let weak_dock = dock.downgrade();
+            let item = gpui_component::dock::DockItem::tab(console.clone(), &weak_dock, window, cx);
+            dock.update(cx, |dock, cx| {
+                dock.set_bottom_dock(
+                    item,
+                    Some(gpui::px(SQL_CONSOLE_DOCK_HEIGHT)),
+                    true,
+                    window,
+                    cx,
+                );
+            });
 
             // Persist the console one last time on window close (P5a T10). This
             // is a best-effort backstop ON TOP OF the guaranteed per-mutation
@@ -3141,11 +3180,17 @@ impl WorkspaceShell {
                 });
             }
         } else {
-            self.sql_console_visible = !self.sql_console_visible;
+            dock.update(cx, |dock, cx| {
+                dock.toggle_dock(gpui_component::dock::DockPlacement::Bottom, window, cx);
+            });
         }
         // Refresh the autocomplete schema whenever the console is (re)shown so
         // tables created/dropped while it was hidden are reflected (P5b T2).
-        if self.sql_console_visible {
+        //
+        // Reading the derived getter immediately after the toggle is sound:
+        // `Dock::set_open` assigns `self.open` synchronously and defers only
+        // `set_collapsed` (`dock.rs:259-266`), measured at B8's T0.
+        if self.sql_console_visible(cx) {
             self.refresh_completion_snapshot(cx);
         }
         // Keep the Catalog dock fresh if it's open (P6a T7).
@@ -6540,6 +6585,177 @@ impl WorkspaceShell {
         crate::inspector::panel::render_inspector(&self.inspector, self.inspector_projection(), cx)
     }
 
+    /// Lazily build the `DockArea` and everything mounted at construction time,
+    /// returning it.
+    ///
+    /// Extracted from `render` at B8 because `toggle_sql_console` needs a dock
+    /// too: it mounts the bottom dock on the console's first open, and relying
+    /// on `render` having run first would make a toggle-before-first-draw
+    /// silently no-op — safe in production (the action handler hangs off the
+    /// shell root element, which cannot exist before a render) but a trap for
+    /// test authors.
+    ///
+    /// ⚠ This runs with the shell LEASED — both callers hold `&mut self` — so
+    /// B7's constraint applies in full: a `DockItem::tabs` of MORE THAN ONE
+    /// panel cannot be built here. Every `add_panel` after the first calls
+    /// `set_active_ix`, which reaches `Panel::visible` → `shell.read` and
+    /// panics with "cannot read WorkspaceShell while it is already being
+    /// updated". A single-panel `DockItem::tab` is immune because
+    /// `set_active_ix(0)` early-returns on an unchanged index
+    /// (`tab_panel.rs:208-211`) — which is why the bottom dock added by
+    /// `toggle_sql_console` holds exactly one panel.
+    fn ensure_dock_area(
+        &mut self,
+        window: &mut gpui::Window,
+        cx: &mut gpui::Context<Self>,
+    ) -> gpui::Entity<gpui_component::dock::DockArea> {
+        // B5: lazily build the DockArea and its center GridPanel. `DockArea::new`
+        // needs a `&mut Window`, available only here — the same reason the
+        // `table_state` promotion above lives in `render`.
+        //
+        // The center is `DockItem::Panel`, NOT `DockItem::Tabs`. `Tabs` renders a
+        // `TabPanel`, which ALWAYS paints a title bar: under `PanelStyle::Auto` a
+        // single visible panel gets a 30px title row rather than no chrome. It
+        // also wraps the panel in a scroll container plus a cached element and
+        // marks the container a tab group — a nested scroll around a virtualized
+        // `Table`, a cached child against the single-frame a11y capture, and a
+        // tab group that reorders Tab traversal. `DockItem::Panel` renders the
+        // panel's raw view instead, putting ZERO elements between this shell and
+        // the `Table`. Measured by the B5 T0 chrome gate: panel-body bounds equal
+        // host bounds, same origin and same height.
+        if self.dock_area.is_none() {
+            let weak_shell = cx.entity().downgrade();
+            let panel = cx.new(|_| crate::panels::grid_panel::GridPanel::new(weak_shell.clone()));
+            let dock = cx.new(|cx| {
+                let mut dock =
+                    gpui_component::dock::DockArea::new("dat0-workspace", Some(1), window, cx);
+                // v1 is resize + collapse only, never drag-rearrange. With
+                // `DockItem::Panel` there is no tab bar to drag; this is for B6+.
+                dock.set_locked(true, window, cx);
+                dock
+            });
+            let item = gpui_component::dock::DockItem::panel(Arc::new(panel.clone()));
+            dock.update(cx, |dock, cx| dock.set_center(item, window, cx));
+
+            // B6: the right dock's split, built once and re-used. Its children
+            // MUST come from `DockItem::tab`, not `DockItem::panel` —
+            // `StackPanel::insert_panel` hard-asserts that a split's children
+            // are a `TabPanel` or a `StackPanel` (`stack_panel.rs:106-112`), so
+            // the 30px title bar is structural here rather than a style choice.
+            //
+            // The dock itself is attached by `sync_right_dock` below, which owns
+            // both its size and its open state.
+            let weak_dock = dock.downgrade();
+            let inspector =
+                cx.new(|_| crate::panels::inspector_panel::InspectorPanel::new(weak_shell.clone()));
+            let charts =
+                cx.new(|_| crate::panels::charts_panel::ChartsPanel::new(weak_shell.clone()));
+            let right = gpui_component::dock::DockItem::split(
+                gpui::Axis::Horizontal,
+                vec![
+                    gpui_component::dock::DockItem::tab(inspector.clone(), &weak_dock, window, cx)
+                        .size(gpui::px(INSPECTOR_DOCK_WIDTH)),
+                    gpui_component::dock::DockItem::tab(charts.clone(), &weak_dock, window, cx)
+                        .size(gpui::px(CHARTS_DOCK_WIDTH)),
+                ],
+                &weak_dock,
+                window,
+                cx,
+            );
+
+            // ⚠ `set_right_dock` is called EXACTLY ONCE, here, and must stay
+            // that way. It runs `subscribe_item`, which `push`es onto the
+            // `DockArea`'s `_subscriptions` and recurses over the whole split
+            // (`dock/mod.rs:955-963`); nothing ever removes those. Calling it
+            // again per toggle — which is what dynamic dock widths would need,
+            // since `DockArea` keeps `right_dock` private and exposes no size
+            // setter — leaks ~3 subscriptions every time, forever, each one
+            // spawning its own task on subsequent `LayoutChanged` events.
+            // `sync_right_dock` therefore only ever opens and closes.
+            let want = (self.inspector_panel_visible, self.chart_panel_visible);
+            let width = INSPECTOR_DOCK_WIDTH + CHARTS_DOCK_WIDTH;
+            dock.update(cx, |dock, cx| {
+                dock.set_right_dock(right, Some(gpui::px(width)), want.0 || want.1, window, cx);
+            });
+            self.right_dock_state = want;
+
+            // B7: the left dock — three panels of which the at-most-one
+            // invariant keeps exactly zero or one visible at a time.
+            //
+            // ⚠⚠ THIS IS A SPLIT OF THREE SINGLE-PANEL TABS, NOT ONE
+            // `DockItem::tabs` OF THREE, and the reason is re-entrancy rather
+            // than layout. `DockItem::tabs` calls `TabPanel::add_panel` per
+            // panel, and every add after the first calls `set_active_ix`, which
+            // does real work and ends up reading `Panel::visible` — which reads
+            // THIS shell. All of it runs inside `WorkspaceShell::render`, where
+            // the shell is already leased, so it panics with "cannot read
+            // WorkspaceShell while it is already being updated". A single-panel
+            // `DockItem::tab` never hits it because `set_active_ix(0)`
+            // early-returns when the index is unchanged (`tab_panel.rs:208-211`)
+            // — which is exactly why B6's two-panel right dock was fine.
+            //
+            // The split costs one `.tab_group()` per child instead of one total,
+            // but that is moot here: the invariant means at most ONE child is
+            // ever visible, so at most one group is ever populated. A hidden
+            // child collapses and yields its space to its sibling
+            // (`stack_panel.rs:427-431`), so the visible panel gets the full
+            // dock width and the result is what the rail model wants.
+            let catalog =
+                cx.new(|_| crate::panels::catalog_panel::CatalogPanel::new(weak_shell.clone()));
+            let connections = cx.new(|_| {
+                crate::panels::connections_panel::ConnectionsPanel::new(weak_shell.clone())
+            });
+            let ai_dock =
+                cx.new(|_| crate::panels::ai_dock_panel::AiDockPanel::new(weak_shell.clone()));
+            let left = gpui_component::dock::DockItem::split(
+                gpui::Axis::Horizontal,
+                vec![
+                    gpui_component::dock::DockItem::tab(catalog.clone(), &weak_dock, window, cx)
+                        .size(gpui::px(LEFT_DOCK_WIDTH)),
+                    gpui_component::dock::DockItem::tab(
+                        connections.clone(),
+                        &weak_dock,
+                        window,
+                        cx,
+                    )
+                    .size(gpui::px(LEFT_DOCK_WIDTH)),
+                    gpui_component::dock::DockItem::tab(ai_dock.clone(), &weak_dock, window, cx)
+                        .size(gpui::px(LEFT_DOCK_WIDTH)),
+                ],
+                &weak_dock,
+                window,
+                cx,
+            );
+
+            // ⚠ `set_left_dock` leaks exactly like `set_right_dock` above: it
+            // runs `subscribe_item`, which pushes onto `_subscriptions` and
+            // recurses over the item tree (`dock/mod.rs:955-963`), and nothing
+            // ever removes them. Called EXACTLY ONCE; `sync_left_dock` only ever
+            // toggles.
+            let want_left = (
+                self.catalog_panel_visible,
+                self.connections_panel_visible,
+                self.ai_panel_visible,
+            );
+            let left_open = want_left.0 || want_left.1 || want_left.2;
+            dock.update(cx, |dock, cx| {
+                dock.set_left_dock(left, Some(gpui::px(LEFT_DOCK_WIDTH)), left_open, window, cx);
+            });
+            self.left_dock_state = want_left;
+
+            self.catalog_panel = Some(catalog);
+            self.connections_panel = Some(connections);
+            self.ai_dock_panel = Some(ai_dock);
+
+            self.grid_panel = Some(panel);
+            self.inspector_panel = Some(inspector);
+            self.charts_panel = Some(charts);
+            self.dock_area = Some(dock);
+        }
+
+        self.dock_area.clone().expect("built directly above")
+    }
+
     /// B6: reconcile the right dock with the visibility bools, which are the
     /// single source of truth.
     ///
@@ -6643,6 +6859,31 @@ impl WorkspaceShell {
     /// direction of the dependency legible.
     pub(crate) fn inspector_visible(&self) -> bool {
         self.inspector_panel_visible
+    }
+
+    /// B8: whether the SQL console is showing — **derived from the dock**,
+    /// never a parallel bool, and the one place in the dock series where the
+    /// direction of the dependency is inverted.
+    ///
+    /// The left and right docks derive from shell bools because dat0 owns
+    /// every writer. The bottom dock has two writers dat0 does NOT own: the
+    /// title-bar collapse chevron (`tab_panel.rs:616`) and clicking a tab
+    /// while the dock is collapsed (`tab_panel.rs:740-752`). Either flips
+    /// `Dock::open` behind the shell's back, so a cached bool would desync and
+    /// the next `SqlConsoleToggle` would move BACKWARDS — it would toggle a
+    /// stale value. Making the dock the single source of truth removes the
+    /// class rather than patching it.
+    ///
+    /// Safe to read in the same call that toggles: `Dock::set_open` assigns
+    /// `self.open` synchronously and defers only `set_collapsed`
+    /// (`dock.rs:259-266`), measured at B8's T0. `is_dock_open` returns false
+    /// while `bottom_dock` is `None`, so the pre-mount state needs no special
+    /// case — the dock does not exist until the console's first open.
+    pub(crate) fn sql_console_visible(&self, cx: &gpui::App) -> bool {
+        self.dock_area.as_ref().is_some_and(|d| {
+            d.read(cx)
+                .is_dock_open(gpui_component::dock::DockPlacement::Bottom, cx)
+        })
     }
 
     /// B7: the Catalog panel's element tree, extracted from the body row so
@@ -7097,149 +7338,7 @@ impl Render for WorkspaceShell {
             }
         }
 
-        // B5: lazily build the DockArea and its center GridPanel. `DockArea::new`
-        // needs a `&mut Window`, available only here — the same reason the
-        // `table_state` promotion above lives in `render`.
-        //
-        // The center is `DockItem::Panel`, NOT `DockItem::Tabs`. `Tabs` renders a
-        // `TabPanel`, which ALWAYS paints a title bar: under `PanelStyle::Auto` a
-        // single visible panel gets a 30px title row rather than no chrome. It
-        // also wraps the panel in a scroll container plus a cached element and
-        // marks the container a tab group — a nested scroll around a virtualized
-        // `Table`, a cached child against the single-frame a11y capture, and a
-        // tab group that reorders Tab traversal. `DockItem::Panel` renders the
-        // panel's raw view instead, putting ZERO elements between this shell and
-        // the `Table`. Measured by the B5 T0 chrome gate: panel-body bounds equal
-        // host bounds, same origin and same height.
-        if self.dock_area.is_none() {
-            let weak_shell = cx.entity().downgrade();
-            let panel = cx.new(|_| crate::panels::grid_panel::GridPanel::new(weak_shell.clone()));
-            let dock = cx.new(|cx| {
-                let mut dock =
-                    gpui_component::dock::DockArea::new("dat0-workspace", Some(1), window, cx);
-                // v1 is resize + collapse only, never drag-rearrange. With
-                // `DockItem::Panel` there is no tab bar to drag; this is for B6+.
-                dock.set_locked(true, window, cx);
-                dock
-            });
-            let item = gpui_component::dock::DockItem::panel(Arc::new(panel.clone()));
-            dock.update(cx, |dock, cx| dock.set_center(item, window, cx));
-
-            // B6: the right dock's split, built once and re-used. Its children
-            // MUST come from `DockItem::tab`, not `DockItem::panel` —
-            // `StackPanel::insert_panel` hard-asserts that a split's children
-            // are a `TabPanel` or a `StackPanel` (`stack_panel.rs:106-112`), so
-            // the 30px title bar is structural here rather than a style choice.
-            //
-            // The dock itself is attached by `sync_right_dock` below, which owns
-            // both its size and its open state.
-            let weak_dock = dock.downgrade();
-            let inspector =
-                cx.new(|_| crate::panels::inspector_panel::InspectorPanel::new(weak_shell.clone()));
-            let charts =
-                cx.new(|_| crate::panels::charts_panel::ChartsPanel::new(weak_shell.clone()));
-            let right = gpui_component::dock::DockItem::split(
-                gpui::Axis::Horizontal,
-                vec![
-                    gpui_component::dock::DockItem::tab(inspector.clone(), &weak_dock, window, cx)
-                        .size(gpui::px(INSPECTOR_DOCK_WIDTH)),
-                    gpui_component::dock::DockItem::tab(charts.clone(), &weak_dock, window, cx)
-                        .size(gpui::px(CHARTS_DOCK_WIDTH)),
-                ],
-                &weak_dock,
-                window,
-                cx,
-            );
-
-            // ⚠ `set_right_dock` is called EXACTLY ONCE, here, and must stay
-            // that way. It runs `subscribe_item`, which `push`es onto the
-            // `DockArea`'s `_subscriptions` and recurses over the whole split
-            // (`dock/mod.rs:955-963`); nothing ever removes those. Calling it
-            // again per toggle — which is what dynamic dock widths would need,
-            // since `DockArea` keeps `right_dock` private and exposes no size
-            // setter — leaks ~3 subscriptions every time, forever, each one
-            // spawning its own task on subsequent `LayoutChanged` events.
-            // `sync_right_dock` therefore only ever opens and closes.
-            let want = (self.inspector_panel_visible, self.chart_panel_visible);
-            let width = INSPECTOR_DOCK_WIDTH + CHARTS_DOCK_WIDTH;
-            dock.update(cx, |dock, cx| {
-                dock.set_right_dock(right, Some(gpui::px(width)), want.0 || want.1, window, cx);
-            });
-            self.right_dock_state = want;
-
-            // B7: the left dock — three panels of which the at-most-one
-            // invariant keeps exactly zero or one visible at a time.
-            //
-            // ⚠⚠ THIS IS A SPLIT OF THREE SINGLE-PANEL TABS, NOT ONE
-            // `DockItem::tabs` OF THREE, and the reason is re-entrancy rather
-            // than layout. `DockItem::tabs` calls `TabPanel::add_panel` per
-            // panel, and every add after the first calls `set_active_ix`, which
-            // does real work and ends up reading `Panel::visible` — which reads
-            // THIS shell. All of it runs inside `WorkspaceShell::render`, where
-            // the shell is already leased, so it panics with "cannot read
-            // WorkspaceShell while it is already being updated". A single-panel
-            // `DockItem::tab` never hits it because `set_active_ix(0)`
-            // early-returns when the index is unchanged (`tab_panel.rs:208-211`)
-            // — which is exactly why B6's two-panel right dock was fine.
-            //
-            // The split costs one `.tab_group()` per child instead of one total,
-            // but that is moot here: the invariant means at most ONE child is
-            // ever visible, so at most one group is ever populated. A hidden
-            // child collapses and yields its space to its sibling
-            // (`stack_panel.rs:427-431`), so the visible panel gets the full
-            // dock width and the result is what the rail model wants.
-            let catalog =
-                cx.new(|_| crate::panels::catalog_panel::CatalogPanel::new(weak_shell.clone()));
-            let connections = cx.new(|_| {
-                crate::panels::connections_panel::ConnectionsPanel::new(weak_shell.clone())
-            });
-            let ai_dock =
-                cx.new(|_| crate::panels::ai_dock_panel::AiDockPanel::new(weak_shell.clone()));
-            let left = gpui_component::dock::DockItem::split(
-                gpui::Axis::Horizontal,
-                vec![
-                    gpui_component::dock::DockItem::tab(catalog.clone(), &weak_dock, window, cx)
-                        .size(gpui::px(LEFT_DOCK_WIDTH)),
-                    gpui_component::dock::DockItem::tab(
-                        connections.clone(),
-                        &weak_dock,
-                        window,
-                        cx,
-                    )
-                    .size(gpui::px(LEFT_DOCK_WIDTH)),
-                    gpui_component::dock::DockItem::tab(ai_dock.clone(), &weak_dock, window, cx)
-                        .size(gpui::px(LEFT_DOCK_WIDTH)),
-                ],
-                &weak_dock,
-                window,
-                cx,
-            );
-
-            // ⚠ `set_left_dock` leaks exactly like `set_right_dock` above: it
-            // runs `subscribe_item`, which pushes onto `_subscriptions` and
-            // recurses over the item tree (`dock/mod.rs:955-963`), and nothing
-            // ever removes them. Called EXACTLY ONCE; `sync_left_dock` only ever
-            // toggles.
-            let want_left = (
-                self.catalog_panel_visible,
-                self.connections_panel_visible,
-                self.ai_panel_visible,
-            );
-            let left_open = want_left.0 || want_left.1 || want_left.2;
-            dock.update(cx, |dock, cx| {
-                dock.set_left_dock(left, Some(gpui::px(LEFT_DOCK_WIDTH)), left_open, window, cx);
-            });
-            self.left_dock_state = want_left;
-
-            self.catalog_panel = Some(catalog);
-            self.connections_panel = Some(connections);
-            self.ai_dock_panel = Some(ai_dock);
-
-            self.grid_panel = Some(panel);
-            self.inspector_panel = Some(inspector);
-            self.charts_panel = Some(charts);
-            self.dock_area = Some(dock);
-        }
+        self.ensure_dock_area(window, cx);
 
         self.sync_left_dock(window, cx);
         self.sync_right_dock(window, cx);
@@ -7494,22 +7593,11 @@ impl Render for WorkspaceShell {
             }
         };
 
-        // SQL Console bottom panel (P5a T5). Mounted between the PipelineBar and
-        // the grid body when the console exists AND is visible. A fixed-height
-        // panel with a top border; the inner `SqlConsole` entity renders the tab
-        // strip + code editor + result region.
-        let sql_console_panel: Option<gpui::AnyElement> = self
-            .sql_console
-            .as_ref()
-            .filter(|_| self.sql_console_visible)
-            .map(|c| {
-                div()
-                    .h(px(260.))
-                    .w_full()
-                    .border_t_1()
-                    .child(c.clone())
-                    .into_any_element()
-            });
+        // B8: the SQL console used to be mounted here as a fixed 260px strip
+        // between the PipelineBar and the grid body, spanning the full window
+        // width. It is now a `Panel` in the DockArea's bottom dock, so it
+        // renders below the grid inside the centre column and this render has
+        // nothing left to place — see `toggle_sql_console`.
 
         // Slice 6 Task 3: make the shell root a genuine Tab stop, but ONLY
         // while `grid_visible` (real a11y fix — Tab must reach the grid so
@@ -7687,7 +7775,6 @@ impl Render for WorkspaceShell {
             .children(banner_host)
             .children(tab_strip)
             .children(pipeline_bar)
-            .children(sql_console_panel)
             // Body row: the Connections panel (left dock, when visible) + the
             // grid/console body (P5c T10/T11). When the panel is hidden this is
             // just the body in a flex_row — identical layout to before.
@@ -7780,6 +7867,34 @@ impl WorkspaceShell {
             .unwrap_or(false)
     }
 
+    /// B8: is the SQL console's bottom dock open? Same shape as the left and
+    /// right accessors above — the DOCK's own flag, never a bool the test
+    /// wrote.
+    pub fn bottom_dock_open_for_test(&self, cx: &gpui::App) -> bool {
+        self.sql_console_visible(cx)
+    }
+
+    /// B8: the ⌘⇧C / menu / palette path, for tests.
+    ///
+    /// `open_console_for_test` only ever OPENS (it early-returns when the
+    /// console is already visible), so it cannot exercise the close half or the
+    /// direction of a toggle after an external one.
+    pub fn toggle_sql_console_for_test(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.toggle_sql_console(window, cx);
+    }
+
+    /// B8: the shell's `DockArea`, so a test can drive the two toggle paths
+    /// dat0 does NOT own.
+    ///
+    /// Upstream's title-bar chevron and its click-a-tab-while-collapsed handler
+    /// both do exactly `dock_area.toggle_dock(DockPlacement::Bottom, ..)`
+    /// (`tab_panel.rs:746-751`). Handing the `DockArea` to a test lets it make
+    /// that same call rather than hunting for the chevron's pixels, which carry
+    /// no debug selector.
+    pub fn dock_area_for_test(&self) -> Option<gpui::Entity<gpui_component::dock::DockArea>> {
+        self.dock_area.clone()
+    }
+
     pub fn chart_bind_for_test(&mut self, source: String, cols: Vec<(String, String)>) {
         self.chart_panel.bind(source, cols);
         self.chart_panel_visible = true;
@@ -7847,7 +7962,7 @@ impl WorkspaceShell {
         window: &mut gpui::Window,
         cx: &mut Context<Self>,
     ) {
-        if !self.sql_console_visible {
+        if !self.sql_console_visible(cx) {
             self.toggle_sql_console(window, cx);
         }
         if let Some(console) = self.sql_console.clone() {
@@ -7950,7 +8065,7 @@ impl WorkspaceShell {
         cx: &mut gpui::Context<Self>,
         ai_ready: bool,
     ) -> gpui::Entity<crate::view::sql_console::SqlConsole> {
-        if !self.sql_console_visible {
+        if !self.sql_console_visible(cx) {
             self.toggle_sql_console(window, cx);
         }
         let console = self.sql_console.clone().expect("console built by toggle");

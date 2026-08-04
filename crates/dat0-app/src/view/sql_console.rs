@@ -226,6 +226,21 @@ pub struct SqlConsole {
     /// Stable focus handle for the tab-strip tablist container (SQL-Console-nav
     /// slice). ONE stop for the whole strip; ←/→ switch the active tab.
     pub(crate) tabstrip_focus: gpui::FocusHandle,
+    /// B8: the handle [`Panel::focus_handle`] hands to the dock — the console's
+    /// ROOT, tracked by the root element in [`Self::render`].
+    ///
+    /// ⚠ It must be its own handle and it must NOT be a tab stop. `TabPanel`
+    /// renders `.track_focus(&self.focus_handle(cx))`, and its `focus_handle`
+    /// delegates to the ACTIVE PANEL's (`tab_panel.rs:1167-1173`) — so whatever
+    /// this returns is also tracked on the TabPanel container, an ANCESTOR of
+    /// this console. Returning a handle that is also a live stop inside the
+    /// console (the active tab's editor was the first attempt) registers one
+    /// `FocusId` twice in a single frame, once outside the tab group and once
+    /// inside it, and the console's stops drop out of the Tab ring entirely.
+    ///
+    /// It is tracked by a real element, so focusing it is not swallowed (B5);
+    /// it simply is not a Tab destination of its own.
+    pub(crate) root_focus: gpui::FocusHandle,
 }
 
 /// Install the autocomplete provider on a freshly-built tab editor (P5b T2).
@@ -355,6 +370,9 @@ impl SqlConsole {
             explain_focus: cx.focus_handle(),
             toolbar_focus: std::collections::HashMap::new(),
             tabstrip_focus: cx.focus_handle(),
+            // Deliberately left at gpui's `tab_stop: false` default — see the
+            // field's doc comment.
+            root_focus: cx.focus_handle(),
         }
     }
 
@@ -1166,6 +1184,10 @@ impl Render for SqlConsole {
             .flex()
             .flex_col()
             .size_full()
+            // B8: the handle the dock focuses when it activates this panel.
+            // Tracked here so it belongs to a real element rather than being
+            // swallowed (B5); not a tab stop, so it adds no Tab destination.
+            .track_focus(&self.root_focus)
             // Scopes the `escape` keybinding registered by
             // `register_sql_console_keys` so a REAL Escape keypress reaches the
             // consolidated Escape ladder below even when focus is on a
