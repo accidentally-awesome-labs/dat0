@@ -439,7 +439,11 @@ mod tests {
                   "catalog_expanded":["orders"],"catalog_selection":"orders"}}"#;
         let state = super::load_str(v9).expect("v9 migrates");
         assert_eq!(state.schema_version, super::SESSION_SCHEMA_VERSION);
-        assert!(state.ui.catalog_panel_visible, "known ui keys survive");
+        assert_eq!(
+            state.dock_layout.and_then(|l| l.left_panel),
+            Some(crate::window::LeftPanel::Catalog),
+            "the v9 catalog bool was carried into v11's layout"
+        );
         assert!(
             state.ui.catalog_collapsed.is_empty(),
             "new field defaults empty; dead keys dropped"

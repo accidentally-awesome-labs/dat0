@@ -81,8 +81,6 @@ expression: json
     }
   ],
   "ui": {
-    "catalog_panel_visible": true,
-    "inspector_panel_visible": false,
     "catalog_collapsed": [
       "local"
     ]

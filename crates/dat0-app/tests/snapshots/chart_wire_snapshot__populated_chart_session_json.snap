@@ -28,8 +28,6 @@ expression: json
   ],
   "attachments": [],
   "ui": {
-    "catalog_panel_visible": false,
-    "inspector_panel_visible": false,
     "catalog_collapsed": []
   }
 }

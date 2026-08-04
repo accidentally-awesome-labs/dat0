@@ -523,15 +523,14 @@ fn v7_file_migrates_to_v8_with_default_ui() {
     let state = migrate::load_str(raw).expect("v7 should migrate to current");
     assert_eq!(state.schema_version, SESSION_SCHEMA_VERSION);
     assert_eq!(state.schema_version, 11);
-    assert!(
-        !state.ui.catalog_panel_visible,
-        "v7 -> v8: catalog dock defaults hidden"
-    );
-    assert!(
-        !state.ui.inspector_panel_visible,
-        "v7 -> v8: inspector dock defaults hidden"
-    );
     assert!(state.ui.catalog_collapsed.is_empty());
+    // v11: dock visibility moved to `dock_layout`. A v7 file has no `ui` at
+    // all, so it derives the all-closed layout, which is what it meant.
+    assert_eq!(
+        state.dock_layout,
+        Some(dat0_app::session::dock_layout::DockLayout::default()),
+        "v7 -> v11: every dock defaults closed"
+    );
 }
 
 #[test]
@@ -545,8 +544,17 @@ fn v8_loads_dropping_dead_tree_ui() {
               "catalog_expanded":["orders","customers"],"catalog_selection":"orders"}}"#;
     let state = migrate::load_str(raw).expect("v8 loads");
     assert_eq!(state.schema_version, SESSION_SCHEMA_VERSION);
-    assert!(state.ui.catalog_panel_visible);
-    assert!(state.ui.inspector_panel_visible);
+    // v11: the two dock bools are carried out of `ui` and into `dock_layout`.
+    // This is the case that makes the raw-document read load-bearing — the
+    // parsed struct no longer has these fields at all, and serde drops the keys
+    // with no error.
+    let layout = state.dock_layout.expect("v8 derives a layout");
+    assert_eq!(
+        layout.left_panel,
+        Some(dat0_app::window::LeftPanel::Catalog),
+        "the v8 catalog bool survived the relocation"
+    );
+    assert!(layout.inspector_visible);
     // v10: the v8 forward-looking keys are dead — dropped on load, replaced by
     // the (defaulted) collapse set.
     assert!(state.ui.catalog_collapsed.is_empty());
@@ -650,8 +658,6 @@ fn session_json_wire_format_is_snapshot_gated() {
             },
         ],
         ui: SessionUiState {
-            catalog_panel_visible: true,
-            inspector_panel_visible: false,
             catalog_collapsed: vec!["local".into()],
         },
         // B9 (v11). Populated rather than `None` so the snapshot actually gates

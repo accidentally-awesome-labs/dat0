@@ -2607,19 +2607,15 @@ impl WorkspaceShell {
             connections_panel_visible: layout
                 .as_ref()
                 .is_some_and(|l| l.left_panel == Some(LeftPanel::Connections)),
-            catalog_panel_visible: match layout.as_ref() {
-                Some(l) => l.left_panel == Some(LeftPanel::Catalog),
-                None => ui.catalog_panel_visible,
-            },
+            catalog_panel_visible: layout
+                .as_ref()
+                .is_some_and(|l| l.left_panel == Some(LeftPanel::Catalog)),
             catalog_active: 0,
             catalog_collapsed: ui.catalog_collapsed.iter().cloned().collect(),
             catalog_tree: crate::catalog::CatalogTree::default(),
             catalog_tables: Vec::new(),
             sql_parents: Default::default(),
-            inspector_panel_visible: match layout.as_ref() {
-                Some(l) => l.inspector_visible,
-                None => ui.inspector_panel_visible,
-            },
+            inspector_panel_visible: layout.as_ref().is_some_and(|l| l.inspector_visible),
             inspector: crate::inspector::InspectorModel::new(),
             ai_panel_visible: layout
                 .as_ref()
@@ -4372,17 +4368,14 @@ impl WorkspaceShell {
         }
     }
 
-    /// Persist the catalog/inspector dock UI state to `session.json` (P6a T13;
-    /// v10 adds the catalog collapse set). Sorted for a deterministic wire
-    /// format (the insta snapshot gates it).
+    /// Persist the catalog TREE state to `session.json` (P6a T13; v10 added the
+    /// collapse set; v11 moved dock visibility out to
+    /// [`persist_dock_layout`](Self::persist_dock_layout)). Sorted for a
+    /// deterministic wire format (the insta snapshot gates it).
     pub(crate) fn persist_dock_ui(&self) {
         let mut catalog_collapsed: Vec<String> = self.catalog_collapsed.iter().cloned().collect();
         catalog_collapsed.sort();
-        let ui = crate::session::SessionUiState {
-            catalog_panel_visible: self.catalog_panel_visible,
-            inspector_panel_visible: self.inspector_panel_visible,
-            catalog_collapsed,
-        };
+        let ui = crate::session::SessionUiState { catalog_collapsed };
         if let Err(e) = self.session.lock().set_ui(ui) {
             tracing::warn!(error = %e, "persist_dock_ui: set_ui failed");
         }
