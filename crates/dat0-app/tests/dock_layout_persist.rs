@@ -576,3 +576,115 @@ fn a_fresh_session_mounts_no_bottom_dock_at_all(cx: &mut TestAppContext) {
         );
     }
 }
+
+// ---------------------------------------------------------------------------
+// Precedence: session over settings seed
+// ---------------------------------------------------------------------------
+
+fn seed_settings(cfg: &Path, layout: DockLayout) {
+    std::fs::create_dir_all(cfg).expect("config dir");
+    let store = dat0_app::settings::store::SettingsStore::with_path(cfg.join("settings.toml"));
+    let mut settings = store.load_or_default().expect("load settings");
+    settings.ui.dock_layout = Some(layout);
+    store.save(&settings).expect("save settings");
+}
+
+#[gpui::test]
+#[serial]
+fn a_fresh_session_inherits_the_settings_seed(cx: &mut TestAppContext) {
+    // A plain launch calls Session::new, which leaves session.json with no
+    // layout. Without the seed the layout would never come back outside a
+    // workspace or a recovered session.
+    let h = enter_async_harness(cx);
+    let _g = h.enter();
+    let tmp = tempfile::tempdir().unwrap();
+    let cfg = tmp.path().join("cfg");
+    set_config_dir(&cfg);
+    init_components(cx);
+    seed_settings(
+        &cfg,
+        DockLayout {
+            left_panel: Some(LeftPanel::Ai),
+            ..DockLayout::default()
+        },
+    );
+
+    let session = build_empty_session(&tmp.path().join("state"));
+    let (shell, vcx) = open_shell_window(cx, session);
+    vcx.run_until_parked();
+
+    assert_eq!(
+        shell.read_with(&vcx.cx, |ws, _| ws.open_left_panel()),
+        Some(LeftPanel::Ai),
+        "a brand-new scratch session starts from the last-used layout"
+    );
+    std::mem::forget(tmp);
+}
+
+#[gpui::test]
+#[serial]
+fn the_session_layout_wins_over_the_settings_seed(cx: &mut TestAppContext) {
+    let h = enter_async_harness(cx);
+    let _g = h.enter();
+    let tmp = tempfile::tempdir().unwrap();
+    let cfg = tmp.path().join("cfg");
+    set_config_dir(&cfg);
+    init_components(cx);
+    seed_settings(
+        &cfg,
+        DockLayout {
+            left_panel: Some(LeftPanel::Ai),
+            ..DockLayout::default()
+        },
+    );
+
+    let session = build_empty_session(&tmp.path().join("state"));
+    session
+        .lock()
+        .set_dock_layout(Some(DockLayout {
+            left_panel: Some(LeftPanel::Catalog),
+            ..DockLayout::default()
+        }))
+        .expect("seed the session");
+    let (shell, vcx) = open_shell_window(cx, session);
+    vcx.run_until_parked();
+
+    assert_eq!(
+        shell.read_with(&vcx.cx, |ws, _| ws.open_left_panel()),
+        Some(LeftPanel::Catalog),
+        "the session is authoritative when it carries a layout of its own"
+    );
+    std::mem::forget(tmp);
+}
+
+#[gpui::test]
+#[serial]
+fn a_dock_toggle_does_not_write_settings_toml(cx: &mut TestAppContext) {
+    // The seed is written ONLY on the close/quit flush. SettingsWatcher re-reads
+    // the file on every write, and settings.toml is otherwise written only on
+    // deliberate user action -- writing it per toggle would widen the window in
+    // which a load-mutate-save clobbers a hand-edit in flight.
+    let h = enter_async_harness(cx);
+    let _g = h.enter();
+    let tmp = tempfile::tempdir().unwrap();
+    let cfg = tmp.path().join("cfg");
+    set_config_dir(&cfg);
+    init_components(cx);
+    seed_settings(&cfg, DockLayout::default());
+    let before = std::fs::read_to_string(cfg.join("settings.toml")).expect("settings written");
+
+    let session = build_empty_session(&tmp.path().join("state"));
+    let (shell, vcx) = open_shell_window(cx, session);
+    vcx.run_until_parked();
+    vcx.update(|_window, app| {
+        shell.update(app, |ws, cx| ws.activate_left_panel(LeftPanel::Ai, cx));
+    });
+    settle(vcx);
+
+    let after = std::fs::read_to_string(cfg.join("settings.toml")).expect("settings still there");
+    assert_eq!(
+        before, after,
+        "a dock toggle must leave settings.toml untouched"
+    );
+    std::mem::forget(tmp);
+}

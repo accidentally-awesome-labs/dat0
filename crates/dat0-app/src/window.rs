@@ -1670,6 +1670,7 @@ fn flush_focused_workspace_sql(cx: &mut App) {
     ws.update(cx, |ws, cx| {
         ws.persist_sql_console(cx);
         ws.persist_dock_layout(cx);
+        ws.persist_dock_layout_seed(cx);
     });
 }
 
@@ -2540,9 +2541,18 @@ impl WorkspaceShell {
         // v8 `ui`). Read into a local BEFORE building the struct so we don't hold
         // the session lock across the whole ctor.
         let ui = session.lock().ui().clone();
-        // B9: the persisted layout wins over the v10 `ui` bools when present.
-        // T6 extends this with the settings-level seed for a fresh session.
-        let layout = session.lock().dock_layout().cloned();
+        // B9 precedence: the SESSION is authoritative when it carries a layout
+        // of its own — a workspace keeps its own arrangement. Otherwise fall
+        // back to the settings-level seed, so a plain launch (which always
+        // creates a FRESH scratch session) still opens the way the user left
+        // it. Neither present → the mount constants.
+        let layout = session.lock().dock_layout().cloned().or_else(|| {
+            Self::settings_store()?
+                .load_or_default()
+                .ok()?
+                .ui
+                .dock_layout
+        });
         Self {
             session,
             data_source: None,
@@ -4438,6 +4448,41 @@ impl WorkspaceShell {
         }
     }
 
+    /// B9: mirror the live dock layout into `settings.toml` as the seed a fresh
+    /// scratch window starts from. Load → mutate → atomic save, the same shape
+    /// as `update_ai_settings`.
+    ///
+    /// ⚠ Called ONLY from the close/quit flush, never from a toggle.
+    /// `SettingsWatcher` re-reads settings.toml on every write
+    /// (`settings/watcher.rs:20-26`). That callback is benign — it swaps the
+    /// in-memory `Settings` under an `RwLock` and re-applies nothing — but this
+    /// file is otherwise written only on deliberate user action, and writing it
+    /// on every dock toggle would turn it into a file written dozens of times a
+    /// session, widening the window in which this load-mutate-save clobbers a
+    /// hand-edit in flight. The seed only has to be right at quit.
+    fn persist_dock_layout_seed(&self, cx: &gpui::App) {
+        let Some(store) = Self::settings_store() else {
+            return;
+        };
+        let mut settings = match store.load_or_default() {
+            Ok(s) => s,
+            Err(e) => {
+                tracing::warn!(
+                    ?e,
+                    "persist_dock_layout_seed: load failed; seed not updated"
+                );
+                return;
+            }
+        };
+        settings.ui.dock_layout = Some(self.current_dock_layout(cx));
+        if let Err(e) = store.save(&settings) {
+            tracing::warn!(
+                ?e,
+                "persist_dock_layout_seed: save failed; seed not updated"
+            );
+        }
+    }
+
     /// Short, stable per-window discriminator for the TEMP VIEW name. The
     /// session `window_id` is a `Uuid`; its canonical `to_string()` always
     /// renders `8-4-4-4-12` hex, so the first 4 chars are always ASCII hex.
@@ -5822,7 +5867,7 @@ impl WorkspaceShell {
     /// `None` (logging) when the config dir is unavailable — callers skip the
     /// persist rather than crash. The API KEY is never routed through this store
     /// (it lives only in the keychain).
-    fn ai_settings_store() -> Option<crate::settings::store::SettingsStore> {
+    fn settings_store() -> Option<crate::settings::store::SettingsStore> {
         match crate::platform::config_dir() {
             Ok(dir) => Some(crate::settings::store::SettingsStore::with_path(
                 dir.join("settings.toml"),
@@ -5830,7 +5875,7 @@ impl WorkspaceShell {
             Err(e) => {
                 tracing::warn!(
                     ?e,
-                    "ai_settings_store: config_dir unavailable; AI settings not persisted"
+                    "settings_store: config_dir unavailable; settings not persisted"
                 );
                 None
             }
@@ -5850,7 +5895,7 @@ impl WorkspaceShell {
     /// Load the AI-panel draft from persisted settings + keychain key-presence.
     /// Never reads the key value — only whether a key exists for the provider.
     fn hydrate_ai_panel(&mut self) {
-        let settings = Self::ai_settings_store()
+        let settings = Self::settings_store()
             .and_then(|s| s.load_or_default().ok())
             .map(|s| s.ai)
             .unwrap_or_default();
@@ -5882,7 +5927,7 @@ impl WorkspaceShell {
     /// path (load → mutate → save). The API KEY is never a field here, so it can
     /// never reach settings.toml. Logs + skips on any store error.
     fn update_ai_settings(&self, f: impl FnOnce(&mut crate::ai::AiSettings)) {
-        let Some(store) = Self::ai_settings_store() else {
+        let Some(store) = Self::settings_store() else {
             return;
         };
         let mut settings = match store.load_or_default() {
@@ -5902,7 +5947,7 @@ impl WorkspaceShell {
     /// never reappears (D5 / R17 transparency). Idempotent: gated on the persisted
     /// `privacy_ack`. Banner is text-only (no action buttons — D-021).
     fn maybe_show_ai_privacy_banner(&self) {
-        let ack = Self::ai_settings_store()
+        let ack = Self::settings_store()
             .and_then(|s| s.load_or_default().ok())
             .map(|s| s.ai.privacy_ack)
             .unwrap_or(false);
@@ -6098,7 +6143,7 @@ impl WorkspaceShell {
                 return;
             }
         };
-        let cfg = Self::ai_settings_store()
+        let cfg = Self::settings_store()
             .and_then(|s| s.load_or_default().ok())
             .map(|s| s.ai)
             .unwrap_or_default();
@@ -6161,7 +6206,7 @@ impl WorkspaceShell {
             Some(k) => k,
             None => return, // ai_ready gate prevents this; belt-and-suspenders
         };
-        let cfg = Self::ai_settings_store()
+        let cfg = Self::settings_store()
             .and_then(|s| s.load_or_default().ok())
             .map(|s| s.ai)
             .unwrap_or_default();
@@ -6262,7 +6307,7 @@ impl WorkspaceShell {
             Some(k) => k,
             None => return, // ai_ready gate prevents this; belt-and-suspenders
         };
-        let cfg = Self::ai_settings_store()
+        let cfg = Self::settings_store()
             .and_then(|s| s.load_or_default().ok())
             .map(|s| s.ai)
             .unwrap_or_default();

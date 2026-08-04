@@ -2,7 +2,7 @@
 source: crates/dat0-app/tests/onboarding_gpui.rs
 expression: toml
 ---
-schema_version = 2
+schema_version = 3
 update_auto_check = true
 memory_budget_mb = 1024
 log_level = "info,dat0=debug"
@@ -29,3 +29,5 @@ custom_base_url = ""
 advanced_override = false
 include_sample_rows = false
 privacy_ack = false
+
+[ui]
