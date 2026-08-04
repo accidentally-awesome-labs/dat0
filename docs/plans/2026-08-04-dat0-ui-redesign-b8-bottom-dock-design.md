@@ -501,4 +501,129 @@ reconsidered despite its broken collapsed state (§3).
 
 ## 15. As-built
 
-_(filled in at the end of the slice)_
+Commits: design `ae61c72` · plan `f250ac2` · T0 `4145857` · T1 `1625c4f` ·
+T2 `2a9743a` · T3 `dbef3b7` · T4 `c58d265`. Executed INLINE (no subagents).
+
+Final gate: `fmt --check` clean · `clippy --workspace --all-targets -D
+warnings` exit 0 · **116 binaries, 0 failures** across `{plain, a11y-capture,
+a11y-capture+gallery}` · style_lint 4/4 with the ratchet **unchanged** at
+`[("window.rs", 1)]` · `git diff` **empty** for `src/grid` and `src/session` ·
+the built binary boots with a log **identical to a `main` build** after
+normalising timestamps, UUIDs, config paths and durations.
+
+### 15.1 ⚠⚠⚠ THE SLICE'S REAL FINDING: `Panel::focus_handle` must not return a live stop
+
+`TabPanel::render` does `.track_focus(&self.focus_handle(cx))` on its
+container, and `TabPanel::focus_handle` **delegates to the active panel's**
+(`tab_panel.rs:1167-1173`). The container is also where `.tab_group()` opens
+the group.
+
+So whatever a `Panel` hands back is tracked **twice in one frame** — once on
+the TabPanel container, *outside* the tab group, and once wherever it really
+lives *inside* it. Returning the active tab's editor handle (the master plan's
+own suggestion, and §6's first draft) therefore **removed every one of the
+console's ~18 focus stops from the Tab ring**: a 200-press walk reached no
+named console stop at all. Enter/Space activation and the focus ring would
+have gone with them — a silent keyboard-accessibility regression, not a test
+artifact.
+
+Fix: `SqlConsole` gains a dedicated `root_focus` handle, tracked on its root
+element in `render` (so focusing it is not swallowed — B5) and left at gpui's
+`tab_stop: false` default (so it adds no Tab destination of its own).
+
+**Why B5-B7 never hit it:** their panels return the SHELL's handle, which lives
+entirely outside the panel subtree, so the double registration has no inside
+half. **Any future panel that owns its own focusable content inherits this
+constraint.**
+
+### 15.2 How it was found, and the two instruments that lied first
+
+The bug presented as "11 tests fail across three suites", and the obvious
+readings were both wrong:
+
+- **Not a reordering.** The design (§7) predicted the console's stops would
+  move after the grid, so "update the asserted order" was the tempting fix. A
+  raw walk showed 7 named hero stops and then **200+ presses with no named stop
+  ever again** — not a different order, an absent one.
+- **Not unreachable, either.** Focus *was* moving; the stops it landed on were
+  upstream's own `Button`/`InputState` handles, which never call
+  `record_focus_id` and so cannot be named by the oracle.
+
+Two of my own instruments produced false readings before being caught:
+
+- **`debug_bounds` is recorded BEFORE `div.rs`'s `visibility == Hidden` early
+  return** (`div.rs:1800` vs `:1809`) and is **absent from `reuse_paint`'s
+  replay list**. Its presence proves a real paint happened — and proves nothing
+  about hitboxes or tab stops.
+- **`focused_label() == None` does not mean "nothing focused"** (B6's
+  unnameable-focus trap). A click-into-the-console probe read as "the click
+  missed" when it actually meant "focus landed somewhere unnameable". That
+  nearly became a recorded finding.
+
+What localised it was a **bisect**: mounting the same console as
+`DockItem::panel` passed all 9 `sql_console_nav` tests, which exonerated the
+`Dock` and implicated the `TabPanel` wrapper. `.cached()` was already exonerated
+(the `DockItem::Panel` path applies it too), and T0's synthetic probe had
+already shown chrome, `overflow_y_scroll` and `.tab_group()` were each harmless
+alone — so the cause had to be an interaction with something the console
+supplies, which is `focus_handle`.
+
+### 15.3 The T4 guard was vacuous on its first version
+
+The test written specifically to guard §15.1 counted a11y **nodes** — and
+reverting `focus_handle` reddened eight tests in `sql_console_nav` while all
+seven `bottom_dock` tests stayed green. Node presence was never what the bug
+destroyed. Rewritten to **walk Tab** from a staged shell focus, it now goes red
+under exactly that revert.
+
+This is the third slice in a row where a test passed its own non-vacuity probe
+(B7's `never_two_panel_names_…`, and now this). **Perturb the mechanism, not
+the expectation.**
+
+### 15.4 Deviations from the plan
+
+- **T3 Step 6 (bump `a11y_spike`) deleted, per T0 §14.7.** The count stays 12.
+  T0's eager probe moved it to 20; the shipped lazy mount never builds a console
+  on the hero.
+- **T5 needed no nav-suite edits at all.** The plan budgeted for reconciling
+  four suites against a changed order; with the focus fix in place the console's
+  Tab order is preserved and all three suites pass unmodified. The only genuine
+  order change is structural (console renders below the grid, inside the centre
+  column) and no test asserts on that.
+- **Probe (b), nested scroll, closed via the existing oracle.** Rather than a
+  new test, `a11y_content::sql_console_renders_result_and_timing_content` —
+  which already builds a real engine, view and `GridDataSource` and drives
+  `set_pane_source` — is green with the console docked, so the virtualized
+  results `Table` survives `overflow_y_scroll` + `.cached()`.
+- **T0 moved into `tests/dock_chrome_spike.rs`** instead of throwaway
+  production wiring (§14.5), and gained a fourth test pinning `closable`.
+- **Two new test shims**, both mirroring B6/B7 precedent:
+  `bottom_dock_open_for_test`, `dock_area_for_test`, plus
+  `toggle_sql_console_for_test` (the existing `open_console_for_test` only ever
+  opens, so it cannot exercise the close half or a post-external toggle).
+
+### 15.5 `closable` — §2.5 was overstated
+
+§2.5 credited the dock lock. Measurement (`dock_chrome_spike.rs`) found **three**
+independent suppressors, and for B8's shape the deciding one is neither the lock
+nor panel count: `is_locked` ends with `self.stack_panel.is_none()`
+(`tab_panel.rs:392`), so a `TabPanel` with no `StackPanel` parent reports itself
+locked whatever the `DockArea` says — and B8 passes `DockItem::tab` straight to
+`set_bottom_dock` with no enclosing split. **Dropping `set_locked(true)` would
+not regress it.** The test carries all three cases plus a control that produces
+a `true`.
+
+⚠ That control initially read `false` because `closable` was read **inside the
+construction closure**; `DockItem::split` parents the child through
+`StackPanel` and dock wiring defers work via `window.defer`, so the flag is only
+meaningful **after `run_until_parked`**. Reading it too early looked exactly
+like a finding.
+
+### 15.6 Still owed
+
+- **Human visual glance** (§13), now including: the 30 px title bar above the
+  console's own tab strip; the collapsed 29 px bar; the new resize splitter;
+  320 px vs the old 260 px; and the console at narrow width with both side docks
+  open. All three themes, HC most of all.
+- The dead `…` menu is now a **sixth** instance (§2.6) — inherited, not
+  introduced, and not removable without forking.
