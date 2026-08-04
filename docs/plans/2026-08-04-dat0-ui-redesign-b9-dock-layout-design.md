@@ -145,7 +145,7 @@ Two shape decisions worth stating:
   the wire**, where three parallel bools could contradict it. This mirrors the
   master plan's own standing rule for B6+: derive dock state, never keep
   parallel bools.
-- **`Option<f32>` sizes.** `None` means "never resized, use the constant", so an
+- **`Option<u32>` sizes.** `None` means "never resized, use the constant", so an
   untouched dock keeps inheriting `LEFT_DOCK_WIDTH` (384) /
   `INSPECTOR_DOCK_WIDTH + CHARTS_DOCK_WIDTH` (848) / `SQL_CONSOLE_DOCK_HEIGHT`
   (320) if those ever change. A `0.0`-means-default sentinel would not.
@@ -411,3 +411,63 @@ no console and no open docks.
 
 Carried forward and still owed: B8's double-chrome / narrow-window pass, B7's
 rail pass, B6's title bars, B5's diff-the-pixels + file-drop, B4's palette.
+
+---
+
+## 14. T0 as-built (2026-08-04)
+
+**All three probes passed on the first run. No stop clause fired, and the
+design is unchanged by this gate.** `tests/dock_layout_spike.rs`, 3 tests,
+kept as standing regression guards (the `dock_chrome_spike.rs` precedent).
+`tests/a11y_spike.rs` re-run alongside: still green, still asserting **12**.
+
+### Probe 1 — `dump()` reads the live `Dock` ✅
+
+Rewritten from the plan's version, which would have measured nothing useful.
+The plan proposed re-mounting a dock at a probe size and reading it back;
+instead the probe asserts all **three** mount sizes at once — 384 left / 848
+right / 320 bottom. Those constants are distinct, and **one shared constant
+cannot produce three different numbers**, so reading all three back proves the
+dump resolves each dock separately from live state. A single-value probe would
+have passed just as happily against a hardcoded echo.
+
+### Probe 2 — the serialized shape ✅
+
+Confirmed exactly as predicted from the source read (design §2 facts 3-4). The
+real payload, captured live and now the fixture for the capture-path parser:
+
+```json
+{"version":1,
+ "center":{"panel_name":"GridPanel","children":[],"info":{"panel":null}},
+ "left_dock":{"panel":{...},"placement":"left","size":384.0,"open":false},
+ "right_dock":{"panel":{...},"placement":"right","size":848.0,"open":false},
+ "bottom_dock":{"panel":{...},"placement":"bottom","size":320.0,"open":true}}
+```
+
+- `size` is a **bare number**, confirming `Pixels`' `#[repr(transparent)]` +
+  derived `Serialize` reaches the wire as `f32`.
+- Each dock is `{panel, placement, size, open}`. `placement` is a lowercase
+  string (`"left"`); dat0 ignores it — the key already names the placement.
+- ★ **`center.panel_name` is `"GridPanel"`**, which makes the §3.1 argument
+  concrete rather than theoretical: a `DockArea::load` of this very dump would
+  hand `"GridPanel"` to `PanelRegistry::build_panel` and re-wrap the result as
+  `DockItem::tabs`, restoring the title bar. The probe now asserts the centre is
+  PRESENT, so the capture path's job is explicit — the centre exists in the dump
+  and is dropped on purpose, not absent by luck.
+- ★ The left dock's inner `stack.sizes` is `[384.0, 384.0, 384.0]` and the
+  right's is `[288.0, 560.0]` — the inner split sizes B9 deliberately does not
+  persist are right there and readable. Noted so a future slice that wants them
+  knows they cost only a parser change, not a new API.
+- Top-level `version` is `1`, from `DockArea::new("dat0-workspace", Some(1), ..)`.
+  Nothing reads it today; a structural change to dat0's dock tree could bump it.
+
+### Probe 3 — early bottom-dock mount ✅
+
+The top risk did not materialise. Mounting the console **before the first frame
+settles** — no `run_until_parked` before the toggle — neither panicked with
+B7's "cannot read WorkspaceShell while it is already being updated" nor moved
+the a11y node count. The `DockItem::tab` single-panel shape is immune for the
+documented reason (`set_active_ix(0)` early-returns on an unchanged index,
+`tab_panel.rs:208-211`), and that immunity holds at the earliest moment the
+restore path could run. **The T5 fallback (defer the mount to after the first
+frame) is therefore NOT needed.**
