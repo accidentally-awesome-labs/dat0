@@ -379,6 +379,126 @@ rail passes.
 
 ---
 
-## 14. As-built
+## 14. T0 as-built
+
+Probes landed as four new tests in `tests/dock_chrome_spike.rs` (B6's standing
+chrome guard), not as throwaway wiring — see §14.5 for why that changed.
+
+### 14.1 ⚠ §8(a) IS FALSIFIED — `a11y_spike` does not move, and "fixing" it would have been wrong
+
+The first probe wired an **eager** bottom dock into `ensure_dock_area` and took
+`a11y_spike` from **12 → 20**. Read naively that is "the dock adds 8 nodes",
+and T3 Step 6 would have dutifully bumped the assertion to 20.
+
+An A/B isolated the variable the way B6's T0 did — same console entity,
+rendered through the **old plain strip** instead of the dock:
+
+| Variant | Mount | `click_ids.len()` |
+| --- | --- | --- |
+| A | console in the bottom dock (TabPanel chrome) | **20** |
+| B | console in the old 260 px strip (no chrome) | **20** |
+| baseline | no console mounted | **12** |
+
+⇒ **TabPanel chrome contributes ZERO `click_id`s.** All +8 are the console's
+own always-visible `.a11y` sites (8 of its 18 render on an empty console). The
+title bar is plain text with no `.a11y`, and per B7 only `.a11y` records a
+click-id — `a11y_label` records `click_id: None`.
+
+⇒ Since the shipped design mounts the dock **lazily**, the hero screen that
+`a11y_spike` measures never builds a console. **The count stays 12 and T3 must
+NOT touch that assertion.** The design predicted the opposite; the prediction
+came from assuming chrome was the variable when the console's own body was.
+
+**The general lesson, which is the reusable half:** the eager probe was not a
+smaller version of the design — it was a *different* design, and its measured
+delta belonged entirely to the difference. A probe whose shape diverges from
+production measures the divergence.
+
+### 14.2 A collapsed bottom dock contributes **0** nodes
+
+`a_closed_bottom_dock_is_still_rendered`: with the dock closed, the panel's
+label leaves the capture entirely (measured 0, asserted `<= 1` so a future
+duplicate is loud). The 29 px bar is chrome only.
+
+⇒ Closing the console removes all 18 of its potential nodes from the tree. No
+phantom stops, and no screen-reader clutter from a collapsed console.
+
+Note the panel *title* never enters the capture either, collapsed or open: it
+is a plain `div().child(SharedString)`, and a bare child contributes nothing
+(A5). That retires the duplicate-label hazard §6 worried about **for the
+capture** — though the reasoning for a static title still stands for real
+assistive tech.
+
+### 14.3 `is_dock_open` tracks `toggle_dock` synchronously — §4 is sound
+
+`toggling_the_bottom_dock_is_observable_synchronously` reads the flag three
+times **inside a single update**, with no frame between:
+
+```
+[true, false, true]
+```
+
+⇒ `Dock::set_open`'s synchronous `self.open` assignment (§2.4) holds in
+practice, two toggles return to the starting state, and the derived getter can
+be read in the same call that toggles it. `toggle_sql_console`'s
+refresh-on-show fires on the correct edge.
+
+### 14.4 Tab reaches into the bottom dock and does not trap
+
+`a_focus_stop_inside_the_bottom_dock_stays_tab_reachable`, walked from the
+center probe (a genuine registered stop outside the group, per B7's rule):
+
+```
+[Some("probe-center"), Some("probe-bottom"), Some("probe-center"), Some("probe-bottom")]
+```
+
+⇒ The bottom dock's `TabPanel` chrome **orders** traversal and does not contain
+it, matching B7's left-dock result. No WCAG 2.1.2 trap.
+
+### 14.5 ⚠ The planned probe shape was abandoned, and why
+
+The plan's T0 wired the probe into `src/window.rs`. That produced **two**
+`SqlConsole` entities in the tree — the probe's and the one each test builds —
+and reddened two previously-green `a11y_content` tests with
+`used a entity with the wrong context` and `no completed run means no query
+segment`. Both were **artifacts**: a baseline run with the probe removed was
+fully green, and removing only the `self.sql_console` hijack did not fix them.
+
+Three of the four measurements were uninterpretable through that noise. Moving
+the probes into `tests/dock_chrome_spike.rs` against a **synthetic**
+`ProbePanel` measured the identical production shape — `DockItem::tab` passed
+straight to `set_bottom_dock`, no enclosing split — with zero artifacts, and
+left four standing regression guards behind instead of a reverted diff.
+
+**Reusable:** a T0 that perturbs production state pollutes the very suites it
+is trying to read. Prefer a synthetic probe in a dedicated spike file; it is
+both quieter and permanent.
+
+### 14.6 ⚠ Probe (b) — nested scroll — is NOT answered
+
+A synthetic `ProbePanel` has no virtualized `Table`, so nothing here says
+whether the console's Pane-result grid survives TabPanel's `overflow_y_scroll`
++ `.cached()` wrapper. That question needs the real console with a real pane
+source and is therefore deferred to **T3/T5**, where
+`a11y_content::sql_console_renders_result_and_timing_content` (which already
+builds a real engine, view and `GridDataSource`) becomes the oracle.
+
+Treat it as an **open gate**, not a passed one: if that test goes red at T3 for
+a reason other than the console's relocation, `DockItem::panel` must be
+reconsidered despite its broken collapsed state (§3).
+
+### 14.7 Plan amendments
+
+- **T3 Step 6** ("bump the `a11y_spike` count") is **deleted**. The count stays
+  12. If T3 moves it, that is a signal the console is being built eagerly —
+  stop and investigate rather than bumping.
+- **T5 Step 2** absorbs probe (b): `a11y_content`'s existing pane test is the
+  oracle, and it must be run and green before the slice closes.
+- `tests/dock_chrome_spike.rs` gains 4 tests and its `mount` helper now returns
+  the `DockArea` too. Suite count is unchanged (no new binary).
+
+---
+
+## 15. As-built
 
 _(filled in at the end of the slice)_
