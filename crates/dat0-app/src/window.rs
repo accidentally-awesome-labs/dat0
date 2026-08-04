@@ -443,7 +443,12 @@ const SQL_CONSOLE_DOCK_HEIGHT: f32 = 320.0;
 /// so that every transition can go through one place
 /// ([`WorkspaceShell::activate_left_panel`]) and the at-most-one-visible
 /// invariant can be structural.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+/// B9 persists this directly (`session/dock_layout.rs`) rather than mirroring it
+/// into a parallel session-side enum, so panel identity has exactly one
+/// definition. It is a field-less enum with no gpui dependency, so the session
+/// and settings modules can name it freely.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub enum LeftPanel {
     Catalog,
     Connections,

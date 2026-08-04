@@ -21,6 +21,7 @@ use uuid::Uuid;
 use dat0_engine::{DuckDBEngine, MemoryBudget, QueryEngine, Transformation};
 
 pub mod charts;
+pub mod dock_layout;
 pub mod migrate;
 pub mod queries;
 pub use migrate::SessionLoadError;
