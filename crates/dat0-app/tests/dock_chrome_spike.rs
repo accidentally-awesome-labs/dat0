@@ -43,6 +43,11 @@ const RIGHT_LABEL: &str = "probe-right";
 /// misattributed between the three placements.
 const BOTTOM_LABEL: &str = "probe-bottom";
 
+/// What `mount` hands back out of `add_window_view`'s closure: the center probe
+/// (a Tab walk needs a staged focus target) and the dock itself (the B8 toggle
+/// probes drive it directly). Aliased to keep `clippy::type_complexity` quiet.
+type MountSlot = Rc<RefCell<Option<(Entity<ProbePanel>, Entity<DockArea>)>>>;
+
 /// A panel that emits exactly ONE capture node, so a count of 1 / 2 / 0 reads
 /// directly as intact / duplicated / swallowed.
 struct ProbePanel {
@@ -302,6 +307,143 @@ fn a_focus_stop_inside_the_bottom_dock_stays_tab_reachable(cx: &mut TestAppConte
     );
 }
 
+/// B8: WHY has no dat0 docked panel ever grown a ✕, given that
+/// `Panel::closable` defaults to `true` (`panel.rs:90-93`) and dat0 overrides
+/// it nowhere?
+///
+/// `TabPanel::closable` (`tab_panel.rs:100-113`) short-circuits on
+/// `!self.draggable(cx)`, and `draggable = !is_locked(cx) && !is_last_panel(cx)`
+/// (`:423`). So there are TWO independent suppressors, and this pins which one
+/// is actually carrying the weight:
+///
+/// - `is_locked` — dat0 calls `dock.set_locked(true, ..)` at DockArea
+///   construction (`window.rs`).
+/// - `is_last_panel` — `self.panels.len() <= 1` (`:396-406`), and EVERY dat0
+///   dock item is a single-panel `TabPanel` (B6 and B7 both ship splits of
+///   single-panel tabs, and B8's bottom dock holds exactly one).
+///
+/// And a THIRD, found by measurement rather than by reading: `is_locked` ends
+/// with `self.stack_panel.is_none()` (`:392`), so a `TabPanel` that is not
+/// nested inside a `StackPanel` reports itself locked **whatever the DockArea
+/// says**. B8's bottom dock passes `DockItem::tab` straight to
+/// `set_bottom_dock` with no enclosing split, so it is in exactly that
+/// position.
+///
+/// Cases 1-3 are the production shape and its two degradations; case 4 is the
+/// non-vacuity control, and it needs a split parent AND two panels AND no lock
+/// before upstream will admit a `true`.
+///
+/// The practical conclusion: closing a dat0 dock panel would be unrecoverable
+/// (nothing can re-add one), and the guarantee against it rests on three
+/// independent conditions, none of which is the `closable` override a reader
+/// would go looking for.
+#[gpui::test]
+#[serial]
+fn a_docked_panel_is_not_closable_and_the_lock_is_not_why(cx: &mut TestAppContext) {
+    // (locked, panel_count, nested_in_split) -> resolved closable
+    let production = closable_of_tab_panel(cx, true, 1, false);
+    let unlocked = closable_of_tab_panel(cx, false, 1, false);
+    let unlocked_pair = closable_of_tab_panel(cx, false, 2, false);
+    let control = closable_of_tab_panel(cx, false, 2, true);
+
+    assert!(
+        !production,
+        "B8's shape (locked, one panel, no split parent) must resolve \
+         closable = false"
+    );
+    assert!(
+        !unlocked,
+        "dropping the dock lock must NOT reveal a close button — is_last_panel \
+         and the no-stack-panel clause both still suppress it"
+    );
+    assert!(
+        !unlocked_pair,
+        "nor does adding a second panel, while the tab panel has no \
+         StackPanel parent"
+    );
+    assert!(
+        control,
+        "non-vacuity: unlocked + two panels + a split parent MUST resolve \
+         closable = true, or the three assertions above prove nothing"
+    );
+}
+
+/// Build a `TabPanel` with `count` probe panels under a dock whose lock is
+/// `locked`, optionally nested in a `DockItem::split`, and return its resolved
+/// `Panel::closable`.
+fn closable_of_tab_panel(
+    cx: &mut TestAppContext,
+    locked: bool,
+    count: usize,
+    nested_in_split: bool,
+) -> bool {
+    cx.update(gpui_component::init);
+
+    let slot: Rc<RefCell<Option<Entity<gpui_component::dock::TabPanel>>>> =
+        Rc::new(RefCell::new(None));
+    let slot_in = slot.clone();
+
+    let (_root, vcx) = cx.add_window_view(|window, cx| {
+        let host = cx.new(|cx| {
+            let dock = cx.new(|cx| {
+                let mut dock = DockArea::new("closable-probe", Some(1), window, cx);
+                dock.set_locked(locked, window, cx);
+                dock
+            });
+            let weak_dock = dock.downgrade();
+
+            let panels: Vec<std::sync::Arc<dyn gpui_component::dock::PanelView>> = (0..count)
+                .map(|i| {
+                    let p = cx.new(|cx| ProbePanel {
+                        fh: cx.focus_handle(),
+                        // Distinct &'static str per index; only two are ever used.
+                        label: if i == 0 { CENTER_LABEL } else { RIGHT_LABEL },
+                    });
+                    std::sync::Arc::new(p) as std::sync::Arc<dyn gpui_component::dock::PanelView>
+                })
+                .collect();
+
+            // `DockItem::tabs` with >1 panel is safe HERE (unlike inside
+            // `WorkspaceShell::render`): `set_active_ix` reaches
+            // `Panel::visible`, and `ProbePanel::visible` is the default `true`
+            // — it never reads the entity that is currently leased. That is
+            // precisely the distinction B7 found.
+            let tabs = DockItem::tabs(panels, &weak_dock, window, cx);
+            let item = if nested_in_split {
+                DockItem::split(Axis::Horizontal, vec![tabs], &weak_dock, window, cx)
+            } else {
+                tabs
+            };
+            dock.update(cx, |dock, cx| dock.set_center(item.clone(), window, cx));
+
+            // Stash the TabPanel; `closable` is read AFTER the tree settles.
+            // Reading it here would be too early — `DockItem::split` parents
+            // the child through `StackPanel`, and dock wiring defers work via
+            // `window.defer` (`dock.rs:186-215`), so `stack_panel` (which
+            // `is_locked` keys off) is not reliably set inside this closure.
+            *slot_in.borrow_mut() = match &item {
+                DockItem::Tabs { view, .. } => Some(view.clone()),
+                DockItem::Split { items, .. } => items.iter().find_map(|i| match i {
+                    DockItem::Tabs { view, .. } => Some(view.clone()),
+                    _ => None,
+                }),
+                _ => None,
+            };
+
+            let center = cx.new(|cx| ProbePanel {
+                fh: cx.focus_handle(),
+                label: CENTER_LABEL,
+            });
+            DockHost { dock, center }
+        });
+        gpui_component::Root::new(host, window, cx)
+    });
+    vcx.run_until_parked();
+
+    let tab_view = slot.borrow_mut().take().expect("tab panel captured");
+    vcx.cx.update(|app| tab_view.read(app).closable(app))
+}
+
 /// Mount a `DockArea` with a probe panel in the center, optionally also one in
 /// a right dock, and return how many times each probe's label reached the
 /// capture.
@@ -370,8 +512,7 @@ fn mount(
 ) {
     cx.update(gpui_component::init);
 
-    let slot: Rc<RefCell<Option<(Entity<ProbePanel>, Entity<DockArea>)>>> =
-        Rc::new(RefCell::new(None));
+    let slot: MountSlot = Rc::new(RefCell::new(None));
     let slot_in = slot.clone();
 
     let (_root, vcx) = cx.add_window_view(|window, cx| {
