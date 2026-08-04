@@ -110,22 +110,32 @@ pub struct DockLayout {
     #[serde(default)]
     pub left_panel: Option<LeftPanel>,
     /// User-resized width. `None` = use the mount constant.
-    #[serde(default)]
-    pub left_size: Option<f32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub left_size: Option<u32>,
 
     #[serde(default)]
     pub inspector_visible: bool,
     #[serde(default)]
     pub charts_visible: bool,
-    #[serde(default)]
-    pub right_size: Option<f32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub right_size: Option<u32>,
 
     #[serde(default)]
     pub console_open: bool,
-    #[serde(default)]
-    pub bottom_size: Option<f32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub bottom_size: Option<u32>,
 }
 ```
+
+⚠ **Amended while planning — sizes are `u32`, not `f32`, and every `Option`
+carries `skip_serializing_if`.** `Settings` derives `Eq`
+(`settings/schema.rs:16`), so an `f32` field would break that derive for every
+existing consumer; and the `toml` serializer errors with `UnsupportedNone` on a
+`None` inside a table, so the settings half would fail to write without the skip
+attribute. The narrower type also means NaN and infinity become
+*unrepresentable* on the wire rather than merely rejected — §3.6's "reject
+non-finite" rule collapses into the capture-side conversion instead of being a
+validation step someone could forget to call.
 
 Two shape decisions worth stating:
 
