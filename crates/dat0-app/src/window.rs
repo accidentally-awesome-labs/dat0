@@ -7867,6 +7867,34 @@ impl WorkspaceShell {
             .unwrap_or(false)
     }
 
+    /// B8: is the SQL console's bottom dock open? Same shape as the left and
+    /// right accessors above — the DOCK's own flag, never a bool the test
+    /// wrote.
+    pub fn bottom_dock_open_for_test(&self, cx: &gpui::App) -> bool {
+        self.sql_console_visible(cx)
+    }
+
+    /// B8: the ⌘⇧C / menu / palette path, for tests.
+    ///
+    /// `open_console_for_test` only ever OPENS (it early-returns when the
+    /// console is already visible), so it cannot exercise the close half or the
+    /// direction of a toggle after an external one.
+    pub fn toggle_sql_console_for_test(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.toggle_sql_console(window, cx);
+    }
+
+    /// B8: the shell's `DockArea`, so a test can drive the two toggle paths
+    /// dat0 does NOT own.
+    ///
+    /// Upstream's title-bar chevron and its click-a-tab-while-collapsed handler
+    /// both do exactly `dock_area.toggle_dock(DockPlacement::Bottom, ..)`
+    /// (`tab_panel.rs:746-751`). Handing the `DockArea` to a test lets it make
+    /// that same call rather than hunting for the chevron's pixels, which carry
+    /// no debug selector.
+    pub fn dock_area_for_test(&self) -> Option<gpui::Entity<gpui_component::dock::DockArea>> {
+        self.dock_area.clone()
+    }
+
     pub fn chart_bind_for_test(&mut self, source: String, cols: Vec<(String, String)>) {
         self.chart_panel.bind(source, cols);
         self.chart_panel_visible = true;
