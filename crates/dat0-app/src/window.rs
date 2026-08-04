@@ -428,6 +428,15 @@ const CHARTS_DOCK_WIDTH: f32 = 560.0;
 /// tree reads better with the extra room.
 const LEFT_DOCK_WIDTH: f32 = 384.0;
 
+/// B8: the SQL console bottom dock's initial height.
+///
+/// 320 rather than the 260 the fixed strip used: the console now shares the
+/// centre column's vertical space with the grid instead of spanning the whole
+/// window above it, and it gained a 30px title bar of its own. Unlike the side
+/// docks this is only an INITIAL height — the bottom dock ships upstream's
+/// resize handle, and B9 will persist whatever the user drags it to.
+const SQL_CONSOLE_DOCK_HEIGHT: f32 = 320.0;
+
 /// B7: which left-dock panel is showing.
 ///
 /// The three shell bools remain the storage; this names the choice they encode
@@ -2319,10 +2328,6 @@ pub struct WorkspaceShell {
     /// [`SqlConsoleEvent`]: crate::view::sql_console::SqlConsoleEvent
     #[allow(dead_code)] // keep-alive: storing the Subscription is the read
     pub(crate) sql_console_sub: Option<Subscription>,
-    /// Whether the SQL Console panel is currently shown. Toggled by
-    /// `toggle_sql_console`; the render gate respects this independently of
-    /// whether `sql_console` is `Some`.
-    pub(crate) sql_console_visible: bool,
     /// Whether the window-close `Persist` backstop has been registered (P5a
     /// T10). Set the first time the console is built so the
     /// `on_window_should_close` hook is installed exactly once per window.
@@ -2550,7 +2555,6 @@ impl WorkspaceShell {
             export_dialog_sub: None,
             sql_console: None,
             sql_console_sub: None,
-            sql_console_visible: false,
             sql_console_close_hooked: false,
             active_query_cancel: None,
             sql_snapshot: None,
@@ -3069,15 +3073,18 @@ impl WorkspaceShell {
     /// per-tab code editors) and subscribes to its [`SqlConsoleEvent`]. The
     /// subscription is STORED in `sql_console_sub` — a dropped `Subscription`
     /// deregisters the callback silently (the P4a T10b trap). Subsequent
-    /// toggles just flip `sql_console_visible` without tearing the console
-    /// down, preserving the editor buffers.
+    /// toggles just open and close the dock without tearing the console down,
+    /// preserving the editor buffers.
     ///
-    /// Run/Cancel are wired in P5a T6/T7; for now the event handler only
-    /// services `Persist`.
+    /// B8: the console lives in the `DockArea`'s BOTTOM dock rather than a
+    /// fixed strip above the grid, and the dock's own open flag is the single
+    /// source of truth for visibility — see
+    /// [`sql_console_visible`](Self::sql_console_visible).
     ///
     /// [`SqlConsole`]: crate::view::sql_console::SqlConsole
     /// [`SqlConsoleEvent`]: crate::view::sql_console::SqlConsoleEvent
     pub(crate) fn toggle_sql_console(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let dock = self.ensure_dock_area(window, cx);
         if self.sql_console.is_none() {
             let (persisted, active) = {
                 let s = self.session.lock();
@@ -3119,8 +3126,40 @@ impl WorkspaceShell {
             // Hydrate ai_ready on the freshly-built console.
             let ready = self.ai_ready();
             console.update(cx, |c, _cx| c.ai_ready = ready);
-            self.sql_console = Some(console);
-            self.sql_console_visible = true;
+            self.sql_console = Some(console.clone());
+
+            // B8: mount the bottom dock, open.
+            //
+            // ⚠ `set_bottom_dock` is called EXACTLY ONCE, here, and must stay
+            // that way. It runs `subscribe_item`, which pushes onto the
+            // `DockArea`'s `_subscriptions` and recurses over the item tree
+            // (`dock/mod.rs:955-963`); nothing ever removes them. Every later
+            // open and close goes through `toggle_dock` below, which
+            // re-subscribes nothing. Same constraint as `set_left_dock` and
+            // `set_right_dock` — see `ensure_dock_area`.
+            //
+            // Mounted LAZILY rather than beside the left and right docks
+            // because upstream keeps a CLOSED bottom dock on screen at
+            // `h(px(29.))` so its title bar can be clicked to reopen
+            // (`dock.rs:372-380`). Building it here means a user who never
+            // opens the console never sees that bar — the first-run hero is
+            // untouched.
+            //
+            // A bare `DockItem::tab`, with no enclosing split: the bottom dock
+            // holds exactly one panel, and that is also the only shape immune
+            // to B7's `set_active_ix` re-entrancy panic (see
+            // `ensure_dock_area`, which this is called from).
+            let weak_dock = dock.downgrade();
+            let item = gpui_component::dock::DockItem::tab(console.clone(), &weak_dock, window, cx);
+            dock.update(cx, |dock, cx| {
+                dock.set_bottom_dock(
+                    item,
+                    Some(gpui::px(SQL_CONSOLE_DOCK_HEIGHT)),
+                    true,
+                    window,
+                    cx,
+                );
+            });
 
             // Persist the console one last time on window close (P5a T10). This
             // is a best-effort backstop ON TOP OF the guaranteed per-mutation
@@ -3141,11 +3180,17 @@ impl WorkspaceShell {
                 });
             }
         } else {
-            self.sql_console_visible = !self.sql_console_visible;
+            dock.update(cx, |dock, cx| {
+                dock.toggle_dock(gpui_component::dock::DockPlacement::Bottom, window, cx);
+            });
         }
         // Refresh the autocomplete schema whenever the console is (re)shown so
         // tables created/dropped while it was hidden are reflected (P5b T2).
-        if self.sql_console_visible {
+        //
+        // Reading the derived getter immediately after the toggle is sound:
+        // `Dock::set_open` assigns `self.open` synchronously and defers only
+        // `set_collapsed` (`dock.rs:259-266`), measured at B8's T0.
+        if self.sql_console_visible(cx) {
             self.refresh_completion_snapshot(cx);
         }
         // Keep the Catalog dock fresh if it's open (P6a T7).
@@ -6816,6 +6861,31 @@ impl WorkspaceShell {
         self.inspector_panel_visible
     }
 
+    /// B8: whether the SQL console is showing — **derived from the dock**,
+    /// never a parallel bool, and the one place in the dock series where the
+    /// direction of the dependency is inverted.
+    ///
+    /// The left and right docks derive from shell bools because dat0 owns
+    /// every writer. The bottom dock has two writers dat0 does NOT own: the
+    /// title-bar collapse chevron (`tab_panel.rs:616`) and clicking a tab
+    /// while the dock is collapsed (`tab_panel.rs:740-752`). Either flips
+    /// `Dock::open` behind the shell's back, so a cached bool would desync and
+    /// the next `SqlConsoleToggle` would move BACKWARDS — it would toggle a
+    /// stale value. Making the dock the single source of truth removes the
+    /// class rather than patching it.
+    ///
+    /// Safe to read in the same call that toggles: `Dock::set_open` assigns
+    /// `self.open` synchronously and defers only `set_collapsed`
+    /// (`dock.rs:259-266`), measured at B8's T0. `is_dock_open` returns false
+    /// while `bottom_dock` is `None`, so the pre-mount state needs no special
+    /// case — the dock does not exist until the console's first open.
+    pub(crate) fn sql_console_visible(&self, cx: &gpui::App) -> bool {
+        self.dock_area.as_ref().is_some_and(|d| {
+            d.read(cx)
+                .is_dock_open(gpui_component::dock::DockPlacement::Bottom, cx)
+        })
+    }
+
     /// B7: the Catalog panel's element tree, extracted from the body row so
     /// [`crate::panels::catalog_panel::CatalogPanel`] can call it.
     ///
@@ -7523,22 +7593,11 @@ impl Render for WorkspaceShell {
             }
         };
 
-        // SQL Console bottom panel (P5a T5). Mounted between the PipelineBar and
-        // the grid body when the console exists AND is visible. A fixed-height
-        // panel with a top border; the inner `SqlConsole` entity renders the tab
-        // strip + code editor + result region.
-        let sql_console_panel: Option<gpui::AnyElement> = self
-            .sql_console
-            .as_ref()
-            .filter(|_| self.sql_console_visible)
-            .map(|c| {
-                div()
-                    .h(px(260.))
-                    .w_full()
-                    .border_t_1()
-                    .child(c.clone())
-                    .into_any_element()
-            });
+        // B8: the SQL console used to be mounted here as a fixed 260px strip
+        // between the PipelineBar and the grid body, spanning the full window
+        // width. It is now a `Panel` in the DockArea's bottom dock, so it
+        // renders below the grid inside the centre column and this render has
+        // nothing left to place — see `toggle_sql_console`.
 
         // Slice 6 Task 3: make the shell root a genuine Tab stop, but ONLY
         // while `grid_visible` (real a11y fix — Tab must reach the grid so
@@ -7716,7 +7775,6 @@ impl Render for WorkspaceShell {
             .children(banner_host)
             .children(tab_strip)
             .children(pipeline_bar)
-            .children(sql_console_panel)
             // Body row: the Connections panel (left dock, when visible) + the
             // grid/console body (P5c T10/T11). When the panel is hidden this is
             // just the body in a flex_row — identical layout to before.
@@ -7876,7 +7934,7 @@ impl WorkspaceShell {
         window: &mut gpui::Window,
         cx: &mut Context<Self>,
     ) {
-        if !self.sql_console_visible {
+        if !self.sql_console_visible(cx) {
             self.toggle_sql_console(window, cx);
         }
         if let Some(console) = self.sql_console.clone() {
@@ -7979,7 +8037,7 @@ impl WorkspaceShell {
         cx: &mut gpui::Context<Self>,
         ai_ready: bool,
     ) -> gpui::Entity<crate::view::sql_console::SqlConsole> {
-        if !self.sql_console_visible {
+        if !self.sql_console_visible(cx) {
             self.toggle_sql_console(window, cx);
         }
         let console = self.sql_console.clone().expect("console built by toggle");

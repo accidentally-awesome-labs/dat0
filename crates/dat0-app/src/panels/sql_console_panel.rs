@@ -26,20 +26,30 @@ impl SqlConsole {
 impl EventEmitter<PanelEvent> for SqlConsole {}
 
 impl Focusable for SqlConsole {
-    /// The ACTIVE TAB'S EDITOR handle, so a `window.focus(panel)` from dock
-    /// code lands where the user types.
+    /// The console's dedicated ROOT handle — **not** the active tab's editor,
+    /// and not any other live stop inside the console.
     ///
-    /// Never a private handle: one minted here would be tracked by no element,
-    /// and focusing it silently SWALLOWS focus rather than moving it (B5).
-    /// Index-guarded because `active` is a plain `usize` — the console
-    /// maintains at least one tab, but a panic in a `&App` accessor called
-    /// every frame is not worth the assumption.
-    fn focus_handle(&self, cx: &App) -> FocusHandle {
-        self.tabs
-            .get(self.active)
-            .or_else(|| self.tabs.first())
-            .map(|tab| tab.input.read(cx).focus_handle(cx))
-            .unwrap_or_else(|| cx.focus_handle())
+    /// ⚠⚠ This is load-bearing and the first attempt got it wrong.
+    /// `TabPanel::render` does `.track_focus(&self.focus_handle(cx))` on its
+    /// container, and `TabPanel::focus_handle` delegates to the ACTIVE PANEL's
+    /// (`tab_panel.rs:1167-1173`). So whatever this returns is *also* tracked
+    /// on the TabPanel container — an ANCESTOR of this console, sitting
+    /// OUTSIDE the `.tab_group()` the container opens.
+    ///
+    /// Returning the editor's handle therefore registered one `FocusId` twice
+    /// in a single frame, at two different tab-stop paths, and every one of the
+    /// console's ~18 focus stops dropped out of the Tab ring: a 200-press walk
+    /// never reached a single named console stop. Enter/Space activation and
+    /// the focus ring would have gone with them.
+    ///
+    /// B6/B7's panels never hit this because they hand back the SHELL's handle,
+    /// which lives outside the panel subtree entirely.
+    ///
+    /// It is still tracked by a real element (the console's root, in `render`),
+    /// so focusing it is not swallowed the way an untracked handle would be
+    /// (B5).
+    fn focus_handle(&self, _cx: &App) -> FocusHandle {
+        self.root_focus.clone()
     }
 }
 
