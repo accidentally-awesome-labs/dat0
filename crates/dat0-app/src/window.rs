@@ -2198,6 +2198,12 @@ pub struct WorkspaceShell {
     /// B7: the (catalog, connections, ai) visibility triple the left dock was
     /// last reconciled to, so `sync_left_dock` does work only on a real change.
     left_dock_state: (bool, bool, bool),
+    /// B9: the layout this window was restored with, consumed once by
+    /// `ensure_dock_area` for its dock sizes.
+    ///
+    /// The visibility bools are seeded directly in the constructor instead,
+    /// because `render` reads them before `ensure_dock_area` runs.
+    restored_layout: Option<crate::session::dock_layout::DockLayout>,
     /// B7: the activity rail's KEYBOARD cursor — an index into
     /// `view::activity_rail::ITEMS`. Independent of which panel is open: the
     /// cursor still exists when the dock is collapsed.
@@ -2534,6 +2540,9 @@ impl WorkspaceShell {
         // v8 `ui`). Read into a local BEFORE building the struct so we don't hold
         // the session lock across the whole ctor.
         let ui = session.lock().ui().clone();
+        // B9: the persisted layout wins over the v10 `ui` bools when present.
+        // T6 extends this with the settings-level seed for a fresh session.
+        let layout = session.lock().dock_layout().cloned();
         Self {
             session,
             data_source: None,
@@ -2544,6 +2553,7 @@ impl WorkspaceShell {
             charts_panel: None,
             right_dock_state: (false, false),
             left_dock_state: (false, false, false),
+            restored_layout: layout.clone(),
             rail_cursor: 0,
             catalog_panel: None,
             connections_panel: None,
@@ -2584,20 +2594,30 @@ impl WorkspaceShell {
             command_palette_sub: None,
             pending_palette_open: false,
             connections: Default::default(),
-            connections_panel_visible: false,
-            catalog_panel_visible: ui.catalog_panel_visible,
+            connections_panel_visible: layout
+                .as_ref()
+                .is_some_and(|l| l.left_panel == Some(LeftPanel::Connections)),
+            catalog_panel_visible: match layout.as_ref() {
+                Some(l) => l.left_panel == Some(LeftPanel::Catalog),
+                None => ui.catalog_panel_visible,
+            },
             catalog_active: 0,
             catalog_collapsed: ui.catalog_collapsed.iter().cloned().collect(),
             catalog_tree: crate::catalog::CatalogTree::default(),
             catalog_tables: Vec::new(),
             sql_parents: Default::default(),
-            inspector_panel_visible: ui.inspector_panel_visible,
+            inspector_panel_visible: match layout.as_ref() {
+                Some(l) => l.inspector_visible,
+                None => ui.inspector_panel_visible,
+            },
             inspector: crate::inspector::InspectorModel::new(),
-            ai_panel_visible: false,
+            ai_panel_visible: layout
+                .as_ref()
+                .is_some_and(|l| l.left_panel == Some(LeftPanel::Ai)),
             ai_panel: crate::ai::panel::AiPanel::default(),
             ai_entry_prompt: None,
             ai_entry_prompt_sub: None,
-            chart_panel_visible: false,
+            chart_panel_visible: layout.as_ref().is_some_and(|l| l.charts_visible),
             chart_panel: crate::charts::panel::ChartPanel::new(),
             chart_image: None,
             chart_load_id: 0,
@@ -6706,6 +6726,35 @@ impl WorkspaceShell {
         // host bounds, same origin and same height.
         if self.dock_area.is_none() {
             let weak_shell = cx.entity().downgrade();
+
+            // B9: resolve the mount sizes ONCE, here.
+            //
+            // Sizes are decided at mount and never re-set: `set_*_dock` runs
+            // `subscribe_item`, which pushes onto the `DockArea`'s
+            // `_subscriptions` and recurses over the item tree, and nothing ever
+            // removes them (B6). Re-setting a dock to resize it would leak
+            // forever, so a persisted size can only be applied at this moment.
+            //
+            // Clamped against the live viewport so a layout saved on a large
+            // display cannot restore into a window with no usable centre.
+            let viewport = window.viewport_size();
+            let layout = self.restored_layout.clone();
+            let restored_size =
+                |pick: fn(&crate::session::dock_layout::DockLayout) -> Option<u32>,
+                 default_size: f32,
+                 axis_extent: gpui::Pixels| {
+                    crate::session::dock_layout::clamped_size(
+                        layout.as_ref().and_then(pick),
+                        default_size,
+                        f32::from(axis_extent),
+                    )
+                };
+            let right_width = restored_size(
+                |l| l.right_size,
+                INSPECTOR_DOCK_WIDTH + CHARTS_DOCK_WIDTH,
+                viewport.width,
+            );
+            let left_width = restored_size(|l| l.left_size, LEFT_DOCK_WIDTH, viewport.width);
             let panel = cx.new(|_| crate::panels::grid_panel::GridPanel::new(weak_shell.clone()));
             let dock = cx.new(|cx| {
                 let mut dock =
@@ -6754,9 +6803,14 @@ impl WorkspaceShell {
             // spawning its own task on subsequent `LayoutChanged` events.
             // `sync_right_dock` therefore only ever opens and closes.
             let want = (self.inspector_panel_visible, self.chart_panel_visible);
-            let width = INSPECTOR_DOCK_WIDTH + CHARTS_DOCK_WIDTH;
             dock.update(cx, |dock, cx| {
-                dock.set_right_dock(right, Some(gpui::px(width)), want.0 || want.1, window, cx);
+                dock.set_right_dock(
+                    right,
+                    Some(gpui::px(right_width)),
+                    want.0 || want.1,
+                    window,
+                    cx,
+                );
             });
             self.right_dock_state = want;
 
@@ -6820,7 +6874,7 @@ impl WorkspaceShell {
             );
             let left_open = want_left.0 || want_left.1 || want_left.2;
             dock.update(cx, |dock, cx| {
-                dock.set_left_dock(left, Some(gpui::px(LEFT_DOCK_WIDTH)), left_open, window, cx);
+                dock.set_left_dock(left, Some(gpui::px(left_width)), left_open, window, cx);
             });
             self.left_dock_state = want_left;
 

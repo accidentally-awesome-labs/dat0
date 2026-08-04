@@ -328,3 +328,173 @@ fn a_fresh_session_starts_with_every_dock_closed(cx: &mut TestAppContext) {
         );
     }
 }
+
+// ---------------------------------------------------------------------------
+// Restore
+// ---------------------------------------------------------------------------
+
+/// Seed a session's layout on disk, then open a shell over that same session —
+/// the shape of reopening a workspace or recovering an orphaned session.
+fn reopen_with_layout(
+    cx: &mut TestAppContext,
+    layout: DockLayout,
+) -> (
+    Entity<WorkspaceShell>,
+    &mut VisualTestContext,
+    Arc<Mutex<Session>>,
+) {
+    let tmp = tempfile::tempdir().unwrap();
+    set_config_dir(&tmp.path().join("cfg"));
+    init_components(cx);
+    let session = build_empty_session(&tmp.path().join("state"));
+    session
+        .lock()
+        .set_dock_layout(Some(layout))
+        .expect("seed the layout");
+    let (shell, vcx) = open_shell_window(cx, session.clone());
+    vcx.run_until_parked();
+    std::mem::forget(tmp);
+    (shell, vcx, session)
+}
+
+/// The size the live dock actually mounted at, on the given placement.
+fn live_size(
+    shell: &Entity<WorkspaceShell>,
+    vcx: &mut VisualTestContext,
+    pick: fn(&dat0_app::session::dock_layout::DumpMirror) -> Option<f32>,
+) -> f32 {
+    let dock = shell
+        .read_with(&vcx.cx, |ws, _| ws.dock_area_for_test())
+        .expect("dock area exists");
+    vcx.cx.update(|app| {
+        let v = serde_json::to_value(dock.read(app).dump(app)).expect("dump serialises");
+        pick(&mirror_from_dump(&v)).expect("dock present in the dump")
+    })
+}
+
+#[gpui::test]
+#[serial]
+fn a_persisted_rail_panel_comes_back_open(cx: &mut TestAppContext) {
+    let h = enter_async_harness(cx);
+    let _g = h.enter();
+    let (shell, vcx, _session) = reopen_with_layout(
+        cx,
+        DockLayout {
+            left_panel: Some(LeftPanel::Connections),
+            ..DockLayout::default()
+        },
+    );
+
+    let dock = shell
+        .read_with(&vcx.cx, |ws, _| ws.dock_area_for_test())
+        .expect("dock area exists");
+    assert!(
+        dock.read_with(&vcx.cx, |d, app| d.is_dock_open(DockPlacement::Left, app)),
+        "the left dock reopened"
+    );
+    assert_eq!(
+        shell.read_with(&vcx.cx, |ws, _| ws.open_left_panel()),
+        Some(LeftPanel::Connections)
+    );
+}
+
+#[gpui::test]
+#[serial]
+fn a_persisted_right_dock_comes_back_open(cx: &mut TestAppContext) {
+    let h = enter_async_harness(cx);
+    let _g = h.enter();
+    let (shell, vcx, session) = reopen_with_layout(
+        cx,
+        DockLayout {
+            inspector_visible: true,
+            charts_visible: true,
+            ..DockLayout::default()
+        },
+    );
+
+    let dock = shell
+        .read_with(&vcx.cx, |ws, _| ws.dock_area_for_test())
+        .expect("dock area exists");
+    assert!(
+        dock.read_with(&vcx.cx, |d, app| d.is_dock_open(DockPlacement::Right, app)),
+        "the right dock reopened"
+    );
+    // Close the loop rather than reach for a private getter: capture reads the
+    // shell's OWN bools, so re-persisting and re-reading the file proves the
+    // restored values actually landed on the shell — not merely that the dock
+    // opened, which either panel alone would achieve.
+    vcx.update(|_window, app| {
+        shell.update(app, |ws, cx| ws.toggle_chart_panel_for_test(cx));
+        shell.update(app, |ws, cx| ws.toggle_chart_panel_for_test(cx));
+    });
+    settle(vcx);
+    let round_tripped = layout_on_disk(&session);
+    assert!(
+        round_tripped.inspector_visible,
+        "the restored inspector bool survived a capture round-trip"
+    );
+    assert!(round_tripped.charts_visible);
+}
+
+#[gpui::test]
+#[serial]
+fn a_persisted_size_is_honoured_at_mount(cx: &mut TestAppContext) {
+    let h = enter_async_harness(cx);
+    let _g = h.enter();
+    let (shell, vcx, _session) = reopen_with_layout(
+        cx,
+        DockLayout {
+            left_panel: Some(LeftPanel::Catalog),
+            left_size: Some(500),
+            ..DockLayout::default()
+        },
+    );
+
+    assert_eq!(
+        live_size(&shell, vcx, |m| m.left_dock.map(|d| d.size)),
+        500.0,
+        "the persisted width won over LEFT_DOCK_WIDTH"
+    );
+}
+
+#[gpui::test]
+#[serial]
+fn an_absurd_persisted_size_is_clamped_not_obeyed(cx: &mut TestAppContext) {
+    // A layout saved on a 4K display, restored on a laptop. Without the clamp
+    // this restores a window whose centre is entirely off screen and whose
+    // resize handle is unreachable — with no in-app way back.
+    let h = enter_async_harness(cx);
+    let _g = h.enter();
+    let (shell, vcx, _session) = reopen_with_layout(
+        cx,
+        DockLayout {
+            left_panel: Some(LeftPanel::Catalog),
+            left_size: Some(30_000),
+            ..DockLayout::default()
+        },
+    );
+
+    let size = live_size(&shell, vcx, |m| m.left_dock.map(|d| d.size));
+    assert!(
+        size < 30_000.0,
+        "an oversized dock must be clamped; got {size}"
+    );
+}
+
+#[gpui::test]
+#[serial]
+fn no_persisted_layout_means_the_mount_constants(cx: &mut TestAppContext) {
+    let h = enter_async_harness(cx);
+    let _g = h.enter();
+    let (shell, vcx, _session) = boot(cx);
+    toggle_console(&shell, vcx);
+
+    assert_eq!(
+        live_size(&shell, vcx, |m| m.left_dock.map(|d| d.size)),
+        384.0
+    );
+    assert_eq!(
+        live_size(&shell, vcx, |m| m.right_dock.map(|d| d.size)),
+        848.0
+    );
+}
