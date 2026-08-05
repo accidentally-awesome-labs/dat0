@@ -94,28 +94,27 @@ pub enum Sp {
 }
 
 impl Sp {
-    pub fn pixels(self) -> Pixels {
-        px(self as u16 as f32)
-    }
-
     /// The scale as a rem-relative length, against the CSS-conventional 16px
     /// rem the gpui helper scale is defined in (`gpui-macros/src/styles.rs`
     /// emits `.gap_1()` as `rems(0.25)`, documented "4px (0.25rem)").
     ///
-    /// This — not [`Sp::pixels`] — is the spacing unit, because dat0's rem is
-    /// **14px**, not 16: `gpui_component::Root::render` calls
+    /// **The only accessor, deliberately.** dat0's rem is **14px**, not 16:
+    /// `gpui_component::Root::render` calls
     /// `window.set_rem_size(cx.theme().font_size)` and A1 set `"font.size": 14`
     /// in all three builtins. An absolute `Sp` therefore sat 14% looser than
-    /// every gpui-spaced element beside it. Expressed this way `Sp::S4` **is**
-    /// `.gap_1()`, exactly.
+    /// every gpui-spaced element beside it, and the codebase runs 196 gpui
+    /// helper sites against 26 `Sp` sites. Expressed this way `Sp::S4` **is**
+    /// `.gap_1()`, exactly, and the two scales are one.
+    ///
+    /// `Sp` still earns its keep: it is a restricted, named 9-step subset of
+    /// gpui's open scale, and it survives a future `font.size` change without
+    /// re-forking. `sp_rems_matches_gpui_helper_scale` is what holds that.
+    ///
+    /// Absolute lengths — hairline rules, fixed panel widths, type sizes,
+    /// corner radii — are not spacing and must not come from here. Use
+    /// `gpui::px` directly and say so at the call site.
     pub fn rems(self) -> Rems {
         rems(self as u16 as f32 / 16.)
-    }
-}
-
-impl From<Sp> for Pixels {
-    fn from(sp: Sp) -> Pixels {
-        sp.pixels()
     }
 }
 
@@ -128,19 +127,19 @@ impl From<Sp> for Rems {
 /// Spacing helpers so call sites stay terse: `.p_sp(Sp::S8)`.
 pub trait SpStyled: Styled + Sized {
     fn p_sp(self, sp: Sp) -> Self {
-        self.p(sp.pixels())
+        self.p(sp.rems())
     }
     fn px_sp(self, sp: Sp) -> Self {
-        self.px(sp.pixels())
+        self.px(sp.rems())
     }
     fn py_sp(self, sp: Sp) -> Self {
-        self.py(sp.pixels())
+        self.py(sp.rems())
     }
     fn gap_sp(self, sp: Sp) -> Self {
-        self.gap(sp.pixels())
+        self.gap(sp.rems())
     }
     fn m_sp(self, sp: Sp) -> Self {
-        self.m(sp.pixels())
+        self.m(sp.rems())
     }
 }
 
@@ -386,6 +385,9 @@ mod tests {
 
     #[test]
     fn sp_scale_exact_values() {
+        // The scale's identity is its step values; the unit is rems, against a
+        // 16px reference rem (see `Sp::rems`). Resolved pixels at dat0's real
+        // 14px rem live in `sp_rems_resolve_at_dat0_rem_size`.
         let expect = [
             (Sp::S1, 1.),
             (Sp::S2, 2.),
@@ -398,8 +400,8 @@ mod tests {
             (Sp::S32, 32.),
         ];
         for (sp, v) in expect {
-            assert_eq!(sp.pixels(), px(v), "{sp:?}");
-            assert_eq!(Pixels::from(sp), px(v));
+            assert_eq!(sp.rems(), rems(v / 16.), "{sp:?}");
+            assert_eq!(Rems::from(sp), rems(v / 16.));
         }
     }
 
@@ -577,9 +579,9 @@ mod tests {
         // SpStyled: padding + gap land with the scale value.
         let mut el = gpui::div().p_sp(Sp::S8).gap_sp(Sp::S4);
         let style = el.style();
-        assert_eq!(style.padding.top, Some(Sp::S8.pixels().into()));
-        assert_eq!(style.padding.left, Some(Sp::S8.pixels().into()));
-        assert_eq!(style.gap.width, Some(Sp::S4.pixels().into()));
+        assert_eq!(style.padding.top, Some(Sp::S8.rems().into()));
+        assert_eq!(style.padding.left, Some(Sp::S8.rems().into()));
+        assert_eq!(style.gap.width, Some(Sp::S4.rems().into()));
 
         // ElevationStyled: border color + radius + shadow presence track resolve().
         let resolved = Elevation::Modal.resolve(&dark);
