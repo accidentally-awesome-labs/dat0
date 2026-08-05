@@ -38,7 +38,7 @@ Measured region map of `window.rs` at `68f01c3` (8,672 lines, 229 fns):
 
 | Region | Lines | Size |
 |---|---|---|
-| module doc + imports | 1–67 | 67 |
+| module doc (33) + imports (29) | 1–63 | 63 |
 | free fns: workspace lifecycle | 68–470 | 403 |
 | free fns: package flows | 471–889 | 419 |
 | free fns: misc + chart-axis helpers | 890–1121 | 232 |
@@ -108,7 +108,7 @@ tree, not estimated.
 | Module | ~Lines | Contents |
 |---|---|---|
 | `mod.rs` | **900** | `WorkspaceShell` struct (361) · `new` (102) · grid/view core wiring (436) · `mod` decls · `pub use` re-exports · new directory-map module doc |
-| `boot.rs` | 900 | `run_app` (457) · `register_menu_action_handlers` (314) · `flush_focused_workspace_sql` · `open_window_view` · `spawn_window` · `paths_from_open_urls` + `open_urls_decode_to_local_paths` test · `focused_session_arc` · **the existing 67-line module doc** · `DOCS_URL` / `DISCORD_URL` |
+| `boot.rs` | 900 | `run_app` (457) · `register_menu_action_handlers` (314) · `flush_focused_workspace_sql` · `open_window_view` · `spawn_window` · `paths_from_open_urls` + `open_urls_decode_to_local_paths` test · `focused_session_arc` · **the existing 33-line module doc** · `DOCS_URL` / `DISCORD_URL` |
 | `render.rs` | 778 | `impl Render for WorkspaceShell` (632) · `render_grid_body` (123) · `bounding_rect` · `grid_focus_handle` |
 | `dock.rs` | 672 | `ensure_dock_area` (256) · `sync_left_dock` / `sync_right_dock` · 6 `render_*_body` · rail cursor/activate/click · `*_visible` predicates · `open_left_panel` / `activate_left_panel` / `on_left_panel_shown` · B9 dock-layout persist |
 | `sql.rs` | 644 | `mount_sql_console` · `toggle_sql_console` · `refresh_completion_snapshot` · `on_sql_console_event` · `spawn_sql_run` · `finish_sql_run` · `save_console_as_table` · query library save/delete · `classify_run_err` · `format_exec_status` · `now_unix_millis` · `bare_table_name` + its unit test |

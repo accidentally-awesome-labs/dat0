@@ -331,9 +331,28 @@ full, and each task states its own data.
    Do **not** hand-curate a 15-file import matrix; that was the original plan text and T0 showed it
    to be unnecessary work. If `mod.rs` later reports `unused_imports` because its last local
    consumer moved out, move that specific `use` down to the module that still needs it.
-6. **Compile and let `E0624` enumerate.** `cargo check -p dat0-app` and mark each reported method
-   `pub(super)` — nothing wider unless an external path needs it. Do **not** pre-emptively widen
-   visibility: an unreported method must stay private, and the error list is the inventory.
+6. **Compile with `--all-targets` and let the compiler enumerate.** Run
+   `cargo check -p dat0-app --all-targets` — **not** a bare `cargo check`, which does not build the
+   test targets and so hides half the surface (measured at T2: a bare check reported 6 errors, and
+   `--all-targets` then found more).
+
+   Three distinct error classes appear, and they need different fixes. Do **not** pre-emptively
+   widen anything — the error list is the inventory.
+
+   | Error | Meaning | Fix |
+   |---|---|---|
+   | `E0624 method is private` | a **method** the parent or a sibling still calls | `pub(super)` on the method |
+   | `E0425 cannot find function` | a **free fn** the parent still calls | `pub(super)` **and** a `use self::<module>::<name>;` in `mod.rs` |
+   | `E0364 only public within the crate` | a `pub(crate)` item re-exported with `pub use` | `pub(crate) use` instead |
+
+   ★ **Visibility and name resolution are two different things, and only methods get away with
+   one.** Method-call syntax resolves through the receiver's type, so `pub(super)` alone is enough.
+   A free function additionally has to be *named*, so the parent needs an import. The design's
+   E0624-only framing was right for methods and incomplete for free functions.
+
+   ⚠ Also prune the **test module's own imports**: a `#[cfg(test)] mod tests` carries its own
+   `use super::{…}` line, and moving a test out of it leaves that line naming something that is no
+   longer there (`E0432`), plus now-unused imports that fail `-D warnings`.
 7. **Standing local gate** (top of this document).
 8. **Digest spot-check:** `python3 /tmp/b11_digest.py 68f01c3` — expect only `MISSING` entries for
    items not yet moved to be *absent*; there must be **zero `CHANGED`** at every task, not just at
@@ -525,7 +544,7 @@ cargo check -p dat0-app     # expect success, no warnings
 
 - [ ] **Step 3: Replace the module doc with a directory map**
 
-The existing 67-line `//!` header is almost entirely about boot (`Application::new`, single-instance
+The existing 33-line `//!` header is almost entirely about boot (`Application::new`, single-instance
 UDS, `WindowRegistry`, Cmd-N). It moves to `boot.rs` in T2. **In this commit, leave it in place** —
 T2 moves it with its subject matter. This step is a no-op placeholder in T1 by design; the map doc
 is written in T16 once every module exists and can be described accurately.
@@ -563,7 +582,7 @@ EOF
 `DISCORD_URL`, `register_menu_action_handlers`, `flush_focused_workspace_sql`, `run_app` 1332–2101 ·
 `open_urls_decode_to_local_paths` (unit test) 8467–8496.
 
-Also move: **the 67-line `//!` module doc at lines 1–63** — it describes boot and nothing else.
+Also move: **the 33-line `//!` module doc at lines 1–33** — it describes boot and nothing else.
 Convert it to `boot.rs`'s module doc verbatim, only changing the first line to name the module.
 
 **Produces (re-exports `mod.rs` must add):**
@@ -603,7 +622,7 @@ refactor(window): extract boot.rs
 
 Moves run_app, register_menu_action_handlers, flush_focused_workspace_sql,
 open_window_view, spawn_window, paths_from_open_urls and its unit test, and
-focused_session_arc out of mod.rs, together with the 67-line module doc that
+focused_session_arc out of mod.rs, together with the 33-line module doc that
 describes boot and nothing else.
 
 The interim DOCS_URL and DISCORD_URL consts move with their only consumer,
