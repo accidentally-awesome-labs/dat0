@@ -93,10 +93,10 @@ fn section(
 fn swatch(theme: &ComponentTheme, name: &str, color: gpui::Hsla) -> impl IntoElement {
     v_flex()
         .gap_sp(Sp::S2)
-        .w(Sp::S32.pixels() * 4.0)
+        .w(gpui::px(128.))
         .child(
             div()
-                .h(Sp::S32.pixels())
+                .h(gpui::px(32.))
                 .w_full()
                 .bg(color)
                 .border_1()
@@ -241,12 +241,14 @@ fn scales_section(theme: &ComponentTheme) -> impl IntoElement {
             .items_center()
             .child(
                 div()
-                    .w(Sp::S32.pixels())
+                    .w(gpui::px(32.))
                     .text_role(TextRole::Caption)
                     .text_color(theme.muted_foreground)
                     .child(name),
             )
-            .child(div().w(sp.pixels()).h(Sp::S8.pixels()).bg(theme.primary))
+            // The scale demo bar renders each step at its TRUE size, so it
+            // is the one gallery width that belongs on the scale.
+            .child(div().w(sp.rems()).h(Sp::S8.rems()).bg(theme.primary))
     }));
 
     // Typography: each role rendered AS itself — size, weight and line-height
@@ -306,8 +308,8 @@ fn elevation_section(theme: &ComponentTheme) -> impl IntoElement {
             .gap_sp(Sp::S16)
             .children(rungs.map(|(name, rung)| {
                 v_flex()
-                    .w(Sp::S32.pixels() * 5.0)
-                    .h(Sp::S32.pixels() * 3.0)
+                    .w(gpui::px(160.))
+                    .h(gpui::px(96.))
                     .p_sp(Sp::S12)
                     .gap_sp(Sp::S4)
                     .elevation(rung, theme)
@@ -347,7 +349,7 @@ fn components_section(theme: &ComponentTheme, input: &Entity<InputState>) -> imp
 
     // Card at the Raised rung — the surface most dat0 panels will sit on.
     let card = v_flex()
-        .w(Sp::S32.pixels() * 8.0)
+        .w(gpui::px(256.))
         .p_sp(Sp::S12)
         .gap_sp(Sp::S4)
         .elevation(Elevation::Raised, theme)
@@ -401,13 +403,13 @@ fn components_section(theme: &ComponentTheme, input: &Entity<InputState>) -> imp
             .child(sub_title(theme, "Buttons"))
             .child(buttons)
             .child(sub_title(theme, "Input"))
-            .child(div().w(Sp::S32.pixels() * 8.0).child(Input::new(input)))
+            .child(div().w(gpui::px(256.)).child(Input::new(input)))
             .child(sub_title(theme, "Cards"))
             .child(card)
             .child(sub_title(theme, "Table (stub)"))
             .child(
                 v_flex()
-                    .w(Sp::S32.pixels() * 10.0)
+                    .w(gpui::px(320.))
                     .elevation(Elevation::Surface, theme)
                     .child(header)
                     .child(rows),
@@ -421,7 +423,7 @@ fn components_section(theme: &ComponentTheme, input: &Entity<InputState>) -> imp
 fn icon_cell(theme: &ComponentTheme, icon: Icon, name: &str, role: TextRole) -> impl IntoElement {
     v_flex()
         .gap_sp(Sp::S2)
-        .w(Sp::S32.pixels() * 3.0)
+        .w(gpui::px(96.))
         .child(
             div()
                 .text_role(role)

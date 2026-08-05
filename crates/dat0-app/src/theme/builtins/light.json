@@ -102,7 +102,7 @@
     "switch.background": "#d0d7de",
     "switch.thumb.background": "#ffffff",
     "drag.border": "#0969da",
-    "drop_target.background": "#0969da1a",
+    "drop_target.background": "#0969da22",
 
     "chart.1": "#0969da",
     "chart.2": "#1a7f37",

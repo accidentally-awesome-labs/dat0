@@ -165,7 +165,10 @@ pub fn render_status_bar(model: &StatusBarModel, cx: &App) -> impl IntoElement {
                         .child(SharedString::from(text)),
                 )
                 .children(
-                    (i < last).then(|| div().w(Sp::S1.pixels()).h(Sp::S12.pixels()).bg(border)),
+                    // B10: a 1px hairline is not spacing — a rem-relative S1
+                    // would be 0.875px at dat0's 14px rem, a sub-pixel rule.
+                    // The height is decorative and stays on the scale.
+                    (i < last).then(|| div().w(gpui::px(1.)).h(Sp::S12.rems()).bg(border)),
                 )
         }))
 }
