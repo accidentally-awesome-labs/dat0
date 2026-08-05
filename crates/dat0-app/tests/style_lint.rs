@@ -46,7 +46,14 @@ const ALLOW_MARKER: &str = "// style-lint: allow(";
 /// SHRINK-ONLY RATCHET. Each A6 sub-slice that migrates a file lowers its number
 /// in the same PR; the gate fails if a count is left too high *or* too low.
 /// A file absent from this table has an allowance of 0.
-const ALLOW: &[(&str, usize)] = &[("window.rs", 1)];
+///
+/// **EMPTY since B10.** The last entry was `window.rs`'s file-drop tint, which
+/// now reads `cx.theme().d0().drag_over`. `src/` holds no colour literal and no
+/// `// style-lint: allow(…)` escape at all, so this gate has stopped describing
+/// debt and become a pure regression guard. Re-adding an entry means a slice
+/// introduced a literal it could not tokenise — that is a design question, not
+/// a bookkeeping one.
+const ALLOW: &[(&str, usize)] = &[];
 
 /// Bare `0x` + exactly 6 or 8 hex digits, boundary-guarded on both sides.
 ///

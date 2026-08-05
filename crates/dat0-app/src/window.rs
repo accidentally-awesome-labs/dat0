@@ -39,6 +39,7 @@ use gpui::{
     KeyDownEvent, Render, Subscription, TitlebarOptions, Window, WindowBounds, WindowOptions, div,
     prelude::*, px, size,
 };
+use gpui_component::ActiveTheme as _;
 use gpui_component::Root;
 use gpui_component::h_flex;
 use gpui_component::table::{Table, TableState};
@@ -53,6 +54,7 @@ use crate::grid::{GridDataSource, GridTableDelegate};
 use crate::main_bridge::MainLoop;
 use crate::recents::Recents;
 use crate::session::Session;
+use crate::theme::tokens::Dat0Theme as _;
 use crate::view::ViewModel;
 use crate::window_registry::{WindowHandle, WindowRegistry};
 use crate::workspace::Home;
@@ -8011,7 +8013,12 @@ impl Render for WorkspaceShell {
             ))
             .on_key_down(key_handler)
             .on_click(click_to_focus)
-            .drag_over::<ExternalPaths>(|style, _, _, _| style.bg(gpui::rgba(0x0088_ff22)))
+            // B10: the last colour literal in `src/`. The closure's 4th param is
+            // `&mut App` (gpui `elements/div.rs:940`), so the tint is read from
+            // the LIVE theme every time it runs — a theme switch mid-drag is
+            // handled with nothing captured. High contrast changes most: this
+            // used to paint a hardcoded blue that ignored the HC palette.
+            .drag_over::<ExternalPaths>(|style, _, _, cx| style.bg(cx.theme().d0().drag_over))
             .on_drop::<ExternalPaths>(drop_listener)
             .children(banner_host)
             .children(tab_strip)
