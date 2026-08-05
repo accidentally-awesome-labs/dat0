@@ -471,3 +471,101 @@ documented reason (`set_active_ix(0)` early-returns on an unchanged index,
 `tab_panel.rs:208-211`), and that immunity holds at the earliest moment the
 restore path could run. **The T5 fallback (defer the mount to after the first
 frame) is therefore NOT needed.**
+
+---
+
+## 15. Slice as-built (2026-08-04)
+
+Executed INLINE (no subagents), T0 → T8, one commit per task off main `1e33559`.
+Every design decision survived contact; the corrections below are all
+implementation-level.
+
+### Deviations from the plan, and why
+
+1. **⚠⚠ The migration carry-over is per-ARM, not inside `migrate_v10_to_v11`.**
+   The plan put it in the v10 helper. `ui` has existed since **v8**, so a v8 or
+   v9 session with the catalog open would have silently lost it — the exact
+   class of failure the raw-document read exists to prevent, reintroduced one
+   level up. Now every pre-v11 arm runs `with_carried_layout`; v1–v7 have no
+   `ui` and correctly derive an all-closed layout. Guarded by
+   `even_a_v8_file_carries_its_dock_bools_over`.
+2. **The capture-site list was wrong in both directions.** The plan named three
+   `persist_dock_ui` sites. One of them (`toggle_catalog_collapsed`) changes
+   catalog TREE state, not dock state, and was NOT wired. `toggle_chart_panel`
+   was missing and had to be added — **chart-panel visibility has never been
+   persisted by any schema**, so v11 is the first to carry it.
+3. **Sizes are `u32`, not `f32`** (amended into §3.2 before implementation).
+   `Settings` derives `Eq`. The narrower type also makes NaN and infinity
+   unrepresentable on the wire.
+4. **Every `Option` needs `skip_serializing_if`** — the `toml` serializer errors
+   with `UnsupportedNone` on a `None` inside a table, so settings.toml would be
+   unwritable without it. Verified by deleting the attribute and watching the
+   `toml::to_string` line fail; the test now asserts toml FIRST so that is the
+   line that reddens.
+5. **`ai_settings_store` → `settings_store`** (7 callers). It always returned a
+   plain `SettingsStore` over settings.toml; B9 is its second non-AI consumer.
+6. **`toggle_chart_panel_for_test` added.** `chart_bind_for_test` assigns the
+   visibility bool directly (the a11y-shim pattern) and therefore bypasses the
+   toggle and its persist entirely — it could not exercise this path.
+7. **T0 probe 1 was rewritten before it ran.** The plan proposed re-mounting one
+   dock at a probe size; that would have proved little. Asserting all **three**
+   distinct mount sizes (384 / 848 / 320) is the stronger claim — one shared
+   constant cannot produce three different numbers.
+
+### What T0 settled
+
+All three probes passed first run; **no stop clause fired and the T5 deferred-mount
+fallback was never needed**. Probe 3 is the notable one: mounting the bottom dock
+*before the first frame settles* does not trip B7's `set_active_ix` →
+`Panel::visible` → `shell.read` re-entrancy panic, because a single-panel
+`DockItem::tab` early-returns from `set_active_ix(0)`.
+
+### Facts worth not re-deriving
+
+- **`DockArea::load` is unusable for a partial restore, and this is now proven
+  live, not just read.** T0 probe 2 captured a real dump whose `center.panel_name`
+  is `"GridPanel"` — `load` would hand that to the registry and re-wrap it as
+  `DockItem::tabs`. The seven registered panel builders stay deliberately
+  unreachable; `src/panels/mod.rs` now says so instead of promising B9 would fix
+  them.
+- **`Dock` is not an `EventEmitter`** — `dock/dock.rs` has zero `cx.emit`. The
+  master plan's `DockEvent::LayoutChanged` save trigger cannot see a resize or
+  an open/close. The Quit/CloseWindow flush is the ONLY thing that captures a
+  resize not followed by a toggle.
+- **The left dock's inner `stack.sizes` is right there in the dump**
+  (`[384,384,384]`; right is `[288,560]`). A future slice that wants inner split
+  sizes needs a parser change, not a new API.
+- **Three separate wire-format snapshots gate this schema** — session, chart,
+  and settings — and each caught a fixture a targeted grep had missed. The
+  settings one lives in `onboarding_gpui.rs` and was invisible to an audit
+  scoped to the session version.
+- Settings v2→v3 needs no migration: `Settings` carries container-level
+  `serde(default)` and nothing gates on its `schema_version`.
+
+### Local gate — ALL GREEN
+
+`cargo fmt --all --check` clean · `cargo clippy --workspace --all-targets -D
+warnings` exit 0 · **118 binaries × {plain, a11y-capture, a11y-capture+gallery},
+0 failures** (116 at B8, +`dock_layout_spike`, +`dock_layout_persist`) ·
+`style_lint` 4/4 with the ratchet UNCHANGED at `[("window.rs", 1)]` ·
+`src/grid` byte-identical to main · `a11y_spike` still **12** ·
+`cargo build --bin dat0` builds AND boots with a log **identical** to a `main`
+build (zero WARN/ERROR on either).
+
+⚠ `src/session` is deliberately NOT byte-identical — B5–B8 all asserted that,
+and B9 is the slice that ends it.
+
+`cargo test --workspace` and `cargo bench` remain unrunnable on this machine
+(macOS 27 / Xcode 26.6 vs vendored DuckDB Thrift; reproduces on `main`).
+
+### Test surface added
+
+`tests/dock_layout_spike.rs` (3, standing guards) + `tests/dock_layout_persist.rs`
+(20) + 9 unit tests in `session/migrate.rs` + 13 in `session/dock_layout.rs` +
+3 in `settings/schema.rs`.
+
+Every task's non-vacuity probe perturbed the MECHANISM. Notably: neutralising
+`current_dock_layout` reddens 6 of 9 capture tests, and
+`closing_the_rail_panel_persists_the_closed_state` stays green because "closed"
+and "default" are the same value — recorded in that test's own doc comment
+rather than deleted or trusted (B7's precedent).

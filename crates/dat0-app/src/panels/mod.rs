@@ -4,8 +4,9 @@
 //! inspector and charts right docks; B7 added the catalog, connections and AI
 //! left docks. B8 adds the SQL console. They live here rather than in
 //! `src/view/` because a `Panel` is a different kind of thing from a free render
-//! fn: it is an entity with a stable `panel_name` that `DockArea::load` resolves
-//! through a global registry (B9).
+//! fn: it is an entity with a stable `panel_name` that a `DockArea::load` would
+//! resolve through a global registry. See [`register_panels`] for why B9 does
+//! not call `load`, and what that means for these builders.
 
 pub mod ai_dock_panel;
 pub mod catalog_panel;
@@ -23,11 +24,27 @@ use gpui::{App, AppContext as _};
 /// registration performed only in production is silently absent under test
 /// (the `register_modal_keys` lesson from B1/B2).
 ///
-/// Nothing calls `DockArea::load` until B9, so the builder below is currently
-/// unreachable. It hands back a shell-less panel rather than panicking — the
-/// `WeakEntity::new_invalid()` upgrade fails and `GridPanel::render` paints an
-/// empty div, which degrades gracefully instead of arming a landmine. B9
-/// replaces it with a builder that resolves the live shell.
+/// ⚠⚠ **These builders are unreachable, deliberately, and B9 is where that was
+/// decided.** `PanelRegistry::build_panel` is called from exactly one place —
+/// `PanelState::to_item` (`dock/state.rs:227-236`) — which runs only from
+/// `DockArea::load`.
+///
+/// B9 does not call `load`. `DockAreaState::center` is a non-`Option` field and
+/// `load` unconditionally rebuilds it through `to_item`, which re-wraps a
+/// `PanelInfo::Panel` as `DockItem::tabs` — restoring the 30 px title bar, the
+/// nested scroll and the `.cached()` child that B5 chose `DockItem::Panel`
+/// specifically to avoid. There is no partial-load API, and B9's own T0 probe 2
+/// confirmed the live dump really does carry a centre named `"GridPanel"`, so
+/// this is a live constraint rather than a theoretical one. dat0 persists its
+/// layout as a typed `DockLayout` instead (`session/dock_layout.rs`), which has
+/// no field a centre could occupy.
+///
+/// The registration stays because `panel_name` is what a future
+/// drag-rearrange slice would resolve panels through — and that slice has to
+/// solve the centre problem first, at which point these builders become its
+/// natural seam. Until then each hands back a shell-less panel rather than
+/// panicking: the `WeakEntity::new_invalid()` upgrade fails and the panel paints
+/// an empty div, which degrades gracefully instead of arming a landmine.
 pub fn register_panels(cx: &mut App) {
     gpui_component::dock::register_panel(
         cx,
@@ -88,8 +105,7 @@ pub fn register_panels(cx: &mut App) {
     // console is a real stateful entity rather than a shell delegate, so the
     // placeholder hands back a console over ZERO persisted tabs and its own
     // fresh autocomplete snapshot — `SqlConsole::new` falls back to a single
-    // empty tab. B9 replaces all seven with builders that resolve the live
-    // shell and the real session.
+    // empty tab. Unreachable for the reason given on `register_panels`.
     gpui_component::dock::register_panel(
         cx,
         crate::view::sql_console::SqlConsole::PANEL_NAME,
