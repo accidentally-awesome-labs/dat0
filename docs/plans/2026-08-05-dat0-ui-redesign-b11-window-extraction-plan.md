@@ -43,7 +43,22 @@ Every task's requirements implicitly include all of these.
 
 ## Standing local gate
 
-Run at the end of every task. All four must pass before committing.
+⚠ **Amended during execution (owner-approved).** The original plan ran the full 118-binary suite
+after every task. Measured at T1, that is ~10+ hours of compute across the slice — these are gpui
+integration tests that each open a window, and they run at roughly 12 binaries per several minutes.
+
+**Per task:** `fmt` + `clippy --workspace --all-targets -D warnings` + the body digest.
+`--all-targets` **compiles all 118 test binaries**, which catches every resolution, visibility and
+import failure — the entire failure mode of a move — and the digest catches body edits. Together
+they cover what a move can break.
+
+**Full suite RUNS at five checkpoints:** T1 (baseline), T2 (first real move — proves the
+`use super::*` mechanism end to end), T5 (the feature-gated block), T14 (dock, the highest-risk
+move), T15 (`render`), and T16 (final, all three feature combinations).
+
+Every commit still compiles cleanly, so bisectability is preserved.
+
+Run at the end of every task. All must pass before committing.
 
 ```bash
 cd /Users/salar/Projects/dat0
@@ -260,6 +275,32 @@ Usage from the repo root: `python3 /tmp/b11_digest.py 68f01c3`
 T16 existed at base. If the digest reports `ADDED`, a task wrote new code — which this slice
 forbids. The only new code in the whole branch is `tests/window_module_ratchet.rs` (T16), which
 lives outside `src/window/` and is therefore invisible to the digest.
+
+## C′. Two tasks are BLOCK moves, not name-based moves
+
+T2–T4 and T6–T14 move a *named set of items*. **T5 and T15 do not** — each moves one contiguous
+`impl` block whole, and treating them as name lists produces wrong code:
+
+- **T15 `render`** is a **trait** method. A name-based move would wrap it in
+  `impl WorkspaceShell`, but it must stay inside `impl Render for WorkspaceShell`. Move the whole
+  block, header and closing brace included.
+- **T5** is the single `#[cfg(feature = "a11y-capture")] impl WorkspaceShell` block holding all 44
+  accessors.
+
+Both shapes were already exercised by T0 probes 2 and 3, which moved exactly these two blocks and
+compiled — so both are pre-validated.
+
+## C″. Empty test-module wrappers must be deleted, not left behind
+
+Two `#[cfg(test)] mod` wrappers in `mod.rs` are emptied by tasks that take their contents. An empty
+`mod tests { }` compiles and would survive every gate silently:
+
+- `mod tests` — T7 takes 5 chart items, T12 takes the last one. **T12 deletes the wrapper.**
+- `mod live_refresh_tests` — T8 takes all 5 of its items. **T8 deletes the wrapper.**
+
+Each task writes its tests into a fresh `#[cfg(test)] mod tests` at the bottom of its own new file.
+Verify after T12: `grep -n "mod tests\|live_refresh_tests" crates/dat0-app/src/window/mod.rs`
+returns nothing.
 
 ## C. The move recipe
 
