@@ -7,7 +7,7 @@
 //! policy: no color constructors in this file, enforced repo-wide by
 //! `tests/style_lint.rs` (A4).
 
-use gpui::{FontWeight, Hsla, Pixels, Styled, px, relative};
+use gpui::{FontWeight, Hsla, Pixels, Rems, Styled, px, relative, rems};
 use gpui_component::Theme;
 
 /// dat0-specific color semantics, derived from the active
@@ -97,11 +97,31 @@ impl Sp {
     pub fn pixels(self) -> Pixels {
         px(self as u16 as f32)
     }
+
+    /// The scale as a rem-relative length, against the CSS-conventional 16px
+    /// rem the gpui helper scale is defined in (`gpui-macros/src/styles.rs`
+    /// emits `.gap_1()` as `rems(0.25)`, documented "4px (0.25rem)").
+    ///
+    /// This — not [`Sp::pixels`] — is the spacing unit, because dat0's rem is
+    /// **14px**, not 16: `gpui_component::Root::render` calls
+    /// `window.set_rem_size(cx.theme().font_size)` and A1 set `"font.size": 14`
+    /// in all three builtins. An absolute `Sp` therefore sat 14% looser than
+    /// every gpui-spaced element beside it. Expressed this way `Sp::S4` **is**
+    /// `.gap_1()`, exactly.
+    pub fn rems(self) -> Rems {
+        rems(self as u16 as f32 / 16.)
+    }
 }
 
 impl From<Sp> for Pixels {
     fn from(sp: Sp) -> Pixels {
         sp.pixels()
+    }
+}
+
+impl From<Sp> for Rems {
+    fn from(sp: Sp) -> Rems {
+        sp.rems()
     }
 }
 
@@ -381,6 +401,59 @@ mod tests {
             assert_eq!(sp.pixels(), px(v), "{sp:?}");
             assert_eq!(Pixels::from(sp), px(v));
         }
+    }
+
+    /// `Sp` and gpui's helper scale are the SAME scale, so an `Sp`-spaced
+    /// container and a `.gap_1()`-spaced sibling agree. Without this, the two
+    /// silently re-fork the next time `font.size` moves.
+    #[test]
+    fn sp_rems_matches_gpui_helper_scale() {
+        // gpui-macros/src/styles.rs: .gap_1() == rems(0.25), .gap_2() ==
+        // rems(0.5), .px_3() == rems(0.75).
+        assert_eq!(Sp::S4.rems(), rems(0.25));
+        assert_eq!(Sp::S8.rems(), rems(0.5));
+        assert_eq!(Sp::S12.rems(), rems(0.75));
+        assert_eq!(Sp::S16.rems(), rems(1.0));
+        assert_eq!(Sp::S32.rems(), rems(2.0));
+    }
+
+    /// What a user actually sees, at dat0's real rem size. The assertion above
+    /// only proves two constants match; this one states pixels.
+    #[test]
+    fn sp_rems_resolve_at_dat0_rem_size() {
+        // gpui_component::Root::render sets rem_size from theme.font_size,
+        // and A1 pinned "font.size": 14 in all three builtins.
+        let rem = px(14.);
+        assert_eq!(Sp::S1.rems().to_pixels(rem), px(0.875));
+        assert_eq!(Sp::S4.rems().to_pixels(rem), px(3.5));
+        assert_eq!(Sp::S8.rems().to_pixels(rem), px(7.));
+        assert_eq!(Sp::S12.rems().to_pixels(rem), px(10.5));
+        assert_eq!(Sp::S32.rems().to_pixels(rem), px(28.));
+    }
+
+    /// THE GATE: `Rems` must flow into every setter `SpStyled` calls —
+    /// padding/gap take `impl Into<DefiniteLength>`, margin takes `Length`.
+    /// gpui provides `From<Rems>` for both, but compiled beats argued.
+    #[test]
+    fn rems_flows_through_every_styled_setter() {
+        // One element per setter, deliberately. Chaining them would let `py`
+        // overwrite the `padding.top` that `p` had just set, which measures
+        // gpui's setter semantics rather than the `Rems` conversion this gate
+        // is about.
+        let mut p = gpui::div().p(Sp::S8.rems());
+        assert_eq!(p.style().padding.top, Some(Sp::S8.rems().into()));
+
+        let mut px_el = gpui::div().px(Sp::S8.rems());
+        assert_eq!(px_el.style().padding.left, Some(Sp::S8.rems().into()));
+
+        let mut py_el = gpui::div().py(Sp::S4.rems());
+        assert_eq!(py_el.style().padding.top, Some(Sp::S4.rems().into()));
+
+        let mut g = gpui::div().gap(Sp::S4.rems());
+        assert_eq!(g.style().gap.width, Some(Sp::S4.rems().into()));
+
+        let mut m = gpui::div().m(Sp::S2.rems());
+        assert_eq!(m.style().margin.top, Some(Sp::S2.rems().into()));
     }
 
     #[test]
