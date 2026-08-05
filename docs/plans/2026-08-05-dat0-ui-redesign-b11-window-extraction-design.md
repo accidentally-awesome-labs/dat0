@@ -314,4 +314,74 @@ branch precisely because B11 cannot affect it. Top of that list (from B10): file
 
 ## 10. As-built
 
-_(filled in during execution)_
+### T0 — hard gate (2026-08-05)
+
+Toolchain `rustc 1.97.0 (2d8144b78 2026-07-07)`, as pinned. Baseline `cargo check -p dat0-app`
+green in 1m16s before any probe, so the known macOS 27 / Xcode 26.6 blocker does not affect this
+crate's check path.
+
+**Probe 1 — visibility. PASS, both halves, and §2 is now measured rather than argued.**
+
+In miniature (`rustc --edition 2021`): a child module reading the parent's private field compiled;
+the parent calling the child's private method produced
+
+```
+error[E0624]: method `hidden` is private
+```
+
+with no error on the field access. Changing `fn hidden` to `pub(super) fn hidden` compiled and ran.
+
+**Probe 1b — the same inside `dat0-app`**, with the 361-field struct and gpui traits in scope. A
+child module reading `self.tour_auto_shown` compiled (only `never used`). Adding a parent-side call
+produced exactly one `error[E0624]: method 'probe_reads_private_field' is private`; `pub(super)`
+cleared it. Reverted and `touch`ed; `diff` against `HEAD` clean.
+
+**Probe 2 — `impl Render` from a child module. PASS.** Moved the 624-line
+`impl Render for WorkspaceShell` block verbatim into `window/render.rs`. No coherence error at any
+point — the only failures were missing imports, which is the expected and desired signal.
+
+★ **This produced the slice's first real execution finding.** Supplying those imports as
+`use super::*;` compiled *and* passed `cargo clippy -p dat0-app --all-targets` with no warning. The
+mechanism is the same downward-visibility rule as the fields: a `use` declaration is an item, it is
+private by default, and a private item is visible in its module **and all descendants** — so a child
+inherits the parent's entire private import block through one glob. `wildcard_imports` is
+pedantic-only and not enabled here. **The plan's original recipe step 5 — hand-curate an import
+block per file — was unnecessary work and has been rewritten.**
+
+**Probe 3 — `#[cfg(feature = "a11y-capture")] impl` from a child module. PASS.** The 392-line
+accessor block moved to `window/test_support.rs` and
+`cargo check -p dat0-app --features a11y-capture --all-targets` finished green in 51s. `--all-targets`
+compiles the integration tests, so the 118 binaries resolve `shell.x_for_test()` unchanged through
+the unmoved `crate::window::WorkspaceShell` path.
+
+**Probe 4 — digest. PASS only after finding and fixing TWO real defects in the gate.**
+
+The plan's authoring-time smoke test (identity green, in-place perturbation red) passed against a
+digest that was badly broken. Running it across a **real move** exposed both:
+
+1. **cwd-dependent paths.** `win.is_dir()` resolved against the caller's cwd, so from
+   `crates/dat0-app/src` it took the wrong branch and crashed. Now resolves the repo root via
+   `git rev-parse --show-toplevel`, and raises explicitly when neither form of the module exists.
+2. ★★ **Bodies were bounded by "until the next `fn`"**, so the last function before any non-`fn`
+   item silently swallowed that item. `bounding_rect` had absorbed
+   `impl Render for WorkspaceShell {`; moving `render` out therefore reported **both** as `CHANGED`
+   — two false positives on a completely correct move. Bodies are now bounded by **brace matching**,
+   so a body depends only on itself.
+
+Final behaviour, all four verified: identity green (229/229) · in-place edit red with the exact ±
+pair · **legitimate move green** (`229 fns across 2 file(s)`, `DIGEST OK`) · **edit inside a moved
+file red**, naming `CHANGED render (now in render.rs)` and the exact line · cwd-independent.
+
+★★ **THE REUSABLE LESSON: a gate whose job is to tolerate movement cannot be validated by a probe
+that does not move anything.** The in-place perturbation test is the obvious non-vacuity check, it
+is what the plan originally specified, and it certifies a gate that would have emitted false
+positives at every one of T2–T15 — at which point its output becomes noise to skim past, and the
+slice silently loses its primary evidence. **Validate a gate against the transformation it exists to
+watch, not against a convenient stand-in.** (Same family as B10's "a chained style read-back tests
+the setter, not your value", and the standing rule to drive keyboard behaviour with
+`simulate_keystrokes` rather than `dispatch_action`.)
+
+**STOP clause not triggered.** All four probes pass; the split shape in §3 stands unchanged.
+
+Probe state fully reverted after each probe; `git status` clean and digest identity re-confirmed
+before T1.

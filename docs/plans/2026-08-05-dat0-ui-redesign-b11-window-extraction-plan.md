@@ -125,9 +125,21 @@ Save to `/tmp/b11_digest.py`. Compares every function body in `window.rs` at a g
 every function body under `window/` on disk, normalising away only what a legitimate move may
 change: leading whitespace, blank lines, `use` lines, and visibility keywords.
 
-**Already smoke-tested at plan-authoring time against `68f01c3`: 229 fns both sides, `DIGEST OK`;
-perturbing one body to `memory_budget_bytes(&store) + 1` produced
-`CHANGED configured_memory_budget` with the exact ± line pair, exit 1.**
+⚠ **T0 found and fixed TWO real defects in the authoring-time draft of this script.** The listing
+below is the corrected version; see design §10 for the full account.
+
+1. **Paths resolved against the caller's cwd**, so running it from anywhere but the repo root took
+   a wrong branch. Now resolves the repo root via `git rev-parse --show-toplevel`, and raises
+   rather than falling through when neither `window.rs` nor `window/` exists.
+2. **Bodies were bounded by "until the next `fn`"**, which makes the last function before any
+   non-`fn` item swallow that item. `bounding_rect` had absorbed `impl Render for WorkspaceShell {`,
+   so moving `render` out reported *both* as `CHANGED` — two false positives on a perfectly correct
+   move. A gate that cries wolf at every task is worse than none. Bodies are now bounded by **brace
+   matching**, so a body depends only on itself.
+
+★ The second defect could only be found by running the digest across a **real move**. The in-place
+perturbation in T0 step 6 passed happily against the broken version — testing a movement-tolerance
+gate with a non-movement probe proves nothing. T0 step 6 below is written accordingly.
 
 ```python
 #!/usr/bin/env python3
@@ -135,10 +147,17 @@ perturbing one body to `memory_budget_bytes(&store) + 1` produced
 import re, subprocess, sys
 from pathlib import Path
 
-SRC = Path("crates/dat0-app/src")
+ROOT = Path(subprocess.run(
+    ["git", "rev-parse", "--show-toplevel"],
+    capture_output=True, text=True, check=True,
+).stdout.strip())
+SRC = Path("crates/dat0-app/src")   # repo-relative, for `git show`
+ABS = ROOT / SRC                    # absolute, for disk reads
+
 FN_RE = re.compile(
     r"^(?P<indent>\s*)(?:pub(?:\([a-z()]+\))?\s+)?(?:async\s+)?fn\s+(?P<name>[a-zA-Z0-9_]+)"
 )
+STRIP = re.compile(r'"(?:\\.|[^"\\])*"|\'(?:\\.|[^\'\\])*\'|//.*$')
 
 def normalize(lines):
     out = []
@@ -151,21 +170,39 @@ def normalize(lines):
         out.append(s)
     return "\n".join(out)
 
+def body_end(lines, start):
+    """Index one past the fn's closing brace, found by brace matching.
+
+    Bounding a body by "until the next fn" makes the last fn before any non-fn
+    item swallow that item, so moving a neighbouring item reports the untouched
+    fn as CHANGED. Brace matching makes a body depend only on itself.
+    """
+    depth, seen = 0, False
+    for i in range(start, len(lines)):
+        code = STRIP.sub("", lines[i])
+        for ch in code:
+            if ch == "{":
+                depth += 1
+                seen = True
+            elif ch == "}":
+                depth -= 1
+                if seen and depth == 0:
+                    return i + 1
+    return len(lines)
+
 def extract(text, origin):
     lines = text.split("\n")
-    starts = []
+    fns = {}
     for i, line in enumerate(lines):
         m = FN_RE.match(line)
-        if m and len(m.group("indent")) in (0, 4, 8):
-            starts.append((i, m.group("name")))
-    fns = {}
-    for k, (i, name) in enumerate(starts):
-        end = starts[k + 1][0] if k + 1 < len(starts) else len(lines)
+        if not (m and len(m.group("indent")) in (0, 4, 8)):
+            continue
+        name = m.group("name")
         key, n = name, 2
         while key in fns:
             key = f"{name}#{n}"
             n += 1
-        fns[key] = (normalize(lines[i:end]), origin)
+        fns[key] = (normalize(lines[i:body_end(lines, i)]), origin)
     return fns
 
 def main():
@@ -177,8 +214,13 @@ def main():
         ["git", "show", f"{base}:{SRC}/window.rs"],
         capture_output=True, text=True, check=True).stdout, "window.rs")
     after = {}
-    win = SRC / "window"
-    files = sorted(win.rglob("*.rs")) if win.is_dir() else [SRC / "window.rs"]
+    win, flat = ABS / "window", ABS / "window.rs"
+    if win.is_dir():
+        files = sorted(win.rglob("*.rs"))
+    elif flat.is_file():
+        files = [flat]
+    else:
+        raise SystemExit(f"neither {win} nor {flat} exists — unexpected tree state")
     for f in files:
         for key, val in extract(f.read_text(), f.name).items():
             k, n = key, 2
@@ -238,8 +280,16 @@ full, and each task states its own data.
 4. **Declare it** in `mod.rs`: add `mod <name>;` in the alphabetically-sorted `mod` block. Add
    `pub use <name>::{…};` for any item that was `pub`/`pub(crate)` at base and is named from
    outside `src/window/` (see the re-export list in T1).
-5. **Add the `use` lines** the new file needs. Do not copy `window.rs`'s whole import block —
-   `cargo clippy -D warnings` fails on `unused_imports`, so the compiler tells you the exact set.
+5. **Open the file with `use super::*;`** — measured at T0, not assumed. A `use` declaration is an
+   item with visibility, and it defaults to private, so by the *same* downward-visibility rule that
+   exposes the parent's fields, a child inherits every one of the parent's private import bindings
+   through a glob. `cargo clippy --all-targets -D warnings` accepts it (`wildcard_imports` is
+   pedantic-only and not enabled here). Add `use gpui::prelude::*;` where trait methods are needed,
+   plus any import the parent does not already carry — the compiler names those exactly.
+
+   Do **not** hand-curate a 15-file import matrix; that was the original plan text and T0 showed it
+   to be unnecessary work. If `mod.rs` later reports `unused_imports` because its last local
+   consumer moved out, move that specific `use` down to the module that still needs it.
 6. **Compile and let `E0624` enumerate.** `cargo check -p dat0-app` and mark each reported method
    `pub(super)` — nothing wider unless an external path needs it. Do **not** pre-emptively widen
    visibility: an unreported method must stay private, and the error list is the inventory.
@@ -336,21 +386,39 @@ cargo check -p dat0-app --features a11y-capture --all-targets
 Expected: compiles, and the integration tests still resolve `shell.dock_mounted_for_test()` etc.
 unchanged (they are `pub`, and the path `crate::window::WorkspaceShell` is unmoved). Revert.
 
-- [ ] **Step 6: Probe 4 — digest non-vacuity**
+- [ ] **Step 6: Probe 4 — digest correctness**
+
+A movement-tolerance gate must be exercised **by a movement**. Four sub-probes, in order; 4b and 4c
+are the ones that matter and the ones that found the defects.
+
+**4a — identity.** Against the unchanged tree:
 
 ```bash
 python3 /tmp/b11_digest.py 68f01c3          # expect: 229 fns both sides, DIGEST OK, exit 0
 ```
 
-Then perturb one body — change `configured_memory_budget`'s last expression to
-`crate::settings::budget::memory_budget_bytes(&store) + 1` — re-run, and expect
-`CHANGED configured_memory_budget` with the ± line pair and exit 1. Then:
+**4a′ — in-place edit.** Change `configured_memory_budget`'s last expression to
+`crate::settings::budget::memory_budget_bytes(&store) + 1`, re-run, expect
+`CHANGED configured_memory_budget` with the ± line pair and exit 1. Then
+`git checkout` + **`touch`** and confirm green again.
 
-```bash
-git checkout crates/dat0-app/src/window.rs
-touch crates/dat0-app/src/window.rs
-python3 /tmp/b11_digest.py 68f01c3          # expect DIGEST OK again
-```
+⚠ **Do not stop here.** This sub-probe passes against a digest that is badly broken — it never
+moves anything, and movement is the whole point.
+
+**4b — legitimate move must stay GREEN.** Reuse the probe-2 tree state (`window/mod.rs` +
+`window/render.rs` with `impl Render` moved verbatim) and run the digest. Expect
+`229 fns across 2 file(s)`, `DIGEST OK`, exit 0.
+
+Any `CHANGED` here is a **gate defect, not a code defect** — nothing was edited. Fix the gate before
+proceeding; a digest that reports noise on correct moves will be ignored by T15 and the slice loses
+its main evidence.
+
+**4c — edit inside a moved file must go RED.** In that same two-file state, change one line in
+`render.rs`'s body (e.g. `render_dialog_layer` → `render_sheet_layer`), re-run, and expect
+`CHANGED render (now in render.rs)` naming the exact ± pair, exit 1.
+
+**4d — cwd independence.** Run the digest from `crates/dat0-app/src` as well as the repo root; both
+must behave identically. Then revert to a single `window.rs` and confirm 4a green once more.
 
 - [ ] **Step 7: STOP clause**
 
