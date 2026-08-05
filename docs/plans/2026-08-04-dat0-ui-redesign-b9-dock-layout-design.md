@@ -569,3 +569,49 @@ Every task's non-vacuity probe perturbed the MECHANISM. Notably: neutralising
 `closing_the_rail_panel_persists_the_closed_state` stays green because "closed"
 and "default" are the same value — recorded in that test's own doc comment
 rather than deleted or trusted (B7's precedent).
+
+### ★★ Whole-branch review finding (the one per-task review could not reach)
+
+**A restored panel skipped every side effect `activate_left_panel` centralises.**
+B7 folded `refresh_catalog` / `hydrate_ai_panel` into that one function
+specifically so no entry point could lose them. B9's restore is a **second entry
+point** — the constructor seeds the visibility bools straight from the persisted
+layout and never calls `activate_left_panel` — so a restored AI panel came back
+visible but **unhydrated** (wrong key/provider state), a restored catalog with no
+tree, and a restored console with an empty autocomplete schema.
+
+**All 20 per-task tests passed**, because every one of them asserts dock or panel
+**visibility**. The docks opened perfectly; the contents behind them were empty.
+Removing the fix reddens only the new test and leaves the other 20 green — the
+cleanest demonstration in this series so far that per-task review is
+structurally blind to this class.
+
+Fixed by extracting `on_left_panel_shown`, called from BOTH entry points.
+Duplicating the match would have re-created exactly the drift B7 removed.
+
+⚠ **The fix moves `tokio::spawn` work into the first render**, which no test
+could clear: `dock_layout_persist.rs` enters the async harness, so a missing
+ambient runtime would have been invisible. Verified by BOOTING the real binary
+with a seeded `[ui.dock_layout]` (catalog + inspector + console): no panic, no
+"there is no reactor running", zero WARN/ERROR. **Booting with a seeded layout is
+the check this slice needed and the fresh-session boot could not give** — a
+fresh session has no layout, so the entire restore path is dead on that path.
+
+### Owed human glance
+
+Everything below needs a real window; none of it is automatable (Gap 1).
+
+- A restored window in all 3 themes, HC most of all: rail selection and open
+  panel agreeing; both right-dock panels restored; the console restored open at a
+  **resized** height.
+- **The drag → persist → restore loop end to end.** No test can drive
+  `Dock::resize` (§4), so this is the only check that a real mouse resize comes
+  back.
+- A layout saved wide and restored in a **narrow** window (the clamping path).
+- A **first run**: must still show the hero with no console and no open docks.
+- Restored panel CONTENTS, not just their frames — the catalog tree populated and
+  the AI dock showing real key/provider state. That is what the review finding
+  above was about, and a glance is what would have caught it first.
+
+Still carried: B8's double-chrome / narrow-window pass, B7's rail pass, B6's
+title bars, B5's diff-the-pixels + file-drop, B4's palette.
