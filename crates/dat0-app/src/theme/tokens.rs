@@ -19,6 +19,15 @@ use gpui_component::Theme;
 pub struct Dat0Colors {
     pub focus_ring: Hsla,
     pub selection_tint: Hsla,
+    /// No production consumer, and that is a finding rather than an oversight.
+    /// A6 deviation 1 searched for a fill-handle render site and found none —
+    /// `grid/mod.rs:72-76` records why the obvious candidate took `primary` /
+    /// `primary_foreground` instead (it is the column-reorder ghost, it paints
+    /// text on the fill, so it needs a text pair the contrast gate already
+    /// covers; `fill_handle` is ring@0.72, tuned by A3 for the non-text 3:1
+    /// bar). Rendered in the gallery only. Kept, on the A5 `Play`/`Bookmark`
+    /// precedent: do not invent a consumer, and do not delete a tuned token a
+    /// grid fill handle would want. Delete it if that feature is ruled out.
     pub fill_handle: Hsla,
     pub active_cell_tint: Hsla,
     pub marching_ants: Hsla,
