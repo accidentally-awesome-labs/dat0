@@ -54,7 +54,7 @@ use crate::grid::{GridDataSource, GridTableDelegate};
 use crate::main_bridge::MainLoop;
 use crate::recents::Recents;
 use crate::session::Session;
-use crate::theme::tokens::Dat0Theme as _;
+use crate::theme::tokens::{Dat0Theme as _, Sp, SpStyled as _};
 use crate::view::ViewModel;
 use crate::window_registry::{WindowHandle, WindowRegistry};
 use crate::workspace::Home;
@@ -4122,7 +4122,11 @@ impl WorkspaceShell {
             }));
 
         // ── Per-visible-axis cycle buttons ─────────────────────────────────
-        let mut row = h_flex().gap_2().flex_wrap().p_2().child(type_btn);
+        let mut row = h_flex()
+            .gap_sp(Sp::S8)
+            .flex_wrap()
+            .p_sp(Sp::S8)
+            .child(type_btn);
         for role in visible_axes(cur_type) {
             let current = axis_field(&self.chart_panel.spec, role).map(str::to_string);
             let label_role = dat0_i18n::t(axis_role_key(role));
@@ -7515,8 +7519,8 @@ impl Render for WorkspaceShell {
             gpui::div()
                 .flex()
                 .flex_col()
-                .gap_1()
-                .p_1()
+                .gap_sp(Sp::S4)
+                .p_sp(Sp::S4)
                 .children(
                     self.banners
                         .iter()
@@ -7681,14 +7685,14 @@ impl Render for WorkspaceShell {
             let is_dirty = vm.is_dirty();
             let label = vm.tab_id().to_string();
             let tab_label = h_flex()
-                .gap_1()
+                .gap_sp(Sp::S4)
                 .items_center()
                 .child(div().child(label))
                 .children(is_dirty.then(|| div().child("•")));
             h_flex()
                 .w_full()
-                .px_3()
-                .py_1()
+                .px_sp(Sp::S12)
+                .py_sp(Sp::S4)
                 .border_b_1()
                 .child(tab_label)
                 .into_any_element()
