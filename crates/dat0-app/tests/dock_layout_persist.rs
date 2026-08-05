@@ -688,3 +688,62 @@ fn a_dock_toggle_does_not_write_settings_toml(cx: &mut TestAppContext) {
     );
     std::mem::forget(tmp);
 }
+
+// ---------------------------------------------------------------------------
+// Restored panels must also run their SIDE EFFECTS
+// ---------------------------------------------------------------------------
+
+/// A restored left panel must run the side effects `activate_left_panel`
+/// centralises, or it comes back visible-but-empty.
+///
+/// ⚠ This is the bug the whole-branch pass found and no per-task test could:
+/// every other test in this file asserts dock or panel VISIBILITY, and the
+/// docks opened perfectly while the AI panel behind one of them was never
+/// hydrated. B7 folded these side effects into `activate_left_panel` so no
+/// entry point could lose them; B9's restore is a second entry point that
+/// seeds the visibility bools directly and skipped every one.
+///
+/// ⚠⚠ SAFETY: the seeded AI settings deliberately set NO provider.
+/// `hydrate_ai_panel` only reaches the OS keychain when a provider is set, and
+/// a test must never drive the real keychain (the standing rule from the
+/// AI-config slice, where an Enter press would have DELETED the developer's
+/// stored API key).
+#[gpui::test]
+#[serial]
+fn a_restored_ai_panel_is_hydrated_not_merely_visible(cx: &mut TestAppContext) {
+    let h = enter_async_harness(cx);
+    let _g = h.enter();
+    let tmp = tempfile::tempdir().unwrap();
+    let cfg = tmp.path().join("cfg");
+    std::fs::create_dir_all(&cfg).unwrap();
+    set_config_dir(&cfg);
+    init_components(cx);
+
+    // `enabled = true` with no provider: hydration is observable, the keychain
+    // is not touched.
+    let store = dat0_app::settings::store::SettingsStore::with_path(cfg.join("settings.toml"));
+    let mut settings = store.load_or_default().unwrap();
+    settings.ai.enabled = true;
+    settings.ai.provider = None;
+    settings.ui.dock_layout = Some(DockLayout {
+        left_panel: Some(LeftPanel::Ai),
+        ..DockLayout::default()
+    });
+    store.save(&settings).unwrap();
+
+    let session = build_empty_session(&tmp.path().join("state"));
+    let (shell, vcx) = open_shell_window(cx, session);
+    vcx.run_until_parked();
+
+    assert_eq!(
+        shell.read_with(&vcx.cx, |ws, _| ws.open_left_panel()),
+        Some(LeftPanel::Ai),
+        "precondition: the AI panel restored visible"
+    );
+    assert!(
+        shell.read_with(&vcx.cx, |ws, _| ws.ai_panel_enabled_for_test()),
+        "a restored AI panel must be HYDRATED from settings, not left at its \
+         default -- visible-but-empty is the failure this guards"
+    );
+    std::mem::forget(tmp);
+}

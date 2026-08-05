@@ -6962,6 +6962,22 @@ impl WorkspaceShell {
                     f32::from(viewport.height),
                 );
                 self.mount_sql_console(&dock, height, window, cx);
+                // The toggle path refreshes the autocomplete schema whenever the
+                // console is (re)shown; a restored console must not come back
+                // with an empty one.
+                self.refresh_completion_snapshot(cx);
+            }
+
+            // ⚠ Restoring a panel means seeding its visibility bool in the
+            // constructor, which does NOT go through `activate_left_panel` — so
+            // the side effects B7 centralised there would otherwise be skipped
+            // and a restored panel would come back EMPTY: the catalog with no
+            // tree, the AI dock with an unhydrated key/provider state. The docks
+            // opened correctly in every test regardless, because those assert
+            // visibility rather than contents, which is why this needed the
+            // whole-branch pass to find.
+            if let Some(target) = self.open_left_panel() {
+                self.on_left_panel_shown(target, cx);
             }
         }
 
@@ -7233,19 +7249,29 @@ impl WorkspaceShell {
     /// VSCode behaviour — and it falls out of the invariant rather than being a
     /// special case.
     ///
-    /// The per-panel side effects that used to live in the individual toggle
-    /// handlers moved here so that no entry point can lose them: Catalog
-    /// refreshes so the dock always shows fresh tables, AI hydrates its draft
-    /// from settings plus keychain.
+    /// The side effects of a left panel BECOMING VISIBLE: Catalog refreshes so
+    /// the dock always shows fresh tables, AI hydrates its draft from settings
+    /// plus keychain.
+    ///
+    /// B7 folded these out of the individual toggle handlers and into
+    /// `activate_left_panel` so that no entry point could lose them. B9 adds a
+    /// SECOND entry point — the constructor seeds the visibility bools straight
+    /// from the persisted layout, which never goes through `activate_left_panel`
+    /// — so they move again, into a helper both call. Duplicating the match
+    /// would have re-created exactly the drift B7 removed.
+    pub(crate) fn on_left_panel_shown(&mut self, target: LeftPanel, cx: &mut gpui::Context<Self>) {
+        match target {
+            LeftPanel::Catalog => self.refresh_catalog(cx),
+            LeftPanel::Ai => self.hydrate_ai_panel(),
+            LeftPanel::Connections => {}
+        }
+    }
+
     pub fn activate_left_panel(&mut self, target: LeftPanel, cx: &mut gpui::Context<Self>) {
         let already_open = self.left_panel_visible(target);
         self.set_left_panel_exclusive((!already_open).then_some(target));
         if !already_open {
-            match target {
-                LeftPanel::Catalog => self.refresh_catalog(cx),
-                LeftPanel::Ai => self.hydrate_ai_panel(),
-                LeftPanel::Connections => {}
-            }
+            self.on_left_panel_shown(target, cx);
         }
         // Session v11 persists the whole rail choice, not just the catalog:
         // `dock_layout.left_panel` is `Option<LeftPanel>`, so the at-most-one
