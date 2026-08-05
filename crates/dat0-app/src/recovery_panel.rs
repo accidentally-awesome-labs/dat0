@@ -110,7 +110,7 @@ pub enum RecoveryRow {
 ///
 /// Pure given the two roots, so it's unit-testable without GPUI. The orphan
 /// test (`session.json` present under a scratch subdir) matches
-/// [`crate::window::count_orphan_scratch`]'s definition exactly; the incomplete
+/// [`crate::window::package_ops::count_orphan_scratch`]'s definition exactly; the incomplete
 /// scan delegates to [`crate::recovery_scan::scan_incomplete_workspaces`] so the
 /// Sheet and the boot banner can never drift on what counts as recoverable.
 ///
