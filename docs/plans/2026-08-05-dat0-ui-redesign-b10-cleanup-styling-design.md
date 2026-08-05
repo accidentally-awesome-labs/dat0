@@ -487,3 +487,45 @@ The empty ratchet was itself proven non-vacuous by planting `gpui::rgba(…)` in
 
 `git diff --stat main -- crates/dat0-app/src/grid` is empty: the grid is
 byte-identical, as every B slice has required.
+
+### 11.5 Local gate — all green
+
+| check | result |
+| --- | --- |
+| `cargo fmt --all --check` | clean |
+| `cargo clippy --workspace --all-targets -- -D warnings` | exit 0 |
+| `cargo clippy -p dat0-app --all-targets --features a11y-capture,gallery -- -D warnings` | exit 0 |
+| `cargo test -p dat0-app` | **118** binaries, 0 failures |
+| `cargo test -p dat0-app --features a11y-capture` | **118** binaries, 0 failures |
+| `cargo test -p dat0-app --features a11y-capture,gallery` | **118** binaries, 0 failures |
+| `style_lint` at `ALLOW = &[]` | 4/4 |
+| `theme_contrast_gate` | 5/5 |
+| `gallery_smoke` | 1/1 |
+| `src/grid` vs `main` | byte-identical |
+| colour hex in `src/` | 0 |
+| `style-lint: allow(` in `src/` | 0 |
+
+**118 binaries, unchanged from B9** — B10 adds no test binary, so the macOS CI
+disk figure should not move.
+
+The suite count is the same across all three feature combinations, which is the
+expected shape: `a11y-capture` and `gallery` add tests *inside* existing
+binaries rather than new targets.
+
+### 11.6 The seeded boot check
+
+B9 established that a fresh-session boot exercises **none** of the restore path,
+so an unseeded boot check is vacuous. Two seeded boots were run against
+`DAT0_CONFIG_DIR`, chosen to cover both restore arms:
+
+1. `left_panel = "catalog"`, inspector visible, console open — the ordinary arm.
+2. `left_panel = "ai"`, charts visible, console open — **B9's riskiest arm**,
+   the one whose `on_left_panel_shown` fix puts a `tokio::spawn` in the first
+   render, which no test can clear because the harness supplies its own runtime.
+
+Both booted clean: no panic, and the only `error`-matching lines are the two
+documented non-fatal update-check DEBUG entries. `settings.toml` round-tripped
+byte-unchanged after boot — the seeded layout was neither reset nor rewritten.
+
+Boot log compared against a `main` build booted from the same seed, normalising
+timestamps, session UUIDs, durations and the config path: **identical**.
