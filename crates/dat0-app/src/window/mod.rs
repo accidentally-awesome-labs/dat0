@@ -1,7 +1,28 @@
-//! The dat0 workspace window.
+//! The dat0 workspace window: the `WorkspaceShell` entity, its state, and the
+//! wiring that binds it to its `ViewModel` and grid delegate.
 //!
-//! B11 is splitting this module into `window/*`; the directory map lands
-//! in T16 once every child module exists and can be described accurately.
+//! Everything else lives in a child module. Children see this module's private
+//! items — including every field on [`WorkspaceShell`] — because Rust makes a
+//! private item visible in its defining module *and all descendants*. The
+//! reverse is not true, which is why a child method the shell still calls is
+//! marked `pub(super)`.
+//!
+//! | module | owns |
+//! |---|---|
+//! | [`boot`] | `run_app`, the menu action handlers, window spawning |
+//! | [`render`] | the `Render` impl and the grid body it draws |
+//! | [`dock`] | the DockArea, activity rail, panel bodies, layout persist (B5-B9) |
+//! | [`sql`] | the SQL console: mount, run, cancel, query library (P5a, B8) |
+//! | [`ai`] | the BYOK panel and the three async AI surfaces (P9c) |
+//! | [`charts`] | axis binding, plot query, chart save/open (P9a) |
+//! | [`package_ops`] | `.dat0` export, open, unpack, replay, recovery scans (P8) |
+//! | [`workspace_ops`] | open, save, promote-by-move, recents |
+//! | [`catalog_inspector`] | catalog tree and nav, column profile, lineage (P6) |
+//! | [`data_io`] | export, save-as-table, file drop, sample and recent open |
+//! | [`modals`] | modal mounting, name prompt, saved picker, palette (B1-B4) |
+//! | [`live_refresh`] | source watch, re-import, replay on drift (P7c) |
+//! | [`connections`] | MotherDuck connect, test, token, detach (P9b) |
+//! | `test_support` | `a11y-capture` accessors for the integration suites |
 
 mod ai;
 mod boot;
@@ -10,39 +31,39 @@ mod charts;
 mod connections;
 mod data_io;
 mod dock;
-
-use dock::SQL_CONSOLE_DOCK_HEIGHT;
 mod live_refresh;
-
-pub use live_refresh::dispatch_live_refresh;
 mod modals;
-
-use modals::NamePromptIntent;
 mod package_ops;
 mod render;
-
-pub(crate) use render::bounding_rect;
-#[cfg(feature = "a11y-capture")]
 mod sql;
+mod workspace_ops;
 
-use sql::{bare_table_name, now_unix_millis};
+// Gated because it exists only for the integration suites. The attribute must
+// stay glued to this module: B11 briefly let it drift onto `mod sql;`, which
+// removed the SQL console from the shipped binary while every feature-unified
+// gate stayed green.
+#[cfg(feature = "a11y-capture")]
 mod test_support;
 
+pub use boot::{register_menu_action_handlers, run_app};
+pub use live_refresh::dispatch_live_refresh;
+pub use package_ops::{orphan_scan_emit, recovery_scan_emit};
+
+pub(crate) use boot::spawn_window;
 pub(crate) use package_ops::{
     export_package_flow, open_demo_workspace, open_package_at, open_package_flow,
     replay_package_flow, spawn_recovered_scratch, unpack_package_flow,
 };
-pub use package_ops::{orphan_scan_emit, recovery_scan_emit};
-mod workspace_ops;
-
-use workspace_ops::{configured_memory_budget, open_recent_n, open_workspace_at};
+pub(crate) use render::bounding_rect;
 pub(crate) use workspace_ops::{
     now_epoch_secs, open_workspace_flow, save_workspace_flow, spawn_workspace_window,
 };
 
-pub(crate) use boot::spawn_window;
 use boot::{focused_session_arc, open_window_view};
-pub use boot::{register_menu_action_handlers, run_app};
+use dock::SQL_CONSOLE_DOCK_HEIGHT;
+use modals::NamePromptIntent;
+use sql::{bare_table_name, now_unix_millis};
+use workspace_ops::{configured_memory_budget, open_recent_n, open_workspace_at};
 
 use anyhow::Result;
 use dat0_i18n::t;

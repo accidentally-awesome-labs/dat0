@@ -385,3 +385,137 @@ the setter, not your value", and the standing rule to drive keyboard behaviour w
 
 Probe state fully reverted after each probe; `git status` clean and digest identity re-confirmed
 before T1.
+
+### Slice as-built (2026-08-05)
+
+**Result: `window.rs` 8,672 → `window/mod.rs` 928, across 14 child modules.** The `<5k` target is
+met more than five times over. Final sizes:
+
+| module | lines | module | lines |
+|---|---|---|---|
+| `boot.rs` | 959 | `package_ops.rs` | 566 |
+| `mod.rs` | **928** | `catalog_inspector.rs` | 492 |
+| `render.rs` | 788 | `modals.rs` | 466 |
+| `dock.rs` | 752 | `data_io.rs` | 448 |
+| `sql.rs` | 699 | `workspace_ops.rs` | 434 |
+| `ai.rs` | 614 | `test_support.rs` | 409 |
+| `charts.rs` | 560 | `live_refresh.rs` | 404 |
+| | | `connections.rs` | 364 |
+
+**Final digest: 229 functions before, 229 after across 15 files, every body verbatim** — zero
+MISSING, zero ADDED, zero CHANGED. Green at every one of the 14 move tasks, not only at the end.
+
+**Exactly one line changed outside `src/window/`**, and it is a comment: the intra-doc link in
+`recovery_panel.rs` retargeted at T4. No call site anywhere in the tree moved.
+
+**Boot check: both restore arms produce a log identical to a `main` build**, byte for byte after
+normalising timestamps, UUIDs and durations — arm 1 `left_panel = "catalog"`, arm 2
+`left_panel = "ai"` (B9's riskiest, whose hydration fix puts a `tokio::spawn` in the first render
+that no test can clear).
+
+#### The cross-module surface was far smaller than the file's size implied
+
+The design predicted `E0624` would enumerate a large internal call surface. It enumerated **~25
+methods across 14 modules**, and the distribution was the surprise:
+
+- `catalog_inspector` (13 methods) and `connections` (7) needed **zero** visibility changes.
+- `render` — which the plan expected to produce "the largest `E0624` batch of the slice", on the
+  grounds that it reads nearly every field — produced **none at all**, only one missing re-export.
+  Fields are visible downward for free, and every method it calls had already been widened.
+
+**An 8,672-line file implies far more entanglement than it necessarily has.** The methods were
+long, not tangled.
+
+#### Three error classes, not one
+
+The design anticipated only `E0624`. Execution found:
+
+| Error | Meaning | Fix |
+|---|---|---|
+| `E0624` | a **method** the parent still calls | `pub(super)` |
+| `E0425` | a **free fn** the parent still calls | `pub(super)` **and** a `use` — visibility is not naming |
+| `E0364` | `pub use` of a `pub(crate)` item | `pub(crate) use` |
+| `E0616` | a **struct moved down**, fields read by the parent | `pub(super)` on type and fields |
+
+`E0616` is the mirror image of the design's central claim: `WorkspaceShell`'s fields cost nothing
+because the struct *stays* in the parent; `MountedModal`'s cost `pub(super)` because the type
+*moved down*.
+
+★ **`use super::*` inherits the parent's entire private import block** — a `use` declaration is an
+item, private by default, and therefore visible to descendants by the same rule as fields. It
+passes `clippy --all-targets -D warnings`. This deleted a planned chore (hand-curating 15 import
+blocks) and meant sibling wiring often cost nothing: at T3, four functions `boot.rs` needed were
+fixed entirely by adding `use` lines to `mod.rs`.
+
+#### ⚠⚠ The slice's most important finding: a gate that could not see the product
+
+**At T12 a misplaced `#[cfg(feature = "a11y-capture")]` attribute feature-gated `mod sql;`, removing
+the entire SQL console from the shipped binary. Four consecutive task gates passed.**
+
+The move tool inserted `mod sql;` in sorted position *between* `#[cfg(feature = "a11y-capture")]`
+and the `mod test_support;` it governed, silently rebinding the attribute.
+
+It survived because **`dat0-app` carries a self dev-dependency with `features = ["a11y-capture"]`**
+(the same trick that enables `gallery`). Cargo unifies features across a build, so every command
+that builds a test target — `clippy --all-targets`, `cargo test`, *all three feature combinations* —
+turns `a11y-capture` on. fmt, clippy, and 118 test binaries were **structurally incapable** of
+seeing it. Only `cargo check --bin dat0`, which excludes dev-dependencies, exposes it, in about four
+seconds.
+
+★★★ **RULE: in a crate whose features are enabled by a self dev-dependency, no test-building command
+can validate a `#[cfg(feature = …)]`. The local gate must include a bin-only build.** Owner approved
+adding `cargo check --bin dat0` to this slice's gate and proposing it for the project's standing
+gate.
+
+★★ **Corollary on attributes: never insert an item between an attribute and the item it governs.**
+Sorted-insertion tooling does this silently and the result still compiles.
+
+Owner chose to fix forward rather than rebase (branch unpushed, so both were open): the finding
+stays visible in history, and bisecting a *test* failure still works across T12–T15 — only a bisect
+on "does the binary build" is affected, with a now-documented one-line cause.
+
+#### A third green-but-blind signal, in the final gate itself
+
+The first attempt at the three-combination matrix ran as a shell loop and reported **exit code 0**
+while two of its three runs had never built: the feature flag reached `cargo` as a single quoted
+argument (`error: unexpected argument '--features a11y-capture' found`), and a trailing `true`
+swallowed the failure. Only counting `test result:` lines — which came back **0** — revealed it.
+
+★ **Count the work a gate did; do not read its exit code.** Three times in this slice a green signal
+meant nothing: the digest's in-place probe, the feature-unified build, and this loop. Each time the
+check that actually settled it was a *count* — 229 functions, 118 binaries, `test result` lines.
+
+#### Two tooling defects, one root cause
+
+Both the digest (T0) and the move tool (T7) bounded an item by **"where the next item begins"**,
+which is wrong wherever structure nests:
+
+- The digest's last function before a non-`fn` item swallowed that item — `bounding_rect` had
+  absorbed `impl Render for WorkspaceShell {`, so moving `render` reported *both* as CHANGED.
+- The move tool's last item inside a block swallowed the block's closing brace — it deleted
+  `mod tests`'s `}` and produced an unclosed delimiter.
+
+Both now brace-match. ★ **The digest defect was only findable by running it across a real move**;
+the in-place perturbation the plan specified passes against the broken version. **Validate a gate
+against the transformation it exists to watch.**
+
+A third digest issue followed: adding `pub(super)` can push a signature past rustfmt's width, so it
+reflows *and* gains a magic trailing comma — reported as CHANGED when nothing was edited. The digest
+now compares token streams, and its non-vacuity was re-proven in both directions after each
+weakening of the normalisation.
+
+#### Ratchet
+
+`tests/window_module_ratchet.rs` carries a per-file ceiling for every module under `src/window/`,
+failing when a file grows past its ceiling, when a ceiling is left stale far above its file, when a
+module on disk has no entry, and when an entry names a file that is gone. Ceilings are
+`(lines + 50) / 100 * 100 + 100`, giving every module ≥51 lines of headroom.
+
+★ `UNDER_SLACK = 300` exists because a line count is not a violation count: A4's colour ratchet can
+demand exact convergence because counts are meant to reach zero, but a line ceiling that fires on an
+ordinary edit gets suppressed rather than obeyed. The first ceiling table would have left `sql.rs`
+one line of headroom — hence the `+ 50` rounding rule.
+
+Per A4's lesson, `ratchet_report` has its own unit test over constructed inputs; the live test was
+proven non-vacuous by padding `connections.rs` with 400 blank lines (red, naming the file and the
+overage) and reverting with a `touch`.

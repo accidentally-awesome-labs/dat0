@@ -64,10 +64,24 @@ Run at the end of every task. All must pass before committing.
 cd /Users/salar/Projects/dat0
 cargo fmt --all
 cargo fmt --all -- --check
+cargo check --bin dat0                                          # ⚠ see below — NOT optional
 cargo clippy --workspace --all-targets -- -D warnings          # must exit 0
 cargo test -p dat0-app 2>&1 | tee /tmp/b11-gate.log | tail -5
 grep -c "^test result: ok" /tmp/b11-gate.log                    # expect 118
 ```
+
+⚠⚠ **`cargo check --bin dat0` is the only local gate that sees the feature set a real user gets,
+and it was missing from this plan until T16 found out the hard way.**
+
+`dat0-app` carries a **self dev-dependency with `features = ["a11y-capture"]`** (the same trick that
+enables `gallery`). Cargo unifies features across a build, so **every command that builds a test
+target — `clippy --all-targets`, `cargo test`, all three feature combinations — silently turns
+`a11y-capture` on.** A `#[cfg(feature = "a11y-capture")]` mistake is therefore invisible to fmt,
+clippy, and all 118 test binaries at once.
+
+At T12 a misplaced attribute feature-gated `mod sql;`, removing the entire SQL console from the
+shipped binary. Four consecutive task gates passed. Only a build that excludes dev-dependencies
+exposes it, and it costs about four seconds.
 
 Feature-matrix sweep (T0, T16, and any task touching `test_support.rs` or a `cfg(test)` mod):
 
