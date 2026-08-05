@@ -406,3 +406,84 @@ Executed inline by the controller, no subagents, per the B9 process.
 3. Carried forward: the B4 palette, B5 dock pixels / narrow window / file drop,
    B6 title bars, B7 rail, B8 console chrome and double title bar, B9 restored
    layout and panel *contents*, all × 3 themes.
+
+---
+
+## 11. As-built
+
+**Branch** `feat/ui-redesign-b10-cleanup-styling` off main `136ef75`. Executed
+inline by the controller, no subagents.
+
+| task | sha | content |
+| --- | --- | --- |
+| design | `e582657` | this document |
+| plan | `a9cf787` | `…-b10-cleanup-styling-plan.md`, 6 tasks |
+| T0 | `0e13c78` | `Sp::rems()` added additively + three gates |
+| T1 | `cb9d8f5` | drag tint → token, α retune, `ALLOW = &[]` |
+| T2 | `c158a6e` | `Sp::pixels()` → `Sp::rems()`, call-site fixups |
+| T3 | `08b2561` | the three `window.rs` chains |
+| T4 | `01fd609` | `fill_handle` doc comment |
+| T5 | *(this commit)* | master plan B10 row + B11 row + this section |
+
+### 11.1 The T0 gate
+
+**Passed; the STOP clause did not fire.** `Rems` compiles into all five
+`SpStyled` setters, so T2 and T3 both ran.
+
+Non-vacuity of the scale gates was proven by perturbing `Sp::rems`'s divisor to
+`/ 8.`, which reddened `sp_rems_matches_gpui_helper_scale` and
+`sp_rems_resolve_at_dat0_rem_size` (`left: 1.75px, right: 0.875px`), then
+reverting with a `touch` to force the rebuild.
+
+### 11.2 Deviations from the plan
+
+**One, and it was in the plan's own test code.** T0 Step 3's
+`rems_flows_through_every_styled_setter` chained `.p()`, `.px()`, `.py()`,
+`.gap()` and `.m()` on a single element and then asserted
+`padding.top == Sp::S8`. It failed: `py` sets top *and* bottom, so it overwrote
+the `padding.top` that `p` had set one call earlier, and the element reported
+`0.25rem` where the assertion wanted `0.5rem`.
+
+The failure was the test's, not the code's — and it still discharged the gate,
+because reaching a runtime assertion at all proved the `Rems` conversion
+compiles into every setter. Rewritten as one element per setter, with a comment
+saying why chaining is wrong here.
+
+Worth keeping as a general note: **a chained style assertion measures the
+setter's semantics, not the value you passed it.** Any future read-back test
+over gpui's overlapping shorthands (`p`/`px`/`py`, `m`/`mx`/`my`,
+`border`/`border_x`) needs one element per setter.
+
+### 11.3 Measurements that differ from what this document predicted
+
+| quantity | predicted | measured |
+| --- | --- | --- |
+| dark, `foreground` over `drop_target∘background` at α `22` | 10.06:1 | **10.04:1** |
+| light, same | 13.07:1 | 13.07:1 |
+| high contrast, same (unchanged) | 13.01:1 | 13.01:1 |
+
+The dark figure is 0.02 off because §2.5's arithmetic rounded the hex→float
+conversion; the gate's own compositor is the authority and both clear the 4.5
+floor by better than 2×.
+
+Everything else held. In particular the `.pixels()` inventory was exactly the
+predicted 10 gallery sites plus the one status-bar hairline — `cargo clippy
+--all-targets --features a11y-capture,gallery` reached exit 0 with no
+unlisted call site, so the type change enumerated its own blast radius. This is
+the A6 lesson again: **change the signature first and let the compiler produce
+the inventory.**
+
+### 11.4 Independent verification of the ratchet's premise
+
+The gate says `src/` holds no colour literal. Verified separately from the test
+that asserts it, by scanning the live tree:
+
+- `grep -rnE '(^|[^0-9a-zA-Z_])0x[0-9a-fA-F]{6}([0-9a-fA-F]{2})?([^0-9a-fA-F]|$)' crates/dat0-app/src --include='*.rs'` → **0 hits**
+- `grep -rn "style-lint: allow(" crates/dat0-app/src` → **0 hits**
+
+So the allowlist is empty *and* unused — no literal survived behind an escape.
+The empty ratchet was itself proven non-vacuous by planting `gpui::rgba(…)` in
+`tokens.rs`, which reddened the gate naming `src/theme/tokens.rs:605`.
+
+`git diff --stat main -- crates/dat0-app/src/grid` is empty: the grid is
+byte-identical, as every B slice has required.
