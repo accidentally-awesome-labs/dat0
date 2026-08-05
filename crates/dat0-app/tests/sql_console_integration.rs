@@ -125,6 +125,7 @@ fn session_round_trips_sql_tabs_via_setter() {
         charts: vec![],
         attachments: vec![],
         ui: Default::default(),
+        dock_layout: None,
     };
     let json = serde_json::to_string_pretty(&state).unwrap();
     let back: dat0_app::session::SessionState = serde_json::from_str(&json).unwrap();

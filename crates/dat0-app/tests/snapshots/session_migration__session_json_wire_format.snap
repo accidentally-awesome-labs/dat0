@@ -3,7 +3,7 @@ source: crates/dat0-app/tests/session_migration.rs
 expression: json
 ---
 {
-  "schema_version": 10,
+  "schema_version": 11,
   "tabs": [
     {
       "table_name": "orders",
@@ -81,10 +81,16 @@ expression: json
     }
   ],
   "ui": {
-    "catalog_panel_visible": true,
-    "inspector_panel_visible": false,
     "catalog_collapsed": [
       "local"
     ]
+  },
+  "dock_layout": {
+    "left_panel": "catalog",
+    "left_size": 500,
+    "inspector_visible": false,
+    "charts_visible": true,
+    "console_open": true,
+    "bottom_size": 420
   }
 }

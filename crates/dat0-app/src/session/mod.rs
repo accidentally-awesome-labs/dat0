@@ -21,6 +21,7 @@ use uuid::Uuid;
 use dat0_engine::{DuckDBEngine, MemoryBudget, QueryEngine, Transformation};
 
 pub mod charts;
+pub mod dock_layout;
 pub mod migrate;
 pub mod queries;
 pub use migrate::SessionLoadError;
@@ -62,7 +63,14 @@ use queries::{HistoryEntry, SavedQuery};
 /// REPLACED by `catalog_collapsed` (serde-defaulted empty = all expanded).
 /// Serde silently drops the old keys on load; prod only ever wrote them at
 /// their empty defaults, so no data is migrated.
-pub const SESSION_SCHEMA_VERSION: u32 = 10;
+///
+/// v10 → v11 (B9, UI redesign) adds `dock_layout`: which docks are open, which
+/// left-rail panel is showing, and each dock's outer size. Additive — a v10 file
+/// has no such key. The migration CARRIES OVER `ui.catalog_panel_visible` and
+/// `ui.inspector_panel_visible`, which v11 relocates into the layout.
+///
+/// Docks only, never the centre — see `session/dock_layout.rs`.
+pub const SESSION_SCHEMA_VERSION: u32 = 11;
 
 /// A single tab within a scratch session.
 ///
@@ -95,21 +103,23 @@ pub struct SqlTabState {
     pub sql: String,
 }
 
-/// Persisted catalog/inspector UI state (v8+, P6a; reshaped v10, catalog-tree
-/// slice). Additive: a v7 file lacks the enclosing `ui` field, so the whole
-/// struct serde-defaults to both-docks-hidden / all-expanded.
+/// Persisted catalog TREE state (v8+, P6a; reshaped v10; reduced v11).
 ///
 /// v10 REPLACED the never-read v8 forward-looking fields (`catalog_expanded`,
 /// `catalog_selection`) with `catalog_collapsed`: the panel defaults to
 /// expanded, so the persisted set is the COLLAPSED attach aliases (empty =
-/// all expanded; absent-in-file = all expanded). Old keys in v8/v9 files are
-/// silently dropped by serde on load (prod only ever wrote them empty).
+/// all expanded; absent-in-file = all expanded).
+///
+/// v11 (B9) REMOVED `catalog_panel_visible` and `inspector_panel_visible`.
+/// Dock visibility now lives in [`SessionState::dock_layout`], which owns all
+/// of it — keeping both would leave two sources of truth for the same two
+/// flags. Serde drops the old keys silently on load, which is precisely why
+/// `migrate::with_carried_layout` reads them from the RAW document before this
+/// struct ever sees them.
+///
+/// What remains is catalog tree state, not dock layout.
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
 pub struct SessionUiState {
-    #[serde(default)]
-    pub catalog_panel_visible: bool,
-    #[serde(default)]
-    pub inspector_panel_visible: bool,
     /// Collapsed attach-parent aliases, sorted (deterministic wire format).
     #[serde(default)]
     pub catalog_collapsed: Vec<String>,
@@ -160,6 +170,15 @@ pub struct SessionState {
     pub attachments: Vec<PersistedAttachment>,
     #[serde(default)]
     pub ui: SessionUiState,
+    /// B9 dock layout (v11+). Tolerant on read: a malformed value degrades to
+    /// `None` — the default layout — instead of failing the whole document, so
+    /// a bad layout can never cost a user their tabs.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "crate::session::dock_layout::de_tolerant_json"
+    )]
+    pub dock_layout: Option<crate::session::dock_layout::DockLayout>,
 }
 
 fn default_schema_version_v1() -> u32 {
@@ -179,6 +198,7 @@ impl Default for SessionState {
             charts: Vec::new(),
             attachments: Vec::new(),
             ui: SessionUiState::default(),
+            dock_layout: None,
         }
     }
 }
@@ -210,6 +230,7 @@ pub struct Session {
     charts: Vec<crate::session::charts::SavedChart>,
     attachments: Vec<PersistedAttachment>,
     ui: SessionUiState,
+    dock_layout: Option<crate::session::dock_layout::DockLayout>,
 }
 
 impl Session {
@@ -252,6 +273,7 @@ impl Session {
             charts: Vec::new(),
             attachments: Vec::new(),
             ui: SessionUiState::default(),
+            dock_layout: None,
         };
         sess.persist()
             .context("session::new: initial persist failed")?;
@@ -331,6 +353,7 @@ impl Session {
             charts: state.charts,
             attachments: state.attachments,
             ui: state.ui,
+            dock_layout: state.dock_layout,
         };
 
         // Eagerly persist after recovery. This matches Session::new's pattern and
@@ -404,6 +427,7 @@ impl Session {
             charts: state.charts,
             attachments: state.attachments,
             ui: state.ui,
+            dock_layout: state.dock_layout,
         };
 
         sess.persist()
@@ -452,6 +476,7 @@ impl Session {
             charts,
             attachments: Vec::new(),
             ui: SessionUiState::default(),
+            dock_layout: None,
         }
     }
 
@@ -655,6 +680,21 @@ impl Session {
         self.persist().context("session::set_ui: persist failed")
     }
 
+    /// Read-only access to the persisted dock layout (B9, v11+).
+    pub fn dock_layout(&self) -> Option<&crate::session::dock_layout::DockLayout> {
+        self.dock_layout.as_ref()
+    }
+
+    /// Replace the persisted dock layout and persist (B9).
+    pub fn set_dock_layout(
+        &mut self,
+        layout: Option<crate::session::dock_layout::DockLayout>,
+    ) -> Result<()> {
+        self.dock_layout = layout;
+        self.persist()
+            .context("session::set_dock_layout: persist failed")
+    }
+
     // -----------------------------------------------------------------------
     // Persistence
     // -----------------------------------------------------------------------
@@ -678,6 +718,7 @@ impl Session {
             charts: self.charts.clone(),
             attachments: self.attachments.clone(),
             ui: self.ui.clone(),
+            dock_layout: self.dock_layout.clone(),
         };
 
         let bytes =
@@ -866,8 +907,8 @@ mod tests {
             "schema_version": 7, "tabs": [], "attachments": []
         });
         let state: super::SessionState = serde_json::from_value(v7).unwrap();
-        assert!(!state.ui.catalog_panel_visible, "default dock hidden");
         assert!(state.ui.catalog_collapsed.is_empty());
+        assert!(state.dock_layout.is_none(), "no layout on a raw v7 parse");
     }
 
     #[test]
@@ -1030,11 +1071,16 @@ mod tests {
             assert_eq!(sess.ui(), &SessionUiState::default());
 
             sess.set_ui(SessionUiState {
-                catalog_panel_visible: true,
-                inspector_panel_visible: true,
                 catalog_collapsed: vec!["sq".into(), "warehouse".into()],
             })
             .expect("set_ui");
+            // v11: dock visibility lives here now, not in `ui`.
+            sess.set_dock_layout(Some(crate::session::dock_layout::DockLayout {
+                left_panel: Some(crate::window::LeftPanel::Catalog),
+                inspector_visible: true,
+                ..Default::default()
+            }))
+            .expect("set_dock_layout");
 
             sess.home.root_dir().to_path_buf()
             // sess drops here, releasing the engine + DB lock
@@ -1044,12 +1090,18 @@ mod tests {
             .await
             .expect("Session::recover");
 
-        let ui = recovered.ui();
-        assert!(ui.catalog_panel_visible, "catalog dock visibility survived");
+        let layout = recovered.dock_layout().expect("layout survived recovery");
+        assert_eq!(
+            layout.left_panel,
+            Some(crate::window::LeftPanel::Catalog),
+            "catalog dock visibility survived"
+        );
         assert!(
-            ui.inspector_panel_visible,
+            layout.inspector_visible,
             "inspector dock visibility survived"
         );
+
+        let ui = recovered.ui();
         assert_eq!(
             ui.catalog_collapsed,
             vec!["sq".to_string(), "warehouse".to_string()]

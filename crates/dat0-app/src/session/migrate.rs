@@ -190,17 +190,18 @@ pub fn load_str(raw: &str) -> Result<SessionState, SessionLoadError> {
     // migration path (e.g. `3 => migrate_v3_to_v4(raw)`) or get an
     // inexhaustive-match error instead of a silent runtime failure.
     match probe.schema_version {
-        1 => migrate_v1_to_v7(raw),
-        2 => migrate_v2_to_v7(raw),
-        3 => migrate_v3_to_v7(raw),
-        4 => migrate_v4_to_v7(raw),
-        5 => migrate_v5_to_v7(raw),
-        6 => migrate_v6_to_v7(raw),
-        7 => migrate_v7_to_v8(raw),
-        8 => migrate_v8_to_v9(raw),
-        9 => migrate_v9_to_v10(raw),
-        10 => {
-            // Forward-incompat guard: a NEWER dat0 (writing the same v10 schema)
+        1 => with_carried_layout(raw, migrate_v1_to_v7(raw)),
+        2 => with_carried_layout(raw, migrate_v2_to_v7(raw)),
+        3 => with_carried_layout(raw, migrate_v3_to_v7(raw)),
+        4 => with_carried_layout(raw, migrate_v4_to_v7(raw)),
+        5 => with_carried_layout(raw, migrate_v5_to_v7(raw)),
+        6 => with_carried_layout(raw, migrate_v6_to_v7(raw)),
+        7 => with_carried_layout(raw, migrate_v7_to_v8(raw)),
+        8 => with_carried_layout(raw, migrate_v8_to_v9(raw)),
+        9 => with_carried_layout(raw, migrate_v9_to_v10(raw)),
+        10 => with_carried_layout(raw, migrate_v10_to_v11(raw)),
+        11 => {
+            // Forward-incompat guard: a NEWER dat0 (writing the same v11 schema)
             // may have introduced a transform variant this build doesn't know.
             // Scan the current-version document's transform stacks and map any
             // unknown TOP-LEVEL `kind` to the forward-incompat banner path BEFORE
@@ -219,7 +220,7 @@ pub fn load_str(raw: &str) -> Result<SessionState, SessionLoadError> {
             Ok(state)
         }
         // When SESSION_SCHEMA_VERSION advances, add: N => migrate_vN_to_v(N+1)(raw)
-        // and make the new current-version (now 10) arm above the "load as-is"
+        // and make the new current-version (now 11) arm above the "load as-is"
         // target.
         n => Err(SessionLoadError::UnsupportedVersion(n)),
     }
@@ -366,6 +367,59 @@ fn migrate_v9_to_v10(raw: &str) -> Result<SessionState, SessionLoadError> {
     Ok(state)
 }
 
+/// Migrate a raw v10 JSON string to a v11 `SessionState`.
+///
+/// v11 adds `dock_layout`. Like its siblings this is a re-parse + version stamp;
+/// the layout itself is derived by [`with_carried_layout`], which every pre-v11
+/// arm runs.
+fn migrate_v10_to_v11(raw: &str) -> Result<SessionState, SessionLoadError> {
+    let mut state: SessionState = serde_json::from_str(raw)?;
+    state.schema_version = SESSION_SCHEMA_VERSION;
+    Ok(state)
+}
+
+/// Derive the v11 `dock_layout` for ANY pre-v11 document.
+///
+/// Every pre-v11 file predates `dock_layout`, so one rule covers all of them:
+/// build it from the `ui` dock bools that v11 relocates. `ui` itself only
+/// arrived at v8, and v1–v7 therefore derive an all-closed layout — which is
+/// exactly what those files meant.
+///
+/// ⚠⚠ This is applied per-ARM rather than inside `migrate_v10_to_v11`, and the
+/// difference is not cosmetic: `ui.catalog_panel_visible` has existed since v8,
+/// so a v8 or v9 session with the catalog open would silently lose it if only
+/// the v10 path carried the value over. Every arm below the current version
+/// needs it.
+///
+/// ⚠⚠ The bools are read from the RAW document, never from the parsed
+/// `SessionState`. They still exist on `SessionUiState` at this commit, but B9's
+/// final task removes them — after which serde drops those keys SILENTLY, with
+/// no error, and a version of this function reading the parsed struct would
+/// quietly reset every existing user's layout. Reading the raw JSON is correct
+/// both before and after that removal.
+///
+/// The result is always `Some`, even when everything was closed: `None` means
+/// "this session has no opinion" and falls through to the settings-level seed,
+/// which would reopen docks the user had deliberately shut.
+fn with_carried_layout(
+    raw: &str,
+    migrated: Result<SessionState, SessionLoadError>,
+) -> Result<SessionState, SessionLoadError> {
+    let mut state = migrated?;
+    let doc: serde_json::Value = serde_json::from_str(raw)?;
+    let flag = |key: &str| {
+        doc.pointer(&format!("/ui/{key}"))
+            .and_then(serde_json::Value::as_bool)
+            .unwrap_or(false)
+    };
+    state.dock_layout = Some(crate::session::dock_layout::DockLayout {
+        left_panel: flag("catalog_panel_visible").then_some(crate::window::LeftPanel::Catalog),
+        inspector_visible: flag("inspector_panel_visible"),
+        ..Default::default()
+    });
+    Ok(state)
+}
+
 #[cfg(test)]
 mod tests {
     #[test]
@@ -385,10 +439,125 @@ mod tests {
                   "catalog_expanded":["orders"],"catalog_selection":"orders"}}"#;
         let state = super::load_str(v9).expect("v9 migrates");
         assert_eq!(state.schema_version, super::SESSION_SCHEMA_VERSION);
-        assert!(state.ui.catalog_panel_visible, "known ui keys survive");
+        assert_eq!(
+            state.dock_layout.and_then(|l| l.left_panel),
+            Some(crate::window::LeftPanel::Catalog),
+            "the v9 catalog bool was carried into v11's layout"
+        );
         assert!(
             state.ui.catalog_collapsed.is_empty(),
             "new field defaults empty; dead keys dropped"
         );
+    }
+
+    #[test]
+    fn v10_carries_its_dock_bools_into_the_v11_layout() {
+        // A user whose catalog and inspector were open must not silently lose
+        // them on upgrade. v9 → v10 could DISCARD its old keys because prod only
+        // ever wrote them at their empty defaults; these two hold real values.
+        let v10 = r#"{
+            "schema_version": 10,
+            "tabs": [],
+            "ui": {
+                "catalog_panel_visible": true,
+                "inspector_panel_visible": true,
+                "catalog_collapsed": ["md"]
+            }
+        }"#;
+        let state = super::load_str(v10).expect("v10 migrates");
+        assert_eq!(state.schema_version, super::SESSION_SCHEMA_VERSION);
+        let layout = state
+            .dock_layout
+            .expect("a pre-v11 file always yields a layout");
+        assert_eq!(layout.left_panel, Some(crate::window::LeftPanel::Catalog));
+        assert!(layout.inspector_visible);
+        assert_eq!(
+            state.ui.catalog_collapsed,
+            vec!["md".to_string()],
+            "catalog collapse state is tree state, not dock layout — it stays"
+        );
+    }
+
+    #[test]
+    fn even_a_v8_file_carries_its_dock_bools_over() {
+        // `ui` arrived at v8, so the carry-over cannot live in the v10 arm
+        // alone: a v8 or v9 session with the catalog open would lose it.
+        for version in [8, 9] {
+            let raw = format!(
+                r#"{{"schema_version":{version},"tabs":[],
+                    "ui":{{"catalog_panel_visible":true}}}}"#
+            );
+            let state = super::load_str(&raw).expect("migrates");
+            let layout = state
+                .dock_layout
+                .unwrap_or_else(|| panic!("v{version} yields a layout"));
+            assert_eq!(
+                layout.left_panel,
+                Some(crate::window::LeftPanel::Catalog),
+                "v{version} carried its open catalog into v11"
+            );
+        }
+    }
+
+    #[test]
+    fn a_pre_ui_file_derives_an_all_closed_layout() {
+        // v1–v7 have no `ui` at all. All-closed is what they meant.
+        let v5 = r#"{"schema_version":5,"tabs":[]}"#;
+        let state = super::load_str(v5).expect("v5 migrates");
+        assert_eq!(
+            state.dock_layout,
+            Some(crate::session::dock_layout::DockLayout::default())
+        );
+    }
+
+    #[test]
+    fn a_v10_session_with_everything_closed_still_yields_a_layout() {
+        // Some(all-closed), not None: a migrated session states its own layout
+        // and must not fall through to the settings seed, which would reopen
+        // docks the user had deliberately shut.
+        let v10 = r#"{"schema_version": 10, "tabs": [], "ui": {}}"#;
+        let state = super::load_str(v10).expect("v10 migrates");
+        assert_eq!(
+            state.dock_layout,
+            Some(crate::session::dock_layout::DockLayout::default())
+        );
+    }
+
+    #[test]
+    fn a_v11_session_loads_its_layout_as_is() {
+        let v11 = r#"{
+            "schema_version": 11,
+            "tabs": [],
+            "dock_layout": { "left_panel": "ai", "left_size": 500, "console_open": true }
+        }"#;
+        let state = super::load_str(v11).expect("v11 loads");
+        let layout = state.dock_layout.expect("layout present");
+        assert_eq!(layout.left_panel, Some(crate::window::LeftPanel::Ai));
+        assert_eq!(layout.left_size, Some(500));
+        assert!(layout.console_open);
+    }
+
+    #[test]
+    fn a_malformed_layout_never_costs_the_user_their_tabs() {
+        let v11 = r#"{
+            "schema_version": 11,
+            "tabs": [{"table_name": "t1", "source_path": null}],
+            "dock_layout": "corrupt"
+        }"#;
+        let state = super::load_str(v11).expect("a bad layout must not fail the document");
+        assert_eq!(state.tabs.len(), 1, "the user's tab survived");
+        assert!(
+            state.dock_layout.is_none(),
+            "the layout degraded to default"
+        );
+    }
+
+    #[test]
+    fn version_twelve_is_still_rejected() {
+        let v12 = r#"{"schema_version": 12, "tabs": []}"#;
+        assert!(matches!(
+            super::load_str(v12),
+            Err(super::SessionLoadError::UnsupportedVersion(12))
+        ));
     }
 }

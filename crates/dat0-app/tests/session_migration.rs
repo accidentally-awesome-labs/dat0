@@ -230,7 +230,7 @@ fn v2_round_trip_through_serialization() {
 }
 
 /// Session::recover eagerly calls persist() after loading, so a v1 file is
-/// rewritten as the current schema (v10) on the first open — no subsequent
+/// rewritten as the current schema (v11) on the first open — no subsequent
 /// mutation required.
 #[tokio::test]
 async fn recover_eagerly_writes_back_current_version_on_first_open() {
@@ -254,12 +254,12 @@ async fn recover_eagerly_writes_back_current_version_on_first_open() {
         .await
         .expect("Session::recover should succeed on a v1 file");
 
-    // The on-disk file must now be the current schema (v10) without any further
+    // The on-disk file must now be the current schema (v11) without any further
     // persist() call.
     let after = fs::read_to_string(&session_path).unwrap();
     assert!(
-        after.contains("\"schema_version\": 10") || after.contains("\"schema_version\":10"),
-        "post-recover file should be current schema (v10), got: {}",
+        after.contains("\"schema_version\": 11") || after.contains("\"schema_version\":11"),
+        "post-recover file should be current schema (v11), got: {}",
         &after[..after.len().min(300)]
     );
 }
@@ -313,9 +313,26 @@ fn v2_session_migrates_to_v7_identity() {
     let v2_canonical = serde_json::to_value(&v2_state).unwrap();
     let mut migrated_canonical = serde_json::to_value(&migrated).unwrap();
     migrated_canonical["schema_version"] = serde_json::json!(2);
+
+    // v11 (B9) derives a `dock_layout` for every pre-v11 document. A v2 file has
+    // no `ui` at all, so the derived layout must be the ALL-CLOSED default —
+    // assert that explicitly and then drop it, rather than ignoring the key:
+    // "identity apart from a known addition" is a weaker claim than "identity",
+    // and the difference has to be visible in the test.
+    let derived = migrated_canonical
+        .as_object_mut()
+        .unwrap()
+        .remove("dock_layout")
+        .expect("v11 derives a layout for every pre-v11 file");
+    assert_eq!(
+        derived,
+        serde_json::to_value(dat0_app::session::dock_layout::DockLayout::default()).unwrap(),
+        "a v2 file has no ui state, so the derived layout is all-closed"
+    );
+
     assert_eq!(
         migrated_canonical, v2_canonical,
-        "v2 → current must change ONLY the version (identity migration)"
+        "v2 → current must change ONLY the version and the derived dock_layout"
     );
 }
 
@@ -505,16 +522,15 @@ fn v7_file_migrates_to_v8_with_default_ui() {
         "query_history":[],"saved_queries":[],"attachments":[]}"#;
     let state = migrate::load_str(raw).expect("v7 should migrate to current");
     assert_eq!(state.schema_version, SESSION_SCHEMA_VERSION);
-    assert_eq!(state.schema_version, 10);
-    assert!(
-        !state.ui.catalog_panel_visible,
-        "v7 -> v8: catalog dock defaults hidden"
-    );
-    assert!(
-        !state.ui.inspector_panel_visible,
-        "v7 -> v8: inspector dock defaults hidden"
-    );
+    assert_eq!(state.schema_version, 11);
     assert!(state.ui.catalog_collapsed.is_empty());
+    // v11: dock visibility moved to `dock_layout`. A v7 file has no `ui` at
+    // all, so it derives the all-closed layout, which is what it meant.
+    assert_eq!(
+        state.dock_layout,
+        Some(dat0_app::session::dock_layout::DockLayout::default()),
+        "v7 -> v11: every dock defaults closed"
+    );
 }
 
 #[test]
@@ -528,8 +544,17 @@ fn v8_loads_dropping_dead_tree_ui() {
               "catalog_expanded":["orders","customers"],"catalog_selection":"orders"}}"#;
     let state = migrate::load_str(raw).expect("v8 loads");
     assert_eq!(state.schema_version, SESSION_SCHEMA_VERSION);
-    assert!(state.ui.catalog_panel_visible);
-    assert!(state.ui.inspector_panel_visible);
+    // v11: the two dock bools are carried out of `ui` and into `dock_layout`.
+    // This is the case that makes the raw-document read load-bearing — the
+    // parsed struct no longer has these fields at all, and serde drops the keys
+    // with no error.
+    let layout = state.dock_layout.expect("v8 derives a layout");
+    assert_eq!(
+        layout.left_panel,
+        Some(dat0_app::window::LeftPanel::Catalog),
+        "the v8 catalog bool survived the relocation"
+    );
+    assert!(layout.inspector_visible);
     // v10: the v8 forward-looking keys are dead — dropped on load, replaced by
     // the (defaulted) collapse set.
     assert!(state.ui.catalog_collapsed.is_empty());
@@ -633,10 +658,21 @@ fn session_json_wire_format_is_snapshot_gated() {
             },
         ],
         ui: SessionUiState {
-            catalog_panel_visible: true,
-            inspector_panel_visible: false,
             catalog_collapsed: vec!["local".into()],
         },
+        // B9 (v11). Populated rather than `None` so the snapshot actually gates
+        // the new wire format — including that `right_size` is OMITTED, not
+        // serialized as null, which is what keeps `DockLayout` writable to
+        // settings.toml (the toml serializer rejects a None inside a table).
+        dock_layout: Some(dat0_app::session::dock_layout::DockLayout {
+            left_panel: Some(dat0_app::window::LeftPanel::Catalog),
+            left_size: Some(500),
+            inspector_visible: false,
+            charts_visible: true,
+            right_size: None,
+            console_open: true,
+            bottom_size: Some(420),
+        }),
     };
 
     // Mirror the exact on-disk serializer (`Session::persist` → to_vec_pretty).

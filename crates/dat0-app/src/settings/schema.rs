@@ -38,12 +38,40 @@ pub struct Settings {
     /// pre-v2 settings.toml → false, so upgraders see the tour once.
     #[serde(default)]
     pub first_run_done: bool,
+    /// B9 (v3): UI state that is a user PREFERENCE rather than window state.
+    /// Absent in pre-v3 settings.toml → defaults.
+    #[serde(default)]
+    pub ui: UiSettings,
+}
+
+/// Global UI preferences (v3+, B9).
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct UiSettings {
+    /// The last-used dock layout — the seed a window whose session has no
+    /// layout of its own starts from.
+    ///
+    /// This exists because a plain launch calls `Session::new`, which creates a
+    /// FRESH scratch directory with an empty session.json: a session-only
+    /// layout would come back only when reopening a workspace or recovering an
+    /// orphaned session, never on the ordinary launch path.
+    ///
+    /// Tolerant on read: a malformed value degrades to `None` rather than
+    /// failing the whole file, which `SettingsStore::load_or_default` would
+    /// answer by falling back to a fully default `Settings` — resetting the
+    /// user's theme, AI configuration and telemetry choice along with it.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "crate::session::dock_layout::de_tolerant_toml"
+    )]
+    pub dock_layout: Option<crate::session::dock_layout::DockLayout>,
 }
 
 impl Default for Settings {
     fn default() -> Self {
         Self {
-            schema_version: 2,
+            schema_version: 3,
             profile: Profile::default(),
             theme: Theme::default(),
             telemetry: Telemetry::default(),
@@ -53,6 +81,7 @@ impl Default for Settings {
             memory_budget_mb: 1024,
             log_level: "info,dat0=debug".into(),
             first_run_done: false,
+            ui: UiSettings::default(),
         }
     }
 }
@@ -154,7 +183,39 @@ mod first_run_tests {
     }
 
     #[test]
-    fn default_schema_version_is_2() {
-        assert_eq!(Settings::default().schema_version, 2);
+    fn default_schema_version_is_3() {
+        assert_eq!(Settings::default().schema_version, 3);
+    }
+
+    #[test]
+    fn a_v2_settings_file_defaults_the_ui_section() {
+        let s: Settings = toml::from_str("schema_version = 2\n").expect("v2 still parses");
+        assert!(s.ui.dock_layout.is_none());
+    }
+
+    #[test]
+    fn a_malformed_ui_section_never_resets_the_users_theme() {
+        // load_or_default answers ANY parse error by discarding the whole file,
+        // so a bad layout must not be a parse error.
+        let toml_src = "schema_version = 3\n[theme]\nname = \"high-contrast\"\n\
+                        [ui]\ndock_layout = \"corrupt\"\n";
+        let s: Settings =
+            toml::from_str(toml_src).expect("a bad layout must not fail the document");
+        assert_eq!(s.theme.name, "high-contrast");
+        assert!(s.ui.dock_layout.is_none());
+    }
+
+    #[test]
+    fn a_layout_round_trips_through_toml() {
+        let mut s = Settings::default();
+        s.ui.dock_layout = Some(crate::session::dock_layout::DockLayout {
+            left_panel: Some(crate::window::LeftPanel::Catalog),
+            left_size: Some(500),
+            console_open: true,
+            ..Default::default()
+        });
+        let text = toml::to_string(&s).expect("serialises");
+        let back: Settings = toml::from_str(&text).expect("round-trips");
+        assert_eq!(back.ui.dock_layout, s.ui.dock_layout);
     }
 }

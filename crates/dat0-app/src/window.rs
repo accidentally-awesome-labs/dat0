@@ -443,7 +443,12 @@ const SQL_CONSOLE_DOCK_HEIGHT: f32 = 320.0;
 /// so that every transition can go through one place
 /// ([`WorkspaceShell::activate_left_panel`]) and the at-most-one-visible
 /// invariant can be structural.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+/// B9 persists this directly (`session/dock_layout.rs`) rather than mirroring it
+/// into a parallel session-side enum, so panel identity has exactly one
+/// definition. It is a field-less enum with no gpui dependency, so the session
+/// and settings modules can name it freely.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub enum LeftPanel {
     Catalog,
     Connections,
@@ -1645,11 +1650,16 @@ pub fn register_menu_action_handlers(cx: &mut App) {
     });
 }
 
-/// Best-effort flush of the focused workspace's SQL-console edit buffer to
-/// disk — the same persist the `on_window_should_close` backstop runs on the
-/// OS close-button path. Used by the menu Quit / Close Window handlers, whose
-/// paths (`platform.quit()` / `Window::remove_window`) never fire that hook.
-/// No-op when no workspace is registered or the entity is gone.
+/// Best-effort flush of the focused workspace's SQL-console edit buffer AND its
+/// dock layout to disk — the same persists the `on_window_should_close` backstop
+/// runs on the OS close-button path. Used by the menu Quit / Close Window
+/// handlers, whose paths (`platform.quit()` / `Window::remove_window`) never
+/// fire that hook. No-op when no workspace is registered or the entity is gone.
+///
+/// ⚠ The layout flush is what captures a dock RESIZE (B9). Resizing is a pure
+/// upstream mouse drag: it runs no dat0 code and emits no event — `Dock` is not
+/// an `EventEmitter` at all — so a resize never followed by a dock toggle would
+/// otherwise never reach disk. This is the only place that catches it.
 fn flush_focused_workspace_sql(cx: &mut App) {
     let Some(ws) = crate::window_registry::focused_workspace_weak()
         .and_then(|w| w.upgrade())
@@ -1657,7 +1667,11 @@ fn flush_focused_workspace_sql(cx: &mut App) {
     else {
         return;
     };
-    ws.update(cx, |ws, cx| ws.persist_sql_console(cx));
+    ws.update(cx, |ws, cx| {
+        ws.persist_sql_console(cx);
+        ws.persist_dock_layout(cx);
+        ws.persist_dock_layout_seed(cx);
+    });
 }
 
 /// Launch the dat0 desktop application.
@@ -2185,6 +2199,12 @@ pub struct WorkspaceShell {
     /// B7: the (catalog, connections, ai) visibility triple the left dock was
     /// last reconciled to, so `sync_left_dock` does work only on a real change.
     left_dock_state: (bool, bool, bool),
+    /// B9: the layout this window was restored with, consumed once by
+    /// `ensure_dock_area` for its dock sizes.
+    ///
+    /// The visibility bools are seeded directly in the constructor instead,
+    /// because `render` reads them before `ensure_dock_area` runs.
+    restored_layout: Option<crate::session::dock_layout::DockLayout>,
     /// B7: the activity rail's KEYBOARD cursor — an index into
     /// `view::activity_rail::ITEMS`. Independent of which panel is open: the
     /// cursor still exists when the dock is collapsed.
@@ -2521,6 +2541,18 @@ impl WorkspaceShell {
         // v8 `ui`). Read into a local BEFORE building the struct so we don't hold
         // the session lock across the whole ctor.
         let ui = session.lock().ui().clone();
+        // B9 precedence: the SESSION is authoritative when it carries a layout
+        // of its own — a workspace keeps its own arrangement. Otherwise fall
+        // back to the settings-level seed, so a plain launch (which always
+        // creates a FRESH scratch session) still opens the way the user left
+        // it. Neither present → the mount constants.
+        let layout = session.lock().dock_layout().cloned().or_else(|| {
+            Self::settings_store()?
+                .load_or_default()
+                .ok()?
+                .ui
+                .dock_layout
+        });
         Self {
             session,
             data_source: None,
@@ -2531,6 +2563,7 @@ impl WorkspaceShell {
             charts_panel: None,
             right_dock_state: (false, false),
             left_dock_state: (false, false, false),
+            restored_layout: layout.clone(),
             rail_cursor: 0,
             catalog_panel: None,
             connections_panel: None,
@@ -2571,20 +2604,26 @@ impl WorkspaceShell {
             command_palette_sub: None,
             pending_palette_open: false,
             connections: Default::default(),
-            connections_panel_visible: false,
-            catalog_panel_visible: ui.catalog_panel_visible,
+            connections_panel_visible: layout
+                .as_ref()
+                .is_some_and(|l| l.left_panel == Some(LeftPanel::Connections)),
+            catalog_panel_visible: layout
+                .as_ref()
+                .is_some_and(|l| l.left_panel == Some(LeftPanel::Catalog)),
             catalog_active: 0,
             catalog_collapsed: ui.catalog_collapsed.iter().cloned().collect(),
             catalog_tree: crate::catalog::CatalogTree::default(),
             catalog_tables: Vec::new(),
             sql_parents: Default::default(),
-            inspector_panel_visible: ui.inspector_panel_visible,
+            inspector_panel_visible: layout.as_ref().is_some_and(|l| l.inspector_visible),
             inspector: crate::inspector::InspectorModel::new(),
-            ai_panel_visible: false,
+            ai_panel_visible: layout
+                .as_ref()
+                .is_some_and(|l| l.left_panel == Some(LeftPanel::Ai)),
             ai_panel: crate::ai::panel::AiPanel::default(),
             ai_entry_prompt: None,
             ai_entry_prompt_sub: None,
-            chart_panel_visible: false,
+            chart_panel_visible: layout.as_ref().is_some_and(|l| l.charts_visible),
             chart_panel: crate::charts::panel::ChartPanel::new(),
             chart_image: None,
             chart_load_id: 0,
@@ -3083,102 +3122,117 @@ impl WorkspaceShell {
     ///
     /// [`SqlConsole`]: crate::view::sql_console::SqlConsole
     /// [`SqlConsoleEvent`]: crate::view::sql_console::SqlConsoleEvent
+    /// B8/B9: build the SQL console, subscribe to it, register the close-flush
+    /// hook and mount the bottom dock. Idempotent — returns immediately if the
+    /// console already exists.
+    ///
+    /// Extracted from [`toggle_sql_console`](Self::toggle_sql_console) at B9,
+    /// because the restore path needs the same mount from a second call site and
+    /// copying it would leave two mounts to keep in step.
+    ///
+    /// `dock` is passed in rather than re-derived: one caller is
+    /// `ensure_dock_area` itself, mid-build, which must not re-enter. `height`
+    /// is a parameter for the same reason — a restored console mounts at its
+    /// persisted height, not the constant.
+    fn mount_sql_console(
+        &mut self,
+        dock: &gpui::Entity<gpui_component::dock::DockArea>,
+        height: f32,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if self.sql_console.is_some() {
+            return;
+        }
+        let (persisted, active) = {
+            let s = self.session.lock();
+            (s.sql_tabs().to_vec(), s.active_sql_tab())
+        };
+        // Ensure the per-window autocomplete snapshot exists, then clone it
+        // into the console so every tab's provider shares one `RefCell`
+        // (P5b T2). The refresh below populates `tables` off the engine.
+        let snapshot = self
+            .sql_snapshot
+            .get_or_insert_with(crate::query::completion::new_shared_snapshot)
+            .clone();
+        let console = cx.new(|cx| {
+            crate::view::sql_console::SqlConsole::new(
+                &persisted,
+                active,
+                snapshot.clone(),
+                window,
+                cx,
+            )
+        });
+        // `subscribe_in` (not `subscribe`) so the event callback receives a
+        // live `&mut Window` — the Save-query path (`SaveQuery`) builds a
+        // `NamePrompt` whose single-line `InputState` needs one eagerly
+        // (P5b T8). The window is valid because the subscription fires inside
+        // a window update.
+        let sub = cx.subscribe_in(
+            &console,
+            window,
+            |ws: &mut Self, console, ev: &crate::view::sql_console::SqlConsoleEvent, window, cx| {
+                ws.on_sql_console_event(console.clone(), ev.clone(), window, cx);
+            },
+        );
+        self.sql_console_sub = Some(sub);
+        // Hydrate ai_ready on the freshly-built console.
+        let ready = self.ai_ready();
+        console.update(cx, |c, _cx| c.ai_ready = ready);
+        self.sql_console = Some(console.clone());
+
+        // B8: mount the bottom dock, open.
+        //
+        // ⚠ `set_bottom_dock` is called EXACTLY ONCE, here, and must stay
+        // that way. It runs `subscribe_item`, which pushes onto the
+        // `DockArea`'s `_subscriptions` and recurses over the item tree
+        // (`dock/mod.rs:955-963`); nothing ever removes them. Every later
+        // open and close goes through `toggle_dock` below, which
+        // re-subscribes nothing. Same constraint as `set_left_dock` and
+        // `set_right_dock` — see `ensure_dock_area`.
+        //
+        // Mounted LAZILY rather than beside the left and right docks
+        // because upstream keeps a CLOSED bottom dock on screen at
+        // `h(px(29.))` so its title bar can be clicked to reopen
+        // (`dock.rs:372-380`). Building it here means a user who never
+        // opens the console never sees that bar — the first-run hero is
+        // untouched.
+        //
+        // A bare `DockItem::tab`, with no enclosing split: the bottom dock
+        // holds exactly one panel, and that is also the only shape immune
+        // to B7's `set_active_ix` re-entrancy panic (see
+        // `ensure_dock_area`, which this is called from).
+        let weak_dock = dock.downgrade();
+        let item = gpui_component::dock::DockItem::tab(console.clone(), &weak_dock, window, cx);
+        dock.update(cx, |dock, cx| {
+            dock.set_bottom_dock(item, Some(gpui::px(height)), true, window, cx);
+        });
+
+        // Persist the console one last time on window close (P5a T10). This
+        // is a best-effort backstop ON TOP OF the guaranteed per-mutation
+        // persists (Run / tab add / close / active-switch each emit
+        // `Persist` → `set_sql_tabs` → disk), so disk is already current;
+        // the close hook flushes any edit-buffer text typed since the last
+        // mutation. Registered once, the first time the console is built
+        // (we hold the only `&mut Window` here). `should_close` returns
+        // `true` so the default close proceeds.
+        if !self.sql_console_close_hooked {
+            self.sql_console_close_hooked = true;
+            let ws_weak = cx.entity().downgrade();
+            window.on_window_should_close(cx, move |_window, app| {
+                if let Some(ws) = ws_weak.upgrade() {
+                    ws.update(app, |ws, cx| ws.persist_sql_console(cx));
+                }
+                true
+            });
+        }
+    }
+
     pub(crate) fn toggle_sql_console(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let dock = self.ensure_dock_area(window, cx);
         if self.sql_console.is_none() {
-            let (persisted, active) = {
-                let s = self.session.lock();
-                (s.sql_tabs().to_vec(), s.active_sql_tab())
-            };
-            // Ensure the per-window autocomplete snapshot exists, then clone it
-            // into the console so every tab's provider shares one `RefCell`
-            // (P5b T2). The refresh below populates `tables` off the engine.
-            let snapshot = self
-                .sql_snapshot
-                .get_or_insert_with(crate::query::completion::new_shared_snapshot)
-                .clone();
-            let console = cx.new(|cx| {
-                crate::view::sql_console::SqlConsole::new(
-                    &persisted,
-                    active,
-                    snapshot.clone(),
-                    window,
-                    cx,
-                )
-            });
-            // `subscribe_in` (not `subscribe`) so the event callback receives a
-            // live `&mut Window` — the Save-query path (`SaveQuery`) builds a
-            // `NamePrompt` whose single-line `InputState` needs one eagerly
-            // (P5b T8). The window is valid because the subscription fires inside
-            // a window update.
-            let sub = cx.subscribe_in(
-                &console,
-                window,
-                |ws: &mut Self,
-                 console,
-                 ev: &crate::view::sql_console::SqlConsoleEvent,
-                 window,
-                 cx| {
-                    ws.on_sql_console_event(console.clone(), ev.clone(), window, cx);
-                },
-            );
-            self.sql_console_sub = Some(sub);
-            // Hydrate ai_ready on the freshly-built console.
-            let ready = self.ai_ready();
-            console.update(cx, |c, _cx| c.ai_ready = ready);
-            self.sql_console = Some(console.clone());
-
-            // B8: mount the bottom dock, open.
-            //
-            // ⚠ `set_bottom_dock` is called EXACTLY ONCE, here, and must stay
-            // that way. It runs `subscribe_item`, which pushes onto the
-            // `DockArea`'s `_subscriptions` and recurses over the item tree
-            // (`dock/mod.rs:955-963`); nothing ever removes them. Every later
-            // open and close goes through `toggle_dock` below, which
-            // re-subscribes nothing. Same constraint as `set_left_dock` and
-            // `set_right_dock` — see `ensure_dock_area`.
-            //
-            // Mounted LAZILY rather than beside the left and right docks
-            // because upstream keeps a CLOSED bottom dock on screen at
-            // `h(px(29.))` so its title bar can be clicked to reopen
-            // (`dock.rs:372-380`). Building it here means a user who never
-            // opens the console never sees that bar — the first-run hero is
-            // untouched.
-            //
-            // A bare `DockItem::tab`, with no enclosing split: the bottom dock
-            // holds exactly one panel, and that is also the only shape immune
-            // to B7's `set_active_ix` re-entrancy panic (see
-            // `ensure_dock_area`, which this is called from).
-            let weak_dock = dock.downgrade();
-            let item = gpui_component::dock::DockItem::tab(console.clone(), &weak_dock, window, cx);
-            dock.update(cx, |dock, cx| {
-                dock.set_bottom_dock(
-                    item,
-                    Some(gpui::px(SQL_CONSOLE_DOCK_HEIGHT)),
-                    true,
-                    window,
-                    cx,
-                );
-            });
-
-            // Persist the console one last time on window close (P5a T10). This
-            // is a best-effort backstop ON TOP OF the guaranteed per-mutation
-            // persists (Run / tab add / close / active-switch each emit
-            // `Persist` → `set_sql_tabs` → disk), so disk is already current;
-            // the close hook flushes any edit-buffer text typed since the last
-            // mutation. Registered once, the first time the console is built
-            // (we hold the only `&mut Window` here). `should_close` returns
-            // `true` so the default close proceeds.
-            if !self.sql_console_close_hooked {
-                self.sql_console_close_hooked = true;
-                let ws_weak = cx.entity().downgrade();
-                window.on_window_should_close(cx, move |_window, app| {
-                    if let Some(ws) = ws_weak.upgrade() {
-                        ws.update(app, |ws, cx| ws.persist_sql_console(cx));
-                    }
-                    true
-                });
-            }
+            self.mount_sql_console(&dock, SQL_CONSOLE_DOCK_HEIGHT, window, cx);
         } else {
             dock.update(cx, |dock, cx| {
                 dock.toggle_dock(gpui_component::dock::DockPlacement::Bottom, window, cx);
@@ -3197,6 +3251,11 @@ impl WorkspaceShell {
         if self.catalog_panel_visible {
             self.refresh_catalog(cx);
         }
+        // v11: persist the console's open state and height. Runs after both
+        // branches so it observes the toggle, and after the `sql_console_visible`
+        // read above for the same reason that read is sound — `Dock::set_open`
+        // assigns `open` synchronously.
+        self.persist_dock_layout(cx);
         cx.notify();
     }
 
@@ -3900,6 +3959,9 @@ impl WorkspaceShell {
     /// bare name then re-quote it with `quote_ident`.
     pub(crate) fn toggle_chart_panel(&mut self, cx: &mut gpui::Context<Self>) {
         self.chart_panel_visible = !self.chart_panel_visible;
+        // v11 is the first schema to persist chart-panel visibility at all —
+        // v10's `ui` carried only the catalog and inspector bools.
+        self.persist_dock_layout(cx);
         if self.chart_panel_visible {
             if let Some(base) = self.base_table() {
                 let bare = bare_table_name(&base);
@@ -4306,19 +4368,111 @@ impl WorkspaceShell {
         }
     }
 
-    /// Persist the catalog/inspector dock UI state to `session.json` (P6a T13;
-    /// v10 adds the catalog collapse set). Sorted for a deterministic wire
-    /// format (the insta snapshot gates it).
+    /// Persist the catalog TREE state to `session.json` (P6a T13; v10 added the
+    /// collapse set; v11 moved dock visibility out to
+    /// [`persist_dock_layout`](Self::persist_dock_layout)). Sorted for a
+    /// deterministic wire format (the insta snapshot gates it).
     pub(crate) fn persist_dock_ui(&self) {
         let mut catalog_collapsed: Vec<String> = self.catalog_collapsed.iter().cloned().collect();
         catalog_collapsed.sort();
-        let ui = crate::session::SessionUiState {
-            catalog_panel_visible: self.catalog_panel_visible,
-            inspector_panel_visible: self.inspector_panel_visible,
-            catalog_collapsed,
-        };
+        let ui = crate::session::SessionUiState { catalog_collapsed };
         if let Err(e) = self.session.lock().set_ui(ui) {
             tracing::warn!(error = %e, "persist_dock_ui: set_ui failed");
+        }
+    }
+
+    /// B9: the live dock layout — what is open, and how big.
+    ///
+    /// Sizes come from `DockArea::dump()` because that is the ONLY public route
+    /// to them at rev `0f0ab35`: `DockArea` keeps `left_dock` / `right_dock` /
+    /// `bottom_dock` private with no getter, so `Dock::size()` — which is `pub`
+    /// — is unreachable from here. Everything else in the dump, including the
+    /// whole `center`, is discarded by `DumpMirror`, which has no field for it.
+    ///
+    /// Open state does NOT come from the dump for the left and right docks: the
+    /// shell's own bools are the source of truth those docks are reconciled
+    /// against each frame (`sync_left_dock` / `sync_right_dock`), so reading the
+    /// dock back would just observe the previous frame's reconciliation. The
+    /// console is the exception — B8 deleted its shell bool and derives
+    /// visibility from the dock itself, because upstream owns two toggle paths
+    /// dat0 does not.
+    pub(crate) fn current_dock_layout(
+        &self,
+        cx: &gpui::App,
+    ) -> crate::session::dock_layout::DockLayout {
+        use crate::session::dock_layout::{DockLayout, mirror_from_dump, size_to_persist};
+
+        let mirror = self
+            .dock_area
+            .as_ref()
+            .and_then(|dock| serde_json::to_value(dock.read(cx).dump(cx)).ok())
+            .map(|v| mirror_from_dump(&v))
+            .unwrap_or_default();
+
+        DockLayout {
+            left_panel: self.open_left_panel(),
+            left_size: mirror.left_dock.and_then(|d| size_to_persist(d.size)),
+            inspector_visible: self.inspector_panel_visible,
+            charts_visible: self.chart_panel_visible,
+            right_size: mirror.right_dock.and_then(|d| size_to_persist(d.size)),
+            console_open: mirror.bottom_dock.is_some_and(|d| d.open),
+            bottom_size: mirror.bottom_dock.and_then(|d| size_to_persist(d.size)),
+        }
+    }
+
+    /// B9: persist the live dock layout to `session.json`.
+    ///
+    /// Called from the sites that already persist dock UI, plus the Quit /
+    /// CloseWindow flush. Open and close need no upstream event — every one of
+    /// them goes through dat0's own toggles — but SIZE is a pure upstream mouse
+    /// drag with no dat0 code in the loop, which is what makes the close
+    /// backstop load-bearing rather than belt-and-braces: it is the only thing
+    /// that captures a resize not followed by any toggle.
+    ///
+    /// ⚠ `DockEvent::LayoutChanged` is NOT usable for this, and the master plan
+    /// was wrong to propose it: `Dock` is not an `EventEmitter` at all
+    /// (`dock/dock.rs` contains zero `cx.emit`; `resize` and `set_open` only
+    /// `cx.notify()`), so neither a resize nor an open/close ever emits it. Its
+    /// only sources are `StackPanel` and `TabPanel`.
+    pub(crate) fn persist_dock_layout(&self, cx: &gpui::App) {
+        let layout = self.current_dock_layout(cx);
+        if let Err(e) = self.session.lock().set_dock_layout(Some(layout)) {
+            tracing::warn!(error = %e, "persist_dock_layout: set_dock_layout failed");
+        }
+    }
+
+    /// B9: mirror the live dock layout into `settings.toml` as the seed a fresh
+    /// scratch window starts from. Load → mutate → atomic save, the same shape
+    /// as `update_ai_settings`.
+    ///
+    /// ⚠ Called ONLY from the close/quit flush, never from a toggle.
+    /// `SettingsWatcher` re-reads settings.toml on every write
+    /// (`settings/watcher.rs:20-26`). That callback is benign — it swaps the
+    /// in-memory `Settings` under an `RwLock` and re-applies nothing — but this
+    /// file is otherwise written only on deliberate user action, and writing it
+    /// on every dock toggle would turn it into a file written dozens of times a
+    /// session, widening the window in which this load-mutate-save clobbers a
+    /// hand-edit in flight. The seed only has to be right at quit.
+    fn persist_dock_layout_seed(&self, cx: &gpui::App) {
+        let Some(store) = Self::settings_store() else {
+            return;
+        };
+        let mut settings = match store.load_or_default() {
+            Ok(s) => s,
+            Err(e) => {
+                tracing::warn!(
+                    ?e,
+                    "persist_dock_layout_seed: load failed; seed not updated"
+                );
+                return;
+            }
+        };
+        settings.ui.dock_layout = Some(self.current_dock_layout(cx));
+        if let Err(e) = store.save(&settings) {
+            tracing::warn!(
+                ?e,
+                "persist_dock_layout_seed: save failed; seed not updated"
+            );
         }
     }
 
@@ -5706,7 +5860,7 @@ impl WorkspaceShell {
     /// `None` (logging) when the config dir is unavailable — callers skip the
     /// persist rather than crash. The API KEY is never routed through this store
     /// (it lives only in the keychain).
-    fn ai_settings_store() -> Option<crate::settings::store::SettingsStore> {
+    fn settings_store() -> Option<crate::settings::store::SettingsStore> {
         match crate::platform::config_dir() {
             Ok(dir) => Some(crate::settings::store::SettingsStore::with_path(
                 dir.join("settings.toml"),
@@ -5714,7 +5868,7 @@ impl WorkspaceShell {
             Err(e) => {
                 tracing::warn!(
                     ?e,
-                    "ai_settings_store: config_dir unavailable; AI settings not persisted"
+                    "settings_store: config_dir unavailable; settings not persisted"
                 );
                 None
             }
@@ -5734,7 +5888,7 @@ impl WorkspaceShell {
     /// Load the AI-panel draft from persisted settings + keychain key-presence.
     /// Never reads the key value — only whether a key exists for the provider.
     fn hydrate_ai_panel(&mut self) {
-        let settings = Self::ai_settings_store()
+        let settings = Self::settings_store()
             .and_then(|s| s.load_or_default().ok())
             .map(|s| s.ai)
             .unwrap_or_default();
@@ -5766,7 +5920,7 @@ impl WorkspaceShell {
     /// path (load → mutate → save). The API KEY is never a field here, so it can
     /// never reach settings.toml. Logs + skips on any store error.
     fn update_ai_settings(&self, f: impl FnOnce(&mut crate::ai::AiSettings)) {
-        let Some(store) = Self::ai_settings_store() else {
+        let Some(store) = Self::settings_store() else {
             return;
         };
         let mut settings = match store.load_or_default() {
@@ -5786,7 +5940,7 @@ impl WorkspaceShell {
     /// never reappears (D5 / R17 transparency). Idempotent: gated on the persisted
     /// `privacy_ack`. Banner is text-only (no action buttons — D-021).
     fn maybe_show_ai_privacy_banner(&self) {
-        let ack = Self::ai_settings_store()
+        let ack = Self::settings_store()
             .and_then(|s| s.load_or_default().ok())
             .map(|s| s.ai.privacy_ack)
             .unwrap_or(false);
@@ -5982,7 +6136,7 @@ impl WorkspaceShell {
                 return;
             }
         };
-        let cfg = Self::ai_settings_store()
+        let cfg = Self::settings_store()
             .and_then(|s| s.load_or_default().ok())
             .map(|s| s.ai)
             .unwrap_or_default();
@@ -6045,7 +6199,7 @@ impl WorkspaceShell {
             Some(k) => k,
             None => return, // ai_ready gate prevents this; belt-and-suspenders
         };
-        let cfg = Self::ai_settings_store()
+        let cfg = Self::settings_store()
             .and_then(|s| s.load_or_default().ok())
             .map(|s| s.ai)
             .unwrap_or_default();
@@ -6146,7 +6300,7 @@ impl WorkspaceShell {
             Some(k) => k,
             None => return, // ai_ready gate prevents this; belt-and-suspenders
         };
-        let cfg = Self::ai_settings_store()
+        let cfg = Self::settings_store()
             .and_then(|s| s.load_or_default().ok())
             .map(|s| s.ai)
             .unwrap_or_default();
@@ -6625,6 +6779,35 @@ impl WorkspaceShell {
         // host bounds, same origin and same height.
         if self.dock_area.is_none() {
             let weak_shell = cx.entity().downgrade();
+
+            // B9: resolve the mount sizes ONCE, here.
+            //
+            // Sizes are decided at mount and never re-set: `set_*_dock` runs
+            // `subscribe_item`, which pushes onto the `DockArea`'s
+            // `_subscriptions` and recurses over the item tree, and nothing ever
+            // removes them (B6). Re-setting a dock to resize it would leak
+            // forever, so a persisted size can only be applied at this moment.
+            //
+            // Clamped against the live viewport so a layout saved on a large
+            // display cannot restore into a window with no usable centre.
+            let viewport = window.viewport_size();
+            let layout = self.restored_layout.clone();
+            let restored_size =
+                |pick: fn(&crate::session::dock_layout::DockLayout) -> Option<u32>,
+                 default_size: f32,
+                 axis_extent: gpui::Pixels| {
+                    crate::session::dock_layout::clamped_size(
+                        layout.as_ref().and_then(pick),
+                        default_size,
+                        f32::from(axis_extent),
+                    )
+                };
+            let right_width = restored_size(
+                |l| l.right_size,
+                INSPECTOR_DOCK_WIDTH + CHARTS_DOCK_WIDTH,
+                viewport.width,
+            );
+            let left_width = restored_size(|l| l.left_size, LEFT_DOCK_WIDTH, viewport.width);
             let panel = cx.new(|_| crate::panels::grid_panel::GridPanel::new(weak_shell.clone()));
             let dock = cx.new(|cx| {
                 let mut dock =
@@ -6673,9 +6856,14 @@ impl WorkspaceShell {
             // spawning its own task on subsequent `LayoutChanged` events.
             // `sync_right_dock` therefore only ever opens and closes.
             let want = (self.inspector_panel_visible, self.chart_panel_visible);
-            let width = INSPECTOR_DOCK_WIDTH + CHARTS_DOCK_WIDTH;
             dock.update(cx, |dock, cx| {
-                dock.set_right_dock(right, Some(gpui::px(width)), want.0 || want.1, window, cx);
+                dock.set_right_dock(
+                    right,
+                    Some(gpui::px(right_width)),
+                    want.0 || want.1,
+                    window,
+                    cx,
+                );
             });
             self.right_dock_state = want;
 
@@ -6739,7 +6927,7 @@ impl WorkspaceShell {
             );
             let left_open = want_left.0 || want_left.1 || want_left.2;
             dock.update(cx, |dock, cx| {
-                dock.set_left_dock(left, Some(gpui::px(LEFT_DOCK_WIDTH)), left_open, window, cx);
+                dock.set_left_dock(left, Some(gpui::px(left_width)), left_open, window, cx);
             });
             self.left_dock_state = want_left;
 
@@ -6750,7 +6938,47 @@ impl WorkspaceShell {
             self.grid_panel = Some(panel);
             self.inspector_panel = Some(inspector);
             self.charts_panel = Some(charts);
-            self.dock_area = Some(dock);
+            self.dock_area = Some(dock.clone());
+
+            // B9: restore an open console at its persisted height.
+            //
+            // The bottom dock stays LAZY for everyone else. B8 mounts it on the
+            // first console open because upstream keeps a CLOSED bottom dock on
+            // screen at `h(px(29.))` so its title bar can be clicked to reopen
+            // (`dock.rs:372-380`) — so a user who never opens the console must
+            // never see that bar, and the first-run hero carries no persisted
+            // layout, which is what keeps the hero untouched.
+            //
+            // Mounting here, during the first render, was the slice's top risk:
+            // it is exactly where B7's `set_active_ix` → `Panel::visible` →
+            // `shell.read` re-entrancy panic lives. T0 probe 3 measured it and
+            // found it absent — a single-panel `DockItem::tab` early-returns
+            // from `set_active_ix(0)` (`tab_panel.rs:208-211`), and that
+            // immunity holds at the earliest moment this can run.
+            if let Some(l) = self.restored_layout.clone().filter(|l| l.console_open) {
+                let height = crate::session::dock_layout::clamped_size(
+                    l.bottom_size,
+                    SQL_CONSOLE_DOCK_HEIGHT,
+                    f32::from(viewport.height),
+                );
+                self.mount_sql_console(&dock, height, window, cx);
+                // The toggle path refreshes the autocomplete schema whenever the
+                // console is (re)shown; a restored console must not come back
+                // with an empty one.
+                self.refresh_completion_snapshot(cx);
+            }
+
+            // ⚠ Restoring a panel means seeding its visibility bool in the
+            // constructor, which does NOT go through `activate_left_panel` — so
+            // the side effects B7 centralised there would otherwise be skipped
+            // and a restored panel would come back EMPTY: the catalog with no
+            // tree, the AI dock with an unhydrated key/provider state. The docks
+            // opened correctly in every test regardless, because those assert
+            // visibility rather than contents, which is why this needed the
+            // whole-branch pass to find.
+            if let Some(target) = self.open_left_panel() {
+                self.on_left_panel_shown(target, cx);
+            }
         }
 
         self.dock_area.clone().expect("built directly above")
@@ -7021,23 +7249,35 @@ impl WorkspaceShell {
     /// VSCode behaviour — and it falls out of the invariant rather than being a
     /// special case.
     ///
-    /// The per-panel side effects that used to live in the individual toggle
-    /// handlers moved here so that no entry point can lose them: Catalog
-    /// refreshes so the dock always shows fresh tables, AI hydrates its draft
-    /// from settings plus keychain.
+    /// The side effects of a left panel BECOMING VISIBLE: Catalog refreshes so
+    /// the dock always shows fresh tables, AI hydrates its draft from settings
+    /// plus keychain.
+    ///
+    /// B7 folded these out of the individual toggle handlers and into
+    /// `activate_left_panel` so that no entry point could lose them. B9 adds a
+    /// SECOND entry point — the constructor seeds the visibility bools straight
+    /// from the persisted layout, which never goes through `activate_left_panel`
+    /// — so they move again, into a helper both call. Duplicating the match
+    /// would have re-created exactly the drift B7 removed.
+    pub(crate) fn on_left_panel_shown(&mut self, target: LeftPanel, cx: &mut gpui::Context<Self>) {
+        match target {
+            LeftPanel::Catalog => self.refresh_catalog(cx),
+            LeftPanel::Ai => self.hydrate_ai_panel(),
+            LeftPanel::Connections => {}
+        }
+    }
+
     pub fn activate_left_panel(&mut self, target: LeftPanel, cx: &mut gpui::Context<Self>) {
         let already_open = self.left_panel_visible(target);
         self.set_left_panel_exclusive((!already_open).then_some(target));
         if !already_open {
-            match target {
-                LeftPanel::Catalog => self.refresh_catalog(cx),
-                LeftPanel::Ai => self.hydrate_ai_panel(),
-                LeftPanel::Connections => {}
-            }
+            self.on_left_panel_shown(target, cx);
         }
-        // Only `catalog_panel_visible` is persisted (session v10); the other two
-        // have always defaulted false at construction.
+        // Session v11 persists the whole rail choice, not just the catalog:
+        // `dock_layout.left_panel` is `Option<LeftPanel>`, so the at-most-one
+        // invariant is unrepresentable-if-violated on the wire.
         self.persist_dock_ui();
+        self.persist_dock_layout(cx);
         cx.notify();
     }
 
@@ -7751,8 +7991,9 @@ impl Render for WorkspaceShell {
             .on_action(cx.listener(
                 |ws: &mut Self, _: &crate::menu_macos::InspectorToggle, _window, cx| {
                     ws.inspector_panel_visible = !ws.inspector_panel_visible;
-                    // Persist the dock visibility (session v8 `ui`).
+                    // Persist the dock visibility (session v8 `ui`, v11 layout).
                     ws.persist_dock_ui();
+                    ws.persist_dock_layout(cx);
                     cx.notify();
                 },
             ))
@@ -7893,6 +8134,17 @@ impl WorkspaceShell {
     /// no debug selector.
     pub fn dock_area_for_test(&self) -> Option<gpui::Entity<gpui_component::dock::DockArea>> {
         self.dock_area.clone()
+    }
+
+    /// B9: the menu / palette Charts toggle, for tests.
+    ///
+    /// [`chart_bind_for_test`](Self::chart_bind_for_test) assigns
+    /// `chart_panel_visible` directly — the a11y-shim pattern, where a test
+    /// writes the bool and the next frame reconciles the dock. That bypasses
+    /// [`toggle_chart_panel`](Self::toggle_chart_panel) and therefore also
+    /// bypasses the layout persist inside it, so it cannot exercise this path.
+    pub fn toggle_chart_panel_for_test(&mut self, cx: &mut Context<Self>) {
+        self.toggle_chart_panel(cx);
     }
 
     pub fn chart_bind_for_test(&mut self, source: String, cols: Vec<(String, String)>) {
