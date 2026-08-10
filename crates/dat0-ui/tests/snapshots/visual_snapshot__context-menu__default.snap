@@ -1,0 +1,37 @@
+---
+source: crates/dat0-ui/tests/visual_snapshot.rs
+expression: "rendered[0].1"
+---
+<div class="d0-scene" data-scene="context-menu/default" style="width: 1440px; height: 900px; overflow: hidden">
+<div class="d0-menu-dismiss" data-a11y-id="context-menu-dismiss">
+</div>
+<div class="d0-menu" data-a11y-id="context-menu" role="menu" tabindex="0" autofocus=true style="left: 420px; top: 260px;">
+<div class="d0-menu-entry">
+<button class="d0-menu-item is-active" data-a11y-id="menu-view.copy" role="menuitem" aria-label="Copy" aria-disabled="false" tabindex="-1">Copy</button>
+</div>
+<div class="d0-menu-entry">
+<button class="d0-menu-item" data-a11y-id="menu-view.cut" role="menuitem" aria-label="Cut" aria-disabled="false" tabindex="-1">Cut</button>
+</div>
+<div class="d0-menu-entry">
+<button class="d0-menu-item" data-a11y-id="menu-view.paste" role="menuitem" aria-label="Paste" aria-disabled="false" tabindex="-1">Paste</button>
+</div>
+<div class="d0-menu-entry">
+<div class="d0-menu-sep" role="separator">
+</div>
+<button class="d0-menu-item" data-a11y-id="menu-view.fill_down" role="menuitem" aria-label="Fill Down" aria-disabled="false" tabindex="-1">Fill Down</button>
+</div>
+<div class="d0-menu-entry">
+<button class="d0-menu-item" data-a11y-id="menu-view.set_null" role="menuitem" aria-label="Set NULL" aria-disabled="false" tabindex="-1">Set NULL</button>
+</div>
+<div class="d0-menu-entry">
+<div class="d0-menu-sep" role="separator">
+</div>
+<button class="d0-menu-item" data-a11y-id="menu-view.delete_rows" role="menuitem" aria-label="Delete Row(s)" aria-disabled="false" tabindex="-1">Delete Row(s)</button>
+</div>
+<div class="d0-menu-entry">
+<div class="d0-menu-sep" role="separator">
+</div>
+<button class="d0-menu-item" data-a11y-id="menu-view.delete_column" role="menuitem" aria-label="Delete Column" aria-disabled="false" tabindex="-1">Delete Column</button>
+</div>
+</div>
+</div>

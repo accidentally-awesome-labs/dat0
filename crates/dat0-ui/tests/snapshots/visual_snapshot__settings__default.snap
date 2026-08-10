@@ -1,0 +1,32 @@
+---
+source: crates/dat0-ui/tests/visual_snapshot.rs
+expression: html
+---
+<div class="d0-scene" data-scene="settings/default" style="width: 1440px; height: 900px; overflow: hidden">
+<div class="d0-settings" data-a11y-id="settings" role="dialog" aria-label="Settings">
+<nav class="d0-settings-nav" role="navigation" aria-label="Settings">
+<button class="d0-settings-tab is-active" data-a11y-id="profile" role="button" aria-label="Profile" aria-current="page">Profile</button>
+<button class="d0-settings-tab" data-a11y-id="theme" role="button" aria-label="Theme">Theme</button>
+<button class="d0-settings-tab" data-a11y-id="memory_budget" role="button" aria-label="Memory Budget">Memory Budget</button>
+<button class="d0-settings-tab" data-a11y-id="motherduck" role="button" aria-label="MotherDuck">MotherDuck</button>
+<button class="d0-settings-tab" data-a11y-id="ai" role="button" aria-label="AI">AI</button>
+<button class="d0-settings-tab" data-a11y-id="telemetry" role="button" aria-label="Telemetry">Telemetry</button>
+<button class="d0-settings-tab" data-a11y-id="workspace" role="button" aria-label="Networked Workspaces">Networked Workspaces</button>
+<button class="d0-settings-tab" data-a11y-id="updates" role="button" aria-label="Updates">Updates</button>
+<button class="d0-settings-tab" data-a11y-id="advanced" role="button" aria-label="Advanced">Advanced</button>
+</nav>
+<section class="d0-settings-body" data-a11y-id="settings-body-profile">
+<div class="d0-settings-fields">
+<p class="d0-body" role="note" aria-label="Your name and email — used as the author of .dat0 packages you create.">Your name and email — used as the author of .dat0 packages you create.</p>
+<label class="d0-settings-field">
+<span class="d0-label">Name</span>
+<input class="d0-field" data-a11y-id="settings-name-input" aria-label="Name" value=""/>
+</label>
+<label class="d0-settings-field">
+<span class="d0-label">Email</span>
+<input class="d0-field" data-a11y-id="settings-email-input" aria-label="Email" value=""/>
+</label>
+</div>
+</section>
+</div>
+</div>

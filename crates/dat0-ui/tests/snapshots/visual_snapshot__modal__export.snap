@@ -1,0 +1,43 @@
+---
+source: crates/dat0-ui/tests/visual_snapshot.rs
+expression: html
+---
+<div class="d0-scene" data-scene="modal/export" style="width: 1440px; height: 900px; overflow: hidden">
+<div class="d0-scrim" data-a11y-id="modal-scrim">
+<div class="d0-modal" data-a11y-id="modal" role="dialog" aria-modal="true" aria-label="Export" tabindex="-1">
+<div class="d0-modal-head">
+<span class="d0-label">export</span>
+<span class="d0-head-title">Export</span>
+</div>
+<div class="d0-modal-body" data-a11y-id="modal-body">
+<div class="d0-export" data-a11y-id="export-dialog">
+<div class="d0-label">Format</div>
+<div class="d0-radiogroup" data-a11y-id="export-format-group" role="radiogroup" aria-label="Format" tabindex="0">
+<button class="d0-radio is-selected" data-a11y-id="export-format-csv" role="radio" aria-checked="true" aria-label="CSV" tabindex="-1">CSV</button>
+<button class="d0-radio" data-a11y-id="export-format-json" role="radio" aria-checked="false" aria-label="JSON" tabindex="-1">JSON</button>
+<button class="d0-radio" data-a11y-id="export-format-parquet" role="radio" aria-checked="false" aria-label="Parquet" tabindex="-1">Parquet</button>
+</div>
+<div class="d0-label">Scope</div>
+<div class="d0-radiogroup is-vertical" data-a11y-id="export-scope-group" role="radiogroup" aria-label="Scope" tabindex="0">
+<button class="d0-radio is-selected" data-a11y-id="export-scope-current" role="radio" aria-checked="true" aria-label="Current view" tabindex="-1">Current view</button>
+<button class="d0-radio" data-a11y-id="export-scope-full" role="radio" aria-checked="false" aria-label="Full table" tabindex="-1">Full table</button>
+</div>
+<div class="d0-label">Destination</div>
+<div class="d0-form-row">
+<span class="d0-mono d0-export-dest" data-a11y-id="export-destination">/data/exports</span>
+<button class="d0-btn is-ghost" data-a11y-id="export-browse" role="button" aria-label="Choose folder…">Choose folder…</button>
+</div>
+<div class="d0-label">File name</div>
+<div class="d0-form-row">
+<input class="d0-field" data-a11y-id="export-name" role="textbox" aria-label="File name" aria-invalid="false" value="export"/>
+<span class="d0-mono d0-export-ext" data-a11y-id="export-extension">.csv</span>
+</div>
+<div class="d0-form-actions">
+<button class="d0-btn is-primary" data-a11y-id="export-run" role="button" aria-label="Export">Export</button>
+<button class="d0-btn is-ghost" data-a11y-id="export-cancel" role="button" aria-label="Cancel">Cancel</button>
+</div>
+</div>
+</div>
+</div>
+</div>
+</div>

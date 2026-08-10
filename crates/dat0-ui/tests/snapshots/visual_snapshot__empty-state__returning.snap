@@ -1,0 +1,31 @@
+---
+source: crates/dat0-ui/tests/visual_snapshot.rs
+expression: html
+---
+<div class="d0-scene" data-scene="empty-state/returning" style="width: 1440px; height: 900px; overflow: hidden">
+<div class="d0-hero" data-a11y-id="empty-state">
+<div class="d0-hero-headline">
+<h1 class="d0-h1" data-a11y-id="hero-title" role="note" aria-label="Your data outgrew the spreadsheet.">Your data outgrew the spreadsheet.</h1>
+<p class="d0-h2 is-muted">It never outgrew your laptop.</p>
+<p class="d0-lead is-muted">Open a 12 GB Parquet like a 5 MB CSV, join it to live Postgres in one SELECT, and seal the whole analysis — data, queries, lineage — into a single file anyone can replay, inspect, or diff.</p>
+</div>
+<div class="d0-hero-cols">
+<div class="d0-hero-drop" data-a11y-id="hero-drop">
+<p class="d0-body">Drop a CSV, Parquet, JSON, or SQLite file. No import wizard, no waiting.</p>
+<span class="d0-mono is-ok">nothing imported · 0 bytes left this machine</span>
+</div>
+<div class="d0-hero-right">
+<div class="d0-hero-list" data-a11y-id="hero-recents">
+<div class="d0-hero-recents" data-a11y-id="recents-list" role="button" aria-label="Recent" tabindex="0">
+<span class="d0-label">Recent</span>
+<button class="d0-hero-recent is-active" data-a11y-id="hero-recent-0" role="button" aria-label="/data/sales.csv" tabindex="-1">/data/sales.csv</button>
+<button class="d0-hero-recent" data-a11y-id="hero-recent-1" role="button" aria-label="/data/trips.parquet" tabindex="-1">/data/trips.parquet</button>
+<button class="d0-hero-recent" data-a11y-id="hero-recent-2" role="button" aria-label="/data/crm.db" tabindex="-1">/data/crm.db</button>
+<button class="d0-hero-recent" data-a11y-id="hero-recent-3" role="button" aria-label="/data/q3-review.dat0" tabindex="-1">/data/q3-review.dat0</button>
+</div>
+<button class="d0-btn" data-a11y-id="hero-open-file-recents" role="button" aria-label="Open file…" tabindex="0">Open file…</button>
+</div>
+</div>
+</div>
+</div>
+</div>

@@ -1,0 +1,29 @@
+---
+source: crates/dat0-ui/tests/visual_snapshot.rs
+expression: "rendered[0].1"
+---
+<div class="d0-scene" data-scene="charts/empty" style="width: 1440px; height: 900px; overflow: hidden">
+<div class="d0-right" style="width: 320px">
+<section class="d0-pane" data-a11y-id="pane-charts">
+<button class="d0-pane-head" data-a11y-id="pane-head-charts" aria-expanded="true">
+<span class="d0-chevron">▾</span>
+<span class="d0-label">charts</span>
+<span class="d0-head-title">Chart</span>
+<span class="d0-pane-meta d0-label">Bar</span>
+</button>
+<div class="d0-pane-body" data-a11y-id="pane-body-charts">
+<div class="d0-chart">
+<div class="d0-chart-toolbar">
+<button class="d0-btn d0-mono" data-a11y-id="chart-type" role="button" aria-label="Chart: Bar">Chart: Bar</button>
+<button class="d0-btn d0-mono" data-a11y-id="chart-axis-x" role="button" aria-label="X: —">X: —</button>
+<button class="d0-btn d0-mono" data-a11y-id="chart-axis-y" role="button" aria-label="Y: —">Y: —</button>
+<button class="d0-btn d0-mono" data-a11y-id="chart-save" role="button" aria-label="Save" disabled=true>Save</button>
+</div>
+<div class="d0-chart-canvas" data-a11y-id="chart-body" data-chart-type="Bar" data-chart-x="" data-chart-y="" data-chart-title="">
+<div class="d0-chart-empty d0-mono" data-a11y-id="chart-empty" role="note" aria-label="Select columns to render a chart">Select columns to render a chart</div>
+</div>
+</div>
+</div>
+</section>
+</div>
+</div>

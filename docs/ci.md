@@ -1,11 +1,11 @@
 # CI Setup
 
 > Operational reference for dat0's GitHub Actions setup. Covers per-PR
-> validation (`ci.yml`), the perf gate, coverage and supply-chain jobs, heavy
-> exit-criteria tests (`heavy.yml`), the NOTICE drift gate (`notice.yml`), the
-> crash round-trip (`crash-e2e.yml`), the PD-004 diagnostic
-> (`pd004-diagnose.yml`), and the runnerkit self-hosted Linux runner that backs
-> the Linux matrix entry.
+> validation (`ci.yml`), the perf gate, the visual gate, coverage and
+> supply-chain jobs, heavy exit-criteria tests (`heavy.yml`), the NOTICE drift
+> gate (`notice.yml`), the crash round-trip (`crash-e2e.yml`), the PD-004
+> diagnostic (`pd004-diagnose.yml`), and the runnerkit self-hosted Linux runner
+> that backs the Linux matrix entry.
 
 ---
 
@@ -182,6 +182,52 @@ successor).
 > **any** label change re-runs the whole workflow, and `cancel-in-progress`
 > means labelling mid-run cancels and restarts it. Apply `run-perf` and
 > `run-heavy` before, or together with, the push you want them to cover.
+
+## Visual gate
+
+Two tiers, and only one of them is a CI job.
+
+1. **HTML snapshots — `crates/dat0-ui/tests/visual_snapshot.rs`.** An ordinary
+   test target, so `cargo nextest run --workspace` already picks it up; the
+   self-dev-dependency at `crates/dat0-ui/Cargo.toml` turns the `visual` feature
+   on for this crate's own targets with no flag. Every scene in
+   `dat0_ui::visual::SCENES` is SSR'd and `insta`-snapshotted, and the two
+   scenes whose markup differs per theme are snapshotted three times. Hermetic,
+   no display.
+
+   ```bash
+   cargo nextest run -p dat0-ui --test visual_snapshot
+   INSTA_UPDATE=always cargo test -p dat0-ui --test visual_snapshot   # accept
+   ```
+
+   Reading the diff before committing **is** the check for this tier.
+
+2. **Real-window probe — `crates/dat0-ui/examples/visual_probe.rs`.** Walks the
+   same catalogue in one wry window, in all three themes, and asserts computed
+   geometry, containment and typography through `document::eval`. This is the
+   only tier that can see a layout: markup is not a layout, which is how the
+   shell once rendered its catalog *on top of* the data grid while fifteen
+   numeric assertions passed.
+
+   ```bash
+   cargo run -p dat0-ui --features visual --example visual_probe   # ~15s, exits 0/1
+   ```
+
+   **Deliberately not a CI job.** It needs a display; hosted runners have none —
+   the same constraint `docs/deferrals.md` records as D-032 for the perf scroll
+   scenarios. Run it locally before a UI change lands, and on the dedicated
+   hardware alongside the perf gate when that arrives. Its window must be
+   1440×900; the probe fails loudly rather than silently mis-measuring if the
+   window manager hands back anything smaller.
+
+`examples/visual_page.rs` is the human half of the same renders: it writes every
+scene to a self-contained HTML file under `target/visual/`, fonts inlined as
+data URIs, plus an `index.html` grouped by surface. That is the vehicle for the
+side-by-side against `docs/internal/design/redesign-landing-v4.dc.html`.
+
+```bash
+cargo run -p dat0-ui --features visual --example visual_page && open target/visual/index.html
+```
 
 ## i18n gate
 

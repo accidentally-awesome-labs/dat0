@@ -28,3 +28,5 @@ pub mod router;
 pub mod session_boot;
 pub mod state;
 pub mod theme;
+#[cfg(feature = "visual")]
+pub mod visual;

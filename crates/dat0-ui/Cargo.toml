@@ -21,6 +21,10 @@ path = "src/lib.rs"
 perf-harness = ["dat0-core/perf-harness"]
 # The token gallery: a dev-only surface, same mechanism.
 gallery = []
+# The visual scene catalogue (`src/visual/`), read by `tests/visual_snapshot.rs`,
+# `examples/visual_probe.rs` and `examples/visual_page.rs`. Dev-only.
+# Implies `gallery`, because `gallery/tokens` is one of the scenes.
+visual = ["dep:tempfile", "gallery"]
 
 [dependencies]
 dioxus = { version = "=0.7.10", features = ["desktop"] }
@@ -54,6 +58,11 @@ plotters = { version = "0.3.7", default-features = false, features = [
     "all_series", "all_elements", "colormaps", "full_palette", "ttf",
 ] }
 
+# Scene fixtures for the `visual` feature write a scratch CSV and a recovery
+# directory. Optional because a release build has no scenes; `tempfile` is
+# otherwise a dev-dependency, and `src/` cannot reach those.
+tempfile = { workspace = true, optional = true }
+
 # See `crates/dat0-core/Cargo.toml`: plotters' `ttf` feature pulls font-kit,
 # whose non-dlopen fontconfig path does not link against
 # yeslogic-fontconfig-sys v6.
@@ -76,7 +85,7 @@ base64 = "0.22"
 # The self-dev-dependency turns `gallery` and `perf-harness` ON for this crate's
 # own test and example targets, so a flag-free `cargo test --all-targets`
 # compiles both in with no CI change. Neither reaches a release build.
-dat0-ui = { path = ".", features = ["gallery", "perf-harness"] }
+dat0-ui = { path = ".", features = ["gallery", "perf-harness", "visual"] }
 
 [[example]]
 name = "grid_spike"

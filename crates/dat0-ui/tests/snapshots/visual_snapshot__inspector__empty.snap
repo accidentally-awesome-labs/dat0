@@ -1,0 +1,23 @@
+---
+source: crates/dat0-ui/tests/visual_snapshot.rs
+expression: "rendered[0].1"
+---
+<div class="d0-scene" data-scene="inspector/empty" style="width: 1440px; height: 900px; overflow: hidden">
+<div class="d0-right" style="width: 320px">
+<section class="d0-pane" data-a11y-id="pane-inspector">
+<button class="d0-pane-head" data-a11y-id="pane-head-inspector" aria-expanded="true">
+<span class="d0-chevron">▾</span>
+<span class="d0-label">inspector</span>
+<span class="d0-head-title">Inspector</span>
+<span class="d0-pane-meta d0-label">
+</span>
+</button>
+<div class="d0-pane-body" data-a11y-id="pane-body-inspector">
+<div class="d0-insp" data-a11y-id="inspector">
+<div class="d0-insp-overview d0-mono" data-a11y-id="inspector-overview" role="note" aria-label="No table selected">No table selected</div>
+<button class="d0-btn d0-mono" data-a11y-id="inspector-mode-toggle" role="button" aria-label="Whole table">Whole table</button>
+</div>
+</div>
+</section>
+</div>
+</div>

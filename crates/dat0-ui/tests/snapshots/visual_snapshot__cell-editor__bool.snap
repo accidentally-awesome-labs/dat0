@@ -1,0 +1,10 @@
+---
+source: crates/dat0-ui/tests/visual_snapshot.rs
+expression: "rendered[0].1"
+---
+<div class="d0-scene" data-scene="cell-editor/bool" style="width: 1440px; height: 900px; overflow: hidden">
+<select class="d0-cell-editor" data-a11y-id="cell-editor" role="combobox" aria-label="Edit cell" autofocus=true style="left: 300px; top: 26px; width: 100px;">
+<option value="true" selected=true>true</option>
+<option value="false">false</option>
+</select>
+</div>

@@ -1,0 +1,29 @@
+---
+source: crates/dat0-ui/tests/visual_snapshot.rs
+expression: "rendered[0].1"
+---
+<div class="d0-scene" data-scene="charts/error" style="width: 1440px; height: 900px; overflow: hidden">
+<div class="d0-right" style="width: 320px">
+<section class="d0-pane" data-a11y-id="pane-charts">
+<button class="d0-pane-head" data-a11y-id="pane-head-charts" aria-expanded="true">
+<span class="d0-chevron">▾</span>
+<span class="d0-label">charts</span>
+<span class="d0-head-title">sales</span>
+<span class="d0-pane-meta d0-label">Bar</span>
+</button>
+<div class="d0-pane-body" data-a11y-id="pane-body-charts">
+<div class="d0-chart">
+<div class="d0-chart-toolbar">
+<button class="d0-btn d0-mono" data-a11y-id="chart-type" role="button" aria-label="Chart: Bar">Chart: Bar</button>
+<button class="d0-btn d0-mono" data-a11y-id="chart-axis-x" role="button" aria-label="X: region">X: region</button>
+<button class="d0-btn d0-mono" data-a11y-id="chart-axis-y" role="button" aria-label="Y: revenue">Y: revenue</button>
+<button class="d0-btn d0-mono" data-a11y-id="chart-save" role="button" aria-label="Save">Save</button>
+</div>
+<div class="d0-chart-canvas" data-a11y-id="chart-body" data-chart-type="Bar" data-chart-x="region" data-chart-y="revenue" data-chart-title="revenue by region">
+<div class="d0-chart-error d0-mono" data-a11y-id="chart-error" role="alert" aria-label="Binder Error: Referenced column &#34;revenu&#34; not found in FROM clause">Binder Error: Referenced column &#34;revenu&#34; not found in FROM clause</div>
+</div>
+</div>
+</div>
+</section>
+</div>
+</div>

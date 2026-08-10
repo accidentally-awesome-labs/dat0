@@ -1,0 +1,23 @@
+---
+source: crates/dat0-ui/tests/visual_snapshot.rs
+expression: html
+---
+<div class="d0-scene" data-scene="modal/workspace-in-use" style="width: 1440px; height: 900px; overflow: hidden">
+<div class="d0-scrim" data-a11y-id="modal-scrim">
+<div class="d0-modal" data-a11y-id="modal" role="dialog" aria-modal="true" aria-label="Workspace may be open elsewhere" tabindex="-1">
+<div class="d0-modal-head">
+<span class="d0-label">workspace</span>
+<span class="d0-head-title">Workspace may be open elsewhere</span>
+</div>
+<div class="d0-modal-body" data-a11y-id="modal-body">
+<div class="d0-confirm" data-a11y-id="workspace-in-use" role="alert" aria-label="Workspace may be open elsewhere">
+<p class="d0-body" data-a11y-id="workspace-in-use-body" aria-label="Open on studio.local, started 1 hour(s) ago. Editing on two machines at once can corrupt this workspace.">Open on studio.local, started 1 hour(s) ago. Editing on two machines at once can corrupt this workspace.</p>
+<div class="d0-confirm-actions">
+<button class="d0-btn is-ghost" data-a11y-id="workspace-in-use-cancel" role="button" aria-label="Cancel">Cancel</button>
+<button class="d0-btn is-primary" data-a11y-id="workspace-in-use-proceed" role="button" aria-label="Open anyway">Open anyway</button>
+</div>
+</div>
+</div>
+</div>
+</div>
+</div>

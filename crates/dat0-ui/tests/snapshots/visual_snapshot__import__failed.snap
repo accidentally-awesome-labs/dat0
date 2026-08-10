@@ -1,0 +1,13 @@
+---
+source: crates/dat0-ui/tests/visual_snapshot.rs
+expression: html
+---
+<div class="d0-scene" data-scene="import/failed" style="width: 1440px">
+<div class="d0-import is-error" data-a11y-id="import-progress" role="alert" aria-label="Import failed: Invalid Input Error: unterminated quote at line 4102" aria-live="assertive">
+<span class="d0-sw sw-parquet">
+</span>
+<span class="d0-import-file d0-mono">trips.parquet</span>
+<span class="d0-import-msg d0-mono">Import failed: Invalid Input Error: unterminated quote at line 4102</span>
+<button class="d0-btn is-ghost" data-a11y-id="import-dismiss" aria-label="Close">Close</button>
+</div>
+</div>

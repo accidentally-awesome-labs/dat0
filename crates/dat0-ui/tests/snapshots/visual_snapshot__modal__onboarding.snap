@@ -1,0 +1,43 @@
+---
+source: crates/dat0-ui/tests/visual_snapshot.rs
+expression: html
+---
+<div class="d0-scene" data-scene="modal/onboarding" style="width: 1440px; height: 900px; overflow: hidden">
+<div class="d0-scrim" data-a11y-id="modal-scrim">
+<div class="d0-modal" data-a11y-id="modal" role="dialog" aria-modal="true" aria-label="Take a tour" tabindex="-1">
+<div class="d0-modal-head">
+<span class="d0-label">tour</span>
+<span class="d0-head-title">Take a tour</span>
+</div>
+<div class="d0-modal-body" data-a11y-id="modal-body">
+<div class="d0-tour" data-a11y-id="tour">
+<img class="d0-tour-art" data-a11y-id="tour-art" src="/dat0/onboarding/p1.png" alt="Drop a file"/>
+<div class="d0-h2" data-a11y-id="tour-headline" role="note" aria-label="Drop a file">Drop a file</div>
+<div class="d0-body" data-a11y-id="tour-body" role="note" aria-label="Open CSV, Parquet, JSON or SQLite — or just drag one in. No import wizard, no waiting.">Open CSV, Parquet, JSON or SQLite — or just drag one in. No import wizard, no waiting.</div>
+<div class="d0-tour-controls">
+<button class="d0-btn is-ghost" data-a11y-id="tour-skip" role="button" aria-label="Skip">Skip</button>
+<div class="d0-tour-pager" data-a11y-id="tour-pager" role="note" aria-label="Panel 1 of 7">
+<span class="d0-tour-dot is-on">
+</span>
+<span class="d0-tour-dot">
+</span>
+<span class="d0-tour-dot">
+</span>
+<span class="d0-tour-dot">
+</span>
+<span class="d0-tour-dot">
+</span>
+<span class="d0-tour-dot">
+</span>
+<span class="d0-tour-dot">
+</span>
+</div>
+<div class="d0-tour-advance">
+<button class="d0-btn is-primary" data-a11y-id="tour-next" role="button" aria-label="Next ›">Next ›</button>
+</div>
+</div>
+</div>
+</div>
+</div>
+</div>
+</div>

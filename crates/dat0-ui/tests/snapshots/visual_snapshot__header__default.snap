@@ -1,0 +1,54 @@
+---
+source: crates/dat0-ui/tests/visual_snapshot.rs
+expression: html
+---
+<div class="d0-scene" data-scene="header/default" style="width: 1440px">
+<div class="d0-grid-head" data-a11y-id="grid-head" role="row">
+<div style="position: absolute; top: 0; left: -0px; width: 400px; height: 26px;">
+<div class="d0-colheader" data-a11y-id="col-0" role="columnheader" aria-label="id" aria-colindex="1" tabindex="-1" style="left: 0px; width: 100px;">
+<div class="d0-grip" data-a11y-id="col-grip-0" style="width: 6px;" draggable=true>
+</div>
+<span style="flex: 1 1 auto; overflow: hidden; text-overflow: ellipsis;">id</span>
+<span data-a11y-id="col-sort-0" style="width: 20px; text-align: center;">
+</span>
+<span data-a11y-id="col-funnel-0" style="width: 20px; text-align: center;">
+</span>
+<div class="d0-col-resize" data-a11y-id="col-resize-0">
+</div>
+</div>
+<div class="d0-colheader" data-a11y-id="col-1" role="columnheader" aria-label="region" aria-colindex="2" tabindex="-1" style="left: 100px; width: 100px;">
+<div class="d0-grip" data-a11y-id="col-grip-1" style="width: 6px;" draggable=true>
+</div>
+<span style="flex: 1 1 auto; overflow: hidden; text-overflow: ellipsis;">region</span>
+<span data-a11y-id="col-sort-1" style="width: 20px; text-align: center;">
+</span>
+<span data-a11y-id="col-funnel-1" style="width: 20px; text-align: center;">
+</span>
+<div class="d0-col-resize" data-a11y-id="col-resize-1">
+</div>
+</div>
+<div class="d0-colheader" data-a11y-id="col-2" role="columnheader" aria-label="revenue" aria-colindex="3" tabindex="-1" style="left: 200px; width: 100px;">
+<div class="d0-grip" data-a11y-id="col-grip-2" style="width: 6px;" draggable=true>
+</div>
+<span style="flex: 1 1 auto; overflow: hidden; text-overflow: ellipsis;">revenue</span>
+<span data-a11y-id="col-sort-2" style="width: 20px; text-align: center;">
+</span>
+<span data-a11y-id="col-funnel-2" style="width: 20px; text-align: center;">
+</span>
+<div class="d0-col-resize" data-a11y-id="col-resize-2">
+</div>
+</div>
+<div class="d0-colheader" data-a11y-id="col-3" role="columnheader" aria-label="active" aria-colindex="4" tabindex="-1" style="left: 300px; width: 100px;">
+<div class="d0-grip" data-a11y-id="col-grip-3" style="width: 6px;" draggable=true>
+</div>
+<span style="flex: 1 1 auto; overflow: hidden; text-overflow: ellipsis;">active</span>
+<span data-a11y-id="col-sort-3" style="width: 20px; text-align: center;">
+</span>
+<span data-a11y-id="col-funnel-3" style="width: 20px; text-align: center;">
+</span>
+<div class="d0-col-resize" data-a11y-id="col-resize-3">
+</div>
+</div>
+</div>
+</div>
+</div>

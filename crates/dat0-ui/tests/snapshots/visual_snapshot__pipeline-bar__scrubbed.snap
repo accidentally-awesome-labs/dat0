@@ -1,0 +1,30 @@
+---
+source: crates/dat0-ui/tests/visual_snapshot.rs
+expression: html
+---
+<div class="d0-scene" data-scene="pipeline-bar/scrubbed" style="width: 1440px">
+<div class="d0-pipeline" data-a11y-id="pipeline-bar" aria-label="pipeline">
+<span class="d0-label">pipeline</span>
+<div class="d0-pipeline-strip">
+<button class="d0-chip" data-a11y-id="pipeline-base" role="button" aria-label="Base table">
+<span class="d0-sw sw-csv">
+</span>/data/sales.csv</button>
+<span class="d0-pipeline-step">
+<span class="d0-pipeline-sep" role="note" aria-label="then">›</span>
+<button class="d0-chip" data-a11y-id="pipeline-chip-0" role="button" aria-label="Filter revenue">Filter revenue</button>
+</span>
+<span class="d0-pipeline-step">
+<span class="d0-pipeline-sep" role="note" aria-label="then">›</span>
+<button class="d0-chip is-past" data-a11y-id="pipeline-chip-1" role="button" aria-label="Sort region↑">Sort region↑</button>
+</span>
+<span class="d0-pipeline-step">
+<span class="d0-pipeline-sep" role="note" aria-label="then">›</span>
+<button class="d0-chip is-past" data-a11y-id="pipeline-chip-2" role="button" aria-label="Rename revenue→gross">Rename revenue→gross</button>
+</span>
+</div>
+<div class="d0-pipeline-tail">
+<button class="d0-chip" data-a11y-id="pipeline-save-table" role="button" aria-label="Save as Table…">Save as Table…</button>
+<button class="d0-chevron is-collapsed" data-a11y-id="pipeline-toggle" role="button" aria-expanded="false" aria-label="Expand">▾</button>
+</div>
+</div>
+</div>

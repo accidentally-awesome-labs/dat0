@@ -1,0 +1,78 @@
+---
+source: crates/dat0-ui/tests/visual_snapshot.rs
+expression: "rendered[0].1"
+---
+<div class="d0-scene" data-scene="inspector/lineage" style="width: 1440px; height: 900px; overflow: hidden">
+<div class="d0-right" style="width: 320px">
+<section class="d0-pane" data-a11y-id="pane-inspector">
+<button class="d0-pane-head" data-a11y-id="pane-head-inspector" aria-expanded="true">
+<span class="d0-chevron">▾</span>
+<span class="d0-label">inspector</span>
+<span class="d0-head-title">Inspector</span>
+<span class="d0-pane-meta d0-label">revenue · DOUBLE</span>
+</button>
+<div class="d0-pane-body" data-a11y-id="pane-body-inspector">
+<div class="d0-insp" data-a11y-id="inspector">
+<div class="d0-insp-overview d0-mono" data-a11y-id="inspector-overview" role="note" aria-label="sales — 12 rows · 5 cols">sales — 12 rows · 5 cols</div>
+<button class="d0-btn d0-mono" data-a11y-id="inspector-mode-toggle" role="button" aria-label="Whole table">Whole table</button>
+<div class="d0-insp-lineage" data-a11y-id="inspector-lineage">
+<div class="d0-label" data-a11y-id="inspector-lineage-title" role="note" aria-label="Lineage">Lineage</div>
+<div class="d0-label" data-a11y-id="inspector-lineage-sources" role="note" aria-label="Sources">Sources</div>
+<div class="d0-insp-chain" data-a11y-id="lineage-1-sales.csv" style="padding-left: 12px" role="note" aria-label="sales.csv">
+<span class="d0-insp-glyph" aria-hidden="true">📄</span>
+<span class="d0-insp-chain-name d0-mono">sales.csv</span>
+<span class="d0-insp-chain-edge d0-label">file import</span>
+</div>
+<div class="d0-insp-chain is-open" data-a11y-id="lineage-2-sales_clean" style="padding-left: 24px" role="note" aria-label="sales_clean">
+<span class="d0-insp-glyph" aria-hidden="true">▦</span>
+<span class="d0-insp-chain-name d0-mono">sales_clean</span>
+<span class="d0-insp-chain-edge d0-label">transform (3 ops)</span>
+</div>
+<div class="d0-insp-target d0-mono" data-a11y-id="inspector-target" role="note" aria-label="sales">
+<span class="d0-chevron is-collapsed" aria-hidden="true">▾</span>sales</div>
+<div class="d0-label" data-a11y-id="inspector-lineage-usedby" role="note" aria-label="Used by">Used by</div>
+<div class="d0-insp-chain is-open" data-a11y-id="lineage-1-revenue_by_region" style="padding-left: 12px" role="note" aria-label="revenue_by_region">
+<span class="d0-insp-glyph" aria-hidden="true">▦</span>
+<span class="d0-insp-chain-name d0-mono">revenue_by_region</span>
+<span class="d0-insp-chain-edge d0-label">SQL reference</span>
+</div>
+<div class="d0-insp-chain is-open" data-a11y-id="lineage-2-revenue_chart" style="padding-left: 24px" role="note" aria-label="revenue_chart">
+<span class="d0-insp-glyph" aria-hidden="true">📊</span>
+<span class="d0-insp-chain-name d0-mono">revenue_chart</span>
+<span class="d0-insp-chain-edge d0-label">chart</span>
+</div>
+<div class="d0-insp-chain is-open" data-a11y-id="lineage-8-deep_rollup" style="padding-left: 72px" role="note" aria-label="deep_rollup">
+<span class="d0-insp-glyph" aria-hidden="true">▦</span>
+<span class="d0-insp-chain-name d0-mono">deep_rollup</span>
+<span class="d0-insp-chain-edge d0-label">SQL reference</span>
+</div>
+</div>
+<div class="d0-insp-cards" data-a11y-id="inspector-cards">
+<div class="d0-insp-card" data-a11y-id="inspector-card-id">
+<div class="d0-insp-card-head d0-mono" data-a11y-id="inspector-card-head-id" role="note" aria-label="id · BIGINT">id · BIGINT</div>
+<div class="d0-insp-stat d0-mono" data-a11y-id="inspector-stats-id" role="note" aria-label="min 1 · max 12 · μ 6.5 · med 6 · σ 3.6">min 1 · max 12 · μ 6.5 · med 6 · σ 3.6</div>
+<div class="d0-insp-stat d0-mono" data-a11y-id="inspector-distinct-id" role="note" aria-label="distinct ≈13 (approx)">distinct ≈13 (approx)</div>
+<div class="d0-insp-stat d0-mono" data-a11y-id="inspector-null-id" role="note" aria-label="null 0.0%">null 0.0%</div>
+</div>
+<div class="d0-insp-card" data-a11y-id="inspector-card-region">
+<div class="d0-insp-card-head d0-mono" data-a11y-id="inspector-card-head-region" role="note" aria-label="region · VARCHAR">region · VARCHAR</div>
+<div class="d0-insp-stat d0-mono" data-a11y-id="inspector-distinct-region" role="note" aria-label="distinct ≈4 (approx)">distinct ≈4 (approx)</div>
+<div class="d0-insp-stat d0-mono" data-a11y-id="inspector-null-region" role="note" aria-label="null 0.0%">null 0.0%</div>
+</div>
+<div class="d0-insp-card" data-a11y-id="inspector-card-revenue">
+<div class="d0-insp-card-head d0-mono" data-a11y-id="inspector-card-head-revenue" role="note" aria-label="revenue · DOUBLE">revenue · DOUBLE</div>
+<div class="d0-insp-stat d0-mono" data-a11y-id="inspector-stats-revenue" role="note" aria-label="min 505 · max 1544 · μ 1017.7 · med 1012.50 · σ 325.7">min 505 · max 1544 · μ 1017.7 · med 1012.50 · σ 325.7</div>
+<div class="d0-insp-stat d0-mono" data-a11y-id="inspector-distinct-revenue" role="note" aria-label="distinct ≈12 (approx)">distinct ≈12 (approx)</div>
+<div class="d0-insp-stat d0-mono" data-a11y-id="inspector-null-revenue" role="note" aria-label="null 0.0%">null 0.0%</div>
+</div>
+<div class="d0-insp-card" data-a11y-id="inspector-card-active">
+<div class="d0-insp-card-head d0-mono" data-a11y-id="inspector-card-head-active" role="note" aria-label="active · BOOLEAN">active · BOOLEAN</div>
+<div class="d0-insp-stat d0-mono" data-a11y-id="inspector-distinct-active" role="note" aria-label="distinct ≈2 (approx)">distinct ≈2 (approx)</div>
+<div class="d0-insp-stat d0-mono" data-a11y-id="inspector-null-active" role="note" aria-label="null 0.0%">null 0.0%</div>
+</div>
+</div>
+</div>
+</div>
+</section>
+</div>
+</div>

@@ -1,0 +1,148 @@
+---
+source: crates/dat0-ui/tests/visual_snapshot.rs
+expression: "rendered[0].1"
+---
+<div class="d0-scene" data-scene="shell/console-open" style="width: 1440px; height: 900px; overflow: hidden">
+<div data-a11y-id="window" tabindex="0" class="d0-window">
+<div class="d0-titlebar" data-a11y-id="titlebar" role="banner">
+<div class="d0-traffic-spacer">
+</div>
+<div class="d0-wordmark no-drag">dat<span class="d0-logomark">
+</span>
+</div>
+<span class="d0-mono" style="color: var(--d0-chrome-muted)">scratch</span>
+<div style="margin-left: auto">
+</div>
+<div class="d0-pill no-drag" data-a11y-id="source-pill">
+<span class="d0-dot">
+</span>
+<span class="d0-label" style="color: var(--d0-warn-text)">local</span>
+</div>
+</div>
+<div class="d0-tabstrip" data-a11y-id="tabstrip" role="tablist">
+<div class="d0-search-slot" data-a11y-id="command-slot">
+<button class="d0-search-gutter" data-a11y-id="command-launcher" role="button" aria-label="Open the command palette" tabindex="0">
+<span>search tables, queries…</span>
+<span class="d0-key">⌘K</span>
+</button>
+</div>
+<div class="d0-tab-filler">
+</div>
+</div>
+<div class="d0-shell" style="grid-template-columns: 238px 4px minmax(0, 1fr)">
+<div class="d0-sidebar" data-a11y-id="sidebar" role="navigation" aria-label="Catalog">
+<div class="d0-sidebar-head">
+<span class="d0-label">catalog</span>
+<span class="d0-mono is-local">local</span>
+</div>
+<div class="d0-sidebar-body" data-a11y-id="catalog-tree" role="tree" tabindex="0">
+<div data-a11y-id="section-files" role="group" aria-label="FILES">
+<button class="d0-section-label d0-label" data-a11y-id="section-toggle-files" aria-expanded="true">
+<span class="d0-chevron">▾</span>FILES</button>
+<div class="d0-row is-empty" data-a11y-id="empty-files">no files yet — drop one here</div>
+</div>
+<div data-a11y-id="section-connections" role="group" aria-label="CONNECTIONS">
+<button class="d0-section-label d0-label" data-a11y-id="section-toggle-connections" aria-expanded="true">
+<span class="d0-chevron">▾</span>CONNECTIONS</button>
+<div class="d0-row is-empty" data-a11y-id="empty-connections">no connections</div>
+</div>
+<div data-a11y-id="section-packages" role="group" aria-label="PACKAGES">
+<button class="d0-section-label d0-label" data-a11y-id="section-toggle-packages" aria-expanded="true">
+<span class="d0-chevron">▾</span>PACKAGES</button>
+<div class="d0-row is-empty" data-a11y-id="empty-packages">no packages</div>
+</div>
+</div>
+<div class="d0-sidebar-foot">
+<span>session · 1 window · 0 tabs</span>
+<span>ai none</span>
+<span class="is-ok">egress 0 B</span>
+</div>
+</div>
+<div class="d0-splitter is-col" data-a11y-id="sidebar-splitter" role="separator" aria-orientation="vertical">
+</div>
+<div class="d0-workarea" style="grid-template-columns: minmax(0, 1fr) 0px">
+<div class="d0-centre" style="grid-template-rows: minmax(0, 1fr) 260px">
+<div class="d0-pane-stack" data-a11y-id="pane-stack">
+<div class="d0-hero" data-a11y-id="empty-state">
+<div class="d0-hero-headline">
+<h1 class="d0-h1" data-a11y-id="hero-title" role="note" aria-label="Your data outgrew the spreadsheet.">Your data outgrew the spreadsheet.</h1>
+<p class="d0-h2 is-muted">It never outgrew your laptop.</p>
+<p class="d0-lead is-muted">Open a 12 GB Parquet like a 5 MB CSV, join it to live Postgres in one SELECT, and seal the whole analysis — data, queries, lineage — into a single file anyone can replay, inspect, or diff.</p>
+</div>
+<div class="d0-hero-cols">
+<div class="d0-hero-drop" data-a11y-id="hero-drop">
+<span class="d0-mono is-muted" data-a11y-id="hero-booting" role="note" aria-label="Opening the data engine…">Opening the data engine…</span>
+<span class="d0-skel" style="width: 320px;">
+</span>
+<span class="d0-skel is-secondary" style="width: 220px;">
+</span>
+<span class="d0-mono is-ok">nothing imported · 0 bytes left this machine</span>
+</div>
+<div class="d0-hero-right">
+<div class="d0-hero-list" data-a11y-id="hero-samples">
+<span class="d0-label">Samples</span>
+<button class="d0-hero-card" data-a11y-id="hero-sample-iris" role="button" aria-label="Iris" tabindex="0">
+<span class="d0-head-title">Iris</span>
+<span class="d0-mono is-muted">150 rows × 5 cols — classic CSV</span>
+</button>
+<button class="d0-hero-card" data-a11y-id="hero-sample-chinook" role="button" aria-label="Chinook" tabindex="0">
+<span class="d0-head-title">Chinook</span>
+<span class="d0-mono is-muted">~1 MB SQLite — multi-table demo</span>
+</button>
+<button class="d0-hero-card" data-a11y-id="hero-sample-nyc-taxi" role="button" aria-label="NYC taxi" tabindex="0">
+<span class="d0-head-title">NYC taxi</span>
+<span class="d0-mono is-muted">~50 MB Parquet — remote fetch on first use</span>
+</button>
+<button class="d0-btn" data-a11y-id="hero-open-file-samples" role="button" aria-label="Open file…" tabindex="0">Open file…</button>
+</div>
+</div>
+</div>
+</div>
+</div>
+<div class="d0-splitter is-row" data-a11y-id="console-splitter" role="separator" aria-orientation="horizontal">
+</div>
+<section class="d0-pane" data-a11y-id="pane-console">
+<button class="d0-pane-head" data-a11y-id="pane-head-console" aria-expanded="true">
+<span class="d0-chevron">▾</span>
+<span class="d0-label">console</span>
+<span class="d0-head-title">SQL editor</span>
+<span class="d0-pane-meta d0-label">⌘⏎ run</span>
+</button>
+<div class="d0-pane-body" data-a11y-id="pane-body-console">
+<div class="d0-console" data-a11y-id="sql-console">
+<div class="d0-console-tabs" role="tablist" data-a11y-id="console-tabstrip">
+<button class="d0-console-tab is-active" data-a11y-id="console-tab-console-<UUID7>" role="tab" aria-selected="true" aria-label="Query 1" tabindex="0">Query 1</button>
+<div style="margin-left: auto">
+</div>
+<button class="d0-chip" data-a11y-id="console-run" role="button" aria-label="Run" tabindex="0">
+<span style="color: var(--d0-ok)">Run</span>
+<span class="d0-key">⌘⏎</span>
+</button>
+</div>
+<div class="d0-console-toolbar" data-a11y-id="console-toolbar">
+<button class="d0-btn" data-a11y-id="console-run-pane" role="button" aria-label="Run in results pane" tabindex="0">Run in results pane</button>
+<button class="d0-btn" data-a11y-id="console-new-tab" role="button" aria-label="New query tab" tabindex="0">New query tab</button>
+<button class="d0-btn" data-a11y-id="console-history" role="button" aria-label="History" tabindex="0">History</button>
+<button class="d0-btn" data-a11y-id="console-save-query" role="button" aria-label="Save Query…" tabindex="0">Save Query…</button>
+<button class="d0-btn" data-a11y-id="console-load-query" role="button" aria-label="Saved Queries…" tabindex="0">Saved Queries…</button>
+<button class="d0-btn" data-a11y-id="console-save-as-table" role="button" aria-label="Save as Table…" tabindex="0">Save as Table…</button>
+</div>
+<div class="d0-editor" id="cm-console-<UUID7>" data-a11y-id="sql-editor-console-<UUID7>" role="textbox" aria-label="SQL editor" aria-multiline="true" tabindex="0">
+</div>
+</div>
+</div>
+</section>
+</div>
+</div>
+</div>
+<div class="d0-statusbar" data-a11y-id="statusbar" role="status">
+<span class="d0-dot is-live">
+</span>
+<span>engine duckdb · native</span>
+<span class="d0-spacer">
+</span>
+<span class="is-ok" style="color: var(--d0-ok)">egress 0 B</span>
+<span class="d0-key">⌘K commands</span>
+</div>
+</div>
+</div>
