@@ -1,0 +1,23 @@
+{
+  "name": "dat0-codemirror-bundle",
+  "private": true,
+  "version": "0.0.0",
+  "description": "Build input for crates/dat0-ui/assets/codemirror.js. Not published, not built by cargo.",
+  "type": "module",
+  "scripts": {
+    "build": "node build.mjs"
+  },
+  "dependencies": {
+    "@codemirror/autocomplete": "6.20.3",
+    "@codemirror/commands": "6.10.4",
+    "@codemirror/lang-sql": "6.10.0",
+    "@codemirror/language": "6.12.4",
+    "@codemirror/search": "6.7.1",
+    "@codemirror/state": "6.7.1",
+    "@codemirror/view": "6.43.8",
+    "@lezer/highlight": "1.2.3"
+  },
+  "devDependencies": {
+    "esbuild": "0.28.2"
+  }
+}

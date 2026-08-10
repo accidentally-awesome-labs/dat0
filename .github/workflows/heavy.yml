@@ -4,15 +4,17 @@ name: Heavy tests
 # per-push CI path because fixture generation (1 GB CSV + 500 MB Parquet +
 # 100 MB SQLite) plus end-to-end execution dominates billable minutes.
 on:
-  # Cron disabled at this stage: solo-dev + pre-P3 + low PR frequency means
-  # most nightly runs would burn ~45m runner-time with no engine/fixture
-  # change to validate. The label-gated PR trigger and manual dispatch
-  # below cover the signals that matter today. Re-enable when:
-  #   (a) team grows to 2+ devs,
-  #   (b) release cadence demands continuous validation, or
-  #   (c) a drift incident shows nightly would have caught it earlier.
-  # schedule:
-  #   - cron: '0 6 * * *'   # 06:00 UTC daily
+  # WEEKLY, not nightly. The original justification for disabling cron
+  # entirely was "solo-dev + pre-P3 + low PR frequency": a nightly run would
+  # burn ~45m of runner time on most days with no engine or fixture change to
+  # validate. That argument is about CADENCE, not about whether the heaviest
+  # gate in the repo should be human-triggered — and leaving it human-
+  # triggered means it silently stops running the moment someone forgets the
+  # label. Weekly answers the cost objection (one run instead of seven) while
+  # putting a floor under drift detection. Monday 06:00 UTC so a regression
+  # surfaces at the start of a working week, not the end of one.
+  schedule:
+    - cron: '0 6 * * 1'   # Mondays 06:00 UTC
   workflow_dispatch:
   pull_request:
     types: [opened, synchronize, reopened, labeled]
@@ -42,8 +44,12 @@ jobs:
     # notes on linux-arm64 deferral. Fixtures are GENERATED in-job
     # (dat0-fixtures, seed 42), not downloaded, so no release-asset dependency.
     runs-on: ubuntu-latest
+    # Fixture generation (~15-20 min on a cache miss) plus the release
+    # duckdb-bundled build plus the exit-criteria suite; 90 leaves headroom
+    # over the observed ~45m while still catching a hang well before GitHub's
+    # 6-hour default burns a weekly run's worth of minutes.
+    timeout-minutes: 90
     env:
-      DAT0_SPARKLE_APPCAST_URL: https://dat0.dev/appcast.xml
       DAT0_GLITCHTIP_DSN_PUBLIC: ${{ secrets.GLITCHTIP_DSN_PUBLIC }}
       # Cap link parallelism: default 4-job `ld` OOMs (Bus error / signal 7) on
       # hosted ubuntu-latest's 16 GB RAM during the release duckdb-bundled link
@@ -73,7 +79,8 @@ jobs:
           sudo apt-get install -y \
             libsecret-1-dev dbus-x11 gnome-keyring \
             libpango1.0-dev libxkbcommon-dev libxkbcommon-x11-dev \
-            libfontconfig1-dev libssl-dev
+            libfontconfig1-dev libssl-dev \
+            libwebkit2gtk-4.1-dev libsoup-3.0-dev
       - name: Start dbus + gnome-keyring (Secret Service backend)
         if: runner.environment == 'github-hosted'
         run: |
@@ -100,7 +107,26 @@ jobs:
           cargo run --release -p dat0-fixtures -- --out /tmp/dat0-prime --csv-bytes 4096 --sqlite-target-bytes 4096 || true
           cargo test -p dat0-engine --test attach_dispatch -- --nocapture || true
       - name: Run exit_criteria
-        run: cargo test -p dat0-engine --test exit_criteria -- --include-ignored
+        id: exit_criteria
+        # `tee` keeps the live log while capturing the tail for the summary.
+        # A weekly cron run nobody clicks into is a run nobody reads; the job
+        # summary is what shows up in the Actions list.
+        run: |
+          set -o pipefail
+          cargo test -p dat0-engine --test exit_criteria -- --include-ignored \
+            2>&1 | tee /tmp/exit_criteria.log
+      - name: Summarize exit_criteria
+        if: always()
+        run: |
+          {
+            echo "## Heavy exit-criteria (${{ github.event_name }})"
+            echo ""
+            echo "Result: **${{ steps.exit_criteria.outcome }}**"
+            echo ""
+            echo '```'
+            tail -n 40 /tmp/exit_criteria.log 2>/dev/null || echo "(no log captured)"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
 
   view-regen-bench:
     # P4a perf gate — 1M-row Filter < 500 ms p95 (linux-x86 leg).
@@ -112,6 +138,8 @@ jobs:
       github.event_name != 'pull_request' ||
       contains(github.event.pull_request.labels.*.name, 'run-heavy')
     runs-on: ubuntu-latest
+    # Criterion bench + a 1M-row in-test fixture build. Backstop only.
+    timeout-minutes: 60
     env:
       CARGO_BUILD_JOBS: 2
     steps:

@@ -1,0 +1,54 @@
+{
+  "schema": 1,
+  "budgets": {
+    "cold_launch": {
+      "metric": "wall_ms",
+      "max": 1000.0
+    },
+    "idle_rss": {
+      "metric": "rss_peak_bytes",
+      "max": 209715200.0
+    },
+    "open_csv_10gb": {
+      "metric": "wall_ms",
+      "max": 30000.0
+    },
+    "open_parquet_1gb": {
+      "metric": "wall_ms",
+      "max": 5000.0
+    },
+    "scroll_10m": {
+      "metric": "p95_ms",
+      "max": 16.67
+    },
+    "scroll_1m": {
+      "metric": "p95_ms",
+      "max": 16.67
+    }
+  },
+  "hosts": {
+    "macos-aarch64-dev": {
+      "recorded": "epoch:1786387902",
+      "rustc": "rustc 1.97.0 (2d8144b78 2026-07-07)",
+      "cold_launch": {
+        "rss_peak_bytes": 124321792.0,
+        "wall_ms": 750.101417
+      },
+      "idle_rss": {
+        "rss_peak_bytes": 106905600.0
+      },
+      "scroll_10m": {
+        "p50_ms": 5.0,
+        "p95_ms": 9.0,
+        "p99_ms": 10.0,
+        "rss_peak_bytes": 872611840.0
+      },
+      "scroll_1m": {
+        "p50_ms": 5.0,
+        "p95_ms": 9.0,
+        "p99_ms": 10.0,
+        "rss_peak_bytes": 210944000.0
+      }
+    }
+  }
+}

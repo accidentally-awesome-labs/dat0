@@ -1,3 +1,12 @@
+//! Export round-trips through `export_query_to_path`.
+//!
+//! These asserted against `export_table` (bytes-returning) until EN3 deleted it:
+//! it had no production consumer — `dat0_format::writer` calls
+//! `export_query_to_path` directly (`writer.rs:66-68`) — and it `read_to_end`'d
+//! an entire export into a `Vec<u8>`, defeating the point of a streaming COPY.
+//! The assertions are unchanged in substance; they now read the file the engine
+//! actually writes.
+
 use dat0_engine::{DerivedOrigin, DuckDBEngine, ExportFormat, MemoryBudget, QueryEngine};
 
 fn budget() -> MemoryBudget {
@@ -23,13 +32,24 @@ async fn engine_with_things() -> (DuckDBEngine, tempfile::TempDir) {
     (engine, dir)
 }
 
+/// Export `things` to a temp file of the given extension and read it back.
+async fn export_things_bytes(engine: &DuckDBEngine, format: ExportFormat, suffix: &str) -> Vec<u8> {
+    let tmp = tempfile::Builder::new()
+        .prefix("dat0-export-test-")
+        .suffix(suffix)
+        .tempfile()
+        .unwrap();
+    engine
+        .export_query_to_path("SELECT * FROM \"things\"", format, tmp.path())
+        .await
+        .unwrap();
+    std::fs::read(tmp.path()).unwrap()
+}
+
 #[tokio::test]
 async fn export_csv() {
     let (engine, _dir) = engine_with_things().await;
-    let bytes = engine
-        .export_table("things", ExportFormat::Csv)
-        .await
-        .unwrap();
+    let bytes = export_things_bytes(&engine, ExportFormat::Csv, ".csv").await;
     let s = String::from_utf8(bytes).unwrap();
     assert!(s.contains("id"));
     assert!(s.contains("name"));
@@ -40,10 +60,7 @@ async fn export_csv() {
 #[tokio::test]
 async fn export_json() {
     let (engine, _dir) = engine_with_things().await;
-    let bytes = engine
-        .export_table("things", ExportFormat::Json)
-        .await
-        .unwrap();
+    let bytes = export_things_bytes(&engine, ExportFormat::Json, ".json").await;
     let s = String::from_utf8(bytes).unwrap();
     assert!(s.contains("\"id\""));
     engine.close().await.unwrap();
@@ -52,10 +69,7 @@ async fn export_json() {
 #[tokio::test]
 async fn export_parquet_yields_nonempty_bytes() {
     let (engine, _dir) = engine_with_things().await;
-    let bytes = engine
-        .export_table("things", ExportFormat::Parquet)
-        .await
-        .unwrap();
+    let bytes = export_things_bytes(&engine, ExportFormat::Parquet, ".parquet").await;
     // Parquet magic: starts with 'PAR1'
     assert!(bytes.starts_with(b"PAR1"));
     assert!(bytes.ends_with(b"PAR1"));

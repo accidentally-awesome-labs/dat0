@@ -10,8 +10,9 @@ permissions:
 jobs:
   macos:
     runs-on: macos-14
+    timeout-minutes: 60
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - uses: dtolnay/rust-toolchain@1.97.0
         with: { targets: aarch64-apple-darwin,x86_64-apple-darwin }
       - run: brew install create-dmg
@@ -42,6 +43,9 @@ jobs:
           cargo xtask bundle-macos --version "${VERSION#v}" --git-sha "$SHA"
           cargo xtask sign-macos --identity "${{ secrets.DAT0_SIGN_IDENTITY }}"
           cargo xtask verify --macos
+      # Artifact filenames stay unversioned: the publish job below and
+      # xtask::sign::verify both address them by fixed path. The version is
+      # applied when the assets are staged for the GitHub Release.
       - uses: actions/upload-artifact@v4
         with: { name: dat0-dmg, path: target/macos/dat0.dmg }
       - uses: actions/upload-artifact@v4
@@ -49,29 +53,92 @@ jobs:
 
   linux:
     runs-on: ubuntu-latest
+    timeout-minutes: 60
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - uses: dtolnay/rust-toolchain@1.97.0
       - name: Tools
         run: |
-          sudo apt-get update && sudo apt-get install -y libfuse2 fuse desktop-file-utils
-          wget -q https://github.com/AppImage/AppImageKit/releases/download/continuous/appimagetool-x86_64.AppImage -O /usr/local/bin/appimagetool
-          chmod +x /usr/local/bin/appimagetool
+          sudo apt-get update
+          # libfuse2 + fuse run the AppImage; desktop-file-utils is
+          # appimagetool's desktop-file-validate. The rest are the GPUI +
+          # keychain BUILD dependencies ci.yml:183-190 declares mandatory —
+          # xtask/src/linux.rs runs `cargo build -p dat0-ui --release` here, and
+          # without them the release build dies at link time on
+          # libsecret/pango/xkbcommon/fontconfig/openssl.
+          sudo apt-get install -y \
+            libfuse2 fuse desktop-file-utils \
+            libsecret-1-dev libpango1.0-dev libxkbcommon-dev libxkbcommon-x11-dev \
+            libfontconfig1-dev libssl-dev \
+            libwebkit2gtk-4.1-dev libsoup-3.0-dev
+          # Into $RUNNER_TEMP, not /usr/local/bin: that directory is not
+          # writable by the runner user, so the original un-sudo'd
+          # `wget -O /usr/local/bin/appimagetool` failed with EACCES. The
+          # basename must stay `appimagetool` — xtask/src/linux.rs invokes it
+          # by bare name.
+          wget -q https://github.com/AppImage/AppImageKit/releases/download/continuous/appimagetool-x86_64.AppImage \
+            -O "$RUNNER_TEMP/appimagetool"
+          chmod +x "$RUNNER_TEMP/appimagetool"
+          # linuxdeploy bundles the binary's non-excluded shared objects into
+          # the AppDir and writes AppRun. Same install shape and same
+          # bare-basename requirement as appimagetool above — xtask/src/linux.rs
+          # invokes it as `linuxdeploy`.
+          wget -q https://github.com/linuxdeploy/linuxdeploy/releases/download/continuous/linuxdeploy-x86_64.AppImage \
+            -O "$RUNNER_TEMP/linuxdeploy"
+          chmod +x "$RUNNER_TEMP/linuxdeploy"
+          echo "$RUNNER_TEMP" >> "$GITHUB_PATH"
       - name: Import GPG key
         env:
           GPG_PRIVATE_KEY: ${{ secrets.GPG_PRIVATE_KEY }}
-          GPG_PASSPHRASE: ${{ secrets.GPG_PASSPHRASE }}
         run: |
+          mkdir -p ~/.gnupg && chmod 700 ~/.gnupg
+          # Required for `--pinentry-mode loopback` in the sign step
+          # (docs/release-runbook.md option (b)). Harmless for the recommended
+          # passphraseless CI subkey, which never reaches the agent for a PIN.
+          echo "allow-loopback-pinentry" >> ~/.gnupg/gpg-agent.conf
+          gpgconf --reload gpg-agent || true
           echo "$GPG_PRIVATE_KEY" | gpg --batch --import
       - name: Bundle + sign
-        env: { VERSION: "${{ github.ref_type == 'tag' && github.ref_name || '0.0.0-dev' }}" }
+        env:
+          VERSION: ${{ github.ref_type == 'tag' && github.ref_name || '0.0.0-dev' }}
+          # THE fix for the P10a passphrase trap: step-scoped `env:` does not
+          # propagate, so declaring GPG_PASSPHRASE on the import step above (as
+          # this workflow used to) left the signing step with nothing. xtask
+          # reads DAT0_GPG_PASSPHRASE and, when it is empty or unset, omits
+          # `--pinentry-mode loopback --passphrase-fd 0` entirely — the
+          # passphraseless CI subkey that docs/security-runbook.md recommends
+          # would FAIL if those flags were always passed.
+          DAT0_GPG_PASSPHRASE: ${{ secrets.GPG_PASSPHRASE }}
+          # Both linuxdeploy and appimagetool ARE AppImages. Extracting instead
+          # of FUSE-mounting them is the standard CI posture — it survives a
+          # runner image without a usable /dev/fuse, which is otherwise an
+          # opaque "failed to set up mount namespace" at bundle time.
+          APPIMAGE_EXTRACT_AND_RUN: 1
         run: |
           cargo xtask gen-icon
           cargo xtask bundle-linux --version "${VERSION#v}"
       - name: Verify on clean Ubuntu
         run: |
-          docker run --rm -v "$PWD/target/linux:/art" ubuntu:24.04 \
-            bash -c "cd /art && ./dat0.AppImage --appimage-extract >/dev/null && ./squashfs-root/AppRun --version"
+          docker run --rm -v "$PWD/target/linux:/art" ubuntu:24.04 bash -euc '
+            # The AppImage excludelist deliberately does NOT bundle the core
+            # desktop libraries; the format declares them the responsibility of
+            # the host system. A genuinely bare container therefore cannot run
+            # ANY AppImage, and testing in one would prove nothing about dat0.
+            # Installing exactly that baseline and nothing else keeps the gate
+            # sharp: every dat0-specific dependency (libssl, libpango,
+            # libxkbcommon, libsecret, and DuckDB own deps) must come from the
+            # AppDir that linuxdeploy populated, or this step fails.
+            apt-get update -qq
+            apt-get install -y -qq --no-install-recommends \
+              ca-certificates zlib1g libstdc++6 \
+              libfontconfig1 libfreetype6 libglib2.0-0t64 \
+              libx11-6 libxext6 libxcb1 libxau6 libxdmcp6 \
+              libgl1 libegl1 \
+              libwebkit2gtk-4.1-0 libsoup-3.0-0
+            cd /art
+            ./dat0.AppImage --appimage-extract >/dev/null
+            ./squashfs-root/AppRun --version
+          '
           cargo xtask verify --linux
       - uses: actions/upload-artifact@v4
         with: { name: dat0-appimage, path: 'target/linux/dat0.AppImage*' }
@@ -80,13 +147,37 @@ jobs:
     needs: [macos, linux]
     if: github.ref_type == 'tag'
     runs-on: ubuntu-latest
+    timeout-minutes: 60
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - uses: actions/download-artifact@v4
         with: { path: dist }
       - uses: dtolnay/rust-toolchain@1.97.0
+      - name: Stage release assets under their versioned names
+        # `gh release`'s asset name is the file's basename — there is no rename
+        # flag — so the version is applied by copying, here, at upload time.
+        # The originals under dist/ are left in place because the manifest step
+        # below addresses them by fixed path.
+        run: |
+          V="${GITHUB_REF_NAME#v}"
+          mkdir -p upload
+          cp dist/dat0-dmg/dat0.dmg                "upload/dat0-${V}-universal.dmg"
+          cp dist/dat0-appimage/dat0.AppImage      "upload/dat0-${V}-x86_64.AppImage"
+          cp dist/dat0-appimage/dat0.AppImage.sig  "upload/dat0-${V}-x86_64.AppImage.sig"
+          # The updater artefact keeps its plain name: xtask/src/manifest.rs
+          # points latest.json's macOS URL at `.../v{version}/dat0.app.tar.gz`.
+          cp dist/dat0-app-tarball/dat0.app.tar.gz upload/dat0.app.tar.gz
+          ls -l upload
       - name: Checksums
-        run: cd dist && find . -type f \( -name '*.dmg' -o -name '*.AppImage' -o -name '*.sig' \) -exec sha256sum {} \; > SHA256SUMS
+        # Explicit operands, not a glob: a bare `*` would race the SHA256SUMS
+        # file the redirect creates in the same directory.
+        run: |
+          V="${GITHUB_REF_NAME#v}"
+          cd upload && sha256sum \
+            "dat0-${V}-universal.dmg" \
+            "dat0-${V}-x86_64.AppImage" \
+            "dat0-${V}-x86_64.AppImage.sig" \
+            dat0.app.tar.gz > SHA256SUMS
       - name: Generate + sign update manifest
         env:
           MINISIGN_SECRET_KEY: ${{ secrets.MINISIGN_SECRET_KEY }}
@@ -111,10 +202,13 @@ jobs:
       - name: Publish to GitHub Release
         env: { GH_TOKEN: "${{ github.token }}" }
         run: |
+          V="${GITHUB_REF_NAME#v}"
           gh release create "${{ github.ref_name }}" --generate-notes \
-            $(find dist -type f \( -name '*.dmg' -o -name '*.AppImage' -o -name '*.sig' \)) \
-            dist/SHA256SUMS
+            "upload/dat0-${V}-universal.dmg" \
+            "upload/dat0-${V}-x86_64.AppImage" \
+            "upload/dat0-${V}-x86_64.AppImage.sig" \
+            upload/SHA256SUMS
           gh release upload "${{ github.ref_name }}" \
             target/latest.json \
             target/latest.json.minisig \
-            dist/dat0-app-tarball/dat0.app.tar.gz
+            upload/dat0.app.tar.gz

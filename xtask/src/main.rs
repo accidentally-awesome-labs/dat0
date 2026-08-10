@@ -2,7 +2,7 @@
 use anyhow::Result;
 use clap::{Parser, Subcommand};
 use std::path::PathBuf;
-use xtask::{icon, linux, macos, manifest, sign};
+use xtask::{icon, linux, macos, manifest, perf, sign};
 
 #[derive(Parser)]
 #[command(bin_name = "xtask", about = "dat0 build/release tasks")]
@@ -55,6 +55,19 @@ enum Cmd {
         #[arg(long)]
         linux_size: u64,
     },
+    /// MX2: run the perf scenarios, optionally gating on the committed budgets.
+    Perf {
+        /// Scenario to run; repeatable. Omitted runs all six.
+        #[arg(long = "scenario")]
+        scenario: Vec<String>,
+        /// Compare each measurement against the budget and this host's
+        /// recorded baseline; exit 1 on a breach.
+        #[arg(long)]
+        check: bool,
+        /// Record this run as this host's baseline.
+        #[arg(long)]
+        update_baseline: bool,
+    },
 }
 
 fn main() -> Result<()> {
@@ -75,6 +88,24 @@ fn main() -> Result<()> {
             let json =
                 manifest::build_manifest(&version, &macos_sha, macos_size, &linux_sha, linux_size);
             std::fs::write("target/latest.json", json)?;
+            Ok(())
+        }
+        // The only subcommand with a meaningful non-zero exit that is not an
+        // error: a budget breach is a RESULT, so it must not surface as an
+        // anyhow chain that CI logs as a crash.
+        Cmd::Perf {
+            scenario,
+            check,
+            update_baseline,
+        } => {
+            let code = perf::run(perf::Options {
+                scenarios: scenario,
+                check,
+                update_baseline,
+            })?;
+            if code != 0 {
+                std::process::exit(code);
+            }
             Ok(())
         }
     }

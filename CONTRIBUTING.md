@@ -4,13 +4,14 @@ Thanks for your interest in dat0. This document covers how to contribute.
 
 ## Status
 
-dat0 is **pre-implementation**. The artifact in this repo today is the [design specification](docs/specs/2026-04-26-dat0-design.md). Code-level contributions will open as the implementation phases (P1 onward, per spec §21) begin.
+dat0 is implemented. The design specification
+([`docs/specs/2026-04-26-dat0-design.md`](docs/specs/2026-04-26-dat0-design.md))
+remains the reference for intent, but the workbench itself is real code —
+build and run it with the steps under **Building from source** below.
 
-In the meantime, helpful contributions include:
-- Spec feedback (open an issue or discussion)
-- Use-case scenarios that reveal gaps
-- `.dat0` format spec review when published
-- Discussion of cross-platform tradeoffs (especially Linux desktop polish)
+Code-level contributions are open. Spec feedback, use-case scenarios that
+reveal gaps, `.dat0` format review, and cross-platform tradeoff discussion
+(especially Linux desktop polish) are all still welcome.
 
 ## Developer Certificate of Origin (DCO)
 
@@ -68,7 +69,9 @@ cargo run --bin dat0
 
 A standalone window titled "dat0" opens. Close it to exit.
 
-**Note on `.cargo/config.toml`**: stub values for `DAT0_GLITCHTIP_DSN_PUBLIC` and `DAT0_SPARKLE_APPCAST_URL` are baked at compile time; CI overrides via secrets. Local dev needs no extra env setup.
+**Note on `.cargo/config.toml`**: a stub value for `DAT0_GLITCHTIP_DSN_PUBLIC` is
+baked at compile time; CI overrides it via secrets. Local dev needs no extra env
+setup.
 
 ## How to propose changes
 

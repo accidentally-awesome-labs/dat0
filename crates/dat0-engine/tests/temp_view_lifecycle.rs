@@ -46,7 +46,7 @@ async fn create_view_and_page_through_it() {
         .execute_paged("SELECT * FROM v_test", 0, 100)
         .await
         .unwrap();
-    assert_eq!(paged.total_rows, 50, "filter should match a >= 50");
+    assert_eq!(paged.total_rows, Some(50), "filter should match a >= 50");
 }
 
 #[tokio::test]
@@ -71,7 +71,7 @@ async fn replace_view_with_new_predicate() {
             .await
             .unwrap()
             .total_rows,
-        50
+        Some(50)
     );
 
     // Replace: a >= 90 → 10 rows.
@@ -88,7 +88,7 @@ async fn replace_view_with_new_predicate() {
             .await
             .unwrap()
             .total_rows,
-        10
+        Some(10)
     );
 }
 
@@ -130,7 +130,7 @@ async fn create_view_with_special_chars_in_name() {
         .execute_paged("SELECT * FROM \"v_weird\"\"name\"", 0, 10)
         .await
         .unwrap();
-    assert_eq!(paged.total_rows, 10);
+    assert_eq!(paged.total_rows, Some(10));
 }
 
 #[tokio::test]
@@ -149,7 +149,7 @@ async fn recreate_view_after_drop() {
         .execute_paged("SELECT * FROM v_test", 0, 10)
         .await
         .unwrap();
-    assert_eq!(paged.total_rows, 10);
+    assert_eq!(paged.total_rows, Some(10));
 }
 
 #[tokio::test]

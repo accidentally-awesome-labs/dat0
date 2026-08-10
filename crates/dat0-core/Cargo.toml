@@ -1,0 +1,88 @@
+[package]
+name = "dat0-core"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+rust-version.workspace = true
+
+[lib]
+path = "src/lib.rs"
+
+# Everything in dat0 that is not a widget. No `gpui*`, no `dioxus*` — the
+# `dat0-core purity` CI gate enforces that, and it is what makes the UI
+# swappable. Deliberately absent: `image`, `smallvec` (gpui bitmap plumbing),
+# `lsp-types`, `ropey` (CodeMirror owns completion ranking from Phase 4),
+# `tree-sitter-sequel` (@codemirror/lang-sql replaces it), `rust-embed`
+# (asset embedding is a UI concern).
+[features]
+# The perf harness's fixture generator. Optional for the same reason it was in
+# the GPUI crate: a release build must not link a CSV generator.
+perf-harness = ["dep:dat0-fixtures"]
+
+[dependencies]
+dat0-fixtures = { path = "../dat0-fixtures", optional = true }
+tokio = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+toml = { workspace = true }
+anyhow = { workspace = true }
+thiserror = { workspace = true }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
+notify = { workspace = true }
+once_cell = { workspace = true }
+parking_lot = { workspace = true }
+dirs = { workspace = true }
+fs4 = { workspace = true }
+gethostname = { workspace = true }
+libc = { workspace = true }
+interprocess = { workspace = true }
+uuid = { workspace = true }
+lru = { workspace = true }
+futures = { workspace = true }
+async-trait = { workspace = true }
+reqwest = { workspace = true }
+sha2 = { workspace = true }
+zip = { workspace = true }
+url = "2"
+regex = { workspace = true }
+ureq = { workspace = true }
+minisign-verify = "0.2"
+num_cpus = { workspace = true }
+clap = { workspace = true }
+tempfile = { workspace = true }
+plotters = { workspace = true }
+duckdb = { workspace = true }
+dat0-engine = { workspace = true }
+dat0-format = { workspace = true }
+dat0-i18n = { workspace = true }
+dat0-keychain = { workspace = true }
+sentry = { workspace = true }
+
+# See `crates/dat0-app/Cargo.toml` for why this is Linux-only: plotters' `ttf`
+# feature pulls font-kit, whose non-dlopen fontconfig path does not link against
+# yeslogic-fontconfig-sys v6.
+[target.'cfg(target_os = "linux")'.dependencies]
+font-kit = { version = "0.14.3", default-features = false, features = ["source-fontconfig-dlopen"] }
+
+[dev-dependencies]
+async-trait = { workspace = true }
+insta = { workspace = true }
+mockito = { workspace = true }
+serial_test = { workspace = true }
+criterion = { workspace = true }
+tempfile = { workspace = true }
+
+[[bench]]
+name = "engine_smoke"
+harness = false
+
+[[bench]]
+name = "grid_scroll"
+harness = false
+
+[[bench]]
+name = "chart_render"
+harness = false

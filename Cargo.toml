@@ -1,7 +1,8 @@
 [workspace]
 resolver = "2"
 members = [
-    "crates/dat0-app",
+    "crates/dat0-ui",
+    "crates/dat0-core",
     "crates/dat0-engine",
     "crates/dat0-format",
     "crates/dat0-fixtures",
@@ -50,23 +51,6 @@ uuid = { version = "1", features = ["v7"] }
 # P3a: LRU cache for paged Arrow batches in GridDataSource.
 lru = "0.12"
 
-# GPUI (verified pins per docs/internal/gpui-api-notes.md, T0 finding 2026-04-26).
-# gpui/gpui-macros are now published to crates.io as of v0.2.0 (PR #39835); v0.2.2 publish
-# commit is zed-industries/zed @ 08d95ad9d31f616a43dacda8416568d658dca6ae. gpui-component
-# v0.5.1 itself declares `gpui = "0.2.2"` in its workspace Cargo.toml — i.e. the upstream
-# component crate consumes gpui as a published crate, not as a git dep on
-# zed-industries/zed. We mirror that here with exact-version pins (`=0.2.2`) plus the SHA
-# recorded in docs/upstream-watch.md for traceability.
-gpui = "=0.2.2"
-# Workspace-pinned for version traceability; not currently a direct dep
-# (transitively resolved via gpui). T14 may add direct usage if `actions!`
-# turns out to be re-exported through gpui-macros at the pinned version.
-gpui-macros = "=0.2.2"
-gpui-component = { git = "https://github.com/longbridge/gpui-component", rev = "0f0ab35233212f8f3277028995caf0c41e13ee6c" }
-# A5: the default Lucide icon bundle for gpui-component's `IconName`. MUST stay
-# on the same rev as gpui-component — a mismatched assets crate silently serves
-# a different icon set (blank or wrong glyphs, no build error).
-gpui-component-assets = { git = "https://github.com/longbridge/gpui-component", rev = "0f0ab35233212f8f3277028995caf0c41e13ee6c" }
 
 # Telemetry
 sentry = { version = "0.36", default-features = false, features = ["backtrace", "panic", "rustls", "reqwest"] }
@@ -102,20 +86,6 @@ mockito = "1"
 # 2026-06-29 UAT-automation research. Text/serialized only; no pixel diffing.
 insta = "1"
 
-# UAT Gap 2 (AccessKit content-assertion): TEST-ONLY, feature-gated a11y tree
-# emission read by kittest. gpui =0.2.2 pulls NO accesskit → purely additive
-# (confirmed via `cargo tree -i accesskit`). accesskit/accesskit_consumer are
-# OPTIONAL deps of dat0-app behind the `a11y-capture` feature; kittest is a
-# dev-dep. kittest 0.3.0 is the newest release compatible with rust-version 1.85
-# (0.4.0 requires rustc 1.92). The accesskit versions MUST match the ones kittest
-# 0.3.0 consumes (accesskit 0.21, accesskit_consumer 0.30) — otherwise our
-# hand-built `TreeUpdate` is a different type than `kittest::State::new` expects
-# and the round-trip won't compile (Task-1 finding: the design's 0.24/0.35 pins
-# were for kittest 0.4, which needs rustc 1.92). Single accesskit copy per crate.
-# This does NOT close D-015 (production a11y).
-accesskit = "0.21"
-accesskit_consumer = "0.30"
-kittest = "0.3.0"
 
 # Bench
 criterion = { version = "0.5", features = ["html_reports", "async_tokio"] }
@@ -159,6 +129,7 @@ rand_chacha = "0.3" # deterministic PRNG (cross-platform reproducibility)
 rusqlite = { version = "0.31", features = ["bundled"] }
 
 # Internal crates
+dat0-core = { path = "crates/dat0-core" }
 dat0-engine = { path = "crates/dat0-engine" }
 dat0-format = { path = "crates/dat0-format" }
 dat0-i18n = { path = "crates/dat0-i18n" }
@@ -166,10 +137,16 @@ dat0-keychain = { path = "crates/dat0-keychain" }
 
 # CI disk/RAM mitigation (docs/ci.md "OOM mitigations" knob #1): trim dev/test
 # debuginfo to line tables only. The dev-profile link of dat0's test-binary set
-# (duckdb + arrow + gpui + sentry) carries full DWARF that exhausted the hosted
-# ubuntu runner's ~14 GB disk once P8 added ~9 more test binaries. `test`
-# inherits `dev`'s debug, so this shrinks every test binary ~60%. Tradeoff:
-# panic backtraces keep line numbers but lose inlined frames — acceptable.
+# (duckdb + arrow + sentry) carries full DWARF that exhausted the hosted ubuntu
+# runner's ~14 GB disk. `test` inherits `dev`'s debug, so this shrinks every
+# test binary ~60%. Tradeoff: panic backtraces keep line numbers but lose
+# inlined frames — acceptable.
+#
+# The GPUI -> Dioxus migration removed gpui, gpui-component and ~98 gpui-linked
+# test binaries from this link, so the pressure this knob was added for is a
+# fraction of what it was. It is kept because reverting it is only safe with a
+# measurement from the hosted runner, which is the one machine that cannot be
+# measured from here — re-check it against a green run before dropping it.
 [profile.dev]
 debug = "line-tables-only"
 

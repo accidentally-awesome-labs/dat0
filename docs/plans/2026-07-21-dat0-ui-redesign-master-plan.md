@@ -1,7 +1,7 @@
 # dat0 UI Redesign v1 — Master Plan
 
 Date: 2026-07-21
-Status: Approved scope. Research-backed. Slices not yet started.
+Status: Complete (B11, 95627c8)
 Scope decisions (owner-approved): full redesign · overlay/modal hardening · icon system · command palette · status bar · DockArea adoption now (not deferred).
 
 ---

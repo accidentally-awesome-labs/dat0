@@ -19,24 +19,31 @@ dat0 incorporates the following third-party components. The list below is genera
 
 ## Bundled assets
 
-dat0 embeds Lucide icons in the application binary. `cargo-about` sees only the
-crates dat0 depends on, not the artwork inside them, so the icons are recorded
-here by hand.
+dat0 embeds Lucide icons and the Geist / Geist Mono typefaces in the
+application binary. `cargo-about` sees only the crates dat0 depends on, not the
+artwork or fonts inside or beside them, so both are recorded here by hand.
 
-- **86 icons** ship via the `gpui-component-assets` crate (listed in the
-  generated section below as an Apache-2.0 dependency; the artwork inside it is
-  Lucide's).
-- **8 icons** are vendored directly into `crates/dat0-app/assets/icons/`:
+### Icons
+
+- **14 icons** are vendored directly into `crates/dat0-ui/assets/icons/`:
   `funnel.svg`, `play.svg`, `layers.svg`, `bookmark.svg`, `clock.svg`,
-  `database.svg`, `plug.svg`, `sparkles.svg`.
+  `database.svg`, `plug.svg`, `sparkles.svg`, and — added by the Dioxus
+  migration, which no longer has a widget library supplying them —
+  `close.svg`, `chevron-down.svg`, `chevron-up.svg`, `chevron-right.svg`,
+  `chevrons-up-down.svg`, `search.svg`.
+- **86 further icons** still reach the GPUI build through the
+  `gpui-component-assets` crate (listed in the generated section below as an
+  Apache-2.0 dependency; the artwork inside it is Lucide's). That crate leaves
+  the tree when `crates/dat0-app` does, at which point the vendored set above
+  is the whole inventory.
 
 Lucide is dual-licensed. Most icons are ISC; icons derived from the Feather
 project are MIT (Copyright (c) 2013-present Cole Bemis). dat0 ships icons under
-both — `clock`, `database`, `x`, `check` and the `chevron-*` family are among the
-Feather-derived set (`plug` and `sparkles` are not: they do not appear in the
-authoritative list below). The complete upstream license text covering both, including
-the authoritative list of Feather-derived icons, is vendored verbatim at
-`crates/dat0-app/assets/icons/LICENSE-lucide`.
+both — `clock`, `database`, `x`/`close`, `search` and the `chevron-*` family are
+among the Feather-derived set (`plug` and `sparkles` are not: they do not appear
+in the authoritative list below). The complete upstream license text covering
+both, including the authoritative list of Feather-derived icons, is vendored
+verbatim at `crates/dat0-ui/assets/icons/LICENSE-lucide`.
 
 ```
 ISC License
@@ -54,6 +61,75 @@ ANY SPECIAL, DIRECT, INDIRECT, OR CONSEQUENTIAL DAMAGES OR ANY DAMAGES
 WHATSOEVER RESULTING FROM LOSS OF USE, DATA OR PROFITS, WHETHER IN AN
 ACTION OF CONTRACT, NEGLIGENCE OR OTHER TORTIOUS ACTION, ARISING OUT OF
 OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
+```
+
+### Fonts
+
+dat0 embeds eight TrueType faces vendored into `crates/dat0-ui/assets/fonts/`
+and registered at boot by `dat0_app::assets::register_fonts`:
+
+- **Geist** — `Geist-Regular.ttf`, `Geist-Medium.ttf`, `Geist-SemiBold.ttf`,
+  `Geist-Bold.ttf`
+- **Geist Mono** — `GeistMono-Regular.ttf`, `GeistMono-Medium.ttf`,
+  `GeistMono-SemiBold.ttf`, `GeistMono-Bold.ttf`
+
+Both families come from <https://github.com/vercel/geist-font> (`fonts/Geist/ttf/`
+and `fonts/GeistMono/ttf/`) and are licensed under the **SIL Open Font License,
+Version 1.1** (SPDX: `OFL-1.1`). Fonts are not Cargo dependencies, so
+`cargo-about` cannot see them; this section is maintained by hand alongside the
+icon section above.
+
+The complete upstream license text is vendored verbatim at
+`crates/dat0-ui/assets/fonts/LICENSE-geist`. Its copyright line declares **no
+Reserved Font Name**, so OFL 1.1 §3 imposes no rename obligation on
+redistribution; dat0 ships the faces unmodified in any case.
+
+```
+Copyright 2024 The Geist Project Authors (https://github.com/vercel/geist-font)
+
+This Font Software is licensed under the SIL Open Font License, Version 1.1.
+This license is copied below, and is also available with a FAQ at:
+https://openfontlicense.org
+```
+
+OFL 1.1 §2 requires that this notice travel with the fonts, which is why the
+full text is vendored next to them rather than only summarised here.
+
+### Vendored JavaScript
+
+dat0's SQL console embeds a prebuilt CodeMirror 6 bundle at
+`crates/dat0-ui/assets/codemirror.js`, served out of the binary over the `dat0`
+custom asset protocol. `cargo-about` reads `Cargo.lock` and cannot see vendored
+JavaScript, so this entry is maintained by hand. The build inputs — including
+the exact pinned versions and `package-lock.json` — live in
+`crates/dat0-ui/vendor/codemirror/`.
+
+The bundle contains `@codemirror/state`, `@codemirror/view`,
+`@codemirror/commands`, `@codemirror/lang-sql`, `@codemirror/autocomplete`,
+`@codemirror/search`, `@codemirror/language` and `@lezer/highlight`. All are MIT.
+
+```
+MIT License
+
+Copyright (C) 2018-2021 by Marijn Haverbeke <marijn@haverbeke.berlin> and others
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in
+all copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
+THE SOFTWARE.
 ```
 
 <!-- BEGIN cargo-about generated -->

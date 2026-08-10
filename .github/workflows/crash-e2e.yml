@@ -15,7 +15,14 @@ env:
 jobs:
   glitchtip-roundtrip:
     runs-on: ubuntu-latest
-    continue-on-error: true   # D4: live external dep — must not redden main (ai_live lesson)
+    timeout-minutes: 60
+    # `continue-on-error` used to sit HERE, at job level, which swallowed the
+    # build and the run too. That is wrong: `./target/release/dat0
+    # __telemetry-test` panicking, or failing to build, is a real regression in
+    # the panic-handler wiring this workflow exists to prove — and it is
+    # regression regardless of whether GlitchTip's API is reachable.
+    # Only the ASSERTION step depends on a live external service, so only the
+    # assertion step is soft (see the ai_live lesson in ci.yml).
     env:
       DAT0_GLITCHTIP_DSN_PUBLIC: ${{ secrets.GLITCHTIP_DSN_PUBLIC }}
       GLITCHTIP_API_TOKEN: ${{ secrets.GLITCHTIP_API_TOKEN }}
@@ -32,20 +39,33 @@ jobs:
           fi
       - uses: dtolnay/rust-toolchain@1.97.0
         if: steps.gate.outputs.run == 'true'
+      # wry links against WebKitGTK and libsoup; without the -dev packages the
+      # build fails at pkg-config time, which looks nothing like a missing
+      # system library from the log.
+      - name: Linux — WebView build deps
+        if: steps.gate.outputs.run == 'true'
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libsoup-3.0-dev libsecret-1-dev
       - name: Build + send test event
         if: steps.gate.outputs.run == 'true'
         run: |
-          cargo build -p dat0-app --release --bin dat0
+          cargo build -p dat0-ui --release --bin dat0
           ./target/release/dat0 __telemetry-test
       - name: Assert arrival in GlitchTip + no PII
         if: steps.gate.outputs.run == 'true'
+        # SOFT — and the only soft step in this job. Everything above (build,
+        # panic-handler run) is a hard gate; this step reaches a live
+        # third-party ingestion API whose availability and lag we do not
+        # control, so a failure here must not redden main.
+        continue-on-error: true
         run: |
           sleep 15  # ingestion lag
           BASE="${GLITCHTIP_API_URL:-https://app.glitchtip.com}"
           # NOTE: Confirm this API path against the live GlitchTip instance during UAT.
           # Self-hosted instances may use /api/0/organizations/<org>/issues/ instead.
-          # The job is soft (continue-on-error: true), so a path mismatch surfaces
-          # as a yellow warning on CI, not a red gate on main.
+          # This STEP is soft, so a path mismatch surfaces as a yellow warning
+          # on CI, not a red gate on main.
           RESP=$(curl -sf -H "Authorization: Bearer ${GLITCHTIP_API_TOKEN}" \
             "${BASE}/api/0/projects/${GLITCHTIP_PROJECT_SLUG}/issues/?query=dat0+telemetry+e2e")
           echo "$RESP" | grep -q "dat0 telemetry e2e" || { echo "test event not found"; exit 1; }

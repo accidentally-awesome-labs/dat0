@@ -1,0 +1,94 @@
+name: PD-004 diagnose (keychain on Linux)
+
+# DIAGNOSTIC INSTRUMENT, not a gate. Manual dispatch only.
+#
+# PD-004 (docs/deferrals.md): `crates/dat0-keychain/tests/round_trip.rs:3` is
+# `#[cfg_attr(target_os = "linux", ignore)]` because the Secret Service backend
+# reportedly panics with `SS error: result not returned from SS API` on hosted
+# Ubuntu. That diagnosis is from 2026-04-26 and has never been re-checked —
+# meanwhile `ci.yml` grew the obvious remedy (`dbus-launch` +
+# `gnome-keyring-daemon --unlock --start --components=secrets`, ci.yml:191-198)
+# and the deferral was never revisited against it.
+#
+# The deliverable of this workflow is THE CAPTURED ERROR, pasted into PD-004.
+# It deliberately runs the same setup ci.yml already uses (arm A) AND the
+# `dbus-run-session` form PD-004 suggests as fix (a) (arm B), so the log shows
+# which one — if either — actually works. Do NOT remove the `cfg_attr` on the
+# strength of a green run here without also making the real CI job run it.
+on:
+  workflow_dispatch: {}
+
+jobs:
+  keychain-linux:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@1.97.0
+      - uses: Swatinem/rust-cache@v2
+        with:
+          cache-targets: true
+      - name: Linux deps
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libsecret-1-dev dbus-x11 gnome-keyring libssl-dev
+      # ── Arm A: exactly what ci.yml does today (env exported across steps).
+      - name: 'Arm A — ci.yml setup: dbus-launch + $GITHUB_ENV propagation'
+        run: |
+          eval "$(dbus-launch --sh-syntax)"
+          eval "$(printf '\n' | gnome-keyring-daemon --unlock --start --components=secrets)"
+          echo "DBUS_SESSION_BUS_ADDRESS=$DBUS_SESSION_BUS_ADDRESS" >> $GITHUB_ENV
+          echo "GNOME_KEYRING_CONTROL=$GNOME_KEYRING_CONTROL" >> $GITHUB_ENV
+          echo "SSH_AUTH_SOCK=$SSH_AUTH_SOCK" >> $GITHUB_ENV
+      - name: 'Arm A — run the ignored keychain test'
+        id: arm_a
+        continue-on-error: true
+        run: |
+          set -o pipefail
+          cargo test -p dat0-keychain --test round_trip -- \
+            --include-ignored --nocapture --test-threads=1 \
+            2>&1 | tee /tmp/pd004-arm-a.log
+      # ── Arm B: PD-004's own suggested fix (a) — one self-contained session
+      # bus wrapping the daemon AND the test in a single invocation.
+      - name: 'Arm B — dbus-run-session (PD-004 suggested fix a)'
+        id: arm_b
+        continue-on-error: true
+        run: |
+          set -o pipefail
+          dbus-run-session -- bash -c '
+            gnome-keyring-daemon --unlock --start --components=secrets <<<"" >/dev/null
+            cargo test -p dat0-keychain --test round_trip -- \
+              --include-ignored --nocapture --test-threads=1
+          ' 2>&1 | tee /tmp/pd004-arm-b.log
+      - name: Summarize
+        if: always()
+        run: |
+          {
+            echo "## PD-004 diagnosis"
+            echo ""
+            echo "| arm | setup | outcome |"
+            echo "|---|---|---|"
+            echo "| A | ci.yml dbus-launch + \$GITHUB_ENV | ${{ steps.arm_a.outcome }} |"
+            echo "| B | dbus-run-session (fix a) | ${{ steps.arm_b.outcome }} |"
+            echo ""
+            echo "### Arm A tail"
+            echo '```'
+            tail -n 40 /tmp/pd004-arm-a.log 2>/dev/null || echo "(no log)"
+            echo '```'
+            echo "### Arm B tail"
+            echo '```'
+            tail -n 40 /tmp/pd004-arm-b.log 2>/dev/null || echo "(no log)"
+            echo '```'
+            echo ""
+            echo "Paste the failing arm's exact error into PD-004 in docs/deferrals.md."
+          } >> "$GITHUB_STEP_SUMMARY"
+      - name: Upload logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: pd004-diagnose-${{ github.sha }}
+          path: |
+            /tmp/pd004-arm-a.log
+            /tmp/pd004-arm-b.log
+          retention-days: 30
+          if-no-files-found: warn

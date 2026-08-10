@@ -3,6 +3,18 @@ on:
   push:
     branches: [main]
   pull_request:
+    # `labeled` is REQUIRED for the `run-perf` gate below to be reachable.
+    # The default set is [opened, synchronize, reopened]; without `labeled`,
+    # applying the label to an existing PR triggers nothing, and re-running the
+    # workflow re-evaluates `if:` against the ORIGINAL event payload — which
+    # does not carry the new label. This is the same trigger heavy.yml uses for
+    # `run-heavy`.
+    #
+    # COST, stated plainly: any label change on a PR now re-runs this whole
+    # workflow, and because `cancel-in-progress` is on, labelling mid-run
+    # cancels and restarts it. Apply `run-perf` / `run-heavy` BEFORE or WITH
+    # the push you want them to cover.
+    types: [opened, synchronize, reopened, labeled]
 
 # Cancel in-progress runs on the same branch/PR when a new commit lands.
 # Stops minute-stacking from rapid-fire pushes.
@@ -15,7 +27,7 @@ env:
   # It only accelerates *re*builds within a persistent target dir; every CI run
   # starts clean, so the incremental caches are written, never reused, and then
   # thrown away — while consuming GBs (locally `target/debug/incremental` alone
-  # reaches ~20 GB). Combined with duckdb's ~1.6 GB rlib and ~98 gpui-linked
+  # reaches ~20 GB). Combined with duckdb's ~1.6 GB rlib and the
   # integration-test binaries (~200-250 MB each), that pushed the hosted Ubuntu
   # runner over its disk limit: the runner PROCESS itself died with
   # `System.IO.IOException: No space left on device` mid-step, failing an
@@ -32,18 +44,32 @@ env:
 jobs:
   fmt:
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v5
       - uses: dtolnay/rust-toolchain@1.97.0
         with: { components: rustfmt }
+      # Registry + git + target caching. `fmt` compiles nothing, but the
+      # registry/git half still removes the DuckDB + GPUI source fetch from
+      # every run, which is most of this job's wall time.
+      - uses: Swatinem/rust-cache@v2
+        with:
+          cache-targets: true
       - run: cargo fmt --all -- --check
 
   clippy:
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v5
       - uses: dtolnay/rust-toolchain@1.97.0
         with: { components: clippy }
+      # `clippy --all-targets` is a full check build; target caching is the
+      # whole point here. This job has no disk ceiling problem (it never
+      # produces the debug test-binary set that `build-and-test` does).
+      - uses: Swatinem/rust-cache@v2
+        with:
+          cache-targets: true
       - run: cargo clippy --workspace --all-targets -- -D warnings
 
   build-and-test:
@@ -75,7 +101,6 @@ jobs:
     # OTHER step that stalls. Well clear of normal cost (Linux ~75m, macOS ~40m).
     timeout-minutes: 120
     env:
-      DAT0_SPARKLE_APPCAST_URL: https://dat0.dev/appcast.xml
       DAT0_GLITCHTIP_DSN_PUBLIC: ${{ secrets.GLITCHTIP_DSN_PUBLIC }}
       # LINUX: drop DWARF from dev/test binaries. This is the disk fix.
       #
@@ -85,7 +110,7 @@ jobs:
       #   Linux  DISK[after-live-ai]          avail=2.6G    ← 99% full
       # A 3.4x platform gap on identical code: on macOS debug info is NOT linked
       # into the executable (it stays in .o/dSYM), but on Linux DWARF is EMBEDDED
-      # in every one of the ~139 statically-linked (duckdb+gpui) test binaries.
+      # in every statically-linked (duckdb + arrow) test binary.
       # So `[profile.dev] debug = "line-tables-only"` is nearly free on macOS and
       # enormously expensive on Linux — which is why Linux finishes at 99% disk and
       # intermittently dies with `No space left on device` (it reddened main on
@@ -146,7 +171,7 @@ jobs:
       - uses: actions/checkout@v5
       # GitHub-hosted ubuntu-latest ships ~14 GB free disk by default;
       # dat0's debug-profile cargo test --workspace blows past that
-      # (duckdb + arrow + gpui + sentry rlib chain). Free ~30 GB by
+      # (duckdb + arrow + sentry rlib chain). Free ~30 GB by
       # removing preinstalled language tooling we don't use.
       # See docs/ci-mac-vm-runner.md / docs/ci.md for the wider disk
       # story. Skipped on self-hosted (operator manages disk there).
@@ -174,6 +199,25 @@ jobs:
       - uses: dtolnay/rust-toolchain@1.97.0
         with:
           targets: ${{ matrix.target.triple }}
+      # Registry + git caching ONLY. `cache-targets: false` is load-bearing:
+      # this job deliberately `rm -rf`s `target/<triple>/release` (see the
+      # "Reclaim release tree" step) and, on macOS, the whole
+      # `target/<triple>` tree before the bench — it fights a disk ceiling
+      # rather than a compile-time one. Caching a target dir that the job
+      # then deletes would upload GBs on every run for nothing, and restoring
+      # it would recreate the exhaustion the reclaims exist to prevent.
+      # What the registry/git half removes is the DuckDB + GPUI + Arrow source
+      # fetch, which is pure download time with no disk-ceiling downside.
+      - uses: Swatinem/rust-cache@v2
+        with:
+          cache-targets: false
+          key: ${{ matrix.target.name }}
+      # nextest runs each test in its OWN PROCESS. dat0 has 21 tests using
+      # `serial_test` and several that mutate process-global `OnceCell`s
+      # (crates/dat0-core/src/globals.rs), so per-test process
+      # isolation is not a nicety here — it is what lets those tests stop
+      # serializing against each other inside one binary.
+      - uses: taiki-e/install-action@nextest
       # apt + dbus-launch steps are skipped on self-hosted runners. Those
       # runners must have the listed packages pre-installed on the host image
       # (see docs/ci.md for the install command) and dbus/gnome-keyring
@@ -187,7 +231,8 @@ jobs:
           sudo apt-get install -y \
             libsecret-1-dev dbus-x11 gnome-keyring \
             libpango1.0-dev libxkbcommon-dev libxkbcommon-x11-dev \
-            libfontconfig1-dev libssl-dev
+            libfontconfig1-dev libssl-dev \
+            libwebkit2gtk-4.1-dev libsoup-3.0-dev
       - name: Linux — start dbus + gnome-keyring (Secret Service backend)
         if: runner.os == 'Linux' && runner.environment == 'github-hosted'
         run: |
@@ -196,25 +241,6 @@ jobs:
           echo "DBUS_SESSION_BUS_ADDRESS=$DBUS_SESSION_BUS_ADDRESS" >> $GITHUB_ENV
           echo "GNOME_KEYRING_CONTROL=$GNOME_KEYRING_CONTROL" >> $GITHUB_ENV
           echo "SSH_AUTH_SOCK=$SSH_AUTH_SOCK" >> $GITHUB_ENV
-      - name: macOS — ensure Metal Toolchain is available
-        if: runner.os == 'macOS'
-        run: |
-          # Probe whether the metal compiler is already on PATH (GitHub-hosted
-          # Xcode bundles the Metal Toolchain by default on most images).
-          if xcrun --find metal >/dev/null 2>&1; then
-            echo "Metal Toolchain already present: $(xcrun --find metal)"
-            exit 0
-          fi
-          # Newer Xcode (~26.x) ships Metal Toolchain as a separately-downloadable
-          # component. The flag does not exist on older Xcode versions, so try it
-          # but fall back if rejected.
-          if xcodebuild -downloadComponent MetalToolchain 2>/dev/null; then
-            echo "Metal Toolchain downloaded via xcodebuild."
-            exit 0
-          fi
-          echo "::error::Metal Toolchain not present and xcodebuild -downloadComponent unsupported on this Xcode."
-          echo "::error::xcodebuild version: $(xcodebuild -version | head -1)"
-          exit 1
       - name: Build
         run: cargo build --workspace --release --target ${{ matrix.target.triple }}
       - name: 'Disk: after Build (release)'
@@ -238,7 +264,7 @@ jobs:
       # rlib). The last consumer of the release tree is the Prime step above
       # (`cargo run --release`); everything after this — Test, MotherDuck,
       # OpenRouter — is debug. On Linux ~7.5 GB of release artifacts just sit
-      # there while the debug tree (duckdb + ~98 gpui-linked test binaries)
+      # there while the debug tree (duckdb + the workspace's test binaries)
       # balloons past the limit. The runner PROCESS itself then dies with `No
       # space left on device` mid-step — it reddened main on b55758b and blocked
       # PR #51. `Free disk space` is already maxed out and CARGO_INCREMENTAL=0
@@ -268,14 +294,21 @@ jobs:
           du -sh "target/${{ matrix.target.triple }}/release" 2>/dev/null || true
           rm -rf "target/${{ matrix.target.triple }}/release"
           ./.github/scripts/disk-report.sh after-reclaim "${{ matrix.target.triple }}"
-      - name: Test
+      - name: Test (nextest)
         # `--include-ignored` deliberately omitted. Heavy exit_criteria tests
         # (1 GB CSV / 500 MB Parquet / 100 MB SQLite) run nightly via
         # heavy.yml. PR-time validation runs the fast suite only.
         #
+        # nextest, not `cargo test`: it runs every test in its own process.
+        # dat0 has 21 tests using `serial_test` and several that mutate
+        # process-global `OnceCell`s (crates/dat0-core/src/globals.rs);
+        # inside a single `cargo test` binary those must serialize against each
+        # other, and a global left dirty by one test is visible to the next.
+        # Per-test processes remove both hazards.
+        #
         # CARGO_BUILD_JOBS caps concurrent rustc/link processes on hosted
         # Linux: ubuntu-latest has 4 vCPU + 16 GB RAM, and the dev-profile
-        # link of dat0's test binary set (duckdb + arrow + gpui + sentry
+        # link of dat0's test binary set (duckdb + arrow + sentry
         # rlib chain) OOM-kills `ld` (signal 7 Bus error) at default
         # parallelism. See docs/ci.md "OOM mitigations" §2.
         env:
@@ -283,7 +316,14 @@ jobs:
           # ("could not parse ``"). Use the literal "default" for the
           # non-Linux branch so cargo treats it as the unset semantics.
           CARGO_BUILD_JOBS: ${{ (runner.os == 'Linux' && runner.environment == 'github-hosted') && '2' || 'default' }}
-        run: cargo test --workspace --target ${{ matrix.target.triple }}
+        run: cargo nextest run --workspace --target ${{ matrix.target.triple }}
+      - name: Doctests
+        # nextest does NOT run doctests (upstream: rustc has no libtest-json
+        # harness for them). `cargo test --doc` is the only way to keep them
+        # gated, and it reuses the tree nextest just built.
+        env:
+          CARGO_BUILD_JOBS: ${{ (runner.os == 'Linux' && runner.environment == 'github-hosted') && '2' || 'default' }}
+        run: cargo test --workspace --target ${{ matrix.target.triple }} --doc
       # ★ THE LOW-WATER MARK. Every disk-exhaustion failure so far has struck at a
       # cargo step AFTER a green `Test` — the debug build is the peak consumer, so
       # this is the number that decides whether the job survives. `if: always()`
@@ -346,55 +386,177 @@ jobs:
         # above stays hermetic; --include-ignored runs them HERE.
         # --test-threads=1 serializes the two live calls so they don't fire
         # simultaneously against the per-key rate window.
-        run: cargo test -p dat0-app --test ai_live --target ${{ matrix.target.triple }} -- --include-ignored --test-threads=1 --nocapture
+        run: cargo test -p dat0-core --test ai_live --target ${{ matrix.target.triple }} -- --include-ignored --test-threads=1 --nocapture
       # This is the exact step the runner has died on (disk-full, mid-step, leaving
       # it `in_progress/null` — deceptively hang-like). Snapshot here to see how
       # much headroom was actually left at the moment of death.
       - name: 'Disk: after live-AI step'
         if: always()
         run: ./.github/scripts/disk-report.sh after-live-ai "${{ matrix.target.triple }}"
-      # Bench is macOS-only (single host class — variance across runners
-      # makes cross-OS comparison meaningless). Artifact-only at P3a; spec
-      # line 819 defers the merge-gate threshold to P10.
+      # Perf harness is macOS-only (single host class — variance across
+      # runners makes cross-OS comparison meaningless).
       #
-      # Gated to push events (i.e. merges to main), NOT pull_request: `cargo
-      # bench` recompiles DuckDB from source in a THIRD profile on top of the
-      # debug (Test) + release (Build) trees, which exhausted the macOS runner's
-      # ~14 GB disk on P5c PR runs ("No space left on device" in libduckdb-sys
-      # ranlib), failing the whole job — and a disk-dead runner can't be rescued
-      # by continue-on-error. Since the bench is advisory (not a gate), skip it
-      # on PR CI to keep disk headroom; it still runs post-merge on main.
-      # Reclaim disk before the bench. The bench command below has no `--target`,
-      # so cargo builds a FRESH host tree in `target/{debug,release}` and
-      # recompiles DuckDB a third time — on top of the Build (release) + Test
-      # (debug) trees under `target/<triple>/`, which the bench never reuses.
-      # That third profile exhausted the macOS runner's ~14 GB disk ("No space
-      # left on device" crashing the runner worker — uncatchable by
-      # continue-on-error). Dropping the `target/<triple>` tree (unused from here
-      # on; MotherDuck tests already ran) frees both prior DuckDB builds first.
-      # (A deeper fix would add `--target ${{ matrix.target.triple }}` to the
-      # bench so it reuses the release tree; left as a future optimization.)
-      - name: Reclaim disk before bench (macOS, push to main)
+      # ADVISORY on purpose (`continue-on-error: true`). This runner is a
+      # virtualized macOS VM with no dedicated GPU; a frame-interval budget
+      # measured there cannot honestly defend a frame-rate claim, and a gate
+      # that reddens main on runner variance is worse than no gate at all —
+      # it trains everyone to ignore it. What this step IS for: recording the
+      # `ci-hosted` host's numbers on every merge so drift is visible.
+      # `--check` on a host with no entry in docs/internal/perf-baselines.json
+      # RECORDS rather than compares (see the MX2 decision table), so the
+      # first run here is informational by construction.
+      # The BLOCKING gate is the `perf-gate` job below.
+      #
+      # Gated to push events (i.e. merges to main), NOT pull_request: the
+      # harness builds `--release --features perf-harness` plus the plain
+      # `dat0` binary in a THIRD profile on top of the debug (Test) + release
+      # (Build) trees, which exhausted the macOS runner's ~14 GB disk on P5c
+      # PR runs ("No space left on device" in libduckdb-sys ranlib), failing
+      # the whole job — and a disk-dead runner can't be rescued by
+      # continue-on-error.
+      #
+      # The reclaim below is therefore mandatory, not an optimization: the
+      # harness build has no `--target`, so cargo builds a FRESH host tree in
+      # `target/{debug,release}` and never reuses `target/<triple>`. Dropping
+      # that tree (unused from here on; MotherDuck tests already ran) frees
+      # both prior DuckDB builds first.
+      - name: Reclaim disk before perf harness (macOS, push to main)
         if: runner.os == 'macOS' && github.event_name != 'pull_request'
         run: |
           df -h /
           rm -rf "target/${{ matrix.target.triple }}"
           df -h /
-      - name: Bench — grid scroll (macOS only, push to main)
+      - name: Perf harness — advisory check (macOS only, push to main)
         if: runner.os == 'macOS' && github.event_name != 'pull_request'
+        continue-on-error: true
+        env:
+          # Keys the baseline entry. Without it a virtualized runner would be
+          # compared against dev-box numbers, which is the comparison MX2's
+          # host key exists to prevent.
+          DAT0_PERF_HOST: ci-hosted
         run: |
-          cargo bench -p dat0-app --bench grid_scroll -- --output-format=bencher | tee bench.txt
-      - name: Upload bench artifact
+          cargo xtask perf --check \
+            --scenario scroll_1m \
+            --scenario cold_launch \
+            --scenario idle_rss \
+            | tee perf-check.jsonl
+      - name: Upload perf artifact
         if: runner.os == 'macOS' && github.event_name != 'pull_request'
         continue-on-error: true
         uses: actions/upload-artifact@v4
         with:
-          name: grid-scroll-bench-${{ github.sha }}
-          path: bench.txt
+          name: perf-check-${{ github.sha }}
+          path: perf-check.jsonl
           retention-days: 14
+
+  # ────────────────────────────────────────────────────────────────────────
+  # BLOCKING perf gate. Opt-in per PR via the `run-perf` label, exactly like
+  # heavy.yml's `run-heavy`, because the six-scenario run costs ~30-40 min of
+  # 10x-billed macOS minutes and most PRs cannot move frame time.
+  #
+  # No `continue-on-error`: this is the gate. When dedicated (non-virtualized)
+  # macOS hardware appears, the ONLY line that changes is `runs-on:` — the
+  # command, the budgets and the host key stay as they are. Promoting this from
+  # label-triggered to every-PR is tracked as its own deferral.
+  perf-gate:
+    name: Perf budget (run-perf label)
+    # Label-gated only. Unlike heavy.yml this does NOT run on push: the
+    # advisory step inside `build-and-test` already covers post-merge main.
+    if: >
+      github.event_name == 'pull_request' &&
+      contains(github.event.pull_request.labels.*.name, 'run-perf')
+    runs-on: macos-14
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@1.97.0
+      - uses: Swatinem/rust-cache@v2
+        with:
+          cache-targets: false
+      - name: cargo xtask perf --check (all six scenarios)
+        env:
+          DAT0_PERF_HOST: ci-hosted
+        run: cargo xtask perf --check | tee perf-gate.jsonl
+      - name: Upload perf artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: perf-gate-${{ github.sha }}
+          path: perf-gate.jsonl
+          retention-days: 14
+
+  # Coverage is REPORTING ONLY — deliberately no threshold. A threshold picked
+  # before the number is known is a guess; docs/ci.md records the measured
+  # figure from the first run, and that measured figure becomes the floor of a
+  # later ratchet.
+  coverage:
+    name: Coverage (report only)
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@1.97.0
+        with: { components: llvm-tools-preview }
+      - uses: Swatinem/rust-cache@v2
+        with:
+          cache-targets: false
+      - name: Free disk space
+        uses: jlumbroso/free-disk-space@v1.3.1
+        with:
+          tool-cache: true
+          android: true
+          dotnet: true
+          haskell: true
+          large-packages: true
+          swap-storage: true
+      - name: Linux deps (keychain + GPUI)
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libsecret-1-dev dbus-x11 gnome-keyring \
+            libpango1.0-dev libxkbcommon-dev libxkbcommon-x11-dev \
+            libfontconfig1-dev libssl-dev \
+            libwebkit2gtk-4.1-dev libsoup-3.0-dev
+      - name: Start dbus + gnome-keyring (Secret Service backend)
+        run: |
+          eval "$(dbus-launch --sh-syntax)"
+          eval "$(printf '\n' | gnome-keyring-daemon --unlock --start --components=secrets)"
+          echo "DBUS_SESSION_BUS_ADDRESS=$DBUS_SESSION_BUS_ADDRESS" >> $GITHUB_ENV
+          echo "GNOME_KEYRING_CONTROL=$GNOME_KEYRING_CONTROL" >> $GITHUB_ENV
+          echo "SSH_AUTH_SOCK=$SSH_AUTH_SOCK" >> $GITHUB_ENV
+      - uses: taiki-e/install-action@nextest
+      - uses: taiki-e/install-action@cargo-llvm-cov
+      - name: cargo llvm-cov
+        env:
+          # Same OOM cap as build-and-test: instrumented builds link the same
+          # duckdb rlib chain, only larger.
+          CARGO_BUILD_JOBS: 2
+        run: cargo llvm-cov nextest --workspace --lcov --output-path lcov.info
+      - name: Upload lcov
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: lcov-${{ github.sha }}
+          path: lcov.info
+          retention-days: 14
+
+  # Supply chain IS a gate (no continue-on-error). Complements notice.yml:
+  # notice.yml asks "is NOTICE.md in sync"; this asks "is the dependency graph
+  # allowed to exist at all" — licenses, advisories, yanked crates, and which
+  # git sources may be pulled.
+  supply-chain:
+    name: cargo-deny (licenses + advisories + sources)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v5
+      - uses: EmbarkStudios/cargo-deny-action@v2
+        with:
+          command: check
 
   i18n-check:
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v5
       - run: ./scripts/i18n-check.sh
@@ -402,6 +564,7 @@ jobs:
   no-standalone-arrow:
     name: No standalone arrow dep (type-chain protection)
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v5
       - name: Verify no `arrow = ` workspace/crate dep
@@ -412,9 +575,29 @@ jobs:
           fi
           echo "OK: no standalone arrow dep"
 
+  dat0-core-purity:
+    name: dat0-core carries no UI toolkit
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Verify no gpui/dioxus in the dat0-core dependency tree
+        run: |
+          # `dat0-core` is what makes the UI swappable: every module in it must
+          # compile without knowing what is drawing. A toolkit dep sneaking in
+          # via a re-export is invisible in review and fatal in a year.
+          if cargo tree -p dat0-core -e normal | grep -qE '(gpui|dioxus)'; then
+            echo "::error::dat0-core must not depend on a UI toolkit."
+            cargo tree -p dat0-core -e normal | grep -E '(gpui|dioxus)'
+            exit 1
+          fi
+          echo "OK: dat0-core is toolkit-free"
+
   no-debug-query-scalar:
     name: No __debug_query_scalar references (D-011 closure)
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v5
       - name: Verify no `__debug_query_scalar` references

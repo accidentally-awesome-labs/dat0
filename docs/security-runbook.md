@@ -105,20 +105,26 @@ gpg --verify dat0.AppImage.sig dat0.AppImage
 The public key should be published at a well-known URL (e.g. in the README and
 on the project website) so users can import it before verifying.
 
-### Passphrase decision (verify at first dry run)
+### Passphrase decision — wired for BOTH postures (RL4)
 
-> See the full details in `docs/release-runbook.md` under
+> Full details in `docs/release-runbook.md` under
 > **"Linux GPG signing — passphrase wiring"**.
 
-The current `release.yml` sets `GPG_PASSPHRASE` only in the "Import GPG key"
-step's `env:` — it does **not** propagate to the "Bundle + sign" step where
-`gpg --batch --detach-sign` actually runs. Before the first release:
+The P10a defect — `GPG_PASSPHRASE` set only in the "Import GPG key" step's
+`env:`, which does not propagate to the "Bundle + sign" step — is fixed.
+`release.yml` now passes `DAT0_GPG_PASSPHRASE` to the signing step, and
+`xtask/src/linux.rs::gpg_sign` adds `--pinentry-mode loopback
+--passphrase-fd 0` **only when that variable is non-empty**, feeding the
+passphrase over stdin rather than argv.
 
-- **(Recommended)** Provision a **passphraseless** dedicated CI signing subkey.
-  This is the simplest posture: the CI key is disposable (rotate on compromise),
-  so a passphrase adds minimal security over the GitHub Secret encryption.
-- **(Alternative)** Wire `GPG_PASSPHRASE` into the sign step and use
-  `--pinentry-mode loopback`. See the release runbook for exact flags.
+- **(Recommended, and the default posture)** a **passphraseless** dedicated CI
+  signing subkey. Leave `GPG_PASSPHRASE` unset; `gpg_sign` omits the loopback
+  flags entirely, which is required — passing `--passphrase-fd 0` with an empty
+  passphrase makes gpg fail on such a key rather than skip the prompt.
+- **(Alternative)** a passphrase-protected key. Set `GPG_PASSPHRASE`; the
+  loopback path engages automatically. No workflow edit needed.
+
+Provisioning either key: `docs/release-prerequisites.md` step 2.
 
 ### Key storage
 
@@ -176,7 +182,7 @@ rsign generate -W -p minisign-public-key.txt -s minisign-secret-key.key
 passphrase-propagation pitfall in `release.yml` — `GPG_PASSPHRASE` was set in
 the "Import" step's `env:` but did not reach the "Bundle + sign" step, so the
 detach-sign hung waiting for a PIN. See the
-[GPG "Passphrase decision" note](#passphrase-decision-verify-at-first-dry-run)
+[GPG "Passphrase decision" note](#passphrase-decision--wired-for-both-postures-rl4)
 above. A passwordless minisign key avoids that class of bug entirely: the key
 is disposable (rotate on compromise), and the GitHub Secret encryption is the
 sole access control — a passphrase would add no meaningful protection over the
@@ -242,6 +248,12 @@ schedule (e.g. yearly):
 > production releases) or the CI sign step fails (no production secret set). The
 > full end-to-end validation is a `workflow_dispatch` dry-run + the clean-VM UAT
 > in `docs/plans/2026-06-22-dat0-p10a-2-uat.md`.
+>
+> **This is now enforced, not just documented.**
+> `crates/dat0-app/tests/update_key_is_production.rs` compares the embedded key
+> against the committed test fixture and **fails while they are identical** —
+> which is the state of the tree today. The exact commands are
+> `docs/release-prerequisites.md` step 1.
 
 ---
 

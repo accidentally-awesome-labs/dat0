@@ -8,6 +8,10 @@ publish = false
 anyhow = { workspace = true }
 clap = { workspace = true }
 image = { version = "0.25", default-features = false, features = ["png"] }
+# MX2: the perf gate reads `docs/internal/perf-baselines.json` and parses the
+# one JSON line each scenario prints.
+serde = { workspace = true }
+serde_json = { workspace = true }
 
 [dev-dependencies]
 tempfile = { workspace = true }

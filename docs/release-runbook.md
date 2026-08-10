@@ -6,6 +6,11 @@
 >
 > Pipeline file: `.github/workflows/release.yml` (commit `f2dae56`).
 > Security ops (cert renewal, key rotation): see `docs/security-runbook.md`.
+>
+> **Before the first release:** `docs/release-prerequisites.md` (RL1) lists the
+> five human-only prerequisites — minisign key, GPG subkey, Apple enrolment,
+> the `nyc_taxi.parquet` asset, GlitchTip credentials. None of them are done
+> yet, and none of the steps below can succeed until they are.
 
 ---
 
@@ -42,42 +47,38 @@ and document them here.
 
 ---
 
-## Linux GPG signing — passphrase wiring (verify at dry run)
+## Linux GPG signing — passphrase wiring
 
-> **KNOWN DRY-RUN BLOCKER. Confirm this before cutting the first release.**
+> **Resolved (RL4).** The wiring defect described here for P10a is fixed; what
+> follows documents the behaviour that shipped, not an open decision.
 
-In `release.yml`, `GPG_PASSPHRASE` is set only in the **"Import GPG key"**
-step's `env:` block. GitHub Actions step-scoped `env:` does **not** propagate
-to later steps. The actual signing command (`gpg --batch --yes --detach-sign
-dat0.AppImage`) runs in the separate **"Bundle + sign"** step and currently
-passes no passphrase.
+The original defect: `GPG_PASSPHRASE` was declared only in the **"Import GPG
+key"** step's `env:`, and GitHub Actions step-scoped `env:` does not propagate.
+The actual signing command runs in the separate **"Bundle + sign"** step, so a
+passphrase-protected key would hang or fail non-interactively.
 
-If the CI signing key is passphrase-protected, `gpg --batch --detach-sign`
-will fail non-interactively at the dry run.
+**What `release.yml` does now.** The **"Bundle + sign"** step declares
+`DAT0_GPG_PASSPHRASE: ${{ secrets.GPG_PASSPHRASE }}`, and the **"Import GPG
+key"** step writes `allow-loopback-pinentry` into `~/.gnupg/gpg-agent.conf`.
 
-**Resolution options (pick one before shipping):**
+**What `xtask` does with it.** `xtask/src/linux.rs::gpg_sign` reads
+`DAT0_GPG_PASSPHRASE` and branches:
 
-**(a) Recommended — provision a passphraseless dedicated CI signing subkey.**
-Generate a dedicated subkey with no passphrase specifically for CI use:
-```
-gpg --quick-add-key <fingerprint> ed25519 sign 2y
-```
-Export only this subkey as `GPG_PRIVATE_KEY`. The `GPG_PASSPHRASE` secret
-becomes vestigial; `--batch --detach-sign` just works.
+- **Empty or unset** (the recommended posture — a dedicated passphraseless CI
+  signing subkey, `docs/security-runbook.md:120-123`) → plain
+  `gpg --batch --yes --detach-sign`. The loopback flags are **omitted**, not
+  passed empty: `--passphrase-fd 0` with an empty passphrase makes gpg fail on
+  a passphraseless key rather than skip the prompt.
+- **Set** → `gpg --batch --yes --pinentry-mode loopback --passphrase-fd 0
+  --detach-sign`, with the passphrase written to the child's **stdin**. Never
+  on argv, which `ps` exposes on a shared runner.
 
-**(b) Enable gpg loopback pinentry in the sign step.**
-Add `GPG_PASSPHRASE` to the "Bundle + sign" step's `env:` and amend the
-signing invocation (small follow-up to T8's gpg call):
-```bash
-echo "$GPG_PASSPHRASE" | gpg --batch --yes --pinentry-mode loopback \
-    --passphrase-fd 0 --detach-sign dat0.AppImage
-```
-Also add `allow-loopback-pinentry` to the `gpg-agent.conf` written during
-the import step.
+So both key postures work, and the recommended one needs no secret at all.
 
-**UAT checklist item (§ Dry run, step 4):** confirm which option is in effect
-and that `dat0.AppImage.sig` is a valid detached signature before cutting a
-production tag.
+**Provisioning either key:** `docs/release-prerequisites.md` step 2.
+
+**Dry-run check:** confirm `dat0.AppImage.sig` exists and that
+`cargo xtask verify --linux` (which runs `gpg --verify`) passes.
 
 ---
 
@@ -85,10 +86,19 @@ production tag.
 
 | Artifact | Job | Contents |
 |---|---|---|
-| `dat0.dmg` | `macos` | Signed + notarized + stapled universal DMG (arm64 + x86_64 lipo'd binary) |
-| `dat0.AppImage` | `linux` | Signed Linux AppImage (x86_64) |
-| `dat0.AppImage.sig` | `linux` | Detached binary GPG signature (`.sig`, NOT `.asc`) |
-| `SHA256SUMS` | `publish` | SHA-256 checksums for the DMG, AppImage, and `.sig` |
+| `dat0-<version>-universal.dmg` | `macos` | Signed + notarized + stapled universal DMG (arm64 + x86_64 lipo'd binary) |
+| `dat0-<version>-x86_64.AppImage` | `linux` | Signed Linux AppImage (x86_64) |
+| `dat0-<version>-x86_64.AppImage.sig` | `linux` | Detached binary GPG signature (`.sig`, NOT `.asc`) |
+| `dat0.app.tar.gz` | `macos` | macOS auto-update payload: the **signed, notarized and stapled** bundle, re-tarred by `sign::sign_and_notarize` after `stapler staple` (`macos::tar_app`). **Unversioned by design** — `xtask/src/manifest.rs` points `latest.json`'s macOS URL at this exact name. |
+| `latest.json` + `.minisig` | `publish` | minisign-signed update manifest |
+| `SHA256SUMS` | `publish` | SHA-256 checksums for the DMG, AppImage, `.sig`, and the tarball |
+
+In-`target/` and in-artifact filenames stay **unversioned** (`dat0.dmg`,
+`dat0.AppImage`) because `xtask::sign::verify` and the `publish` job address
+them by fixed path. The version is applied by the publish job's
+**"Stage release assets under their versioned names"** step, because
+`gh release` names each asset after its basename and has no rename flag. These
+are the names `README.md:36-38` documents to users.
 
 ---
 
@@ -141,7 +151,35 @@ Jobs run in order: `macos` → `linux` (both parallel) → `publish` (tag-only).
 If any job fails, check its log for the failing step. Common failure modes are
 documented in the troubleshooting section below.
 
-### 5. Watch the post-merge main run (project CI lesson)
+### 5. Run the perf gate on the release host
+
+```bash
+cargo xtask perf --check
+```
+
+All six scenarios must pass. This is the only place the 60 fps / 1 s cold-launch
+/ 200 MB idle-RSS numbers the marketing page prints are actually checked against
+a running window — `ci.yml`'s copy is advisory (`continue-on-error`), because a
+virtualized GPU cannot defend a frame-rate claim.
+
+Attach the emitted JSON lines to the release PR. Two arms can fail:
+
+- **`FAIL … over budget`** — the absolute number in
+  `docs/internal/perf-baselines.json`. Do not ship; the claim would be false.
+- **`FAIL … worse than the recorded`** — a >20% regression against this host's
+  own committed baseline. Investigate before shipping; if the regression is
+  understood and accepted, re-record with `--update-baseline` **in its own
+  commit**, so the loosening is a reviewed act rather than a side effect.
+
+`RECORD` (not `PASS`) on every scenario means this host has no committed
+baseline yet. That is expected on a new machine; run `--update-baseline` once
+and commit the result.
+
+This step may be run earlier, on the release branch, since its output belongs on
+the release PR. It is placed here so that a release cut without it is visibly
+skipping a numbered step.
+
+### 6. Watch the post-merge main run (project CI lesson)
 
 The push to `main` (step 3) also triggers `ci.yml`. The macOS grid-scroll
 bench is push-to-main-only and is the first indicator of a disk-reclaim
@@ -155,26 +193,31 @@ gh run watch <main-run-id>
 Do **not** declare a release green until both `release.yml` and the post-merge
 `ci.yml` main run are confirmed green.
 
-### 6. Verify the release artifacts
+### 7. Verify the release artifacts
 
-After `publish` completes, confirm the GitHub Release page has:
-- `dat0.dmg`
-- `dat0.AppImage`
-- `dat0.AppImage.sig`
+After `publish` completes, confirm the GitHub Release page has (with
+`<version>` = the tag without its leading `v`):
+- `dat0-<version>-universal.dmg`
+- `dat0-<version>-x86_64.AppImage`
+- `dat0-<version>-x86_64.AppImage.sig`
+- `dat0.app.tar.gz`
+- `latest.json` and `latest.json.minisig`
 - `SHA256SUMS`
 
 Download and verify locally:
 
 ```bash
+V=1.0.0   # the release version
+
 # macOS
-shasum -a 256 dat0.dmg | grep -F "$(grep dat0.dmg SHA256SUMS | awk '{print $1}')"
+shasum -a 256 "dat0-$V-universal.dmg" | grep -F "$(grep "dat0-$V-universal.dmg" SHA256SUMS | awk '{print $1}')"
 
 # Linux AppImage + signature
-sha256sum dat0.AppImage | grep -F "$(grep dat0.AppImage SHA256SUMS | awk '{print $1}')"
-gpg --verify dat0.AppImage.sig dat0.AppImage   # must print "Good signature"
+sha256sum "dat0-$V-x86_64.AppImage" | grep -F "$(grep "dat0-$V-x86_64.AppImage " SHA256SUMS | awk '{print $1}')"
+gpg --verify "dat0-$V-x86_64.AppImage.sig" "dat0-$V-x86_64.AppImage"   # must print "Good signature"
 ```
 
-### 7. Run the clean-VM UAT
+### 8. Run the clean-VM UAT
 
 See `docs/plans/2026-06-17-dat0-p10a-uat.md` for the full manual checklist.
 Do not mark a release shipped until all UAT items are checked.
@@ -200,6 +243,20 @@ from the Actions run summary. Use this for:
 
 Record the run URL in the release notes or in the team chat for traceability.
 
+### Last verified dry run
+
+**NOT YET RUN — requires RL1 secrets** (`docs/release-prerequisites.md`).
+
+```bash
+gh workflow run release.yml && gh run watch
+```
+
+Record the run URL here once it is green:
+
+| Date | Run URL | Result |
+|---|---|---|
+| — | — | not yet run |
+
 ---
 
 ## Troubleshooting
@@ -209,7 +266,7 @@ Record the run URL in the release notes or in the team chat for traceability.
 | `security import` fails (cert not trusted) | `APPLE_DEV_ID_CERT_P12` is stale or the cert expired | Re-export the `.p12` from a Mac with the valid cert installed; update the secret. |
 | `codesign` exits non-zero (`The specified item could not be found`) | `DAT0_SIGN_IDENTITY` string does not exactly match the cert CN | Run `security find-identity -v -p codesigning` on the signing Mac; copy verbatim. |
 | `notarytool submit` returns `Invalid` status | Entitlement or binary issue | Run `xcrun notarytool log <submission-id>` to see the notarization report. |
-| `gpg --detach-sign` exits non-zero / prompts | Passphrase not wired to the sign step | See **Linux GPG signing — passphrase wiring** section above. |
+| `gpg --detach-sign` exits non-zero / prompts | `DAT0_GPG_PASSPHRASE` set for a passphraseless key, or unset for a protected one | See **Linux GPG signing — passphrase wiring** above; the variable must match the key. |
 | `publish` job skipped on a tag push | Preceding `macos` or `linux` job failed | Fix the failing job first; re-push the tag after fixing the source. |
 | `notice` CI gate warns after a dep change | NOTICE.md regenerated on macOS, not Linux | Regenerate on Linux; commit the result (see step 2 above). |
 
@@ -218,6 +275,7 @@ Record the run URL in the release notes or in the team chat for traceability.
 ## See also
 
 - `docs/security-runbook.md` — cert renewal cadence, key rotation, SECURITY.md process
+- `docs/release-prerequisites.md` — the five human-only prerequisites (RL1)
 - `docs/plans/2026-06-17-dat0-p10a-uat.md` — clean-VM UAT checklist
 - `docs/ci-mac-vm-runner.md` — tart-based self-hosted macOS runner (D-013)
 - `.github/workflows/release.yml` — the pipeline itself

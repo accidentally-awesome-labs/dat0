@@ -46,6 +46,12 @@ pub(crate) fn spawn_streaming(
                 return;
             }
         };
+        // D-030: `arrow_iter` yields a bare `RecordBatch`, so a mid-stream
+        // DuckDB error terminates this loop exactly as EOF does and the
+        // consumer sees a short-but-successful stream. Unfixable at duckdb-rs
+        // 1.4.4 (`arrow_batch.rs:27-33`) and undetectable here: unlike
+        // `execute::paged::run_paged` this path has no row count to reconcile
+        // against. Prepare/bind errors above DO reach the consumer.
         for batch in arrow_iter {
             // blocking_send blocks until consumer pulls; channel cap=1.
             // If consumer dropped, send fails — exit cleanly.

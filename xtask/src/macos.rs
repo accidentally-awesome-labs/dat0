@@ -40,13 +40,50 @@ pub fn info_plist(version: &str, git_sha: &str) -> String {
     )
 }
 
+/// The assembled application bundle.
+pub const APP_PATH: &str = "target/macos/dat0.app";
+
+/// The macOS auto-update payload. `update::manifest`'s macOS `url` points at
+/// this exact filename (`xtask/src/manifest.rs`), and `release.yml`'s publish
+/// job uploads it under that name, so it is deliberately unversioned.
+pub const APP_TARBALL: &str = "target/macos/dat0.app.tar.gz";
+
+/// gzip-tar `dat0.app` into [`APP_TARBALL`], replacing any existing archive.
+///
+/// Called TWICE by design, and the second call is the one that matters:
+/// [`bundle`] produces a tarball so a local `cargo xtask bundle-macos` yields
+/// a complete artefact set without signing credentials, and
+/// `sign::sign_and_notarize` regenerates it from the signed + stapled bundle.
+/// Before that second call existed, the archive the macOS auto-updater
+/// downloads and swaps into place was built from the UNSIGNED app — the DMG
+/// was signed and the update payload was not, bypassing the whole chain.
+///
+/// The stale archive is removed and its absence asserted BEFORE `tar` runs, so
+/// "the replacement happened" is a checked fact rather than a wall-clock guess.
+/// Returns the new archive's size in bytes.
+pub fn tar_app() -> Result<u64> {
+    let tarball = Path::new(APP_TARBALL);
+    let _ = std::fs::remove_file(tarball);
+    anyhow::ensure!(
+        !tarball.exists(),
+        "could not remove stale {APP_TARBALL}; refusing to ship a tarball whose \
+         provenance is unknown"
+    );
+    run(Command::new("tar").args(["-czf", APP_TARBALL, "-C", "target/macos", "dat0.app"]))?;
+    let len = std::fs::metadata(tarball)
+        .with_context(|| format!("{APP_TARBALL} was not created"))?
+        .len();
+    anyhow::ensure!(len > 0, "{APP_TARBALL} is empty");
+    Ok(len)
+}
+
 pub fn bundle(version: &str, git_sha: &str) -> Result<PathBuf> {
     // 1. Build both arches.
     for triple in ["aarch64-apple-darwin", "x86_64-apple-darwin"] {
         run(Command::new("cargo").args([
             "build",
             "-p",
-            "dat0-app",
+            "dat0-ui",
             "--release",
             "--target",
             triple,
@@ -74,14 +111,11 @@ pub fn bundle(version: &str, git_sha: &str) -> Result<PathBuf> {
         app.join("Contents/Info.plist"),
         info_plist(version, git_sha),
     )?;
-    // 4. Create tar.gz of the .app bundle.
-    run(Command::new("tar").args([
-        "-czf",
-        "target/macos/dat0.app.tar.gz",
-        "-C",
-        "target/macos",
-        "dat0.app",
-    ]))?;
+    // 4. Provisional tar.gz of the .app bundle, so an unsigned local
+    //    `bundle-macos` still yields a full artefact set. `sign_and_notarize`
+    //    REPLACES this with an archive of the signed + stapled bundle; see
+    //    [`tar_app`].
+    tar_app()?;
     Ok(app)
 }
 

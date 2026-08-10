@@ -48,7 +48,7 @@
       "minimum": 0
     },
     "checksums": {
-      "description": "Map of in-archive entry path -> \"sha256:<hex>\". MUST cover every data/*.parquet entry and recipe.json.",
+      "description": "Map of in-archive entry path -> \"sha256:<hex>\". MUST cover every data/*.parquet entry and recipe.json; writers since QA4 also cover sources.json, views.json, queries.json and charts.json. Readers verify exactly the entries listed here, so a longer map is strictly stronger and an older package listing fewer entries remains valid.",
       "type": "object",
       "additionalProperties": {
         "type": "string"

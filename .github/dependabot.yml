@@ -1,0 +1,49 @@
+version: 2
+
+updates:
+  - package-ecosystem: cargo
+    directory: "/"
+    schedule:
+      interval: weekly
+      day: monday
+      time: "06:00"
+    open-pull-requests-limit: 5
+    # One PR per week for the whole non-breaking tail instead of a dozen.
+    # Majors stay individual — those need a human reading a changelog.
+    groups:
+      cargo-minor-and-patch:
+        update-types:
+          - minor
+          - patch
+    ignore:
+      # These five are EXACT-pinned on purpose, with the rationale recorded in
+      # the root Cargo.toml, and their upgrade cadence is governed by
+      # docs/upstream-watch.md — not by a bot.
+      #
+      #   gpui / gpui-macros  (Cargo.toml:53-64) — `=0.2.2`, mirroring what
+      #     gpui-component itself declares; the SHA is recorded for
+      #     traceability. A silent bump desynchronizes the two.
+      #   gpui-component / gpui-component-assets (Cargo.toml:65-69) — pinned to
+      #     the SAME git rev. A mismatched assets crate silently serves a
+      #     different icon set: blank or wrong glyphs, and NO build error.
+      #   duckdb (Cargo.toml:141-144) — `=1.4.4`; Arrow types are consumed via
+      #     `duckdb::arrow` re-exports, so the version is a type-chain
+      #     constraint, not a dependency preference.
+      - dependency-name: gpui
+      - dependency-name: gpui-macros
+      - dependency-name: gpui-component
+      - dependency-name: gpui-component-assets
+      - dependency-name: duckdb
+
+  - package-ecosystem: github-actions
+    directory: "/"
+    schedule:
+      interval: weekly
+      day: monday
+      time: "06:00"
+    open-pull-requests-limit: 5
+    groups:
+      actions-minor-and-patch:
+        update-types:
+          - minor
+          - patch

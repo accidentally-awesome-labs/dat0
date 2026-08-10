@@ -1,0 +1,5 @@
+{
+  "version": "9.9.9-roundtrip",
+  "macos": { "url": "https://github.com/accidentally-awesome-labs/dat0/releases/download/v9.9.9-roundtrip/dat0.app.tar.gz", "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "size": 12345 },
+  "linux": { "url": "https://github.com/accidentally-awesome-labs/dat0/releases/download/v9.9.9-roundtrip/dat0-9.9.9-roundtrip-x86_64.AppImage", "sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb", "size": 67890 }
+}

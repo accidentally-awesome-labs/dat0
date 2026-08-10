@@ -26,6 +26,7 @@ impl Reader {
     /// [`FormatError::ChecksumMismatch`] or parse error.
     ///
     /// # Errors
+    /// - [`FormatError::UnsafeEntryPath`] — an entry name would escape the extraction root.
     /// - [`FormatError::UnsupportedVersion`] — manifest's `format_version` ≠ [`FORMAT_VERSION`].
     /// - [`FormatError::ChecksumMismatch`] — a data/recipe entry's sha256 doesn't match.
     /// - [`FormatError::Zip`] — malformed zip or missing entry.
@@ -37,6 +38,10 @@ impl Reader {
             source: e,
         })?;
         let mut zip = zip::ZipArchive::new(file)?;
+
+        // 0. Reject escaping entry names before anything in the archive is
+        //    trusted — see `reject_unsafe_entry_names`.
+        reject_unsafe_entry_names(&zip)?;
 
         // 1. Read and version-check the manifest FIRST.
         let manifest: PackageManifest = read_json(&mut zip, "manifest.json")?;
@@ -97,6 +102,7 @@ impl ParsedPackage {
     /// Parent directories are created as needed.
     ///
     /// # Errors
+    /// - [`FormatError::UnsafeEntryPath`] — an entry name would escape `dir`.
     /// - [`FormatError::Zip`] — malformed zip.
     /// - [`FormatError::Io`] — I/O failures during extraction.
     pub fn extract_data_to(&self, dir: &Path) -> Result<()> {
@@ -105,6 +111,11 @@ impl ParsedPackage {
             source: e,
         })?;
         let mut zip = zip::ZipArchive::new(file)?;
+        // Re-checked here, not just in `Reader::open`: this method re-opens
+        // the file from `zip_path`, so the bytes on disk may have been
+        // swapped since `open` validated them. This is the only method that
+        // WRITES using an archive-supplied name, so it pays the cheap recheck.
+        reject_unsafe_entry_names(&zip)?;
         for i in 0..zip.len() {
             let mut f = zip.by_index(i)?;
             let name = f.name().to_string();
@@ -131,6 +142,40 @@ impl ParsedPackage {
         }
         Ok(())
     }
+}
+
+/// Reject any entry whose name would escape the extraction root.
+///
+/// A zip entry name is attacker-controlled data, and [`ParsedPackage::extract_data_to`]
+/// joins it onto a caller-supplied directory. `Path::join` walks UP on a `..`
+/// component and REPLACES the base outright on an absolute one, so an entry
+/// named `data/../../.ssh/authorized_keys` inside a `.dat0` someone sent you
+/// writes outside the directory the user picked. The zip crate does not
+/// sanitize `ZipFile::name()` — its separate `enclosed_name()` accessor exists
+/// precisely because `name()` is raw.
+///
+/// This is a whole-package rejection rather than a per-entry skip. [`crate::Writer`]
+/// only ever emits fixed sidecar names and `data/<table>.parquet`, so an
+/// escaping entry means the archive was hand-edited, and the honest response
+/// to a hand-edited archive is to refuse all of it.
+///
+/// Backslash is treated as a separator alongside `/` even though the zip spec
+/// mandates `/`: a hand-built archive is not bound by the spec, and a Windows
+/// extractor would honour it.
+fn reject_unsafe_entry_names(zip: &zip::ZipArchive<std::fs::File>) -> Result<()> {
+    for name in zip.file_names() {
+        let escapes = name.split(['/', '\\']).any(|c| c == "..")
+            || name.starts_with('/')
+            || name.starts_with('\\')
+            // Windows drive prefix, e.g. `C:evil.txt` — also absolute.
+            || matches!(name.as_bytes(), [d, b':', ..] if d.is_ascii_alphabetic());
+        if escapes {
+            return Err(FormatError::UnsafeEntryPath {
+                entry: name.to_string(),
+            });
+        }
+    }
+    Ok(())
 }
 
 /// Deserialize a JSON entry from the zip archive by name.

@@ -34,7 +34,8 @@ pub use transform::{
 };
 pub use types::{
     ArrowRecordBatchStream, AttachOpts, ColumnInfo, DerivedOrigin, EngineStatus, ExportFormat,
-    FileFormat, MemoryBudget, PagedQueryResult, QueryResult, RegisterOpts, TableInfo, TableOrigin,
+    FileFormat, MemoryBudget, PagedQueryResult, QueryLane, QueryResult, QueryToken, RegisterOpts,
+    TableInfo, TableOrigin,
 };
 
 /// Result type for engine operations.

@@ -79,37 +79,54 @@ impl Writer {
             checksums.insert(entry, format!("sha256:{:x}", Sha256::digest(&bytes)));
         }
 
-        // 2. JSON sidecars (Deflated). recipe.json is the only one checksummed
-        //    here (it is the load-bearing portable recipe).
-        let recipe_bytes = serde_json::to_vec_pretty(&contents.recipe)?;
-        checksums.insert(
-            "recipe.json".into(),
-            format!("sha256:{:x}", Sha256::digest(&recipe_bytes)),
-        );
-        write_json(&mut zip, "recipe.json", &recipe_bytes, deflated)?;
-        write_json(
+        // 2. JSON sidecars (Deflated). EVERY sidecar is checksummed, not just
+        //    recipe.json.
+        //
+        //    Until QA4 only `recipe.json` was, on the reasoning that it is
+        //    "the load-bearing portable recipe". That reasoning does not hold:
+        //    `Reader::open` verifies exactly the entries the manifest lists
+        //    (reader.rs:66-80), so an unlisted entry is an entry an editor can
+        //    rewrite and still have the package verify clean. `sources.json`
+        //    carries the file paths a replay re-reads, `views.json` and
+        //    `queries.json` carry SQL that gets executed, and `charts.json`
+        //    drives rendering — all four are as load-bearing as the recipe.
+        //
+        //    Backward-compatible in BOTH directions and FORMAT_VERSION stays 1:
+        //    a reader verifies whatever the manifest lists, so an old package
+        //    (four entries absent) still opens, and an old reader ignores
+        //    nothing it does not know about — the map is just longer.
+        let mut put_json =
+            |zip: &mut zip::ZipWriter<std::fs::File>, name: &str, bytes: &[u8]| -> Result<()> {
+                checksums.insert(
+                    name.to_string(),
+                    format!("sha256:{:x}", Sha256::digest(bytes)),
+                );
+                write_json(zip, name, bytes, deflated)
+            };
+        put_json(
+            &mut zip,
+            "recipe.json",
+            &serde_json::to_vec_pretty(&contents.recipe)?,
+        )?;
+        put_json(
             &mut zip,
             "sources.json",
             &serde_json::to_vec_pretty(&contents.sources)?,
-            deflated,
         )?;
-        write_json(
+        put_json(
             &mut zip,
             "views.json",
             &serde_json::to_vec_pretty(&contents.views)?,
-            deflated,
         )?;
-        write_json(
+        put_json(
             &mut zip,
             "queries.json",
             &serde_json::to_vec_pretty(&contents.queries)?,
-            deflated,
         )?;
-        write_json(
+        put_json(
             &mut zip,
             "charts.json",
             &serde_json::to_vec_pretty(&contents.charts)?,
-            deflated,
         )?;
 
         // 3. Manifest LAST, so checksums for all prior entries are populated.

@@ -1,6 +1,13 @@
 [env]
 DAT0_GLITCHTIP_DSN_PUBLIC = "https://stub@glitchtip.invalid/1"
-DAT0_SPARKLE_APPCAST_URL = "https://dat0.dev/appcast.xml"
+
+# duckdb's vendored Thrift enum iterator has no `operator==`, which current
+# libc++ requires; see build-support/include/d0-thrift-shim.h for the whole
+# story. `relative = true` resolves against this file's parent directory, so
+# the path works from any checkout, and `-include` finds the header through
+# the include search path CPLUS_INCLUDE_PATH adds.
+CPLUS_INCLUDE_PATH = { value = "build-support/include", relative = true }
+CXXFLAGS = "-include d0-thrift-shim.h"
 
 [alias]
 xtask = "run --package xtask --release --"

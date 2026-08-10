@@ -14,17 +14,21 @@ path = "src/lib.rs"
 duckdb.workspace = true
 futures.workspace = true
 num_cpus.workspace = true
+parking_lot.workspace = true
 regex.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 async-trait.workspace = true
-tempfile.workspace = true
 thiserror.workspace = true
 tokio.workspace = true
 tracing.workspace = true
 
 [dev-dependencies]
 tokio = { workspace = true, features = ["rt-multi-thread", "macros", "fs", "sync", "time"] }
+# Was a normal dependency for `export::export_table_bytes`, which buffered a whole
+# export into a `Vec<u8>` and was deleted in EN3. Nothing under `src/` needs a
+# temp file any more; the export tests do.
+tempfile.workspace = true
 criterion = { workspace = true }
 dat0-fixtures = { path = "../dat0-fixtures" }
 # UAT-automation proof slice: snapshot-gate the compiled view SQL for a realistic
