@@ -50,7 +50,7 @@ jobs:
       - uses: dtolnay/rust-toolchain@1.97.0
         with: { components: rustfmt }
       # Registry + git + target caching. `fmt` compiles nothing, but the
-      # registry/git half still removes the DuckDB + GPUI source fetch from
+      # registry/git half still removes the DuckDB + Dioxus source fetch from
       # every run, which is most of this job's wall time.
       - uses: Swatinem/rust-cache@v2
         with:
@@ -206,7 +206,7 @@ jobs:
       # rather than a compile-time one. Caching a target dir that the job
       # then deletes would upload GBs on every run for nothing, and restoring
       # it would recreate the exhaustion the reclaims exist to prevent.
-      # What the registry/git half removes is the DuckDB + GPUI + Arrow source
+      # What the registry/git half removes is the DuckDB + Dioxus + Arrow source
       # fetch, which is pure download time with no disk-ceiling downside.
       - uses: Swatinem/rust-cache@v2
         with:
@@ -224,7 +224,7 @@ jobs:
       # running as user services. runnerkit images do not include sudo
       # NOPASSWD, so per-job `sudo apt` fails. Hosted ubuntu-latest still
       # needs them installed in-job since the image is wiped per run.
-      - name: Linux deps (keychain + GPUI)
+      - name: Linux deps (webview + keychain + charts)
         if: runner.os == 'Linux' && runner.environment == 'github-hosted'
         run: |
           sudo apt-get update
@@ -509,7 +509,7 @@ jobs:
           haskell: true
           large-packages: true
           swap-storage: true
-      - name: Linux deps (keychain + GPUI)
+      - name: Linux deps (webview + keychain + charts)
         run: |
           sudo apt-get update
           sudo apt-get install -y \

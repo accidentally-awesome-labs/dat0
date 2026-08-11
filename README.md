@@ -74,7 +74,7 @@ libraries listed in [CONTRIBUTING.md](CONTRIBUTING.md)).
 ## Tech stack (from design spec §3)
 
 - **Language:** Rust 2024
-- **UI:** GPUI + longbridge/gpui-component
+- **UI:** Dioxus 0.7 (desktop), rendering into a wry/WebKit webview
 - **Engine:** DuckDB native via the `duckdb` crate
 - **Wire format:** Apache Arrow (record batches, in-process)
 - **Async:** tokio

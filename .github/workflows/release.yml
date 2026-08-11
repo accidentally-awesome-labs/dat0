@@ -61,11 +61,11 @@ jobs:
         run: |
           sudo apt-get update
           # libfuse2 + fuse run the AppImage; desktop-file-utils is
-          # appimagetool's desktop-file-validate. The rest are the GPUI +
-          # keychain BUILD dependencies ci.yml:183-190 declares mandatory —
-          # xtask/src/linux.rs runs `cargo build -p dat0-ui --release` here, and
-          # without them the release build dies at link time on
-          # libsecret/pango/xkbcommon/fontconfig/openssl.
+          # appimagetool's desktop-file-validate. The rest are the webview +
+          # keychain BUILD dependencies ci.yml's "Linux deps" step declares
+          # mandatory — xtask/src/linux.rs runs `cargo build -p dat0-ui
+          # --release` here, and without them the release build dies at link
+          # time on webkit2gtk/libsecret/pango/xkbcommon/fontconfig/openssl.
           sudo apt-get install -y \
             libfuse2 fuse desktop-file-utils \
             libsecret-1-dev libpango1.0-dev libxkbcommon-dev libxkbcommon-x11-dev \

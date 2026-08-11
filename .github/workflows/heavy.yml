@@ -72,7 +72,7 @@ jobs:
       # Skipped on self-hosted (runnerkit images lack NOPASSWD sudo).
       # Host must have these packages pre-installed and dbus/gnome-keyring
       # as user services. See docs/ci.md.
-      - name: Linux deps (keychain + GPUI)
+      - name: Linux deps (webview + keychain + charts)
         if: runner.environment == 'github-hosted'
         run: |
           sudo apt-get update
