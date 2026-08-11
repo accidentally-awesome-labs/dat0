@@ -758,11 +758,21 @@ dat0 is macOS + Linux desktop, so the one official desktop path does not apply.
 
 ### What we do instead
 
-`examples/visual_page.rs` renders the real `Shell` through `dioxus-ssr`, inlines
-the real `app.css`, and inlines the real Geist faces as base64 data URIs —
-emitting one self-contained HTML file per builtin theme that opens anywhere,
-needs no server, no `assets/` directory and **no display server**. A browser can
-screenshot it, a human can eyeball it, and CI can do either.
+`examples/visual_page.rs` renders the real components through `dioxus-ssr`,
+inlines the real `app.css`, and inlines the real Geist faces as base64 data
+URIs — emitting self-contained HTML files that open anywhere, need no server,
+no `assets/` directory and **no display server**. A browser can screenshot
+them, a human can eyeball them, and CI can do either.
+
+> **Since superseded, and widened.** At the time of writing this rendered the
+> `Shell` alone, one file per builtin theme. It now walks
+> `dat0_ui::visual::SCENES` — every surface in every state, 60 scenes x 3
+> themes — and emits an `index.html` grouped by surface, so the side-by-side
+> below is one file open rather than 180. The same catalogue drives two gates
+> the migration did not have: `tests/visual_snapshot.rs` (SSR snapshots, in CI)
+> and `examples/visual_probe.rs` (computed geometry in a real window, not in
+> CI — no display on hosted runners). See the "Visual gate" section of
+> `docs/ci.md`.
 
 It is a faithful proxy, and that is measurable rather than asserted: the page
 reports the same numbers the real window does — titlebar 44, tab strip 38,
