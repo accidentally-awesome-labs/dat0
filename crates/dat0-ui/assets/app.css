@@ -603,11 +603,22 @@ button {
 
 /* ── Panes ─────────────────────────────────────────────────────────────── */
 
+/* The centre work surface. Flush, deliberately.
+
+   It used to carry `gap: 8px; padding: 12px 20px`, lifted from the design
+   source's pane stack — but that source is the MARKETING page, whose stack
+   holds eight bordered accordion cards that want to float on the canvas. This
+   stack holds the data grid, and a grid is not a card: the inset detached it
+   from the shell on all four sides, and because `.d0-grid` has no border or
+   shadow the padding read as a gap rather than as a margin around something.
+
+   Nothing is lost by removing it, because every child already owns its own
+   inset: `.d0-banner-host` 6/16, `.d0-pipeline` 6/16 with a `border-bottom`
+   that only spans correctly when the strip is full-width, and `.d0-hero`
+   32/24. The grid, which wants none, now gets none. */
 .d0-pane-stack {
   display: flex;
   flex-direction: column;
-  gap: var(--sp-5);
-  padding: var(--sp-6) 20px;
   min-height: 0;
   min-width: 0;
 }

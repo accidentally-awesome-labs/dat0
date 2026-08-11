@@ -763,7 +763,8 @@ fn body(sc: &Scene, fx: &Handle) -> Element {
             }
         },
 
-        // Inside a real `.d0-pane-stack`, and at the right column's width.
+        // Inside a real `.d0-right`, the container the shell actually mounts
+        // `Inspector` and `Charts` in, at the width it mounts it at.
         //
         // `.d0-pane.is-collapsed` is `flex: 0 0 var(--d0-pane-head-h)`, which
         // does nothing without a flex-column parent: mounted bare, a collapsed
@@ -772,7 +773,7 @@ fn body(sc: &Scene, fx: &Handle) -> Element {
         // Caught by the design review, not by the invariants — V1 through V6
         // are all satisfied by a pane that is simply the wrong height.
         "pane/open" => rsx! {
-            div { class: "d0-pane-stack", style: "width: {crate::state::RIGHT_WIDTH}px; height: 400px",
+            div { class: "d0-right", style: "width: {crate::state::RIGHT_WIDTH}px; height: 400px",
                 crate::components::pane::Pane {
                     id: "inspector".to_string(),
                     title: dat0_i18n::t("inspector.title"),
@@ -784,7 +785,7 @@ fn body(sc: &Scene, fx: &Handle) -> Element {
             }
         },
         "pane/collapsed" => rsx! {
-            div { class: "d0-pane-stack", style: "width: {crate::state::RIGHT_WIDTH}px; height: 400px",
+            div { class: "d0-right", style: "width: {crate::state::RIGHT_WIDTH}px; height: 400px",
                 crate::components::pane::Pane {
                     id: "inspector".to_string(),
                     title: dat0_i18n::t("inspector.title"),

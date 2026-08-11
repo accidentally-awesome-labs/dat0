@@ -3,7 +3,7 @@ source: crates/dat0-ui/tests/visual_snapshot.rs
 expression: "rendered[0].1"
 ---
 <div class="d0-scene" data-scene="pane/open" style="width: 1440px">
-<div class="d0-pane-stack" style="width: 320px; height: 400px">
+<div class="d0-right" style="width: 320px; height: 400px">
 <section class="d0-pane" data-a11y-id="pane-inspector">
 <button class="d0-pane-head" data-a11y-id="pane-head-inspector" aria-expanded="true">
 <span class="d0-chevron">▾</span>
