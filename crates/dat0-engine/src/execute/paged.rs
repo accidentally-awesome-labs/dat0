@@ -77,6 +77,21 @@ pub(crate) fn run_page(
 /// as [`EngineError::Interrupted`] and not a generic `DuckDb(_)` — a bare `?`
 /// here (which is what `run_paged` used to do) converts via the `#[from]` impl
 /// and loses that discriminator, which the SQL console's Cmd+. UX reads.
+///
+/// # An empty result still carries its schema
+///
+/// `Arrow` yields **no batches at all** when a query matches no rows, so a
+/// caller that needs the column set — rather than the values — got nothing back
+/// and could not tell "no rows" from "no such shape". `GridDataSource::new`
+/// probes with `LIMIT 1` for exactly that reason and used to fail outright on a
+/// zero-row table, which made a header-only CSV unopenable and left
+/// `GridDataSource::is_empty()` unreachable.
+///
+/// The schema is available the whole time — `Arrow::get_schema` reads the
+/// prepared statement, not the stream — so it is captured before the drain and
+/// returned as one zero-row `RecordBatch`. Row-counting callers are unaffected:
+/// an empty batch contributes 0 to `run_paged`'s reconcile sum, and to every
+/// `num_rows()` fold downstream.
 fn window_batches(
     conn: &duckdb::Connection,
     sql: &str,
@@ -89,12 +104,18 @@ fn window_batches(
     );
     let mut stmt = conn.prepare(&windowed_sql).map_err(translate_duckdb_err)?;
     let arrow_iter = stmt.query_arrow([]).map_err(translate_duckdb_err)?;
+    // Before the drain: the iterator borrows the statement, and the schema is
+    // the one thing an empty result still has to offer.
+    let schema = arrow_iter.get_schema();
     // D-030: this iterator yields a bare `RecordBatch`, not a `Result`, so a
     // mid-stream error is indistinguishable from end-of-stream. `run_paged`
     // reconciles against its count; `run_page` cannot.
     let mut batches = Vec::new();
     for b in arrow_iter {
         batches.push(b);
+    }
+    if batches.is_empty() {
+        batches.push(duckdb::arrow::record_batch::RecordBatch::new_empty(schema));
     }
     Ok(batches)
 }

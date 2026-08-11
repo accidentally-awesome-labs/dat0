@@ -52,14 +52,14 @@ id,region,revenue,active
 12,west,1035.0,true
 ";
 
-// A zero-row source is deliberately absent. `GridDataSource::new` probes the
-// schema with `execute_page(sql, 0, 1)` and fails with "schema probe yielded no
-// batch" when the table has no rows — despite the comment two lines above that
-// `?` promising a fallback to an empty schema, and despite
-// `GridDataSource::is_empty()` existing for "the user opened a freshly-created
-// empty table". The state is therefore unreachable in the shipped app too: the
-// shell's `source` resource surfaces that error instead of an empty grid. There
-// is no `grid/empty` scene because there is no `grid/empty` state.
+/// The same header, no data rows.
+///
+/// The grid's zero-row render is a different shape from its populated one — the
+/// header row with nothing under it — and it has no other fixture. It is also a
+/// state the app could not reach until `run_page` learned to carry a schema
+/// through an empty result; `tests/grid_empty_table.rs` in `dat0-core` is the
+/// behavioural half of the same fix.
+const EMPTY_CSV: &str = "id,region,revenue,active\n";
 
 /// Everything every scene needs, built once.
 ///
@@ -74,6 +74,8 @@ pub struct Fixtures {
     pub source: Arc<GridDataSource>,
     /// `source`'s visible columns, in display order.
     pub columns: Vec<ProjectionColumn>,
+    /// The same four columns with zero rows behind them.
+    pub empty_source: Arc<GridDataSource>,
     /// Files, connections (one live, one not) and packages.
     pub catalog: CatalogTree,
     /// A bar chart's plot-ready rows, and the spec they came from.
@@ -128,6 +130,8 @@ impl Fixtures {
 
         let sales_csv = root.join("sales.csv");
         std::fs::write(&sales_csv, SALES_CSV).context("write sales.csv")?;
+        let empty_csv = root.join("empty.csv");
+        std::fs::write(&empty_csv, EMPTY_CSV).context("write empty.csv")?;
 
         let engine = DuckDBEngine::new(
             root.join("scratch.duckdb"),
@@ -143,8 +147,13 @@ impl Fixtures {
             .register_file_as_table(&sales_csv, RegisterOpts::default())
             .await
             .context("register sales.csv")?;
+        engine
+            .register_file_as_table(&empty_csv, RegisterOpts::default())
+            .await
+            .context("register empty.csv")?;
 
         let source = grid_source(&engine, "sales").await?;
+        let empty_source = grid_source(&engine, "empty").await?;
         let columns = source
             .visible_column_names()
             .into_iter()
@@ -202,6 +211,7 @@ impl Fixtures {
             root,
             source,
             columns,
+            empty_source,
             catalog: catalog(),
             plot,
             spec,

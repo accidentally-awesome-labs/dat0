@@ -59,6 +59,44 @@ async fn execute_page_past_eof_is_empty_not_an_error() {
     e.close().await.unwrap();
 }
 
+/// A zero-row window still carries its column set.
+///
+/// `Arrow` yields no batches at all for an empty result, so a caller that needs
+/// the *shape* rather than the values got nothing back and could not tell "no
+/// rows" from "no such table". `GridDataSource::new` probes with `LIMIT 1` for
+/// exactly that reason, and it used to fail outright on a zero-row table — a
+/// header-only CSV was unopenable, and `GridDataSource::is_empty` was
+/// unreachable because construction failed before anything could observe it.
+#[tokio::test]
+async fn an_empty_result_still_carries_its_schema() {
+    let dir = tempfile::tempdir().unwrap();
+    let e = engine(&dir).await;
+    let pq = e
+        .execute_page(
+            "SELECT i, i * 2 AS double FROM range(10) t(i) WHERE false",
+            0,
+            1,
+        )
+        .await
+        .expect("an empty result is not a failure");
+
+    let sum: usize = pq.batches.iter().map(|b| b.num_rows()).sum();
+    assert_eq!(sum, 0, "the predicate matches nothing");
+
+    let batch = pq
+        .batches
+        .first()
+        .expect("an empty result must still yield one zero-row batch, for its schema");
+    let schema = batch.schema();
+    let names: Vec<&str> = schema.fields().iter().map(|f| f.name().as_str()).collect();
+    assert_eq!(
+        names,
+        vec!["i", "double"],
+        "the column set is what an empty result is still expected to answer"
+    );
+    e.close().await.unwrap();
+}
+
 /// Mirrors `interrupt.rs`'s discrimination assertion for the new path.
 ///
 /// This is the concrete reason EN1 routed both paging forms through

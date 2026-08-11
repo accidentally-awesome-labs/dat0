@@ -85,11 +85,21 @@ impl GridDataSource {
             .await
             .context("GridDataSource::new — count_rows failed")?;
 
-        // Probe schema by fetching one row. LIMIT 0 in DuckDB returns no
-        // batches at all, so we use LIMIT 1 which always yields a batch even
-        // for empty tables (the batch may have 0 rows if the table is empty,
-        // but it carries schema). For empty tables we fall back to an empty
-        // schema and let callers treat all pages as empty.
+        // Probe the schema by fetching one row.
+        //
+        // This comment used to claim that `LIMIT 1` "always yields a batch even
+        // for empty tables" and that an empty table "falls back to an empty
+        // schema". Neither was true: `Arrow` yields no batches at all for a
+        // zero-row result, and the line below was a hard `?`. A header-only CSV
+        // was therefore unopenable — the shell surfaced "schema probe yielded
+        // no batch" instead of an empty grid — and `Self::is_empty`, written
+        // for "the user opened a freshly-created empty table", could never
+        // return true because construction failed first.
+        //
+        // The guarantee is now real and enforced one layer down: `run_page`
+        // captures `Arrow::get_schema` before draining and returns a zero-row
+        // batch when the stream is empty, so the column set survives. The `?`
+        // stays as the assertion of that contract rather than as the bug.
         let safe_name = table_name.replace('"', "\"\"");
         let schema_sql = format!("SELECT * FROM \"{}\"", safe_name);
         let probe = engine

@@ -193,9 +193,10 @@ pub const SCENES: &[Scene] = &[
         s("grid/populated", "grid", "12 rows, no selection"),
         Scroll::Vertical,
     ),
-    // No `grid/empty`: `GridDataSource::new` cannot open a zero-row table, so
-    // the state does not exist in the shipped app either. See
-    // `visual/fixtures.rs`.
+    scrolls(
+        s("grid/empty", "grid", "header row, zero data rows"),
+        Scroll::Vertical,
+    ),
     scrolls(
         s("grid/read-only", "grid", "read-only workspace"),
         Scroll::Vertical,
@@ -567,10 +568,17 @@ fn body(sc: &Scene, fx: &Handle) -> Element {
         id if id.starts_with("modal/") => rsx! { ModalHost {} },
 
         "grid/populated" => {
-            rsx! { GridScene { fx: fx.clone(), read_only: false, selected: false } }
+            rsx! { GridScene { fx: fx.clone(), empty: false, read_only: false, selected: false } }
         }
-        "grid/read-only" => rsx! { GridScene { fx: fx.clone(), read_only: true, selected: false } },
-        "grid/selection" => rsx! { GridScene { fx: fx.clone(), read_only: false, selected: true } },
+        "grid/empty" => {
+            rsx! { GridScene { fx: fx.clone(), empty: true, read_only: false, selected: false } }
+        }
+        "grid/read-only" => {
+            rsx! { GridScene { fx: fx.clone(), empty: false, read_only: true, selected: false } }
+        }
+        "grid/selection" => {
+            rsx! { GridScene { fx: fx.clone(), empty: false, read_only: false, selected: true } }
+        }
 
         "cell-editor/text" => rsx! {
             crate::components::grid::cell_editor::CellEditor {
@@ -790,8 +798,12 @@ fn body(sc: &Scene, fx: &Handle) -> Element {
 // the probe drops the scene entirely for one settle between measurements.
 
 #[component]
-fn GridScene(fx: Handle, read_only: bool, selected: bool) -> Element {
-    let source = fx.source.clone();
+fn GridScene(fx: Handle, empty: bool, read_only: bool, selected: bool) -> Element {
+    let source = if empty {
+        fx.empty_source.clone()
+    } else {
+        fx.source.clone()
+    };
     let rows = source.row_count.max(1) as usize;
     let cols = fx.columns.len().max(1);
     let selection = use_signal(move || {
