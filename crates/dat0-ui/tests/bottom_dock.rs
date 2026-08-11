@@ -387,10 +387,15 @@ fn a_closed_console_leaves_no_console_nodes_in_the_tree() {
 #[serial]
 fn the_console_takes_height_from_the_centre_only_while_it_is_open() {
     with_shell(open(), |h| {
-        let opened = centre_track(h);
-        assert!(
-            !opened.contains("1fr) 0px"),
-            "an open console has real height: {opened}"
+        // Exact, not `!contains("1fr) 0px")`. That heuristic read the track
+        // immediately after the `1fr`, which is now the splitter's zero-width
+        // one — so it reported an open console as collapsed. The console's
+        // height is the LAST track, and naming the whole template is the only
+        // way to say which one is being claimed.
+        assert_eq!(
+            centre_track(h),
+            "grid-template-rows: minmax(0, 1fr) 0px 260px",
+            "an open console has real height"
         );
 
         h.click("pane-head-console");
@@ -416,7 +421,7 @@ fn the_open_console_declares_a_track_for_every_child() {
     with_shell(open(), |h| {
         assert_eq!(
             centre_track(h),
-            "grid-template-rows: minmax(0, 1fr) 4px 260px",
+            "grid-template-rows: minmax(0, 1fr) 0px 260px",
             "pane stack, splitter and console are three children and need \
              three rows — with two, the console wraps into an implicit one"
         );

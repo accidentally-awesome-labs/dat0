@@ -675,18 +675,59 @@ button {
   user-select: text;
 }
 
-/* Dock splitters. 4px tracks in the dock grid; the cursor is the affordance. */
+/* Dock splitters.
+
+   They sit in a ZERO-width track and straddle the boundary, rather than
+   occupying 4px of it. A 4px transparent track put four pixels of canvas
+   between the sidebar's own `border-right` and the grid — a visible gutter
+   with nothing in it, which read as the grid being detached from the shell.
+   The divider is the neighbouring surface's border; the splitter is only a
+   place to grab.
+
+   `justify-self`/`align-self: center` over a 0px grid area centres the 9px
+   box on the boundary, so the grab zone reaches 4.5px either side and costs
+   no layout. `z-index` puts it above both neighbours so it, not they, takes
+   the pointer.
+
+   Hover paints a 2px line through the middle, not the whole 9px box: the
+   affordance should look like the edge it moves, and a 9px slab of accent
+   lying across two surfaces looks like a rendering fault. */
 .d0-splitter {
+  position: relative;
+  z-index: 5;
   background: transparent;
 }
 .d0-splitter.is-col {
+  width: 9px;
+  justify-self: center;
   cursor: col-resize;
 }
 .d0-splitter.is-row {
+  height: 9px;
+  align-self: center;
   cursor: row-resize;
 }
-.d0-splitter:hover,
-.d0-splitter.is-dragging {
+.d0-splitter::after {
+  content: "";
+  position: absolute;
+  background: transparent;
+}
+.d0-splitter.is-col::after {
+  top: 0;
+  bottom: 0;
+  left: 50%;
+  width: 2px;
+  transform: translateX(-50%);
+}
+.d0-splitter.is-row::after {
+  left: 0;
+  right: 0;
+  top: 50%;
+  height: 2px;
+  transform: translateY(-50%);
+}
+.d0-splitter:hover::after,
+.d0-splitter.is-dragging::after {
   background: var(--d0-accent);
 }
 
@@ -1140,7 +1181,7 @@ button {
   height: 100%;
 }
 .d0-workarea:has(> .d0-splitter) {
-  grid-template-columns: minmax(0, 1fr) 4px auto;
+  grid-template-columns: minmax(0, 1fr) 0 auto;
 }
 
 .d0-centre {
@@ -1149,7 +1190,7 @@ button {
   min-height: 0;
 }
 .d0-centre:has(> .d0-splitter) {
-  grid-template-rows: minmax(0, 1fr) 4px auto;
+  grid-template-rows: minmax(0, 1fr) 0 auto;
 }
 
 .d0-right {

@@ -291,10 +291,13 @@ fn showing_the_inspector_opens_the_column_and_titles_its_pane() {
             "and it announces itself collapsed"
         );
 
-        assert!(
-            !right_track(h).contains("1fr) 0px"),
-            "an open pane gives the column real width: {}",
-            right_track(h)
+        // Exact, for the reason `bottom_dock.rs`'s twin records: the track
+        // after the `1fr` is the splitter's zero-width one, so a substring
+        // check on it reports an open column as collapsed.
+        assert_eq!(
+            right_track(h),
+            "grid-template-columns: minmax(0, 1fr) 0px 320px",
+            "an open pane gives the column real width"
         );
     });
 }
@@ -304,7 +307,7 @@ fn showing_the_inspector_opens_the_column_and_titles_its_pane() {
 /// Three children — centre, splitter, right column — into a two-track template
 /// meant the splitter took the panel's column and the right column was
 /// auto-placed into an implicit second row: inspector and charts rendered
-/// *under* the grid at 878px wide, and the 4px splitter rendered 320px wide.
+/// *under* the grid at 878px wide, and the splitter rendered 320px wide.
 /// Every existing assertion here still passed, because each element was
 /// individually a plausible size and the whole thing stayed inside the window.
 ///
@@ -317,7 +320,7 @@ fn the_open_column_declares_a_track_for_every_child() {
     with_shell(with_inspector(), |h| {
         assert_eq!(
             right_track(h),
-            "grid-template-columns: minmax(0, 1fr) 4px 320px",
+            "grid-template-columns: minmax(0, 1fr) 0px 320px",
             "centre, splitter and column are three children and need three \
              tracks — with two, the last one wraps to a row of its own"
         );

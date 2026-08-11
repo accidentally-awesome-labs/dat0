@@ -183,16 +183,66 @@ fn the_shell_declares_a_track_for_every_child_it_renders() {
     )
     .expect("read shell.rs");
 
-    let open = src
-        .find("grid-template-columns: {sidebar_px}px")
-        .map(|i| src[i..].lines().next().unwrap_or_default())
-        .expect("the open-sidebar grid template");
+    // Every dock, not just the sidebar. The sidebar's was fixed when the bug
+    // was first found; `.d0-workarea` and `.d0-centre` shipped with the same
+    // defect and were caught later, by eye, because this test only ever looked
+    // at one of the three.
+    for (needle, children) in [
+        (
+            "grid-template-columns: {sidebar_px}px",
+            "sidebar, splitter, work area",
+        ),
+        (
+            "grid-template-columns: minmax(0, 1fr) 0px {right_px}px",
+            "centre, splitter, right column",
+        ),
+        (
+            "grid-template-rows: minmax(0, 1fr) 0px {bottom_px}px",
+            "pane stack, splitter, console",
+        ),
+    ] {
+        let line = src
+            .find(needle)
+            .map(|i| src[i..].lines().next().unwrap_or_default())
+            .unwrap_or_else(|| panic!("no dock template matching {needle:?}"));
+        let tracks = track_count(line);
+        assert_eq!(
+            tracks, 3,
+            "the shell renders three children here — {children} — so the \
+             template needs three tracks. With two, the last child is \
+             auto-placed into an implicit track and the splitter takes the one \
+             meant for the panel. Found {tracks} in: {line}"
+        );
+    }
+}
 
-    // sidebar | splitter | work area.
-    assert!(
-        open.contains("{sidebar_px}px 4px minmax(0, 1fr)"),
-        "with the sidebar open the shell renders a sidebar, a 4px splitter and \
-         the work area — three children — so the template needs three tracks. \
-         Found: {open}"
-    );
+/// Count the tracks in a `grid-template-*` declaration, at paren depth 0 so
+/// `minmax(0, 1fr)` counts once.
+///
+/// A count rather than a substring match on a literal width: the splitter's
+/// track went from `4px` to `0px` when it stopped occupying space and started
+/// straddling the boundary, and a test that pinned the old number failed for a
+/// change that did not touch what it was guarding.
+fn track_count(line: &str) -> usize {
+    let Some(decl) = line.split_once(':').map(|(_, rest)| rest) else {
+        return 0;
+    };
+    let decl = decl.trim().trim_end_matches(['"', ',']).trim();
+    let (mut depth, mut n, mut in_token) = (0i32, 0usize, false);
+    for ch in decl.chars() {
+        match ch {
+            '(' => depth += 1,
+            ')' => depth -= 1,
+            _ => {}
+        }
+        if depth == 0 && ch.is_whitespace() {
+            in_token = false;
+            continue;
+        }
+        if !in_token {
+            n += 1;
+            in_token = true;
+        }
+    }
+    n
 }

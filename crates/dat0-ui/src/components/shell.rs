@@ -354,14 +354,15 @@ pub fn Shell() -> Element {
             div {
                 class: "d0-shell",
                 // THREE tracks when the sidebar is open, not two: the splitter
-                // is a real child and needs a column of its own. With two, it
+                // is a real child and needs a column of its own — a ZERO-width
+                // one, which it straddles (see `.d0-splitter` in app.css). With two, it
                 // took the second track and the work area wrapped to row 2 —
                 // the sidebar and the grid stacked vertically instead of
                 // sitting side by side. Every geometry probe still passed,
                 // because each bar was individually the right size; only a
                 // screenshot showed it.
                 style: if sidebar_px > 0 {
-                    "grid-template-columns: {sidebar_px}px 4px minmax(0, 1fr)"
+                    "grid-template-columns: {sidebar_px}px 0px minmax(0, 1fr)"
                 } else {
                     "grid-template-columns: minmax(0, 1fr)"
                 },
@@ -421,12 +422,12 @@ pub fn Shell() -> Element {
                     // real child. With two, it took the column meant for the
                     // panel and the right column wrapped to row 2 — inspector
                     // and charts rendered BELOW the grid at full width, and the
-                    // 4px splitter rendered 320px wide. `app.css` says
+                    // splitter rendered 320px wide. `app.css` says
                     // `.d0-workarea:has(> .d0-splitter)` for exactly this, and
                     // an inline style outranks a stylesheet rule, so that rule
                     // was dead the moment this attribute existed.
                     style: if right_px > 0 {
-                        "grid-template-columns: minmax(0, 1fr) 4px {right_px}px"
+                        "grid-template-columns: minmax(0, 1fr) 0px {right_px}px"
                     } else {
                         "grid-template-columns: minmax(0, 1fr)"
                     },
@@ -437,7 +438,7 @@ pub fn Shell() -> Element {
                         // splitter took the 260px track and the console itself
                         // was auto-placed into an implicit third row, 99px tall.
                         style: if bottom_px > 0 {
-                            "grid-template-rows: minmax(0, 1fr) 4px {bottom_px}px"
+                            "grid-template-rows: minmax(0, 1fr) 0px {bottom_px}px"
                         } else {
                             "grid-template-rows: minmax(0, 1fr)"
                         },

@@ -29,7 +29,7 @@ expression: "rendered[0].1"
 <div class="d0-tab-filler">
 </div>
 </div>
-<div class="d0-shell" style="grid-template-columns: 238px 4px minmax(0, 1fr)">
+<div class="d0-shell" style="grid-template-columns: 238px 0px minmax(0, 1fr)">
 <div class="d0-sidebar" data-a11y-id="sidebar" role="navigation" aria-label="Catalog">
 <div class="d0-sidebar-head">
 <span class="d0-label">catalog</span>

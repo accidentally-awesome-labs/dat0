@@ -29,7 +29,7 @@ expression: "rendered[0].1"
 <div class="d0-tab-filler">
 </div>
 </div>
-<div class="d0-shell" style="grid-template-columns: 238px 4px minmax(0, 1fr)">
+<div class="d0-shell" style="grid-template-columns: 238px 0px minmax(0, 1fr)">
 <div class="d0-sidebar" data-a11y-id="sidebar" role="navigation" aria-label="Catalog">
 <div class="d0-sidebar-head">
 <span class="d0-label">catalog</span>
@@ -61,7 +61,7 @@ expression: "rendered[0].1"
 <div class="d0-splitter is-col" data-a11y-id="sidebar-splitter" role="separator" aria-orientation="vertical">
 </div>
 <div class="d0-workarea" style="grid-template-columns: minmax(0, 1fr)">
-<div class="d0-centre" style="grid-template-rows: minmax(0, 1fr) 4px 260px">
+<div class="d0-centre" style="grid-template-rows: minmax(0, 1fr) 0px 260px">
 <div class="d0-pane-stack" data-a11y-id="pane-stack">
 <div class="d0-hero" data-a11y-id="empty-state">
 <div class="d0-hero-headline">
