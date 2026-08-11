@@ -218,10 +218,11 @@ fn no_console_pane_until_the_console_is_first_opened() {
              hero is not sitting on a collapsed title bar"
         );
         assert_eq!(count_id(h, "console-splitter"), 0);
-        assert!(
-            centre_track(h).contains("minmax(0, 1fr) 0px"),
-            "and the grid keeps the whole centre: {}",
-            centre_track(h)
+        // One track, not a trailing 0px one — see `right_dock.rs`.
+        assert_eq!(
+            centre_track(h),
+            "grid-template-rows: minmax(0, 1fr)",
+            "and the grid keeps the whole centre"
         );
 
         console_toggle(h);
@@ -394,10 +395,30 @@ fn the_console_takes_height_from_the_centre_only_while_it_is_open() {
 
         h.click("pane-head-console");
 
-        assert!(
-            centre_track(h).contains("minmax(0, 1fr) 0px"),
-            "and closing it gives every pixel back to the grid: {}",
-            centre_track(h)
+        assert_eq!(
+            centre_track(h),
+            "grid-template-rows: minmax(0, 1fr)",
+            "and closing it gives every pixel back to the grid"
+        );
+    });
+}
+
+/// The console splitter gets a row of its own, so the console keeps its height.
+///
+/// Three children — pane stack, splitter, console — into a two-row template
+/// meant the splitter took the console's 260px row and the console was
+/// auto-placed into an implicit third row, 99px tall. Same defect as
+/// `.d0-shell`'s and `.d0-workarea`'s; pinned by track count for the same
+/// reason, because "not 0px" cannot see it.
+#[test]
+#[serial]
+fn the_open_console_declares_a_track_for_every_child() {
+    with_shell(open(), |h| {
+        assert_eq!(
+            centre_track(h),
+            "grid-template-rows: minmax(0, 1fr) 4px 260px",
+            "pane stack, splitter and console are three children and need \
+             three rows — with two, the console wraps into an implicit one"
         );
     });
 }

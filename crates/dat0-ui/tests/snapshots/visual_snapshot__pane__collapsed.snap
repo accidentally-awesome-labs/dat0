@@ -1,8 +1,9 @@
 ---
 source: crates/dat0-ui/tests/visual_snapshot.rs
-expression: html
+expression: "rendered[0].1"
 ---
 <div class="d0-scene" data-scene="pane/collapsed" style="width: 1440px">
+<div class="d0-pane-stack" style="width: 320px; height: 400px">
 <section class="d0-pane is-collapsed" data-a11y-id="pane-inspector">
 <button class="d0-pane-head" data-a11y-id="pane-head-inspector" aria-expanded="false">
 <span class="d0-chevron">▾</span>
@@ -14,4 +15,5 @@ expression: html
 <p class="d0-body">twelve rows, four columns</p>
 </div>
 </section>
+</div>
 </div>

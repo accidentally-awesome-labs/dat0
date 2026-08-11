@@ -395,11 +395,31 @@ pub fn Shell() -> Element {
 
                 div {
                     class: "d0-workarea",
-                    style: "grid-template-columns: minmax(0, 1fr) {right_px}px",
+                    // THREE tracks when the right column is open, for the same
+                    // reason `.d0-shell` above needs three: the splitter is a
+                    // real child. With two, it took the column meant for the
+                    // panel and the right column wrapped to row 2 — inspector
+                    // and charts rendered BELOW the grid at full width, and the
+                    // 4px splitter rendered 320px wide. `app.css` says
+                    // `.d0-workarea:has(> .d0-splitter)` for exactly this, and
+                    // an inline style outranks a stylesheet rule, so that rule
+                    // was dead the moment this attribute existed.
+                    style: if right_px > 0 {
+                        "grid-template-columns: minmax(0, 1fr) 4px {right_px}px"
+                    } else {
+                        "grid-template-columns: minmax(0, 1fr)"
+                    },
 
                     div {
                         class: "d0-centre",
-                        style: "grid-template-rows: minmax(0, 1fr) {bottom_px}px",
+                        // Same shape, other axis: with two rows the console
+                        // splitter took the 260px track and the console itself
+                        // was auto-placed into an implicit third row, 99px tall.
+                        style: if bottom_px > 0 {
+                            "grid-template-rows: minmax(0, 1fr) 4px {bottom_px}px"
+                        } else {
+                            "grid-template-rows: minmax(0, 1fr)"
+                        },
 
                         div { class: "d0-pane-stack", "data-a11y-id": "pane-stack",
                             BannerHost {

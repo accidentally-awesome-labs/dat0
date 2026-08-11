@@ -201,6 +201,60 @@ try {
   const escaped = [];
   let shown = 0;
 
+  // V7. A grid whose track list is computed in Rust must fit its children in
+  // the tracks it declared.
+  //
+  // This is the bug that motivated the whole suite, and it has shipped three
+  // times: a dock lays out N children into an N-1 track template, so the last
+  // one is auto-placed into an IMPLICIT track and the splitter inherits the
+  // track meant for the panel. The result stays inside the frame and every
+  // element keeps a sane size, so V1-V6 are all satisfied — it is simply in
+  // the wrong cell. Only the track count sees it.
+  //
+  // Scoped to INLINE templates on purpose: those are the shell's docks, whose
+  // track lists are interpolated from `sidebar_px` / `right_px` / `bottom_px`.
+  // A stylesheet grid that wraps by design (the gallery's `auto-fill` swatch
+  // grid) is not making a claim about its child count and is not checked.
+  const misgridded = [];
+  const trackCount = (v) => (!v || v === "none" ? 0 : v.trim().split(/\s+/).length);
+  // Declared tracks, tokenised at paren depth 0 so `minmax(0, 1fr)` counts once.
+  const declaredCount = (v) => {
+    let depth = 0, n = 0, inTok = false;
+    for (const ch of v) {
+      if (ch === "(") depth++;
+      else if (ch === ")") depth--;
+      if (depth === 0 && /\s/.test(ch)) { inTok = false; continue; }
+      if (!inTok) { n++; inTok = true; }
+    }
+    return n;
+  };
+
+  for (const el of root.querySelectorAll("*")) {
+    const cols = el.style.gridTemplateColumns;
+    const rows = el.style.gridTemplateRows;
+    if (!cols && !rows) continue;
+    if (getComputedStyle(el).display.indexOf("grid") === -1) continue;
+    const cs = getComputedStyle(el);
+    const label = (el.getAttribute("data-a11y-id") || el.className || el.tagName).toString();
+
+    for (const [axis, inline, computed] of [
+      ["columns", cols, cs.gridTemplateColumns],
+      ["rows", rows, cs.gridTemplateRows],
+    ]) {
+      const got = trackCount(computed);
+      if (inline) {
+        const want = declaredCount(inline);
+        if (got > want) {
+          misgridded.push(`${label} ${axis}: declared ${want} (${inline.trim()}), laid out ${got}`);
+        }
+      } else if (got > 1) {
+        // The untemplated axis. More than one track there means children
+        // wrapped off the axis this grid actually controls.
+        misgridded.push(`${label} ${axis}: untemplated, but laid out ${got} tracks (${computed})`);
+      }
+    }
+  }
+
   for (const el of all) {
     if (hidden(el)) continue;
     shown += 1;
@@ -263,6 +317,7 @@ try {
     collapsed,
     escaped,
     invisible,
+    misgridded,
     families: Array.from(families),
     viewport_w: window.innerWidth,
     viewport_h: window.innerHeight,
@@ -293,6 +348,8 @@ struct Report {
     escaped: Vec<String>,
     #[serde(default)]
     invisible: Vec<String>,
+    #[serde(default)]
+    misgridded: Vec<String>,
     /// Every distinct first `font-family` the scene's visible text resolved to.
     #[serde(default)]
     families: Vec<String>,
@@ -344,7 +401,7 @@ fn Probe() -> Element {
             let mut fails: Vec<String> = Vec::new();
             println!("--- dat0 visual probe ---");
             println!(
-                "  {:<30} {:<14} {:>5} {:>4}  V1 V2 V3 V4 V5 V6",
+                "  {:<30} {:<14} {:>5} {:>4}  V1 V2 V3 V4 V5 V6 V7",
                 "scene", "theme", "els", "ovf"
             );
 
@@ -502,11 +559,12 @@ fn check(scene: &Scene, theme: &str, r: &Report, fails: &mut Vec<String>) {
     let v3 = r.collapsed.is_empty();
     let v4 = r.escaped.is_empty();
     let v5 = r.invisible.is_empty();
+    let v7 = r.misgridded.is_empty();
     let v6 = !r.families.is_empty() && r.families.iter().all(|f| f == "Geist" || f == "Geist Mono");
 
     let mark = |ok: bool| if ok { "ok" } else { "XX" };
     println!(
-        "  {:<30} {:<14} {:>5} {:>4}  {}  {}  {}  {}  {}  {}",
+        "  {:<30} {:<14} {:>5} {:>4}  {}  {}  {}  {}  {}  {}  {}",
         scene.id,
         theme,
         r.elements,
@@ -517,6 +575,7 @@ fn check(scene: &Scene, theme: &str, r: &Report, fails: &mut Vec<String>) {
         mark(v4),
         mark(v5),
         mark(v6),
+        mark(v7),
     );
 
     if !v1 {
@@ -544,6 +603,12 @@ fn check(scene: &Scene, theme: &str, r: &Report, fails: &mut Vec<String>) {
         fails.push(format!(
             "{where_} V5 text on its own ground: {}",
             r.invisible.join(", ")
+        ));
+    }
+    if !v7 {
+        fails.push(format!(
+            "{where_} V7 children in implicit grid tracks: {}",
+            r.misgridded.join("; ")
         ));
     }
     if !v6 {

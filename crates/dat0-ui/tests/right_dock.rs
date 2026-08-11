@@ -239,11 +239,15 @@ fn the_right_column_is_zero_wide_when_both_panes_are_closed() {
             "and no splitter for a column that is not there"
         );
 
-        assert!(
-            right_track(h).contains("minmax(0, 1fr) 0px"),
+        // No second track at all, not a 0px one: the splitter and the column
+        // are both absent when the column is shut, so a template that still
+        // named them would be describing children that do not exist. Matches
+        // how `.d0-shell` collapses its sidebar.
+        assert_eq!(
+            right_track(h),
+            "grid-template-columns: minmax(0, 1fr)",
             "the column must be ZERO pixels, not merely empty — the GPUI split \
-             reserved its width whether or not a panel was showing: {}",
-            right_track(h)
+             reserved its width whether or not a panel was showing"
         );
     });
 }
@@ -291,6 +295,31 @@ fn showing_the_inspector_opens_the_column_and_titles_its_pane() {
             !right_track(h).contains("1fr) 0px"),
             "an open pane gives the column real width: {}",
             right_track(h)
+        );
+    });
+}
+
+/// The splitter gets a track of its own, so the column sits BESIDE the grid.
+///
+/// Three children — centre, splitter, right column — into a two-track template
+/// meant the splitter took the panel's column and the right column was
+/// auto-placed into an implicit second row: inspector and charts rendered
+/// *under* the grid at 878px wide, and the 4px splitter rendered 320px wide.
+/// Every existing assertion here still passed, because each element was
+/// individually a plausible size and the whole thing stayed inside the window.
+///
+/// This is the third instance of the same defect (`.d0-shell` was the first,
+/// `.d0-centre` the second), so it is pinned by count rather than by "not 0px":
+/// one track per child, named explicitly.
+#[test]
+#[serial]
+fn the_open_column_declares_a_track_for_every_child() {
+    with_shell(with_inspector(), |h| {
+        assert_eq!(
+            right_track(h),
+            "grid-template-columns: minmax(0, 1fr) 4px 320px",
+            "centre, splitter and column are three children and need three \
+             tracks — with two, the last one wraps to a row of its own"
         );
     });
 }
@@ -347,10 +376,10 @@ fn closing_both_panes_collapses_the_column_to_zero_width() {
             0,
             "closing the last pane collapses the column"
         );
-        assert!(
-            right_track(h).contains("minmax(0, 1fr) 0px"),
-            "and hands its width back to the grid: {}",
-            right_track(h)
+        assert_eq!(
+            right_track(h),
+            "grid-template-columns: minmax(0, 1fr)",
+            "and hands its width back to the grid"
         );
     });
 }
