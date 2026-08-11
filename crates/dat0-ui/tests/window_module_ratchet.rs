@@ -56,7 +56,12 @@ const MAX_LINES: &[(&str, usize)] = &[
     ("recovery.rs", 500),
     ("saved_queries.rs", 200),
     ("settings_ui.rs", 900),
-    ("shell.rs", 1100),
+    // 1100 -> 1200: the grid-binding fix. The `source` resource grew the
+    // widths/selection seeding the shell never did, the `Grid` call site grew
+    // the column projection it used to pass as `Vec::new()`, and both carry
+    // the comment explaining what the placeholder cost. Extraction would mean
+    // a module for twenty lines that only make sense beside the resource.
+    ("shell.rs", 1200),
     ("sidebar.rs", 600),
     ("sql_console/editor.rs", 400),
     ("sql_console/mod.rs", 700),

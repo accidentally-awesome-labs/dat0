@@ -131,20 +131,41 @@ pub fn Shell() -> Element {
     // One `GridDataSource` per active tab, rebuilt when the tab changes.
     // `use_resource` because building one runs a DESCRIBE against DuckDB: it is
     // a query, not a field read, and it must not block the render that asks.
-    let active_table = ws.active_tab().map(|t| t.table);
-    let session = ws.session;
-    let source = use_resource(move || {
-        let table = active_table.clone();
-        async move {
-            let table = table?;
-            let engine = session.read().ready().map(|s| s.lock().engine.clone())?;
-            Some(
-                dat0_core::grid::data_source::GridDataSource::new(engine, table)
-                    .await
-                    .map(std::sync::Arc::new)
-                    .map_err(|e| format!("{e:#}")),
-            )
+    //
+    // Every read below is INSIDE the future, and that is the whole contract:
+    // `use_resource` restarts when a signal read during its own execution
+    // changes, and nothing else. Hoisting `ws.active_tab()` up here — read
+    // during the shell's render, captured into the closure — subscribed the
+    // resource to nothing at all, because on the one poll that mattered the
+    // `?` short-circuited on an empty tab list before it ever touched
+    // `session`. The tab arrived, the tab strip showed it, and the work area
+    // stayed on `d0-grid-loading` forever. `tests/shell_grid_binding.rs`
+    // mounts the real shell over a real session and fails if it comes back.
+    let mut widths_seed = widths;
+    let mut selection_seed = selection;
+    let source = use_resource(move || async move {
+        let table = ws.active_tab().map(|t| t.table)?;
+        let engine = ws.session.read().ready().map(|s| s.lock().engine.clone())?;
+        let built = dat0_core::grid::data_source::GridDataSource::new(engine, table)
+            .await
+            .map(std::sync::Arc::new)
+            .map_err(|e| format!("{e:#}"));
+
+        // Size the grid's two pieces of shell-owned state to the table that
+        // just bound. `Grid` derives its visible column range from
+        // `widths.len()`, so an empty vector paints a header with no columns
+        // and no cells; `SelectionModel` clamps `move_active` against its own
+        // dimensions, so a 1x1 model pins the keyboard cursor to A1 whatever
+        // the table holds. Both were left at their mount-time placeholders.
+        if let Ok(src) = &built {
+            let cols = src.visible_column_names().len();
+            widths_seed.set(vec![crate::components::grid::COL_W_DEFAULT; cols]);
+            selection_seed.set(dat0_core::grid::selection::SelectionModel::new(
+                usize::try_from(src.row_count).unwrap_or(usize::MAX).max(1),
+                cols.max(1),
+            ));
         }
+        Some(built)
     });
 
     // The console's tabs and its last failure. The schema snapshot is shared
@@ -159,7 +180,7 @@ pub fn Shell() -> Element {
             if spec.source.is_empty() {
                 return None;
             }
-            let engine = session.read().ready().map(|s| s.lock().engine.clone())?;
+            let engine = ws.session.read().ready().map(|s| s.lock().engine.clone())?;
             let sql = dat0_core::charts::query::build_plot_sql(&spec).ok()?;
             let qr = dat0_engine::QueryEngine::execute(engine.as_ref(), &sql)
                 .await
@@ -477,15 +498,31 @@ pub fn Shell() -> Element {
                                     on_save_as_table: move |_| {},
                                 }
                                 match source.read_unchecked().clone().flatten() {
-                                    Some(Ok(src)) => rsx! {
-                                        Grid {
-                                            source: src,
-                                            selection,
-                                            columns: Vec::new(),
-                                            widths,
-                                            read_only: *ws.read_only.read(),
+                                    Some(Ok(src)) => {
+                                        // The bound table's own columns. This
+                                        // was `Vec::new()`, and `Grid` paints
+                                        // one header cell and one body cell
+                                        // per entry — so the work area
+                                        // rendered an empty frame over a
+                                        // table full of data.
+                                        let columns: Vec<_> = src
+                                            .visible_column_names()
+                                            .into_iter()
+                                            .map(|n| dat0_engine::transform::ProjectionColumn {
+                                                source: n.clone(),
+                                                display: n,
+                                            })
+                                            .collect();
+                                        rsx! {
+                                            Grid {
+                                                source: src,
+                                                selection,
+                                                columns,
+                                                widths,
+                                                read_only: *ws.read_only.read(),
+                                            }
                                         }
-                                    },
+                                    }
                                     // The table is being described. Not an
                                     // empty grid: an empty grid is a claim
                                     // about the data, and this is a claim

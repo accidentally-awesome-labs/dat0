@@ -201,10 +201,26 @@ pub fn Grid(props: GridProps) -> Element {
     // synchronous render already paints real values, so there is nothing to
     // fetch and no task to spawn. Without it a fast scroll spawns a task per
     // frame over data it already has.
+    //
+    // `pages_loaded` is what makes the fetch visible. The LRU behind
+    // `GridDataSource` is a `Mutex`, not a signal, so filling it changes
+    // nothing Dioxus is watching: the cells that rendered before the page
+    // landed keep their `–` placeholder until something unrelated happens to
+    // re-render the grid. Bumping a signal the render reads is the whole fix,
+    // and it is why the counter is read one line below rather than in the
+    // effect — a scope only subscribes to what its RENDER touches.
+    let mut pages_loaded = use_signal(|| 0_u64);
+    let _ = pages_loaded();
     {
         let source = props.source.clone();
         let (start, last) = (range.rows.start, range.rows.end.saturating_sub(1));
         use_effect(move || {
+            // Read inside the effect so a scroll re-runs it: `use_effect`
+            // re-runs on the signals its body touches, and `start`/`last` are
+            // plain values computed during render. Without this the grid
+            // prefetches exactly once, at mount, and every page below the
+            // first screenful stays blank however far you scroll.
+            let _ = viewport();
             if start > last || source.pages_resident(start, last) {
                 return;
             }
@@ -216,6 +232,9 @@ pub fn Grid(props: GridProps) -> Element {
                         tracing::warn!("grid page {row} failed: {e:#}");
                     }
                 }
+                // The cache is not reactive; this is the repaint.
+                let next = pages_loaded().wrapping_add(1);
+                pages_loaded.set(next);
             });
         });
     }
