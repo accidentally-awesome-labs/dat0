@@ -57,7 +57,7 @@ webview, not a GPU shader pipeline.
 
 ```sh
 sudo apt-get install -y \
-  libwebkit2gtk-4.1-dev libsoup-3.0-dev \
+  libwebkit2gtk-4.1-dev libsoup-3.0-dev libxdo-dev \
   libsecret-1-dev dbus-x11 gnome-keyring \
   libpango1.0-dev libfontconfig1-dev \
   libxkbcommon-dev libxkbcommon-x11-dev \

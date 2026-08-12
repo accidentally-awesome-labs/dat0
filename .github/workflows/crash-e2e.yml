@@ -46,7 +46,7 @@ jobs:
         if: steps.gate.outputs.run == 'true'
         run: |
           sudo apt-get update -qq
-          sudo apt-get install -y libwebkit2gtk-4.1-dev libsoup-3.0-dev libsecret-1-dev
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libsoup-3.0-dev libsecret-1-dev libxdo-dev
       - name: Build + send test event
         if: steps.gate.outputs.run == 'true'
         run: |

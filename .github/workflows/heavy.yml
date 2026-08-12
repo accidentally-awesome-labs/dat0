@@ -80,7 +80,7 @@ jobs:
             libsecret-1-dev dbus-x11 gnome-keyring \
             libpango1.0-dev libxkbcommon-dev libxkbcommon-x11-dev \
             libfontconfig1-dev libssl-dev \
-            libwebkit2gtk-4.1-dev libsoup-3.0-dev
+            libwebkit2gtk-4.1-dev libsoup-3.0-dev libxdo-dev
       - name: Start dbus + gnome-keyring (Secret Service backend)
         if: runner.environment == 'github-hosted'
         run: |

@@ -70,7 +70,7 @@ jobs:
             libfuse2 fuse desktop-file-utils \
             libsecret-1-dev libpango1.0-dev libxkbcommon-dev libxkbcommon-x11-dev \
             libfontconfig1-dev libssl-dev \
-            libwebkit2gtk-4.1-dev libsoup-3.0-dev
+            libwebkit2gtk-4.1-dev libsoup-3.0-dev libxdo-dev
           # Into $RUNNER_TEMP, not /usr/local/bin: that directory is not
           # writable by the runner user, so the original un-sudo'd
           # `wget -O /usr/local/bin/appimagetool` failed with EACCES. The
