@@ -226,6 +226,24 @@ pub fn build() -> Menu {
     ]);
 
     let _ = menu.append_items(&[&app, &file, &edit, &view, &window, &help]);
+
+    // Keep the children alive for the life of the process.
+    //
+    // `dioxus-desktop` parks this `Menu` in the per-window `WebviewInstance`,
+    // but macOS's `init_for_nsapp` installs it as the *process* menu bar. Close
+    // that window and the last `Rc` drops, freeing the `MenuChild` ivars that
+    // `NSApp.mainMenu` still points at - so the next click on any menu item
+    // reads freed memory. It surfaces as a `ZeroWidth` panic inside muda's icon
+    // encoder: the garbage reads back as an `Option<Icon>` of 0 x 0, which is
+    // exactly what muda's only validation (`pixel_count == width * height`)
+    // waves through, and what its PNG encoder then refuses. Reproduced with
+    // File -> New Window, close it, click any menu item.
+    //
+    // `Menu` is `Rc`-backed and `Clone`, so one leaked clone per menu pins the
+    // children no matter which window owns the menu bar. Costs a few words per
+    // window; the alternative is a use-after-free on every menu click.
+    std::mem::forget(menu.clone());
+
     menu
 }
 
