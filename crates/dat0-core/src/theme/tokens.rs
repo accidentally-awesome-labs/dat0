@@ -140,13 +140,19 @@ pub struct ThemeTokens {
     pub inset: String,
 }
 
+/// Reads one token's value out of a token set.
+///
+/// Named so `CSS_NAMES` below stays a readable two-column table rather than a
+/// wall of function-pointer syntax.
+pub type TokenAccessor = fn(&ThemeTokens) -> &str;
+
 /// The `--d0-*` name for a token field. Kept as an explicit table rather than
 /// derived from field names by string munging, because the CSS names are a
 /// published contract that `app.css` is written against; a rename must be a
 /// visible edit here, not a silent consequence of a Rust refactor.
 ///
 /// The `design_contract` test walks this table in both directions.
-pub const CSS_NAMES: &[(&str, fn(&ThemeTokens) -> &str)] = &[
+pub const CSS_NAMES: &[(&str, TokenAccessor)] = &[
     ("--d0-canvas", |t| &t.canvas),
     ("--d0-surface", |t| &t.surface),
     ("--d0-pane-head", |t| &t.pane_head),

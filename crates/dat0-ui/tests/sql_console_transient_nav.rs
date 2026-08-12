@@ -348,7 +348,6 @@ fn a_failed_stream_says_why_and_can_still_be_dismissed() {
             text: String::new(),
             phase: StreamPhase::Failed,
             error: Some("401 unauthorized".into()),
-            ..StreamView::default()
         },
         None,
     );

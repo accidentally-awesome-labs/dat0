@@ -276,7 +276,9 @@ fn the_same_machine_gate_offers_focus_rather_than_a_warning() {
 fn the_in_use_gate_has_no_exit_other_than_its_two_buttons() {
     // Both outcomes have consequences, so a stray click on the scrim, an
     // Escape or a header ✕ must not resolve to either one.
-    assert!(!dat0_ui::components::workspace_in_use::SCRIM_DISMISSABLE);
+    // A compile-time assert: flipping the const is the regression, and this
+    // catches it at build time rather than on a test run.
+    const _: () = assert!(!dat0_ui::components::workspace_in_use::SCRIM_DISMISSABLE);
 
     let h = in_use(InUse::SameMachine);
     let buttons = h.by_role("button");
@@ -864,5 +866,7 @@ fn refreshing_anyway_and_cancelling_are_different_answers() {
 
 #[test]
 fn the_refresh_confirmation_cannot_be_resolved_by_a_stray_click() {
-    assert!(!dat0_ui::components::live_refresh::SCRIM_DISMISSABLE);
+    // A compile-time assert: flipping the const is the regression, and this
+    // catches it at build time rather than on a test run.
+    const _: () = assert!(!dat0_ui::components::live_refresh::SCRIM_DISMISSABLE);
 }

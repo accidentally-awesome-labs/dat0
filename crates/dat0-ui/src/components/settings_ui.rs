@@ -339,7 +339,12 @@ fn Profile(store: Store) -> Element {
     let mut name = use_signal(|| seed.get_string("author.name").unwrap_or_default());
     let seed = store.clone();
     let mut email = use_signal(|| seed.get_string("author.email").unwrap_or_default());
+    // `clippy::redundant_closure` misfires here: `Signal<T>` is only callable
+    // through the nightly `Fn` impls, so on stable `use_signal(name)` passes the
+    // signal itself where a closure is required and does not compile.
+    #[allow(clippy::redundant_closure)]
     let mut last_name = use_signal(|| name());
+    #[allow(clippy::redundant_closure)]
     let mut last_email = use_signal(|| email());
 
     let name_store = store.clone();
@@ -441,6 +446,9 @@ fn MemoryBudget(store: Store) -> Element {
             .unwrap_or(dat0_core::settings::budget::DEFAULT_MEMORY_BUDGET_MB)
             .to_string()
     });
+    // See `Profile` above: `Signal` is not callable on stable, so this closure
+    // is load-bearing despite what `redundant_closure` says.
+    #[allow(clippy::redundant_closure)]
     let mut last = use_signal(|| budget());
     let input_store = store.clone();
 

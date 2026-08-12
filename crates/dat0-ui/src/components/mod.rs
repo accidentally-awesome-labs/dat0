@@ -116,7 +116,7 @@ async fn handle(
             let _ = crate::launch::open_window(boot.clone(), paths).await;
         }
         AppEvent::RunAction { id, .. } => {
-            if !crate::router::route(ws, &boot.events, surface, &id) {
+            if !crate::router::route(ws, &boot.events, surface, id) {
                 // Loud, because it can only mean a descriptor was registered
                 // with no handler — the failure mode the router exists to make
                 // impossible to ship silently.

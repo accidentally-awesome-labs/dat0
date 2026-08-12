@@ -68,10 +68,8 @@ fn accelerator(action_id: &str) -> Option<String> {
             other if other.len() == 1 => other.to_ascii_uppercase(),
             other => {
                 let mut c = other.chars();
-                match c.next() {
-                    Some(f) => f.to_ascii_uppercase().to_string() + c.as_str(),
-                    None => return None,
-                }
+                let f = c.next()?;
+                f.to_ascii_uppercase().to_string() + c.as_str()
             }
         });
     }

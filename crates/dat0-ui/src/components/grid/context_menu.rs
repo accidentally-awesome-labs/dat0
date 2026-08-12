@@ -119,10 +119,8 @@ pub fn ContextMenu(props: ContextMenuProps) -> Element {
                     Key::Escape => on_dismiss.call(()),
                     Key::ArrowDown => cursor.set(step(cursor(), 1, &enabled)),
                     Key::ArrowUp => cursor.set(step(cursor(), -1, &enabled)),
-                    Key::Enter => {
-                        if enabled.get(cursor()).copied().unwrap_or(false) {
-                            on_pick.call((ids_list[cursor()], cell));
-                        }
+                    Key::Enter if enabled.get(cursor()).copied().unwrap_or(false) => {
+                        on_pick.call((ids_list[cursor()], cell));
                     }
                     _ => {}
                 }

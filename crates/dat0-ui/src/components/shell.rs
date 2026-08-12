@@ -877,26 +877,6 @@ fn thousands(n: u64) -> String {
     out
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn row_counts_are_grouped() {
-        assert_eq!(thousands(0), "0");
-        assert_eq!(thousands(999), "999");
-        assert_eq!(thousands(1_048_576), "1,048,576");
-        assert_eq!(thousands(1_200_000_000), "1,200,000,000");
-    }
-
-    #[test]
-    fn egress_reads_zero_rather_than_disappearing() {
-        // Always shown: "no bytes left this machine" is the claim dat0 makes,
-        // and a hidden counter cannot make it.
-        assert_eq!(egress_line(&Status::default()), "egress 0 B");
-    }
-}
-
 /// Perform one console intent.
 ///
 /// The console never touches the engine or the registry itself — it reports
@@ -1134,4 +1114,24 @@ fn surface_command(
         _ => return false,
     }
     true
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn row_counts_are_grouped() {
+        assert_eq!(thousands(0), "0");
+        assert_eq!(thousands(999), "999");
+        assert_eq!(thousands(1_048_576), "1,048,576");
+        assert_eq!(thousands(1_200_000_000), "1,200,000,000");
+    }
+
+    #[test]
+    fn egress_reads_zero_rather_than_disappearing() {
+        // Always shown: "no bytes left this machine" is the claim dat0 makes,
+        // and a hidden counter cannot make it.
+        assert_eq!(egress_line(&Status::default()), "egress 0 B");
+    }
 }

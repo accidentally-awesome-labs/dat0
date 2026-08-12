@@ -117,7 +117,10 @@ try {
 struct Box2 {
     #[serde(default)]
     x: i64,
+    // Deserialised for shape parity with the JS side, which sends the whole
+    // rect; no probe reads it yet.
     #[serde(default)]
+    #[allow(dead_code)]
     y: i64,
     w: i64,
     h: i64,

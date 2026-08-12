@@ -389,7 +389,7 @@ async fn a_layout_saved_on_a_bigger_display_is_clamped_when_it_is_mounted() {
     let mounted = clamped_size(persisted, 238.0, 1440.0);
     assert_eq!(mounted, 1152.0);
     assert!(
-        mounted >= DOCK_MIN_SIZE && mounted < 30_000.0,
+        (DOCK_MIN_SIZE..30_000.0).contains(&mounted),
         "an oversized sidebar is clamped at mount, not obeyed; got {mounted}"
     );
 }

@@ -38,6 +38,12 @@
 //! harness has no browser. Document order is asserted instead — it is the
 //! thing the port could actually get wrong.
 
+// `AiDeps` declares `probe`/`keys` as `Arc<dyn ..>`, and these scripted
+// fixtures hold `RefCell`, so the Arc is not Sync. The harness is
+// single-threaded and the type is the production API's, not a choice made
+// here - satisfying the lint would mean changing `AiDeps`.
+#![allow(clippy::arc_with_non_send_sync)]
+
 mod support;
 
 use std::cell::RefCell;

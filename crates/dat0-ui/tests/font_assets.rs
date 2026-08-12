@@ -233,7 +233,7 @@ fn the_type_stacks_lead_with_a_declared_family() {
             assert!(
                 value.starts_with("var(--d0-sans")
                     || value.starts_with("var(--d0-monospace")
-                    || declared.contains(&value.trim_matches('"').to_string()),
+                    || declared.contains(value.trim_matches('"')),
                 "app.css:{} asks for {value} directly; use var(--d0-sans) or \
                  var(--d0-monospace) so one edit moves the whole app",
                 i + 1

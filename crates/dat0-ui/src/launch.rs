@@ -232,6 +232,19 @@ pub async fn open_window(
     Some(pending.window.id())
 }
 
+/// Whether this tree is running inside a real desktop window.
+///
+/// False in the headless component harness, where there is no webview, no
+/// window handle and no native dialog to show. The commands that need one —
+/// file pickers, the settings window — check this and log instead of panicking
+/// deep inside `dioxus::desktop::window()`.
+///
+/// This is not a test hook: a build with no window system genuinely cannot show
+/// a file dialog, and saying so is better than aborting the process.
+pub fn has_desktop() -> bool {
+    dioxus::prelude::try_consume_context::<std::rc::Rc<dioxus::desktop::DesktopService>>().is_some()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -251,17 +264,4 @@ mod tests {
         assert_eq!(parse_hex("#12345"), None);
         assert_eq!(parse_hex("#ffffff"), Some((0xff, 0xff, 0xff, 0xff)));
     }
-}
-
-/// Whether this tree is running inside a real desktop window.
-///
-/// False in the headless component harness, where there is no webview, no
-/// window handle and no native dialog to show. The commands that need one —
-/// file pickers, the settings window — check this and log instead of panicking
-/// deep inside `dioxus::desktop::window()`.
-///
-/// This is not a test hook: a build with no window system genuinely cannot show
-/// a file dialog, and saying so is better than aborting the process.
-pub fn has_desktop() -> bool {
-    dioxus::prelude::try_consume_context::<std::rc::Rc<dioxus::desktop::DesktopService>>().is_some()
 }

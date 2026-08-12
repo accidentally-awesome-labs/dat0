@@ -113,7 +113,7 @@ fn drain(
     for ev in queued {
         if let AppEvent::RunAction { id, .. } = ev {
             assert!(
-                dat0_ui::router::route(ws, events, surface, &id),
+                dat0_ui::router::route(ws, events, surface, id),
                 "the router must claim {id} — an unrouted descriptor is the \
                  failure mode the router exists to make impossible"
             );

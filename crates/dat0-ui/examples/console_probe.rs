@@ -435,7 +435,7 @@ fn report(r: Report, runs: Vec<String>) {
     check(
         "DuckDB function completes",
         r.fns.iter().any(|f| f == "date_trunc"),
-        format!("{:?}", &r.fns.iter().take(3).collect::<Vec<_>>()),
+        format!("{:?}", r.fns.iter().take(3).collect::<Vec<_>>()),
     );
     check(
         "document round-trips to Rust",

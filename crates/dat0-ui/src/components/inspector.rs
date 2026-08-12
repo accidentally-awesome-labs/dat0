@@ -88,8 +88,7 @@ impl InspectorState {
     /// Claim the next load id. Every later write must present it.
     pub fn begin_load(&self) -> u64 {
         let mut model = self.model;
-        let id = model.write().begin_load();
-        id
+        model.write().begin_load()
     }
 
     /// Store a profile, **if** `load_id` is still the newest load.

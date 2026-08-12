@@ -8,6 +8,12 @@
 //! What is deliberately *not* here: geometry. The harness has no layout, so a
 //! test that a bar is 4px tall would be testing the string "4px".
 
+// `AiDeps` declares `probe`/`keys` as `Arc<dyn ..>`, and these scripted
+// fixtures hold `RefCell`, so the Arc is not Sync. The harness is
+// single-threaded and the type is the production API's, not a choice made
+// here - satisfying the lint would mean changing `AiDeps`.
+#![allow(clippy::arc_with_non_send_sync)]
+
 mod support;
 
 use std::cell::RefCell;
@@ -194,8 +200,10 @@ fn cycling_the_theme_persists_the_next_one() {
 fn resetting_asks_first_and_cancelling_changes_nothing() {
     let (mut h, store) = settings();
     // Something to lose.
-    let mut s = Settings::default();
-    s.update_auto_check = false;
+    let mut s = Settings {
+        update_auto_check: false,
+        ..Settings::default()
+    };
     s.profile.author_name = "Ada".into();
     store.save(&s).unwrap();
 
