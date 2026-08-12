@@ -166,11 +166,7 @@ fn chord(h: &mut Harness, key: Key, mods: Modifiers) {
 /// ⌘⇧C on macOS, ⌃⇧C elsewhere — `keys::Cascade` picks the platform row, so
 /// the test supplies the platform's own modifier.
 fn console_toggle(h: &mut Harness) {
-    let primary = if cfg!(target_os = "macos") {
-        Modifiers::META
-    } else {
-        Modifiers::CONTROL
-    };
+    let primary = support::primary();
     chord(h, Key::Character("c".into()), primary | Modifiers::SHIFT);
 }
 

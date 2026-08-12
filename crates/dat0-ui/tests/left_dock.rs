@@ -147,9 +147,9 @@ fn boot_with(tabs: Vec<TabView>) -> Harness {
     h
 }
 
-/// Press ⌘B on the shell root and let the bus reach the router.
+/// Press the sidebar chord on the shell root and let the bus reach the router.
 fn toggle_sidebar(h: &mut Harness) {
-    h.key_at("window", Key::Character("b".into()), Modifiers::META);
+    h.key_at("window", Key::Character("b".into()), support::primary());
     h.click("pump");
 }
 
@@ -235,9 +235,9 @@ fn the_sidebar_toggle_is_a_registered_action() {
 
     let cascade = dat0_ui::keys::Cascade::default();
     assert_eq!(
-        cascade.resolve(&Key::Character("b".into()), Modifiers::META),
+        cascade.resolve(&Key::Character("b".into()), support::primary()),
         Some(ids::SIDEBAR_TOGGLE),
-        "⌘B must resolve through the real keymap table"
+        "the sidebar chord must resolve through the real keymap table"
     );
 }
 

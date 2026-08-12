@@ -37,6 +37,29 @@ use dom::{Dom, NodeKey};
 
 pub use dioxus::prelude::{Code, Key, Location, Modifiers};
 
+/// The platform's primary chord modifier: ⌘ on macOS, Ctrl everywhere else.
+///
+/// `dat0_core::keymap` carries both a `macos` and an `other` binding per row,
+/// and `keys::Cascade` picks by platform at compile time. Any test that presses
+/// a chord and expects the action to FIRE must therefore ask for the platform's
+/// modifier rather than hardcoding `Modifiers::META` — hardcoding it passes on
+/// macOS and resolves to nothing on Linux, where the row says `ctrl-…`.
+///
+/// Three files each grew their own copy of this and three more went without,
+/// which is how `left_dock` and `keys` shipped green on macOS and red on Linux.
+/// It lives here so the next test finds it.
+///
+/// Not needed when the modifier is incidental — a test asserting a keystroke
+/// falls THROUGH to the shell, or one parsing a literal `"cmd-z"` chord, means
+/// `META` exactly and should keep it.
+pub fn primary() -> Modifiers {
+    if cfg!(target_os = "macos") {
+        Modifiers::META
+    } else {
+        Modifiers::CONTROL
+    }
+}
+
 /// A mounted component under test.
 pub struct Harness {
     vdom: VirtualDom,

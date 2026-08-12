@@ -116,7 +116,7 @@ fn tab(path: &str) -> TabView {
 }
 
 fn toggle_sidebar(h: &mut Harness) {
-    h.key_at("window", Key::Character("b".into()), Modifiers::META);
+    h.key_at("window", Key::Character("b".into()), support::primary());
     h.click("pump");
 }
 

@@ -125,10 +125,7 @@ fn shell() -> Harness {
 
 /// Press the real chord, at the shell root where the cascade lives.
 fn press_palette_chord(h: &mut Harness) {
-    #[cfg(target_os = "macos")]
-    let mods = Modifiers::META | Modifiers::SHIFT;
-    #[cfg(not(target_os = "macos"))]
-    let mods = Modifiers::CONTROL | Modifiers::SHIFT;
+    let mods = support::primary() | Modifiers::SHIFT;
     // Shift really does deliver an uppercase character; the keymap lowercases.
     h.key_at("window", Key::Character("P".into()), mods);
 }

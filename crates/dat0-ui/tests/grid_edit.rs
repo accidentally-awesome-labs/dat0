@@ -145,11 +145,7 @@ async fn shift_arrow_extends_the_selection() {
 #[tokio::test]
 async fn select_all_then_escape_clears() {
     let (mut h, _t) = mount(false).await;
-    let jump = if cfg!(target_os = "macos") {
-        Modifiers::META
-    } else {
-        Modifiers::CONTROL
-    };
+    let jump = support::primary();
     key(&mut h, Key::Character("a".into()), jump);
     // 3 rows x 3 columns.
     assert_eq!(h.text_of(h.by_a11y_id("count").unwrap()), "9");
