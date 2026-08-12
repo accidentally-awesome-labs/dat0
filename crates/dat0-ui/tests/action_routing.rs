@@ -63,9 +63,16 @@ fn Host(props: HostProps) -> Element {
     // effect read — that is what a command is — so an unguarded effect would
     // re-run itself forever.
     let refused = use_signal(String::new);
+    // Whether the effect has actually run. Without this the readback is
+    // indistinguishable from "routing found nothing to refuse", so a settle
+    // that returned too early read as a PASS - vacuously, for the sibling test
+    // that asserts the refusal list is empty. Observed as a macOS CI failure
+    // here while that sibling stayed green.
+    let ran = use_signal(|| false);
     let done = use_hook(|| std::rc::Rc::new(std::cell::Cell::new(false)));
     {
         let mut refused = refused;
+        let mut ran = ran;
         use_effect(move || {
             if done.replace(true) {
                 return;
@@ -76,23 +83,37 @@ fn Host(props: HostProps) -> Element {
                 .map(String::as_str)
                 .collect();
             refused.set(out.join(" "));
+            ran.set(true);
         });
     }
 
     rsx! {
         Shell {}
         div { "data-a11y-id": "refused", "{refused}" }
+        div { "data-a11y-id": "ran", "{ran}" }
     }
 }
 
+/// Route `ids` inside a real shell and return the ones the router refused.
+///
+/// Settles until the effect reports it has run: `Harness::settle` stops when
+/// the edit count stops moving, which can happen before a post-render effect
+/// has had its turn.
 fn refusals(ids: Vec<String>) -> Vec<String> {
     let mut h = Harness::new(Host, HostProps { ids });
-    h.settle();
-    let node = h.by_a11y_id("refused").expect("the readback node");
-    h.text_of(node)
-        .split_whitespace()
-        .map(str::to_string)
-        .collect()
+    for _ in 0..64 {
+        h.settle();
+        let ran = h.by_a11y_id("ran").expect("the readback node");
+        if h.text_of(ran) == "true" {
+            let node = h.by_a11y_id("refused").expect("the readback node");
+            return h
+                .text_of(node)
+                .split_whitespace()
+                .map(str::to_string)
+                .collect();
+        }
+    }
+    panic!("the routing effect never ran; the readback would have been a lie");
 }
 
 #[test]

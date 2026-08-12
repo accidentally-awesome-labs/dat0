@@ -369,7 +369,10 @@ mod tests {
     #[test]
     fn a_global_chord_resolves_when_nothing_else_is_open() {
         let c = Cascade::default();
-        let undo = c.resolve(&ch("z"), Modifiers::META);
+        // `jump()`, not `META`: `Cascade::default()` is built from the platform
+        // keymap, where undo is `cmd-z` on macOS and `ctrl-z` everywhere else.
+        // Hardcoding META passed on macOS and resolved to nothing on Linux.
+        let undo = c.resolve(&ch("z"), jump());
         assert_eq!(undo, Some(dat0_core::actions::builtin::ids::VIEW_UNDO));
     }
 
