@@ -153,7 +153,16 @@ debug = "line-tables-only"
 [profile.release]
 lto = "thin"
 codegen-units = 1
-strip = "symbols"
+# `debuginfo`, not `symbols`: drop the debug info but keep the symbol table.
+#
+# dat0 stages a panic to `last-crash.json` and offers to submit it. Under
+# `strip = "symbols"` every frame in that report resolved to
+# `__mh_execute_header` or a misattributed duckdb symbol, so the payload named
+# nothing and the feature reported noise - proven when a real menu-bar
+# use-after-free landed one and macOS's own crash report was the only way in.
+# Keeping the table names the frames (no line numbers, which need debug info
+# this still strips). Costs ~10 MB on a ~46 MB binary.
+strip = "debuginfo"
 panic = "abort"
 
 [profile.bench]
