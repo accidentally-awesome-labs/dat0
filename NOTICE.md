@@ -136,12 +136,6 @@ THE SOFTWARE.
 ## BSD Zero Clause License (SPDX: 0BSD)
 
 Used by:
-- enum-iterator-derive 1.5.0 — https://github.com/stephaneyfx/enum-iterator.git
-- enum-iterator 2.3.0 — https://github.com/stephaneyfx/enum-iterator.git
-
-## BSD Zero Clause License (SPDX: 0BSD)
-
-Used by:
 - doctest-file 1.1.1 — https://codeberg.org/Goat7658/doctest-file
 
 ## Apache License 2.0 (SPDX: Apache-2.0)
@@ -182,32 +176,11 @@ Used by:
 - arrow-select 56.2.0 — https://github.com/apache/arrow-rs
 - arrow-string 56.2.0 — https://github.com/apache/arrow-rs
 - arrow 56.2.0 — https://github.com/apache/arrow-rs
-- as-raw-xcb-connection 1.0.1 — https://github.com/psychon/as-raw-xcb-connection
-- encoding_rs 0.8.35 — https://github.com/hsivonen/encoding_rs
 - iri-string 0.7.12 — https://github.com/lo48576/iri-string
-- kurbo 0.11.3 — https://github.com/linebender/kurbo
-- static_assertions 1.1.0 — https://github.com/nvzqz/static-assertions-rs
-- tinyvec 1.11.0 — https://github.com/Lokathor/tinyvec
 - utf8_iter 1.0.4 — https://github.com/hsivonen/utf8_iter
 - x11rb-protocol 0.13.2 — https://github.com/psychon/x11rb
 - x11rb 0.13.2 — https://github.com/psychon/x11rb
 - zeroize 1.8.2 — https://github.com/RustCrypto/utils
-- zeroize_derive 1.4.3 — https://github.com/RustCrypto/utils/tree/master/zeroize/derive
-
-## Apache License 2.0 (SPDX: Apache-2.0)
-
-Used by:
-- rangemap 1.7.1 — https://github.com/jeffparsons/rangemap
-
-## Apache License 2.0 (SPDX: Apache-2.0)
-
-Used by:
-- raw-window-metal 0.4.0 — https://github.com/norse-rs/raw-window-metal
-
-## Apache License 2.0 (SPDX: Apache-2.0)
-
-Used by:
-- tinyvec_macros 0.1.1 — https://github.com/Soveu/tinyvec_macros
 
 ## Apache License 2.0 (SPDX: Apache-2.0)
 
@@ -224,12 +197,7 @@ Used by:
 ## Apache License 2.0 (SPDX: Apache-2.0)
 
 Used by:
-- codespan-reporting 0.12.0 — https://github.com/brendanzab/codespan
-- command-fds 0.3.3 — https://github.com/google/command-fds/
 - imgref 1.12.0 — https://github.com/kornelski/imgref
-- self_cell 1.2.2 — https://github.com/Voultapher/self_cell
-- sys-locale 0.3.2 — https://github.com/1Password/sys-locale
-- unicode-linebreak 0.1.5 — https://github.com/axelf4/unicode-linebreak
 - ureq 2.12.1 — https://github.com/algesten/ureq
 - zune-core 0.5.1 — https://github.com/etemesi254/zune-image
 - zune-jpeg 0.5.15 — https://github.com/etemesi254/zune-image/tree/dev/crates/zune-jpeg
@@ -238,11 +206,6 @@ Used by:
 
 Used by:
 - ipnet 2.12.0 — https://github.com/krisprice/ipnet
-
-## Apache License 2.0 (SPDX: Apache-2.0)
-
-Used by:
-- cosmic-text 0.14.2 — https://github.com/pop-os/cosmic-text
 
 ## Apache License 2.0 (SPDX: Apache-2.0)
 
@@ -266,31 +229,29 @@ Used by:
 - fallible-streaming-iterator 0.1.9 — https://github.com/sfackler/fallible-streaming-iterator
 - float-ord 0.3.2 — https://github.com/notriddle/rust-float-ord
 - foreign-types-macros 0.2.3 — https://github.com/sfackler/foreign-types
+- foreign-types-shared 0.1.1 — https://github.com/sfackler/foreign-types
 - foreign-types-shared 0.3.1 — https://github.com/sfackler/foreign-types
+- foreign-types 0.3.2 — https://github.com/sfackler/foreign-types
 - foreign-types 0.5.0 — https://github.com/sfackler/foreign-types
 - hex 0.4.3 — https://github.com/KokaKiwi/rust-hex
 - is_terminal_polyfill 1.70.2 — https://github.com/polyfill-rs/is_terminal_polyfill
+- native-tls 0.2.18 — https://github.com/rust-native-tls/rust-native-tls
 - no_std_io2 0.9.3 — https://github.com/wcampbell0x2a/no-std-io2
+- openssl-macros 0.1.1
+- openssl 0.10.81 — https://github.com/rust-openssl/rust-openssl
 - quick-error 2.0.1 — http://github.com/tailhook/quick-error
 - serde_spanned 0.6.9 — https://github.com/toml-rs/toml
-- streaming-iterator 0.1.9 — https://github.com/sfackler/streaming-iterator
-- toml 0.8.23 — https://github.com/toml-rs/toml
-- toml_datetime 0.6.11 — https://github.com/toml-rs/toml
+- toml 0.8.2 — https://github.com/toml-rs/toml
 - toml_datetime 1.1.1+spec-1.1.0 — https://github.com/toml-rs/toml
-- toml_edit 0.22.27 — https://github.com/toml-rs/toml
+- toml_edit 0.19.15 — https://github.com/toml-rs/toml
+- toml_edit 0.20.2 — https://github.com/toml-rs/toml
 - toml_edit 0.25.11+spec-1.1.0 — https://github.com/toml-rs/toml
 - toml_parser 1.1.2+spec-1.1.0 — https://github.com/toml-rs/toml
-- toml_write 0.1.2 — https://github.com/toml-rs/toml
 
 ## Apache License 2.0 (SPDX: Apache-2.0)
 
 Used by:
 - async-broadcast 0.7.2 — https://github.com/smol-rs/async-broadcast
-
-## Apache License 2.0 (SPDX: Apache-2.0)
-
-Used by:
-- kv-log-macro 1.0.7 — https://github.com/yoshuawuyts/kv-log-macro
 
 ## Apache License 2.0 (SPDX: Apache-2.0)
 
@@ -314,12 +275,11 @@ Used by:
 
 Used by:
 - reqwest 0.12.28 — https://github.com/seanmonstar/reqwest
-- zed-reqwest 0.12.15-zed — https://github.com/seanmonstar/reqwest
 
 ## Apache License 2.0 (SPDX: Apache-2.0)
 
 Used by:
-- pathdiff 0.2.3 — https://github.com/Manishearth/pathdiff
+- cookie 0.18.2 — https://github.com/SergioBenitez/cookie-rs
 
 ## Apache License 2.0 (SPDX: Apache-2.0)
 
@@ -334,17 +294,12 @@ Used by:
 ## Apache License 2.0 (SPDX: Apache-2.0)
 
 Used by:
-- pin-utils 0.1.0 — https://github.com/rust-lang-nursery/pin-utils
-
-## Apache License 2.0 (SPDX: Apache-2.0)
-
-Used by:
 - ppv-lite86 0.2.21 — https://github.com/cryptocorrosion/cryptocorrosion
 
 ## Apache License 2.0 (SPDX: Apache-2.0)
 
 Used by:
-- proc-macro-error-attr2 2.0.0 — https://github.com/GnomedDev/proc-macro-error-2
+- proc-macro-error-attr 1.0.4 — https://gitlab.com/CreepySkeleton/proc-macro-error
 
 ## Apache License 2.0 (SPDX: Apache-2.0)
 
@@ -359,11 +314,6 @@ Used by:
 ## Apache License 2.0 (SPDX: Apache-2.0)
 
 Used by:
-- notify-types 1.0.1 — https://github.com/notify-rs/notify.git
-
-## Apache License 2.0 (SPDX: Apache-2.0)
-
-Used by:
 - memmap2 0.9.10 — https://github.com/RazrFalcon/memmap2-rs
 
 ## Apache License 2.0 (SPDX: Apache-2.0)
@@ -371,6 +321,7 @@ Used by:
 Used by:
 - async-recursion 1.1.1 — https://github.com/dcchut/async-recursion
 - gif 0.14.2 — https://github.com/image-rs/image-gif
+- keyboard-types 0.7.0 — https://github.com/pyfisch/keyboard-types
 - weezl 0.1.12 — https://github.com/image-rs/weezl
 
 ## Apache License 2.0 (SPDX: Apache-2.0)
@@ -379,24 +330,18 @@ Used by:
 - addr2line 0.25.1 — https://github.com/gimli-rs/addr2line
 - ahash 0.8.12 — https://github.com/tkaitchuck/ahash
 - aligned 0.4.3 — https://github.com/rust-embedded-community/aligned
-- arc-swap 1.9.1 — https://github.com/vorner/arc-swap
 - arrayvec 0.7.6 — https://github.com/bluss/arrayvec
 - as-slice 0.2.1 — https://github.com/japaric/as-slice
-- async-channel 1.9.0 — https://github.com/smol-rs/async-channel
 - async-channel 2.5.0 — https://github.com/smol-rs/async-channel
-- async-compression 0.4.42 — https://github.com/Nullus157/async-compression
 - async-executor 1.14.0 — https://github.com/smol-rs/async-executor
 - async-fs 2.2.0 — https://github.com/smol-rs/async-fs
-- async-global-executor 2.4.1 — https://github.com/Keruspe/async-global-executor
 - async-io 2.6.0 — https://github.com/smol-rs/async-io
 - async-lock 3.4.2 — https://github.com/smol-rs/async-lock
 - async-net 2.0.0 — https://github.com/smol-rs/async-net
 - async-process 2.5.0 — https://github.com/smol-rs/async-process
 - async-signal 0.2.14 — https://github.com/smol-rs/async-signal
-- async-std 1.13.2 — https://github.com/async-rs/async-std
 - async-task 4.7.1 — https://github.com/smol-rs/async-task
 - atomic-waker 1.1.2 — https://github.com/smol-rs/atomic-waker
-- atomic 0.5.3 — https://github.com/Amanieu/atomic-rs
 - backtrace 0.3.76 — https://github.com/rust-lang/backtrace-rs
 - base64 0.22.1 — https://github.com/marshallpierce/rust-base64
 - bitflags 1.3.2 — https://github.com/bitflags/bitflags
@@ -406,43 +351,32 @@ Used by:
 - bstr 1.12.1 — https://github.com/BurntSushi/bstr
 - cast 0.3.0 — https://github.com/japaric/cast.rs
 - cfg-if 1.0.4 — https://github.com/rust-lang/cfg-if
-- cgl 0.3.2 — https://github.com/servo/cgl-rs
-- cocoa-foundation 0.1.2 — https://github.com/servo/core-foundation-rs
 - cocoa-foundation 0.2.0 — https://github.com/servo/core-foundation-rs
-- cocoa 0.25.0 — https://github.com/servo/core-foundation-rs
-- cocoa 0.26.0 — https://github.com/servo/core-foundation-rs
-- compression-codecs 0.4.38 — https://github.com/Nullus157/async-compression
-- compression-core 0.4.32 — https://github.com/Nullus157/async-compression
+- cocoa 0.26.1 — https://github.com/servo/core-foundation-rs
 - concurrent-queue 2.5.0 — https://github.com/smol-rs/concurrent-queue
-- const-random-macro 0.1.16 — https://github.com/tkaitchuck/constrandom
-- const-random 0.1.18 — https://github.com/tkaitchuck/constrandom
 - core-foundation-sys 0.8.7 — https://github.com/servo/core-foundation-rs
-- core-foundation 0.10.0 — https://github.com/servo/core-foundation-rs
+- core-foundation 0.10.1 — https://github.com/servo/core-foundation-rs
 - core-foundation 0.9.4 — https://github.com/servo/core-foundation-rs
 - core-graphics-types 0.1.3 — https://github.com/servo/core-foundation-rs
 - core-graphics-types 0.2.0 — https://github.com/servo/core-foundation-rs
-- core-graphics2 0.4.1 — https://github.com/rust-media/apple-media-rs
 - core-graphics 0.23.2 — https://github.com/servo/core-foundation-rs
 - core-graphics 0.24.0 — https://github.com/servo/core-foundation-rs
+- core-graphics 0.25.0 — https://github.com/servo/core-foundation-rs
 - core-text 20.1.0 — https://github.com/servo/core-foundation-rs
-- core-text 21.0.0 — https://github.com/servo/core-foundation-rs
-- core-video 0.4.3 — https://github.com/rust-media/apple-media-rs
 - crossbeam-channel 0.5.15 — https://github.com/crossbeam-rs/crossbeam
 - crossbeam-deque 0.8.6 — https://github.com/crossbeam-rs/crossbeam
-- crossbeam-epoch 0.9.18 — https://github.com/crossbeam-rs/crossbeam
-- crossbeam-queue 0.3.12 — https://github.com/crossbeam-rs/crossbeam
+- crossbeam-epoch 0.9.20 — https://github.com/crossbeam-rs/crossbeam
 - crossbeam-utils 0.8.21 — https://github.com/crossbeam-rs/crossbeam
-- data-url 0.3.2 — https://github.com/servo/rust-url
 - debugid 0.8.0 — https://github.com/getsentry/rust-debugid
 - displaydoc 0.2.5 — https://github.com/yaahc/displaydoc
 - either 1.15.0 — https://github.com/rayon-rs/either
+- enumset 1.1.14 — https://github.com/Lymia/enumset
+- enumset_derive 0.15.0 — https://github.com/Lymia/enumset
 - equivalent 1.0.2 — https://github.com/indexmap-rs/equivalent
 - errno 0.3.14 — https://github.com/lambda-fairy/rust-errno
 - euclid 0.22.14 — https://github.com/servo/euclid
 - event-listener-strategy 0.5.4 — https://github.com/smol-rs/event-listener-strategy
-- event-listener 2.5.3 — https://github.com/smol-rs/event-listener
 - event-listener 5.4.1 — https://github.com/smol-rs/event-listener
-- fastrand 1.9.0 — https://github.com/smol-rs/fastrand
 - fastrand 2.4.1 — https://github.com/smol-rs/fastrand
 - filetime 0.2.27 — https://github.com/alexcrichton/filetime
 - flate2 1.1.9 — https://github.com/rust-lang/flate2-rs
@@ -450,41 +384,31 @@ Used by:
 - font-kit 0.14.3 — https://github.com/servo/font-kit
 - form_urlencoded 1.2.2 — https://github.com/servo/rust-url
 - fs4 0.9.1 — https://github.com/al8n/fs4-rs
-- futf 0.1.5 — https://github.com/servo/futf
-- futures-lite 1.13.0 — https://github.com/smol-rs/futures-lite
 - futures-lite 2.6.1 — https://github.com/smol-rs/futures-lite
 - gethostname 1.1.0 — https://codeberg.org/swsnr/gethostname.rs.git
 - gimli 0.32.3 — https://github.com/gimli-rs/gimli
-- git2 0.20.4 — https://github.com/rust-lang/git2-rs
-- glob 0.3.3 — https://github.com/rust-lang/glob
+- global-hotkey 0.7.0 — https://github.com/amrbashir/global-hotkey
 - hashbrown 0.14.5 — https://github.com/rust-lang/hashbrown
 - hashbrown 0.15.5 — https://github.com/rust-lang/hashbrown
 - hashbrown 0.16.1 — https://github.com/rust-lang/hashbrown
 - hashbrown 0.17.0 — https://github.com/rust-lang/hashbrown
+- heck 0.4.1 — https://github.com/withoutboats/heck
 - heck 0.5.0 — https://github.com/withoutboats/heck
-- html5ever 0.27.0 — https://github.com/servo/html5ever
 - httparse 1.10.1 — https://github.com/seanmonstar/httparse
 - hyper-rustls 0.27.9 — https://github.com/rustls/hyper-rustls
 - idna 1.1.0 — https://github.com/servo/rust-url/
 - idna_adapter 1.2.1 — https://github.com/hsivonen/idna_adapter
 - indexmap 2.14.0 — https://github.com/indexmap-rs/indexmap
-- io-surface 0.16.1 — https://github.com/servo/core-foundation-rs
-- itertools 0.11.0 — https://github.com/rust-itertools/itertools
-- itertools 0.13.0 — https://github.com/rust-itertools/itertools
 - itertools 0.14.0 — https://github.com/rust-itertools/itertools
 - jpeg-decoder 0.3.2 — https://github.com/image-rs/jpeg-decoder
 - lazy_static 1.5.0 — https://github.com/rust-lang-nursery/lazy-static.rs
-- libgit2-sys 0.18.4+1.9.3 — https://github.com/rust-lang/git2-rs
-- libz-sys 1.1.28 — https://github.com/rust-lang/libz-sys
+- libappindicator 0.9.0
 - linux-raw-sys 0.12.1 — https://github.com/sunfishcode/linux-raw-sys
 - linux-raw-sys 0.4.15 — https://github.com/sunfishcode/linux-raw-sys
 - lock_api 0.4.14 — https://github.com/Amanieu/parking_lot
 - log 0.4.29 — https://github.com/rust-lang/log
-- markup5ever 0.12.1 — https://github.com/servo/html5ever
-- markup5ever_rcdom 0.3.0 — https://github.com/servo/html5ever
-- metal 0.29.0 — https://github.com/gfx-rs/metal-rs
-- mime 0.3.17 — https://github.com/hyperium/mime
-- num-bigint-dig 0.8.6 — https://github.com/dignifiedquire/num-bigint
+- longest-increasing-subsequence 0.1.0 — https://github.com/fitzgen/longest-increasing-subsequence
+- muda 0.17.2 — https://github.com/tauri-apps/muda
 - num-bigint 0.4.6 — https://github.com/rust-num/num-bigint
 - num-complex 0.4.6 — https://github.com/rust-num/num-complex
 - num-derive 0.4.2 — https://github.com/rust-num/num-derive
@@ -506,20 +430,17 @@ Used by:
 - png 0.17.16 — https://github.com/image-rs/image-png
 - png 0.18.1 — https://github.com/image-rs/image-png
 - polling 3.11.0 — https://github.com/smol-rs/polling
-- pollster 0.2.5 — https://github.com/zesterer/pollster
+- pollster 0.4.0 — https://github.com/zesterer/pollster
 - rayon-core 1.13.0 — https://github.com/rayon-rs/rayon
 - rayon 1.12.0 — https://github.com/rayon-rs/rayon
 - regex-automata 0.4.14 — https://github.com/rust-lang/regex
 - regex-syntax 0.8.10 — https://github.com/rust-lang/regex
 - regex 1.12.3 — https://github.com/rust-lang/regex
 - ring 0.17.14 — https://github.com/briansmith/ring
-- roxmltree 0.20.0 — https://github.com/RazrFalcon/roxmltree
 - rustc-demangle 0.1.27 — https://github.com/rust-lang/rustc-demangle
 - rustc-hash 1.1.0 — https://github.com/rust-lang-nursery/rustc-hash
 - rustix 0.38.44 — https://github.com/bytecodealliance/rustix
 - rustix 1.1.4 — https://github.com/bytecodealliance/rustix
-- rustls-native-certs 0.8.3 — https://github.com/rustls/rustls-native-certs
-- rustls-pemfile 2.2.0 — https://github.com/rustls/pemfile
 - rustls 0.23.39 — https://github.com/rustls/rustls
 - scoped-tls 1.0.1 — https://github.com/alexcrichton/scoped-tls
 - scopeguard 1.2.0 — https://github.com/bluss/scopeguard
@@ -527,48 +448,25 @@ Used by:
 - security-framework-sys 2.17.0 — https://github.com/kornelski/rust-security-framework
 - security-framework 2.11.1 — https://github.com/kornelski/rust-security-framework
 - security-framework 3.7.0 — https://github.com/kornelski/rust-security-framework
-- serde_fmt 1.1.0 — https://github.com/KodrAus/serde_fmt.git
 - shellexpand 3.1.2 — https://gitlab.com/ijackson/rust-shellexpand
 - signal-hook-registry 1.4.8 — https://github.com/vorner/signal-hook
-- simplecss 0.2.2 — https://github.com/linebender/simplecss
+- signal-hook 0.3.18 — https://github.com/vorner/signal-hook
 - smallvec 1.15.1 — https://github.com/servo/rust-smallvec
-- smol 2.0.2 — https://github.com/smol-rs/smol
-- smol_str 0.2.2 — https://github.com/rust-analyzer/smol_str
 - socket2 0.6.3 — https://github.com/rust-lang/socket2
 - stable_deref_trait 1.2.1 — https://github.com/storyyeller/stable_deref_trait
-- stacker 0.1.24 — https://github.com/rust-lang/stacker
-- string_cache 0.8.9 — https://github.com/servo/string-cache
-- svgtypes 0.15.3 — https://github.com/linebender/svgtypes
-- swash 0.2.7 — https://github.com/dfrg/swash
 - syn 1.0.109 — https://github.com/dtolnay/syn
-- system-configuration-sys 0.6.0 — https://github.com/mullvad/system-configuration-rs
-- system-configuration 0.6.1 — https://github.com/mullvad/system-configuration-rs
 - tempfile 3.27.0 — https://github.com/Stebalien/tempfile
-- tendril 0.4.3 — https://github.com/servo/tendril
 - thread_local 1.1.9 — https://github.com/Amanieu/thread_local-rs
+- toml_datetime 0.6.3 — https://github.com/toml-rs/toml
+- tray-icon 0.21.3 — https://github.com/tauri-apps/tray-icon
 - ttf-parser 0.20.0 — https://github.com/RazrFalcon/ttf-parser
-- ttf-parser 0.21.1 — https://github.com/RazrFalcon/ttf-parser
-- ttf-parser 0.25.1 — https://github.com/harfbuzz/ttf-parser
-- unicase 2.9.0 — https://github.com/seanmonstar/unicase
-- unicode-bidi-mirroring 0.2.0 — https://github.com/RazrFalcon/unicode-bidi-mirroring
-- unicode-bidi-mirroring 0.4.0 — https://github.com/RazrFalcon/unicode-bidi-mirroring
-- unicode-bidi 0.3.18 — https://github.com/servo/unicode-bidi
-- unicode-ccc 0.2.0 — https://github.com/RazrFalcon/unicode-ccc
-- unicode-ccc 0.4.0 — https://github.com/RazrFalcon/unicode-ccc
-- unicode-id 0.3.6 — https://github.com/Boshen/unicode-id
-- unicode-properties 0.1.4 — https://github.com/unicode-rs/unicode-properties
+- tungstenite 0.28.0 — https://github.com/snapview/tungstenite-rs
 - unicode-segmentation 1.13.2 — https://github.com/unicode-rs/unicode-segmentation
-- unicode-vo 0.1.0 — https://github.com/RazrFalcon/unicode-vo
 - unicode-width 0.2.2 — https://github.com/unicode-rs/unicode-width
+- unicode-xid 0.2.6 — https://github.com/unicode-rs/unicode-xid
 - url 2.5.8 — https://github.com/servo/rust-url
 - uuid 1.23.1 — https://github.com/uuid-rs/uuid
-- value-bag-serde1 1.12.0
-- value-bag 1.12.0 — https://github.com/sval-rs/value-bag
-- waker-fn 1.2.0 — https://github.com/smol-rs/waker-fn
-- xattr 0.2.3 — https://github.com/Stebalien/xattr
-- xml5ever 0.18.1 — https://github.com/servo/html5ever
-- zed-async-tar 0.5.0-zed — https://github.com/dignifiedquire/async-tar
-- zed-font-kit 0.14.1-zed — https://github.com/servo/font-kit
+- wry 0.53.5 — https://github.com/tauri-apps/wry
 
 ## Apache License 2.0 (SPDX: Apache-2.0)
 
@@ -579,8 +477,6 @@ Used by:
 ## Apache License 2.0 (SPDX: Apache-2.0)
 
 Used by:
-- bit-set 0.8.0 — https://github.com/contain-rs/bit-set
-- bit-vec 0.8.0 — https://github.com/contain-rs/bit-vec
 - downcast-rs 1.2.1 — https://github.com/marcianx/downcast-rs
 - lexical-core 1.0.6 — https://github.com/Alexhuszagh/rust-lexical
 - lexical-parse-float 1.0.6 — https://github.com/Alexhuszagh/rust-lexical
@@ -608,14 +504,13 @@ Used by:
 - digest 0.10.7 — https://github.com/RustCrypto/traits
 - hmac 0.12.1 — https://github.com/RustCrypto/MACs
 - inout 0.1.4 — https://github.com/RustCrypto/utils
-- md-5 0.10.6 — https://github.com/RustCrypto/hashes
-- pbkdf2 0.12.2 — https://github.com/RustCrypto/password-hashes/tree/master/pbkdf2
+- sha1 0.10.7 — https://github.com/RustCrypto/hashes
 - sha2 0.10.9 — https://github.com/RustCrypto/hashes
 
 ## Apache License 2.0 (SPDX: Apache-2.0)
 
 Used by:
-- triomphe 0.1.15 — https://github.com/Manishearth/triomphe
+- webbrowser 1.2.4 — https://github.com/amodm/webbrowser-rs
 
 ## Apache License 2.0 (SPDX: Apache-2.0)
 
@@ -634,41 +529,15 @@ Used by:
 ## Apache License 2.0 (SPDX: Apache-2.0)
 
 Used by:
-- ropey 2.0.0-beta.1 — https://github.com/cessen/ropey
-- str_indices 0.4.4 — https://github.com/cessen/str_indices
-
-## Apache License 2.0 (SPDX: Apache-2.0)
-
-Used by:
 - adler2 2.0.1 — https://github.com/oyvindln/adler2
-- home 0.5.12 — https://github.com/rust-lang/cargo
+- proc-macro-crate 1.3.1 — https://github.com/bkchr/proc-macro-crate
+- proc-macro-crate 2.0.2 — https://github.com/bkchr/proc-macro-crate
 - proc-macro-crate 3.5.0 — https://github.com/bkchr/proc-macro-crate
 
 ## Apache License 2.0 (SPDX: Apache-2.0)
 
 Used by:
-- proc-macro-error2 2.0.1 — https://github.com/GnomedDev/proc-macro-error-2
-
-## Apache License 2.0 (SPDX: Apache-2.0)
-
-Used by:
-- unicode-script 0.5.8 — https://github.com/unicode-rs/unicode-script
-
-## Apache License 2.0 (SPDX: Apache-2.0)
-
-Used by:
-- yazi 0.2.1 — https://github.com/dfrg/yazi
-- zeno 0.3.3 — https://github.com/dfrg/zeno
-
-## Apache License 2.0 (SPDX: Apache-2.0)
-
-Used by:
-- psm 0.1.31 — https://github.com/rust-lang/stacker/
-
-## Apache License 2.0 (SPDX: Apache-2.0)
-
-Used by:
-- flume 0.11.1 — https://github.com/zesterer/flume
+- proc-macro-error 1.0.4 — https://gitlab.com/CreepySkeleton/proc-macro-error
 
 ## Apache License 2.0 (SPDX: Apache-2.0)
 
@@ -683,27 +552,13 @@ Used by:
 ## Apache License 2.0 (SPDX: Apache-2.0)
 
 Used by:
-- ash-window 0.13.0 — https://github.com/ash-rs/ash
-- ash 0.38.0+1.3.281 — https://github.com/ash-rs/ash
-
-## Apache License 2.0 (SPDX: Apache-2.0)
-
-Used by:
-- font-types 0.11.3 — https://github.com/googlefonts/fontations
-- read-fonts 0.37.0 — https://github.com/googlefonts/fontations
-- skrifa 0.40.0 — https://github.com/googlefonts/fontations
-
-## Apache License 2.0 (SPDX: Apache-2.0)
-
-Used by:
-- ctor-proc-macro 0.0.6 — https://github.com/mmastrac/rust-ctor
-- ctor 0.4.3 — https://github.com/mmastrac/rust-ctor
+- dpi 0.1.2 — https://github.com/rust-windowing/winit
+- tao 0.34.8 — https://github.com/tauri-apps/tao
 
 ## Apache License 2.0 (SPDX: Apache-2.0)
 
 Used by:
 - bytemuck 1.25.0 — https://github.com/Lokathor/bytemuck
-- bytemuck_derive 1.10.2 — https://github.com/Lokathor/bytemuck
 
 ## Apache License 2.0 (SPDX: Apache-2.0)
 
@@ -713,58 +568,72 @@ Used by:
 ## Apache License 2.0 (SPDX: Apache-2.0)
 
 Used by:
-- gpui-component-assets 0.5.1 — https://github.com/longbridge/gpui-component
-- dat0-app 0.1.0 — https://github.com/accidentally-awesome-labs/dat0
+- dat0-core 0.1.0 — https://github.com/accidentally-awesome-labs/dat0
 - dat0-engine 0.1.0 — https://github.com/accidentally-awesome-labs/dat0
 - dat0-fixtures 0.1.0 — https://github.com/accidentally-awesome-labs/dat0
 - dat0-format 0.1.0 — https://github.com/accidentally-awesome-labs/dat0
 - dat0-i18n 0.1.0 — https://github.com/accidentally-awesome-labs/dat0
 - dat0-keychain 0.1.0 — https://github.com/accidentally-awesome-labs/dat0
-- accesskit 0.21.1 — https://github.com/AccessKit/accesskit
-- accesskit_consumer 0.30.1 — https://github.com/AccessKit/accesskit
+- dat0-ui 0.1.0 — https://github.com/accidentally-awesome-labs/dat0
+- xtask 0.1.0
 - allocator-api2 0.2.21 — https://github.com/zakarumych/allocator-api2
-- anyhow 1.0.102 — https://github.com/dtolnay/anyhow
+- anyhow 1.0.104 — https://github.com/dtolnay/anyhow
+- arboard 3.6.1 — https://github.com/1Password/arboard
 - async-trait 0.1.89 — https://github.com/dtolnay/async-trait
-- dirs-sys 0.3.7 — https://github.com/dirs-dev/dirs-sys-rs
+- const-serialize-macro 0.7.2 — https://github.com/dioxuslabs/dioxus
+- const-serialize-macro 0.8.0-alpha.1 — https://github.com/dioxuslabs/dioxus
+- const-serialize 0.7.2 — https://github.com/dioxuslabs/dioxus
+- const-serialize 0.8.0-alpha.0 — https://github.com/dioxuslabs/dioxus
+- dioxus-asset-resolver 0.7.10 — https://github.com/DioxusLabs/dioxus/
+- dioxus-cli-config 0.7.10 — https://github.com/DioxusLabs/dioxus/
+- dioxus-config-macro 0.7.10 — https://github.com/DioxusLabs/dioxus/
+- dioxus-config-macros 0.7.10 — https://github.com/DioxusLabs/dioxus/
+- dioxus-core-macro 0.7.10 — https://github.com/DioxusLabs/dioxus/
+- dioxus-core-types 0.7.10 — https://github.com/DioxusLabs/dioxus/
+- dioxus-core 0.7.10 — https://github.com/DioxusLabs/dioxus/
+- dioxus-desktop 0.7.10 — https://github.com/DioxusLabs/dioxus/
+- dioxus-devtools-types 0.7.10 — https://github.com/DioxusLabs/dioxus/
+- dioxus-devtools 0.7.10 — https://github.com/DioxusLabs/dioxus/
+- dioxus-document 0.7.10 — https://github.com/DioxusLabs/dioxus/
+- dioxus-history 0.7.10 — https://github.com/DioxusLabs/dioxus/
+- dioxus-hooks 0.7.10 — https://github.com/DioxusLabs/dioxus/
+- dioxus-html-internal-macro 0.7.10 — https://github.com/DioxusLabs/dioxus/
+- dioxus-html 0.7.10 — https://github.com/DioxusLabs/dioxus/
+- dioxus-interpreter-js 0.7.10 — https://github.com/DioxusLabs/dioxus/
+- dioxus-rsx 0.7.10 — https://github.com/DioxusLabs/dioxus/
+- dioxus-signals 0.7.10 — https://github.com/DioxusLabs/dioxus/
+- dioxus-stores-macro 0.7.10 — https://github.com/DioxusLabs/dioxus/
+- dioxus-stores 0.7.10 — https://github.com/DioxusLabs/dioxus/
+- dioxus 0.7.10 — https://github.com/DioxusLabs/dioxus/
 - dirs-sys 0.4.1 — https://github.com/dirs-dev/dirs-sys-rs
 - dirs-sys 0.5.0 — https://github.com/dirs-dev/dirs-sys-rs
-- dirs 4.0.0 — https://github.com/soc/dirs-rs
 - dirs 5.0.1 — https://github.com/soc/dirs-rs
 - dirs 6.0.0 — https://github.com/soc/dirs-rs
-- dtor-proc-macro 0.0.5 — https://github.com/mmastrac/rust-ctor
-- dtor 0.0.6 — https://github.com/mmastrac/rust-ctor
+- dispatch2 0.3.1 — https://github.com/madsmtm/objc2
 - dunce 1.0.5 — https://gitlab.com/kornelski/dunce
-- dyn-clone 1.0.20 — https://github.com/dtolnay/dyn-clone
-- erased-serde 0.4.10 — https://github.com/dtolnay/erased-serde
-- etagere 0.2.15 — https://github.com/nical/etagere
 - fdeflate 0.3.7 — https://github.com/image-rs/fdeflate
-- gpu-alloc-ash 0.7.0 — https://github.com/zakarumych/gpu-alloc
-- gpu-alloc-types 0.3.0 — https://github.com/zakarumych/gpu-alloc
-- gpu-alloc 0.6.0 — https://github.com/zakarumych/gpu-alloc
+- field-offset 0.3.6 — https://github.com/Diggsey/rust-field-offset
+- generational-box 0.7.10 — https://github.com/DioxusLabs/dioxus/
 - half 2.7.1 — https://github.com/VoidStarKat/half-rs
+- ident_case 1.0.1 — https://github.com/TedDriggs/ident_case
 - image-webp 0.2.4 — https://github.com/image-rs/image-webp
 - image 0.24.9 — https://github.com/image-rs/image
 - image 0.25.10 — https://github.com/image-rs/image
 - interprocess 2.4.2 — https://github.com/kotauskas/interprocess
-- inventory 0.3.24 — https://github.com/dtolnay/inventory
 - itoa 1.0.18 — https://github.com/dtolnay/itoa
-- leak 0.1.2 — https://github.com/jmesmon/leak.git
-- leaky-cow 0.1.1 — https://github.com/notriddle/rust-leaky-cow
+- libappindicator-sys 0.9.0
 - libc 0.2.186 — https://github.com/rust-lang/libc
-- lyon 1.0.19 — https://github.com/nical/lyon
-- lyon_algorithms 1.0.19 — https://github.com/nical/lyon
-- lyon_geom 1.0.19 — https://github.com/nical/lyon
-- lyon_path 1.0.19 — https://github.com/nical/lyon
-- lyon_tessellation 1.0.20 — https://github.com/nical/lyon
-- mac 0.1.1 — https://github.com/reem/rust-mac.git
+- macro-string 0.1.4 — https://github.com/dtolnay/macro-string
+- manganis-core 0.7.10 — https://github.com/DioxusLabs/dioxus/tree/main/packages/manganis/manganis-core
+- manganis-macro 0.7.10 — https://github.com/DioxusLabs/dioxus/tree/main/packages/manganis/manganis-macro
+- manganis 0.7.10 — https://github.com/DioxusLabs/dioxus/tree/main/packages/manganis/manganis
 - miniz_oxide 0.8.9 — https://github.com/Frommi/miniz_oxide/tree/master/miniz_oxide
-- naga 25.0.1 — https://github.com/gfx-rs/wgpu/tree/trunk/naga
-- normpath 1.5.0 — https://github.com/dylni/normpath
 - num-conv 0.2.1 — https://github.com/jhpratt/num-conv
 - objc2-app-kit 0.3.2 — https://github.com/madsmtm/objc2
 - objc2-core-foundation 0.3.2 — https://github.com/madsmtm/objc2
-- objc2-metal 0.3.2 — https://github.com/madsmtm/objc2
-- objc2-quartz-core 0.3.2 — https://github.com/madsmtm/objc2
+- objc2-core-graphics 0.3.2 — https://github.com/madsmtm/objc2
+- objc2-exception-helper 0.1.1 — https://github.com/madsmtm/objc2
+- objc2-web-kit 0.3.2 — https://github.com/madsmtm/objc2
 - paste 1.0.15 — https://github.com/dtolnay/paste
 - pastey 0.1.1 — https://github.com/as1100k/pastey
 - pathfinder_geometry 0.5.1 — https://github.com/servo/pathfinder
@@ -772,6 +641,7 @@ Used by:
 - pin-project-internal 1.1.11 — https://github.com/taiki-e/pin-project
 - pin-project-lite 0.2.17 — https://github.com/taiki-e/pin-project-lite
 - pin-project 1.1.11 — https://github.com/taiki-e/pin-project
+- proc-macro2-diagnostics 0.10.1 — https://github.com/SergioBenitez/proc-macro2-diagnostics
 - proc-macro2 1.0.106 — https://github.com/dtolnay/proc-macro2
 - profiling-procmacros 1.0.17 — https://github.com/aclysma/profiling
 - profiling 1.0.17 — https://github.com/aclysma/profiling
@@ -779,28 +649,19 @@ Used by:
 - rand 0.8.6 — https://github.com/rust-random/rand
 - rand 0.9.4 — https://github.com/rust-random/rand
 - rand_chacha 0.9.0 — https://github.com/rust-random/rand
+- raw-window-handle 0.5.2 — https://github.com/rust-windowing/raw-window-handle
 - raw-window-handle 0.6.2 — https://github.com/rust-windowing/raw-window-handle
-- ref-cast-impl 1.0.25 — https://github.com/dtolnay/ref-cast
-- ref-cast 1.0.25 — https://github.com/dtolnay/ref-cast
-- resvg 0.45.1 — https://github.com/linebender/resvg
 - rustc-hash 2.1.2 — https://github.com/rust-lang/rustc-hash
 - rustversion 1.0.22 — https://github.com/dtolnay/rustversion
 - ryu 1.0.23 — https://github.com/dtolnay/ryu
 - serde 1.0.228 — https://github.com/serde-rs/serde
 - serde_core 1.0.228 — https://github.com/serde-rs/serde
 - serde_derive 1.0.228 — https://github.com/serde-rs/serde
-- serde_derive_internals 0.29.1 — https://github.com/serde-rs/serde
 - serde_json 1.0.149 — https://github.com/serde-rs/json
-- serde_json_lenient 0.2.4 — https://github.com/google/serde_json_lenient
 - serde_repr 0.1.20 — https://github.com/dtolnay/serde-repr
 - serde_urlencoded 0.7.1 — https://github.com/nox/serde_urlencoded
-- serde_yaml 0.9.34+deprecated — https://github.com/dtolnay/serde-yaml
-- shlex 1.3.0 — https://github.com/comex/rust-shlex
-- siphasher 1.0.2 — https://github.com/jedisct1/rust-siphash
-- spirv 0.3.0+sdk-1.3.268.0 — https://github.com/gfx-rs/rspirv
-- stacksafe-macro 0.1.4 — https://github.com/fast/stacksafe
-- stacksafe 0.1.4 — https://github.com/fast/stacksafe
-- svg_fmt 0.4.5 — https://github.com/nical/rust_debug
+- subsecond-types 0.7.10 — https://github.com/DioxusLabs/dioxus/tree/main/packages/subsecond
+- subsecond 0.7.10 — https://github.com/DioxusLabs/dioxus/tree/main/packages/subsecond
 - syn 2.0.117 — https://github.com/dtolnay/syn
 - sync_wrapper 1.0.2 — https://github.com/Actyx/sync_wrapper
 - thiserror-impl 1.0.69 — https://github.com/dtolnay/thiserror
@@ -808,37 +669,15 @@ Used by:
 - thiserror 1.0.69 — https://github.com/dtolnay/thiserror
 - thiserror 2.0.18 — https://github.com/dtolnay/thiserror
 - time-core 0.1.8 — https://github.com/time-rs/time
+- time-macros 0.2.27 — https://github.com/time-rs/time
 - time 0.3.47 — https://github.com/time-rs/time
 - typed-path 0.12.3 — https://github.com/chipsenkbeil/typed-path
-- typeid 1.0.3 — https://github.com/dtolnay/typeid
 - unicode-ident 1.0.24 — https://github.com/dtolnay/unicode-ident
-- usvg 0.45.1 — https://github.com/linebender/resvg
 - utf-8 0.7.6 — https://github.com/SimonSapin/rust-utf8
 - utf8parse 0.2.2 — https://github.com/alacritty/vte
+- warnings-macro 0.2.0 — https://github.com/dioxuslabs/warnings
+- warnings 0.2.1 — https://github.com/dioxuslabs/warnings
 - zune-inflate 0.2.54
-
-## Apache License 2.0 (SPDX: Apache-2.0)
-
-Used by:
-- gpui-macros 0.2.2
-- gpui 0.2.2 — https://github.com/zed-industries/zed
-- gpui_collections 0.2.2
-- gpui_derive_refineable 0.2.2
-- gpui_http_client 0.2.2
-- gpui_media 0.2.2
-- gpui_perf 0.2.2
-- gpui_refineable 0.2.2
-- gpui_semantic_version 0.2.2
-- gpui_sum_tree 0.2.2
-- gpui_util 0.2.2
-- gpui_util_macros 0.2.2
-- zed-sum-tree 0.2.0
-
-## Apache License 2.0 (SPDX: Apache-2.0)
-
-Used by:
-- gpui-component 0.5.1 — https://github.com/longbridge/gpui-component
-- gpui-component-macros 0.5.1
 
 ## Apache License 2.0 (SPDX: Apache-2.0)
 
@@ -860,11 +699,6 @@ Used by:
 Used by:
 - av1-grain 0.2.5 — https://github.com/rust-av/av1-grain
 
-## BSD 2-Clause &quot;Simplified&quot; License (SPDX: BSD-2-Clause)
-
-Used by:
-- arrayref 0.3.9 — https://github.com/droundy/arrayref
-
 ## BSD 3-Clause &quot;New&quot; or &quot;Revised&quot; License (SPDX: BSD-3-Clause)
 
 Used by:
@@ -878,18 +712,7 @@ Used by:
 ## BSD 3-Clause &quot;New&quot; or &quot;Revised&quot; License (SPDX: BSD-3-Clause)
 
 Used by:
-- tiny-skia-path 0.11.4 — https://github.com/RazrFalcon/tiny-skia/tree/master/path
-- tiny-skia 0.11.4 — https://github.com/RazrFalcon/tiny-skia
-
-## BSD 3-Clause &quot;New&quot; or &quot;Revised&quot; License (SPDX: BSD-3-Clause)
-
-Used by:
 - subtle 2.6.1 — https://github.com/dalek-cryptography/subtle
-
-## BSD 3-Clause &quot;New&quot; or &quot;Revised&quot; License (SPDX: BSD-3-Clause)
-
-Used by:
-- instant 0.1.13 — https://github.com/sebcrozet/instant
 
 ## BSD 3-Clause &quot;New&quot; or &quot;Revised&quot; License (SPDX: BSD-3-Clause)
 
@@ -900,29 +723,11 @@ Used by:
 
 Used by:
 - exr 1.74.0 — https://github.com/johannesvollmer/exrs
-- sha1_smol 1.0.1 — https://github.com/mitsuhiko/sha1-smol
-
-## BSD 3-Clause &quot;New&quot; or &quot;Revised&quot; License (SPDX: BSD-3-Clause)
-
-Used by:
-- encoding_rs 0.8.35 — https://github.com/hsivonen/encoding_rs
-
-## Creative Commons Zero v1.0 Universal (SPDX: CC0-1.0)
-
-Used by:
-- notify 7.0.0 — https://github.com/notify-rs/notify.git
 
 ## Creative Commons Zero v1.0 Universal (SPDX: CC0-1.0)
 
 Used by:
 - notify 6.1.1 — https://github.com/notify-rs/notify.git
-
-## Creative Commons Zero v1.0 Universal (SPDX: CC0-1.0)
-
-Used by:
-- hexf-parse 0.2.1 — https://github.com/lifthrasiir/hexf
-- tiny-keccak 2.0.2
-- workspace-hack 0.1.0 — https://github.com/facebookincubator/cargo-guppy
 
 ## Community Data License Agreement Permissive 2.0 (SPDX: CDLA-Permissive-2.0)
 
@@ -943,7 +748,6 @@ Used by:
 ## ISC License (SPDX: ISC)
 
 Used by:
-- inotify 0.10.2 — https://github.com/hannobraun/inotify
 - inotify 0.9.6 — https://github.com/hannobraun/inotify
 
 ## ISC License (SPDX: ISC)
@@ -954,6 +758,7 @@ Used by:
 ## ISC License (SPDX: ISC)
 
 Used by:
+- libloading 0.7.4 — https://github.com/nagisa/rust_libloading/
 - libloading 0.8.9 — https://github.com/nagisa/rust_libloading/
 
 ## ISC License (SPDX: ISC)
@@ -964,13 +769,7 @@ Used by:
 ## MIT License (SPDX: MIT)
 
 Used by:
-- rustybuzz 0.14.1 — https://github.com/RazrFalcon/rustybuzz
-- rustybuzz 0.20.1 — https://github.com/harfbuzz/rustybuzz
-
-## MIT License (SPDX: MIT)
-
-Used by:
-- markdown 1.0.0 — https://github.com/wooorm/markdown-rs
+- openssl-sys 0.9.117 — https://github.com/rust-openssl/rust-openssl
 
 ## MIT License (SPDX: MIT)
 
@@ -982,11 +781,6 @@ Used by:
 
 Used by:
 - nom 8.0.0 — https://github.com/rust-bakery/nom
-
-## MIT License (SPDX: MIT)
-
-Used by:
-- float-cmp 0.9.0 — https://github.com/mikedilger/float-cmp
 
 ## MIT License (SPDX: MIT)
 
@@ -1004,16 +798,9 @@ Used by:
 Used by:
 - wayland-backend 0.3.15 — https://github.com/smithay/wayland-rs
 - wayland-client 0.31.14 — https://github.com/smithay/wayland-rs
-- wayland-cursor 0.31.14 — https://github.com/smithay/wayland-rs
-- wayland-protocols 0.31.2 — https://github.com/smithay/wayland-rs
 - wayland-protocols 0.32.12 — https://github.com/smithay/wayland-rs
 - wayland-scanner 0.31.10 — https://github.com/smithay/wayland-rs
 - wayland-sys 0.31.11 — https://github.com/smithay/wayland-rs
-
-## MIT License (SPDX: MIT)
-
-Used by:
-- base62 2.2.4 — https://github.com/fbernier/base62
 
 ## MIT License (SPDX: MIT)
 
@@ -1028,32 +815,22 @@ Used by:
 ## MIT License (SPDX: MIT)
 
 Used by:
-- which 6.0.3 — https://github.com/harryfei/which-rs.git
+- webkit2gtk-sys 2.0.1 — https://github.com/tauri-apps/webkit2gtk-rs
 
 ## MIT License (SPDX: MIT)
 
 Used by:
-- xkbcommon 0.8.0 — https://github.com/rust-x-bindings/xkbcommon-rs
+- webkit2gtk 2.0.1 — https://github.com/tauri-apps/webkit2gtk-rs
 
 ## MIT License (SPDX: MIT)
 
 Used by:
-- globwalk 0.8.1 — https://github.com/gilnaa/globwalk
-
-## MIT License (SPDX: MIT)
-
-Used by:
-- h2 0.4.13 — https://github.com/hyperium/h2
+- memoffset 0.9.1 — https://github.com/Gilnaa/memoffset
 
 ## MIT License (SPDX: MIT)
 
 Used by:
 - bytes 1.11.1 — https://github.com/tokio-rs/bytes
-
-## MIT License (SPDX: MIT)
-
-Used by:
-- calloop 0.13.0 — https://github.com/Smithay/calloop
 
 ## MIT License (SPDX: MIT)
 
@@ -1099,11 +876,6 @@ Used by:
 ## MIT License (SPDX: MIT)
 
 Used by:
-- pico-args 0.5.0 — https://github.com/RazrFalcon/pico-args
-
-## MIT License (SPDX: MIT)
-
-Used by:
 - tower-http 0.6.8 — https://github.com/tower-rs/tower-http
 
 ## MIT License (SPDX: MIT)
@@ -1115,16 +887,6 @@ Used by:
 
 Used by:
 - http-body-util 0.1.3 — https://github.com/hyperium/http-body
-
-## MIT License (SPDX: MIT)
-
-Used by:
-- strict-num 0.1.1 — https://github.com/RazrFalcon/strict-num
-
-## MIT License (SPDX: MIT)
-
-Used by:
-- calloop-wayland-source 0.3.0 — https://github.com/smithay/calloop-wayland-source
 
 ## MIT License (SPDX: MIT)
 
@@ -1148,17 +910,12 @@ Used by:
 ## MIT License (SPDX: MIT)
 
 Used by:
-- take-until 0.2.0 — https://github.com/hdevalke/take-until.git
-
-## MIT License (SPDX: MIT)
-
-Used by:
 - libduckdb-sys 1.4.4 — https://github.com/duckdb/duckdb-rs
 
 ## MIT License (SPDX: MIT)
 
 Used by:
-- lru 0.12.5 — https://github.com/jeromefroe/lru-rs.git
+- lru 0.18.2 — https://github.com/jeromefroe/lru-rs.git
 
 ## MIT License (SPDX: MIT)
 
@@ -1173,12 +930,14 @@ Used by:
 ## MIT License (SPDX: MIT)
 
 Used by:
-- mint 0.5.9 — https://github.com/kvark/mint
+- cfb 0.7.3 — https://github.com/mdsteele/rust-cfb
 
 ## MIT License (SPDX: MIT)
 
 Used by:
-- precomputed-hash 0.1.1 — https://github.com/emilio/precomputed-hash
+- darling 0.21.3 — https://github.com/TedDriggs/darling
+- darling_core 0.21.3 — https://github.com/TedDriggs/darling
+- darling_macro 0.21.3 — https://github.com/TedDriggs/darling
 
 ## MIT License (SPDX: MIT)
 
@@ -1193,23 +952,12 @@ Used by:
 ## MIT License (SPDX: MIT)
 
 Used by:
-- filedescriptor 0.8.3 — https://github.com/wezterm/wezterm
-
-## MIT License (SPDX: MIT)
-
-Used by:
-- tokio-socks 0.5.2 — https://github.com/sticnarf/tokio-socks
-
-## MIT License (SPDX: MIT)
-
-Used by:
 - comfy-table 7.1.2 — https://github.com/nukesor/comfy-table
 
 ## MIT License (SPDX: MIT)
 
 Used by:
-- schemars 1.2.1 — https://github.com/GREsau/schemars
-- schemars_derive 1.2.1 — https://github.com/GREsau/schemars
+- infer 0.19.0 — https://github.com/bojand/infer
 
 ## MIT License (SPDX: MIT)
 
@@ -1243,27 +991,6 @@ Used by:
 
 Used by:
 - ashpd 0.11.1 — https://github.com/bilelmoussaoui/ashpd
-- ashpd 0.12.3 — https://github.com/bilelmoussaoui/ashpd
-
-## MIT License (SPDX: MIT)
-
-Used by:
-- zed-xim 0.4.0-zed — https://github.com/Riey/xim-rs
-
-## MIT License (SPDX: MIT)
-
-Used by:
-- xcursor 0.3.10 — https://github.com/esposm03/xcursor-rs
-
-## MIT License (SPDX: MIT)
-
-Used by:
-- float_next_after 1.0.0 — https://gitlab.com/bronsonbdevost/next_afterf
-
-## MIT License (SPDX: MIT)
-
-Used by:
-- async_zip 0.0.17 — https://github.com/Majored/rs-async-zip
 
 ## MIT License (SPDX: MIT)
 
@@ -1273,33 +1000,13 @@ Used by:
 ## MIT License (SPDX: MIT)
 
 Used by:
-- rust-i18n 3.1.5 — https://github.com/longbridge/rust-i18n
-
-## MIT License (SPDX: MIT)
-
-Used by:
-- postage 0.5.0 — https://github.com/austinjones/postage-rs
-
-## MIT License (SPDX: MIT)
-
-Used by:
-- oo7 0.5.0 — https://github.com/bilelmoussaoui/oo7
-
-## MIT License (SPDX: MIT)
-
-Used by:
-- hidden-trait 0.1.2 — https://github.com/kvark/hidden-trait
+- rfd 0.15.4 — https://github.com/PolyMeilex/rfd
+- rfd 0.17.2 — https://github.com/PolyMeilex/rfd
 
 ## MIT License (SPDX: MIT)
 
 Used by:
 - aligned-vec 0.6.4 — https://github.com/sarah-ek/aligned-vec/
-
-## MIT License (SPDX: MIT)
-
-Used by:
-- is-docker 0.2.0 — https://github.com/TheLarkInn/is-docker
-- is-wsl 0.4.0 — https://github.com/TheLarkInn/is-wsl
 
 ## MIT License (SPDX: MIT)
 
@@ -1310,17 +1017,17 @@ Used by:
 ## MIT License (SPDX: MIT)
 
 Used by:
-- core_maths 0.1.1 — https://github.com/robertbastian/core_maths
+- convert_case 0.8.0 — https://github.com/rutrum/convert-case
 
 ## MIT License (SPDX: MIT)
 
 Used by:
-- blade-graphics 0.7.1 — https://github.com/kvark/blade
-- blade-macros 0.3.0 — https://github.com/kvark/blade
-- blade-util 0.3.0 — https://github.com/kvark/blade
 - block2 0.6.2 — https://github.com/madsmtm/objc2
 - block 0.1.6 — http://github.com/SSheldon/rust-block
-- convert_case 0.4.0 — https://github.com/rutrum/convert-case
+- dioxus-logger 0.7.10 — https://github.com/dioxuslabs/dioxus
+- dlopen2 0.8.2 — https://github.com/OpenByteDev/dlopen2
+- dlopen2_derive 0.4.3 — https://github.com/OpenByteDev/dlopen2
+- dpi 0.1.2 — https://github.com/rust-windowing/winit
 - duckdb 1.4.4 — https://github.com/duckdb/duckdb-rs
 - fax 0.2.6 — https://github.com/pdf-rs/fax
 - fax_derive 0.2.0 — https://github.com/pdf-rs/fax
@@ -1334,16 +1041,10 @@ Used by:
 - plotters-bitmap 0.3.7 — https://github.com/plotters-rs/plotters
 - plotters-svg 0.3.7 — https://github.com/plotters-rs/plotters.git
 - plotters 0.3.7 — https://github.com/plotters-rs/plotters
-- rust-i18n-macro 3.1.5 — https://github.com/longbridge/rust-i18n
-- rust-i18n-support 3.1.5 — https://github.com/longbridge/rust-i18n
-- seahash 4.1.0 — https://gitlab.redox-os.org/redox-os/seahash
 - simd_helpers 0.1.0 — https://github.com/lu-zero/simd_helpers
-- taffy 0.9.0 — https://github.com/DioxusLabs/taffy
-- tree-sitter-json 0.24.8 — https://github.com/tree-sitter/tree-sitter-json
-- tree-sitter-sequel 0.3.11 — https://github.com/derekstride/tree-sitter-sql.git
-- tree-sitter 0.25.10 — https://github.com/tree-sitter/tree-sitter
-- xim-ctext 0.3.0 — https://github.com/Riey/xim-rs
-- xim-parser 0.2.2 — https://github.com/Riey/xim-rs
+- sledgehammer_bindgen 0.6.0 — https://github.com/demonthos/sledgehammer_bindgen/
+- sledgehammer_bindgen_macro 0.6.5 — https://github.com/demonthos/sledgehammer_bindgen/
+- sledgehammer_utils 0.3.1 — https://github.com/demonthos/sledgehammer_utils/
 
 ## MIT License (SPDX: MIT)
 
@@ -1364,56 +1065,55 @@ Used by:
 ## MIT License (SPDX: MIT)
 
 Used by:
-- x11-clipboard 0.9.3 — https://github.com/quininer/x11-clipboard
-
-## MIT License (SPDX: MIT)
-
-Used by:
-- imagesize 0.13.0 — https://github.com/Roughsketch/imagesize
-
-## MIT License (SPDX: MIT)
-
-Used by:
-- grid 0.18.0 — https://github.com/becheran/grid
-
-## MIT License (SPDX: MIT)
-
-Used by:
-- fontconfig-parser 0.5.8 — https://github.com/Riey/fontconfig-parser
-
-## MIT License (SPDX: MIT)
-
-Used by:
-- fluent-uri 0.1.4 — https://github.com/yescallop/fluent-uri-rs
-
-## MIT License (SPDX: MIT)
-
-Used by:
-- wayland-protocols-plasma 0.2.0 — https://github.com/smithay/wayland-rs
-
-## MIT License (SPDX: MIT)
-
-Used by:
 - endi 1.1.1 — https://github.com/zeenix/endi
-- unsafe-libyaml 0.2.11 — https://github.com/dtolnay/unsafe-libyaml
+- x11-dl 2.21.0 — https://github.com/AltF02/x11-rs.git
+- x11 2.21.0 — https://github.com/AltF02/x11-rs.git
 - zmij 1.0.21 — https://github.com/dtolnay/zmij
 - zvariant_utils 3.3.1 — https://github.com/z-galaxy/zbus/
 
 ## MIT License (SPDX: MIT)
 
 Used by:
+- winnow 0.5.40 — https://github.com/winnow-rs/winnow
 - winnow 0.7.15 — https://github.com/winnow-rs/winnow
 - winnow 1.0.2 — https://github.com/winnow-rs/winnow
 
 ## MIT License (SPDX: MIT)
 
 Used by:
-- deflate64 0.1.12 — https://github.com/anatawa12/deflate64-rs
+- atk-sys 0.18.2 — https://github.com/gtk-rs/gtk3-rs
+- atk 0.18.2 — https://github.com/gtk-rs/gtk3-rs
+- cairo-rs 0.18.5 — https://github.com/gtk-rs/gtk-rs-core
+- cairo-sys-rs 0.18.2 — https://github.com/gtk-rs/gtk-rs-core
+- gdk-pixbuf-sys 0.18.0 — https://github.com/gtk-rs/gtk-rs-core
+- gdk-pixbuf 0.18.5 — https://github.com/gtk-rs/gtk-rs-core
+- gdk-sys 0.18.2 — https://github.com/gtk-rs/gtk3-rs
+- gdk 0.18.2 — https://github.com/gtk-rs/gtk3-rs
+- gdkwayland-sys 0.18.2 — https://github.com/gtk-rs/gtk3-rs
+- gdkx11-sys 0.18.2 — https://github.com/gtk-rs/gtk3-rs
+- gio-sys 0.18.1 — https://github.com/gtk-rs/gtk-rs-core
+- gio 0.18.4 — https://github.com/gtk-rs/gtk-rs-core
+- glib-macros 0.18.5 — https://github.com/gtk-rs/gtk-rs-core
+- glib-sys 0.18.1 — https://github.com/gtk-rs/gtk-rs-core
+- glib 0.18.5 — https://github.com/gtk-rs/gtk-rs-core
+- gobject-sys 0.18.0 — https://github.com/gtk-rs/gtk-rs-core
+- gtk-sys 0.18.2 — https://github.com/gtk-rs/gtk3-rs
+- gtk3-macros 0.18.2 — https://github.com/gtk-rs/gtk3-rs
+- gtk 0.18.2 — https://github.com/gtk-rs/gtk3-rs
+- pango-sys 0.18.0 — https://github.com/gtk-rs/gtk-rs-core
+- pango 0.18.3 — https://github.com/gtk-rs/gtk-rs-core
 
 ## MIT License (SPDX: MIT)
 
 Used by:
-- spin 0.9.8 — https://github.com/mvdnes/spin-rs.git
+- javascriptcore-rs-sys 1.1.1 — https://github.com/tauri-apps/javascriptcore-rs
+- soup3-sys 0.5.0 — https://gitlab.gnome.org/World/Rust/soup3-rs
+- soup3 0.5.0 — https://gitlab.gnome.org/World/Rust/soup3-rs
+
+## MIT License (SPDX: MIT)
+
+Used by:
+- javascriptcore-rs 1.1.2 — https://github.com/tauri-apps/javascriptcore-rs
 
 ## MIT License (SPDX: MIT)
 
@@ -1428,31 +1128,23 @@ Used by:
 ## MIT License (SPDX: MIT)
 
 Used by:
-- phf 0.11.3 — https://github.com/rust-phf/rust-phf
-- phf_shared 0.11.3 — https://github.com/rust-phf/rust-phf
-
-## MIT License (SPDX: MIT)
-
-Used by:
 - aho-corasick 1.1.4 — https://github.com/BurntSushi/aho-corasick
 - byteorder-lite 0.1.0 — https://github.com/image-rs/byteorder-lite
 - byteorder 1.5.0 — https://github.com/BurntSushi/byteorder
 - globset 0.4.18 — https://github.com/BurntSushi/ripgrep/tree/master/crates/globset
-- ignore 0.4.25 — https://github.com/BurntSushi/ripgrep/tree/master/crates/ignore
 - memchr 2.8.0 — https://github.com/BurntSushi/memchr
-- termcolor 1.4.1 — https://github.com/BurntSushi/termcolor
 - walkdir 2.5.0 — https://github.com/BurntSushi/walkdir
 
 ## MIT License (SPDX: MIT)
 
 Used by:
-- nix 0.29.0 — https://github.com/nix-rust/nix
-- nix 0.31.2 — https://github.com/nix-rust/nix
+- strsim 0.11.1 — https://github.com/rapidfuzz/strsim-rs
 
 ## MIT License (SPDX: MIT)
 
 Used by:
-- strsim 0.11.1 — https://github.com/rapidfuzz/strsim-rs
+- libxdo-sys 0.11.0 — https://github.com/crumblingstatue/rust-libxdo-sys
+- libxdo 0.6.0 — https://github.com/crumblingstatue/rust-libxdo
 
 ## MIT License (SPDX: MIT)
 
@@ -1467,12 +1159,7 @@ Used by:
 ## MIT License (SPDX: MIT)
 
 Used by:
-- derive_more 0.99.20 — https://github.com/JelteF/derive_more
-
-## MIT License (SPDX: MIT)
-
-Used by:
-- lsp-types 0.97.0 — https://github.com/gluon-lang/lsp-types
+- data-encoding 2.11.1 — https://github.com/ia0/data-encoding
 
 ## MIT License (SPDX: MIT)
 
@@ -1487,30 +1174,9 @@ Used by:
 ## MIT License (SPDX: MIT)
 
 Used by:
-- tree-sitter-language 0.1.7 — https://github.com/tree-sitter/tree-sitter
-
-## MIT License (SPDX: MIT)
-
-Used by:
 - rust-embed-impl 8.11.0 — https://pyrossh.dev/repos/rust-embed
 - rust-embed-utils 8.11.0 — https://pyrossh.dev/repos/rust-embed
 - rust-embed 8.11.0 — https://pyrossh.dev/repos/rust-embed
-
-## MIT License (SPDX: MIT)
-
-Used by:
-- xmlwriter 0.1.0 — https://github.com/RazrFalcon/xmlwriter
-
-## MIT License (SPDX: MIT)
-
-Used by:
-- fontdb 0.16.2 — https://github.com/RazrFalcon/fontdb
-- fontdb 0.23.0 — https://github.com/RazrFalcon/fontdb
-
-## MIT License (SPDX: MIT)
-
-Used by:
-- crunchy 0.2.4 — https://github.com/eira-fransham/crunchy
 
 ## MIT License (SPDX: MIT)
 
@@ -1520,17 +1186,7 @@ Used by:
 ## MIT License (SPDX: MIT)
 
 Used by:
-- open 5.3.4 — https://github.com/Byron/open-rs
-
-## MIT License (SPDX: MIT)
-
-Used by:
 - nu-ansi-term 0.50.3 — https://github.com/nushell/nu-ansi-term
-
-## MIT License (SPDX: MIT)
-
-Used by:
-- mime_guess 2.0.5 — https://github.com/abonander/mime_guess
 
 ## MIT License (SPDX: MIT)
 
@@ -1541,6 +1197,11 @@ Used by:
 
 Used by:
 - quick-xml 0.39.2 — https://github.com/tafia/quick-xml
+
+## MIT License (SPDX: MIT)
+
+Used by:
+- urlencoding 2.1.3 — https://github.com/kornelski/rust_urlencoding
 
 ## MIT License (SPDX: MIT)
 
@@ -1587,17 +1248,25 @@ Used by:
 ## zlib License (SPDX: Zlib)
 
 Used by:
+- const_format 0.2.36 — https://github.com/rodrimati1992/const_format_crates/
+- const_format_proc_macros 0.2.34 — https://github.com/rodrimati1992/const_format_crates/
+
+## zlib License (SPDX: Zlib)
+
+Used by:
+- konst 0.2.20 — https://github.com/rodrimati1992/konst/
+- konst_macro_rules 0.2.19 — https://github.com/rodrimati1992/konst/
+
+## zlib License (SPDX: Zlib)
+
+Used by:
 - slotmap 1.1.1 — https://github.com/orlp/slotmap
 
 ## zlib License (SPDX: Zlib)
 
 Used by:
 - foldhash 0.1.5 — https://github.com/orlp/foldhash
-
-## zlib License (SPDX: Zlib)
-
-Used by:
-- nanorand 0.7.0 — https://github.com/Absolucy/nanorand-rs
+- foldhash 0.2.0 — https://github.com/orlp/foldhash
 
 
 <!-- END cargo-about generated -->

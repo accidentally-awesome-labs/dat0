@@ -49,7 +49,7 @@ interprocess = { version = "2", features = ["tokio"] }
 uuid = { version = "1", features = ["v7"] }
 
 # P3a: LRU cache for paged Arrow batches in GridDataSource.
-lru = "0.12"
+lru = "0.18"
 
 
 # Telemetry
