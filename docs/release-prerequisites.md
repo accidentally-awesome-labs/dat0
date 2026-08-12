@@ -24,9 +24,9 @@
 
 ## 1. Production minisign update-signing key
 
-**Why it blocks everything.** `crates/dat0-app/assets/minisign-public-key.txt`
+**Why it blocks everything.** `crates/dat0-core/assets/minisign-public-key.txt`
 is compiled into the binary by `include_str!` at
-`crates/dat0-app/src/update/manifest.rs:28`:
+`crates/dat0-core/src/update/manifest.rs:28`:
 
 ```rust
 pub const EMBEDDED_PUBKEY: &str = include_str!("../../assets/minisign-public-key.txt");
@@ -39,12 +39,12 @@ string, so the file must contain **only** the 56-character base64 key line — a
 minisign `.pub` file's leading `untrusted comment:` line would make it fail to
 decode. The trailing newline is fine; `verify_manifest` trims.
 
-*Also verified:* `crates/dat0-app/assets/minisign-public-key.txt` is currently
+*Also verified:* `crates/dat0-core/assets/minisign-public-key.txt` is currently
 **byte-identical** to line 2 of
-`crates/dat0-app/tests/fixtures/update/test-minisign.pub` — both are
+`crates/dat0-core/tests/fixtures/update/test-minisign.pub` — both are
 `RWR/aKYzRk3oeZJDzLCZ/nooGJs2wLOVhTKMMaqJvOEWyFKpf53Ir9RW`. The shipped binary
 therefore trusts the development test key.
-`crates/dat0-app/tests/update_key_is_production.rs` fails on this today, by
+`crates/dat0-core/tests/update_key_is_production.rs` fails on this today, by
 design, and is the gate that closes when this step is done.
 
 ### Commands
@@ -59,11 +59,11 @@ rsign generate -W -p dat0-minisign.pub -s dat0-minisign.key
 
 # The .pub file is two lines: an untrusted comment, then the base64 key.
 # ONLY the second line goes into the repository.
-sed -n '2p' dat0-minisign.pub > crates/dat0-app/assets/minisign-public-key.txt
+sed -n '2p' dat0-minisign.pub > crates/dat0-core/assets/minisign-public-key.txt
 
 # Verify the file is exactly one line of base64 and nothing else.
-wc -l < crates/dat0-app/assets/minisign-public-key.txt   # must print 1
-cat crates/dat0-app/assets/minisign-public-key.txt       # must NOT contain "untrusted comment"
+wc -l < crates/dat0-core/assets/minisign-public-key.txt   # must print 1
+cat crates/dat0-core/assets/minisign-public-key.txt       # must NOT contain "untrusted comment"
 ```
 
 Then, in **Settings → Secrets and variables → Actions**, create secret
@@ -82,8 +82,10 @@ manager (`docs/security-runbook.md:193-196`).
 ### Verification
 
 ```bash
-cargo test -p dat0-app --test update_key_is_production   # must PASS after this step
-cargo test -p dat0-app --test update_manifest            # must still PASS (uses the test fixture, unaffected)
+# `#[ignore]`d until this step lands, so it needs --ignored to run at all.
+cargo test -p dat0-core --test update_key_is_production -- --ignored  # must PASS after this step
+# Then DELETE the #[ignore] in the same commit: it belongs in every run once it passes.
+cargo test -p dat0-core --test update_manifest            # must still PASS (uses the test fixture, unaffected)
 ```
 
 ---
@@ -176,7 +178,7 @@ Delete the `.p12` and `.p8` from disk once the secrets are set.
 
 ## 4. `nyc_taxi.parquet` sample asset (PD-012)
 
-**Why.** `crates/dat0-app/src/sample_data.rs:46` ships
+**Why.** `crates/dat0-core/src/sample_data.rs:46` ships
 `pub const NYC_TAXI_SHA256: &str = "FILL_AT_T8";` — verified against the tree.
 `NYC_TAXI_URL` (`:41`) already points at release tag `sample-data-v1`, so the
 remote sample either fails its integrity check or, worse, is accepted against a
@@ -195,7 +197,7 @@ shasum -a 256 nyc_taxi.parquet
 Replace `"FILL_AT_T8"` with the 64-character hex digest and commit. Then close
 PD-012 in `docs/deferrals.md`.
 
-*(`crates/dat0-app/src/sample_data.rs` is not edited by RL1-RL4; this is a
+*(`crates/dat0-core/src/sample_data.rs` is not edited by RL1-RL4; this is a
 documented hand-off, not a pending code change in this workstream.)*
 
 ---
@@ -220,15 +222,15 @@ with the real DSN.
 ## After the checklist
 
 ```bash
-cargo test -p dat0-app --test update_key_is_production   # step 1
-cargo test -p dat0-app --test update_manifest_roundtrip  # wire contract (no secrets needed)
+cargo test -p dat0-core --test update_key_is_production   # step 1
+cargo test -p dat0-core --test update_manifest_roundtrip  # wire contract (no secrets needed)
 gh workflow run release.yml && gh run watch              # steps 2 + 3 end to end
 ```
 
 The `workflow_dispatch` dry run exercises `macos` and `linux` and skips
 `publish` (gated on `github.ref_type == 'tag'`), so it proves the signing and
 notarization chain but not manifest signing. That gap is covered locally by
-`crates/dat0-app/tests/update_manifest_roundtrip.rs`.
+`crates/dat0-core/tests/update_manifest_roundtrip.rs`.
 
 ### What the dry run must confirm on the two RL4 fixes
 

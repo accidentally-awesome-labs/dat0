@@ -70,6 +70,7 @@ that's modifying it; merge conflicts are signals worth investigating.
 | D-031 | Display-type letter-spacing (v4's −0.03em/−0.035em tracking) unavailable on gpui 0.2.2 — no `Styled` setter and no `TextStyle` field | closed | UI1 | closed by the GPUI→Dioxus migration |
 | D-032 | Promote `perf-gate` from label-triggered to every-PR (needs dedicated macOS hardware) | open | MX3 | — |
 | D-036 | Two `block_on(Session::…)` sites remain on the GPUI main thread — `workspace_ops::spawn_workspace_window` and `package_ops::open_package_at` | open | EN4 | — |
+| D-037 | `docs/a11y.md` (and 8 more docs) still describe the GPUI build — dead crate `dat0-app`, dead test `theme_contrast_gate`, dead feature `a11y-capture`, dead paths `src/window/render.rs` | open | GPUI→Dioxus migration | — |
 
 ## At-a-glance — Plan defects
 
@@ -1218,6 +1219,33 @@ that's modifying it; merge conflicts are signals worth investigating.
   through `spawn_session_boot`'s dispatcher hop.
 - **Originating doc:** EN4, `docs/plans/2026-08-08-dat0-production-v1-plan.md`
 - **Last touched:** 2026-08-08
+
+### D-037 — Nine docs still describe the GPUI build
+
+- **Status:** open
+- **Severity:** low
+- **Deferred from:** the GPUI→Dioxus migration
+- **What it is:** the migration swept the contributor-facing docs (README,
+  CONTRIBUTING, SECURITY, the CI configs, the PR template) and
+  `docs/release-prerequisites.md`, whose `dat0-app` references were pure path
+  renames into `dat0-core`. Nine deeper documents were left alone, `docs/a11y.md`
+  chief among them.
+- **Why it was not swept with the others:** those files do not merely *mention*
+  the old crate, they document its architecture. `a11y.md` gives commands for a
+  test that no longer exists (`theme_contrast_gate`), a feature that no longer
+  exists (`a11y-capture`), and files that no longer exist
+  (`src/window/render.rs`). A path rename would make every one of those read as
+  current while staying wrong, which is worse than visibly stale: a reader can
+  tell that `crates/dat0-app/...` is history, but not that
+  `cargo test -p dat0-core --test theme_contrast_gate` is a command that cannot
+  work. Rewriting them means re-deriving what each claim maps to on the Dioxus
+  surface — real editing, not a `sed`, and not something to rush into a merge.
+- **Fix when picked up:** take `docs/a11y.md` first; it is the largest and the
+  one most likely to be read. The live equivalents are the `dat0-ui` nav suite,
+  `theme_live_switch` + `style_lint` for contrast/theming, and the `data-a11y-id`
+  handles, which now ship in release rather than behind a capture feature.
+- **Originating doc:** this migration's PR
+- **Last touched:** 2026-08-12
 
 ---
 
