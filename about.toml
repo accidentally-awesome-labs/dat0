@@ -14,6 +14,7 @@
 #       source-disclosure obligations on modified MPL files, which we don't ship.
 
 accepted = [
+    "Apache-2.0 WITH LLVM-exception",
     "Apache-2.0",
     "MIT",
     "BSD-2-Clause",

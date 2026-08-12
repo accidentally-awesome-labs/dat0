@@ -2,6 +2,8 @@
 name = "xtask"
 version = "0.1.0"
 edition = "2024"
+# Not published, but cargo-deny checks every workspace member.
+license.workspace = true
 publish = false
 
 [dependencies]
