@@ -991,6 +991,7 @@ Used by:
 
 Used by:
 - ashpd 0.11.1 — https://github.com/bilelmoussaoui/ashpd
+- rfd 0.17.2 — https://github.com/PolyMeilex/rfd
 
 ## MIT License (SPDX: MIT)
 
@@ -1001,7 +1002,6 @@ Used by:
 
 Used by:
 - rfd 0.15.4 — https://github.com/PolyMeilex/rfd
-- rfd 0.17.2 — https://github.com/PolyMeilex/rfd
 
 ## MIT License (SPDX: MIT)
 
