@@ -46,7 +46,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@1.97.0
         with: { components: rustfmt }
       # Registry + git + target caching. `fmt` compiles nothing, but the
@@ -61,7 +61,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@1.97.0
         with: { components: clippy }
       # `--all-targets` on Linux now compiles the webview stack's `-sys` build
@@ -181,7 +181,7 @@ jobs:
       # reclaim exists to prevent. See the bench steps at the end of this job.
       CARGO_PROFILE_DEV_DEBUG: 0
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
       # GitHub-hosted ubuntu-latest ships ~14 GB free disk by default;
       # dat0's debug-profile cargo test --workspace blows past that
       # (duckdb + arrow + sentry rlib chain). Free ~30 GB by
@@ -481,7 +481,7 @@ jobs:
     runs-on: macos-14
     timeout-minutes: 60
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@1.97.0
       - uses: Swatinem/rust-cache@v2
         with:
@@ -521,7 +521,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 90
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@1.97.0
         with: { components: llvm-tools-preview }
       - uses: Swatinem/rust-cache@v2
@@ -581,7 +581,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
       - uses: EmbarkStudios/cargo-deny-action@v2
         with:
           command: check
@@ -590,7 +590,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
       - run: ./scripts/i18n-check.sh
 
   no-standalone-arrow:
@@ -598,7 +598,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
       - name: Verify no `arrow = ` workspace/crate dep
         run: |
           if grep -rE '^arrow\s*=' Cargo.toml crates/*/Cargo.toml; then
@@ -612,7 +612,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@stable
       - name: Verify no gpui/dioxus in the dat0-core dependency tree
         run: |
@@ -631,7 +631,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
       - name: Verify no `__debug_query_scalar` references
         run: |
           if grep -rE '__debug_query_scalar' crates/ 2>/dev/null; then
