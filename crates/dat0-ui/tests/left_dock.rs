@@ -34,7 +34,7 @@ use dioxus::prelude::*;
 use serial_test::serial;
 use tempfile::TempDir;
 
-use support::{Harness, Key, Modifiers};
+use support::{Harness, Key};
 
 use dat0_core::actions::builtin::{ids, register_all};
 use dat0_core::actions::registry::ActionRegistry;
