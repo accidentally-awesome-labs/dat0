@@ -502,10 +502,22 @@ jobs:
   # before the number is known is a guess; docs/ci.md records the measured
   # figure from the first run, and that measured figure becomes the floor of a
   # later ratchet.
+  #
+  # `continue-on-error` because the name has to be true. This job is new with
+  # the Dioxus migration and has never completed on a hosted runner: it
+  # instruments the whole workspace, and the runner dies mid-step — job marked
+  # failed, `cargo llvm-cov` still `in_progress`, no logs uploaded, ~27 min in
+  # against a 90 min timeout. That is the runner being exhausted, not a test
+  # failing. Without this flag an advisory job with no threshold reddens every
+  # PR, which is how required checks get ignored wholesale.
+  #
+  # It still runs, and still uploads `lcov.info` when it survives. Making it
+  # fit — or dropping it — is D-038.
   coverage:
     name: Coverage (report only)
     runs-on: ubuntu-latest
     timeout-minutes: 90
+    continue-on-error: true
     steps:
       - uses: actions/checkout@v5
       - uses: dtolnay/rust-toolchain@1.97.0

@@ -71,6 +71,7 @@ that's modifying it; merge conflicts are signals worth investigating.
 | D-032 | Promote `perf-gate` from label-triggered to every-PR (needs dedicated macOS hardware) | open | MX3 | — |
 | D-036 | Two `block_on(Session::…)` sites remain on the GPUI main thread — `workspace_ops::spawn_workspace_window` and `package_ops::open_package_at` | open | EN4 | — |
 | D-037 | `docs/a11y.md` (and 8 more docs) still describe the GPUI build — dead crate `dat0-app`, dead test `theme_contrast_gate`, dead feature `a11y-capture`, dead paths `src/window/render.rs` | open | GPUI→Dioxus migration | — |
+| D-038 | `Coverage (report only)` has never completed on a hosted runner — instruments the whole workspace and exhausts the runner mid-step; now `continue-on-error` | open | GPUI→Dioxus migration | — |
 
 ## At-a-glance — Plan defects
 
@@ -1244,6 +1245,31 @@ that's modifying it; merge conflicts are signals worth investigating.
   one most likely to be read. The live equivalents are the `dat0-ui` nav suite,
   `theme_live_switch` + `style_lint` for contrast/theming, and the `data-a11y-id`
   handles, which now ship in release rather than behind a capture feature.
+- **Originating doc:** this migration's PR
+- **Last touched:** 2026-08-12
+
+---
+
+### D-038 — `Coverage (report only)` has never produced a report
+
+- **Status:** open
+- **Severity:** low
+- **Deferred from:** the GPUI→Dioxus migration
+- **What it is:** the coverage job arrived with this migration — `main`'s
+  `ci.yml` has no such job — and has not once succeeded. It runs
+  `cargo llvm-cov nextest --workspace`, which instruments every crate and all
+  60-odd test binaries, and the hosted runner dies partway: the job is marked
+  failed while `cargo llvm-cov` is still `in_progress`, no logs are uploaded,
+  and it gives up around 27 minutes against a 90 minute timeout. A job that
+  dies without logs is out of disk or out of memory, not failing a test.
+- **Why it is `continue-on-error` for now:** the job asserts no threshold by
+  design, so it can only ever be advisory. Leaving it red on every PR trains
+  people to skim the check list, which costs more than the report is worth
+  while the report does not exist.
+- **Fix when picked up:** either make it fit — instrument the library crates
+  rather than every test binary, or take the `Free disk space` step further —
+  or delete the job. Shipping a permanently dying advisory job is the one
+  option that should not survive.
 - **Originating doc:** this migration's PR
 - **Last touched:** 2026-08-12
 
