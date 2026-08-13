@@ -156,7 +156,7 @@ regular schedule (e.g. yearly for the CI subkey):
 ### What it is
 
 The minisign secret key is used by the `release.yml` CI workflow to sign the
-`latest.json` update manifest. The in-app updater (`dat0-app`) fetches
+`latest.json` update manifest. The in-app updater (`dat0-core`) fetches
 `latest.json` and verifies its minisign signature before trusting any version
 or download URL. The app embeds the public key at build time via:
 
@@ -164,7 +164,7 @@ or download URL. The app embeds the public key at build time via:
 const MINISIGN_PUBLIC_KEY: &str = include_str!("../assets/minisign-public-key.txt");
 ```
 
-(`crates/dat0-app/assets/minisign-public-key.txt`). The app **verifies only**
+(`crates/dat0-core/assets/minisign-public-key.txt`). The app **verifies only**
 — it never holds the secret key.
 
 ### Passphrase decision — **passwordless CI key** (deliberate)
@@ -195,7 +195,7 @@ secret itself. The CI signs `latest.json` non-interactively with no PIN prompt.
   plus an offline backup in a password manager. The raw file must **never be
   committed** to the repository.
 - **Public key** — committed to the repository at
-  `crates/dat0-app/assets/minisign-public-key.txt` and embedded by the app
+  `crates/dat0-core/assets/minisign-public-key.txt` and embedded by the app
   via `include_str!`. This is the only key material that belongs in version
   control.
 
@@ -218,7 +218,7 @@ schedule (e.g. yearly):
 
 1. Generate a new passwordless key pair (see "Passphrase decision" above).
 2. Update `MINISIGN_SECRET_KEY` in GitHub Secrets with the new secret key contents.
-3. Replace `crates/dat0-app/assets/minisign-public-key.txt` with the new public
+3. Replace `crates/dat0-core/assets/minisign-public-key.txt` with the new public
    key and commit it.
 4. Cut a new release that ships the updated embedded public key. Clients running
    the **old** embedded key can still verify **old** releases — they cannot verify
@@ -235,13 +235,13 @@ schedule (e.g. yearly):
 
 ### Current state — dry-run blocker
 
-> **The production key is NOT yet provisioned.** `crates/dat0-app/assets/minisign-public-key.txt`
+> **The production key is NOT yet provisioned.** `crates/dat0-core/assets/minisign-public-key.txt`
 > currently holds the **T1 test key** (generated during development). Before any
 > real release, a human MUST:
 >
 > 1. Generate a production passwordless key pair (see above).
 > 2. Set `MINISIGN_SECRET_KEY` to the new secret key in GitHub Secrets.
-> 3. Replace the embedded public key in `crates/dat0-app/assets/minisign-public-key.txt`
+> 3. Replace the embedded public key in `crates/dat0-core/assets/minisign-public-key.txt`
 >    and commit it.
 >
 > Until these steps are done, either the test key ships to real users (invalid for
@@ -250,7 +250,7 @@ schedule (e.g. yearly):
 > in `docs/plans/2026-06-22-dat0-p10a-2-uat.md`.
 >
 > **This is now enforced, not just documented.**
-> `crates/dat0-app/tests/update_key_is_production.rs` compares the embedded key
+> `crates/dat0-core/tests/update_key_is_production.rs` compares the embedded key
 > against the committed test fixture and **fails while they are identical** —
 > which is the state of the tree today. The exact commands are
 > `docs/release-prerequisites.md` step 1.

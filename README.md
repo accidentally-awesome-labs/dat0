@@ -47,7 +47,7 @@ libraries listed in [CONTRIBUTING.md](CONTRIBUTING.md)).
 <!--
   Screenshot owed: enriched first-run hero capture.
 
-  To produce it: `cargo run -p dat0-app` against a clean state root (no recents,
+  To produce it: `cargo run --bin dat0` against a clean state root (no recents,
   so the enriched hero + tour carousel show), capture the window, and commit the
   PNG as `docs/img/first-run-hero.png` before linking it here.
 

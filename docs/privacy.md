@@ -20,7 +20,7 @@ The logging pipeline redacts absolute file-system paths before they are written:
 - Windows paths (`C:\<name>\…`)
 
 …are all replaced with `<redacted>`. The redaction is applied in the `before_send`
-hook in `crates/dat0-app/src/telemetry/redaction.rs` before any crash event leaves
+hook in `crates/dat0-core/src/telemetry/redaction.rs` before any crash event leaves
 the process. Local log output is written by a standard tracing subscriber and is
 **not** separately redacted — treat your local log files as potentially containing
 absolute paths.
@@ -52,7 +52,7 @@ are included in the crash report:
 ### 2.2 Redaction applied before transmission
 
 Before any crash event leaves the process, the `before_send` hook in
-`crates/dat0-app/src/telemetry/redaction.rs` performs the following:
+`crates/dat0-core/src/telemetry/redaction.rs` performs the following:
 
 - **Absolute paths** in stack frames (`filename`, `abs_path`) are reduced to
   `<redacted>/<basename>` — only the source filename is kept, never the full path.
@@ -100,13 +100,13 @@ the payload is schema-only:
   in `AiSettings`).
 
 The schema-only default is enforced structurally in
-`crates/dat0-app/src/ai/schema_ctx.rs` and `crates/dat0-app/src/ai/request.rs`.
+`crates/dat0-core/src/ai/schema_ctx.rs` and `crates/dat0-core/src/ai/request.rs`.
 The `SchemaContext` built by `build_schema_context` maps names and types only.
 `AiRequest.sample_rows` is `None` unless the include-sample-rows toggle is on.
 
 dat0 does not proxy your AI requests through its own servers. Requests go directly
 from your machine to the provider endpoint you configured. Custom provider URLs
-are validated against an SSRF guard (`crates/dat0-app/src/ai/ssrf.rs`) that
+are validated against an SSRF guard (`crates/dat0-core/src/ai/ssrf.rs`) that
 blocks loopback, private, link-local, and unspecified IP ranges, and requires
 HTTPS.
 

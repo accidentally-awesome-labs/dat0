@@ -70,8 +70,8 @@ that's modifying it; merge conflicts are signals worth investigating.
 | D-031 | Display-type letter-spacing (v4's −0.03em/−0.035em tracking) unavailable on gpui 0.2.2 — no `Styled` setter and no `TextStyle` field | closed | UI1 | closed by the GPUI→Dioxus migration |
 | D-032 | Promote `perf-gate` from label-triggered to every-PR (needs dedicated macOS hardware) | open | MX3 | — |
 | D-036 | Two `block_on(Session::…)` sites remain on the GPUI main thread — `workspace_ops::spawn_workspace_window` and `package_ops::open_package_at` | open | EN4 | — |
-| D-037 | `docs/a11y.md` (and 8 more docs) still describe the GPUI build — dead crate `dat0-app`, dead test `theme_contrast_gate`, dead feature `a11y-capture`, dead paths `src/window/render.rs` | open | GPUI→Dioxus migration | — |
-| D-038 | `Coverage (report only)` has never completed on a hosted runner — instruments the whole workspace and exhausts the runner mid-step; now `continue-on-error` | open | GPUI→Dioxus migration | — |
+| D-037 | `docs/a11y.md` (and 8 more docs) still describe the GPUI build — dead crate `dat0-app`, dead test `theme_contrast_gate`, dead feature `a11y-capture`, dead paths `src/window/render.rs` | closed | GPUI→Dioxus migration | closed by the doc-accuracy pass after PR #82 |
+| D-038 | `Coverage (report only)` exhausted the runner's disk — fixed by dropping debug info from the instrumented build (21 GB vs 64 GB); awaiting first green CI run | in-progress | GPUI→Dioxus migration | — |
 
 ## At-a-glance — Plan defects
 
@@ -1223,55 +1223,89 @@ that's modifying it; merge conflicts are signals worth investigating.
 
 ### D-037 — Nine docs still describe the GPUI build
 
-- **Status:** open
+- **Status:** closed
 - **Severity:** low
 - **Deferred from:** the GPUI→Dioxus migration
-- **What it is:** the migration swept the contributor-facing docs (README,
+- **What it was:** the migration swept the contributor-facing docs (README,
   CONTRIBUTING, SECURITY, the CI configs, the PR template) and
   `docs/release-prerequisites.md`, whose `dat0-app` references were pure path
   renames into `dat0-core`. Nine deeper documents were left alone, `docs/a11y.md`
   chief among them.
 - **Why it was not swept with the others:** those files do not merely *mention*
-  the old crate, they document its architecture. `a11y.md` gives commands for a
+  the old crate, they document its architecture. `a11y.md` gave commands for a
   test that no longer exists (`theme_contrast_gate`), a feature that no longer
   exists (`a11y-capture`), and files that no longer exist
-  (`src/window/render.rs`). A path rename would make every one of those read as
-  current while staying wrong, which is worse than visibly stale: a reader can
-  tell that `crates/dat0-app/...` is history, but not that
-  `cargo test -p dat0-core --test theme_contrast_gate` is a command that cannot
-  work. Rewriting them means re-deriving what each claim maps to on the Dioxus
-  surface — real editing, not a `sed`, and not something to rush into a merge.
-- **Fix when picked up:** take `docs/a11y.md` first; it is the largest and the
-  one most likely to be read. The live equivalents are the `dat0-ui` nav suite,
-  `theme_live_switch` + `style_lint` for contrast/theming, and the `data-a11y-id`
-  handles, which now ship in release rather than behind a capture feature.
+  (`src/window/render.rs`). A path rename would have made every one of those
+  read as current while staying wrong, which is worse than visibly stale.
+- **Closed by:** the doc-accuracy pass following PR #82.
+  - `docs/a11y.md` **rewritten**, not renamed. It was a point-in-time audit of a
+    toolkit that no longer exists. Its hand-maintained contrast table and
+    keyboard tally are now owned by gates that cannot drift, so the document
+    points at them and states the measured minima instead of copying rows: light
+    4.74:1, dark 4.75:1, high-contrast 9.18:1, measured with `contrast_ratio`
+    over the committed builtins. Every `path:line` citation in it was checked
+    against the tree, and four the research pass got wrong were corrected.
+  - The screen-reader section changed substantively rather than cosmetically.
+    Its old rationale — GPUI exposes no accessibility tree, so A5 is out of
+    scope — is void: a WebView exposes ARIA natively and dat0's roles and labels
+    ship in release. The section now records that, and is careful to claim only
+    the mechanism: no screen-reader UAT has been performed, and it says so.
+  - `privacy.md`, `privacy-review-process.md`, `security-runbook.md`,
+    `release-runbook.md`, `ci-mac-vm-runner.md`, `README.md` were genuine path
+    renames — each target resolved 1:1 into `dat0-core` and was verified to
+    exist before the edit.
+  - `docs/ci.md` needed more than renames: it described a `[sources]` allow-list
+    and a dependabot ignore-list that no longer match the files. Both were
+    corrected against the real configs.
+  - `docs/upstream-watch.md` needed nothing. Its gpui mentions are explicitly
+    marked historical, which is the correct treatment and the reason it was
+    wrongly counted in the original nine.
+  - One live config defect fell out of the sweep: `deny.toml` still allow-listed
+    the `gpui-component` git URL. The lockfile carries zero git sources now, so
+    `allow-git` is empty and `unknown-git = "deny"` has nothing to excuse.
+    Verified `sources ok` with cargo-deny 0.20.2 on Linux.
+  - `docs/deferrals.md` keeps its GPUI references. This is a historical register;
+    rewriting the record would be falsifying it.
 - **Originating doc:** this migration's PR
-- **Last touched:** 2026-08-12
+- **Last touched:** 2026-08-13
 
 ---
 
 ### D-038 — `Coverage (report only)` has never produced a report
 
-- **Status:** open
+- **Status:** in-progress — fixed locally, awaiting the first green CI run
 - **Severity:** low
 - **Deferred from:** the GPUI→Dioxus migration
-- **What it is:** the coverage job arrived with this migration — `main`'s
-  `ci.yml` has no such job — and has not once succeeded. It runs
-  `cargo llvm-cov nextest --workspace`, which instruments every crate and all
-  60-odd test binaries, and the hosted runner dies partway: the job is marked
-  failed while `cargo llvm-cov` is still `in_progress`, no logs are uploaded,
-  and it gives up around 27 minutes against a 90 minute timeout. A job that
-  dies without logs is out of disk or out of memory, not failing a test.
-- **Why it is `continue-on-error` for now:** the job asserts no threshold by
-  design, so it can only ever be advisory. Leaving it red on every PR trains
-  people to skim the check list, which costs more than the report is worth
-  while the report does not exist.
-- **Fix when picked up:** either make it fit — instrument the library crates
-  rather than every test binary, or take the `Free disk space` step further —
-  or delete the job. Shipping a permanently dying advisory job is the one
-  option that should not survive.
+- **What it was:** the coverage job arrived with this migration — `main`'s
+  `ci.yml` has no such job — and had not once succeeded. It runs
+  `cargo llvm-cov nextest --workspace`, and the hosted runner died partway: the
+  job marked failed while `cargo llvm-cov` was still `in_progress`, no logs
+  uploaded, giving up around 27 minutes against a 90 minute timeout.
+- **The cause, from the only evidence that survived.** No logs reached the
+  artifact store, but GitHub keeps check annotations separately, and they said:
+  `System.IO.IOException: No space left on device` — while writing the runner's
+  *own* diagnostic log. Disk, not memory, and so complete that the runner could
+  not report it. That is why the job looked like an unexplained hang.
+- **Why it could never have fit.** The workspace builds 190 integration-test
+  binaries, each linking a `libduckdb-sys` rlib that is 1.6 GB by itself. The
+  ordinary debug build is 64 GB of target directory here, and `build-and-test`
+  already calls that its low-water mark for disk. Instrumenting the same
+  workload on top of it was never going to work; this was not a few GB short.
+- **The fix: `CARGO_PROFILE_DEV_DEBUG: 0`.** Debug info was what did not fit,
+  and coverage does not need it — llvm-cov takes line numbers from the coverage
+  map `-C instrument-coverage` emits, not from DWARF. Measured on the whole
+  workspace: **21 GB** instrumented without debug info, against 64 GB for the
+  ordinary debug build, and the report is undiminished — 19 789 line records
+  over 194 files, 8 005 functions, 1 709 tests, **84.9% lines**. The figure is
+  recorded in `docs/ci.md`, which is where the job's comment always said the
+  first measurement would live.
+- **`continue-on-error` removed.** It was added when the job could not run at
+  all; a job that completes should be allowed to speak.
+- **What is left:** confirm the same figure on a hosted runner. The 21 GB was
+  measured on macOS, and Linux binaries are not identical — the margin is
+  large but it is not yet observed on the machine that matters.
 - **Originating doc:** this migration's PR
-- **Last touched:** 2026-08-12
+- **Last touched:** 2026-08-13
 
 ---
 

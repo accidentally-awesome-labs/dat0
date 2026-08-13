@@ -206,7 +206,7 @@ tart clone dat0-runner-base dat0-runner
 
 ### Disk hygiene
 
-The PR #5 runnerkit lesson applies — debug-profile link of the dat0-app
+The PR #5 runnerkit lesson applies — debug-profile link of the dat0-ui
 test binary chain can balloon past 50 GB:
 
 ```bash

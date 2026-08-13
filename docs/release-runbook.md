@@ -294,7 +294,7 @@ dat0 uses a **self-hosted GlitchTip instance** (confirmed by the user: only the
 GlitchTip path exists; managed/Sentry is a fallback option noted in spec R11 if
 the self-hosted instance becomes unmaintainable). The public DSN is baked into
 the release binary at compile time via `env!("DAT0_GLITCHTIP_DSN_PUBLIC")` in
-`crates/dat0-app/src/telemetry/`. Development and CI builds use the stub value
+`crates/dat0-core/src/telemetry/`. Development and CI builds use the stub value
 `https://stub@glitchtip.invalid/1` (set in `.cargo/config.toml`) so no reports
 are sent during development. Only a release build compiled with the real DSN emits events.
 
@@ -357,7 +357,7 @@ GlitchTip persists data in Postgres. Recommended hygiene:
 To verify the live round-trip outside of CI, build with the real DSN and run:
 
 ```bash
-DAT0_GLITCHTIP_DSN_PUBLIC="<real-dsn>" cargo build -p dat0-app --release --bin dat0
+DAT0_GLITCHTIP_DSN_PUBLIC="<real-dsn>" cargo build -p dat0-ui --release --bin dat0
 ./target/release/dat0 __telemetry-test
 # Wait ~15 s, then check GlitchTip Issues for "dat0 telemetry e2e"
 ```

@@ -117,9 +117,10 @@ unknown-registry = "deny"
 # an arbitrary host.
 unknown-git = "deny"
 allow-registry = ["https://github.com/rust-lang/crates.io-index"]
-# gpui-component AND gpui-component-assets both resolve to this single repo,
-# both pinned to rev 0f0ab35233212f8f3277028995caf0c41e13ee6c (root
-# Cargo.toml:65 and :69). cargo-deny matches on the source URL, so one entry
-# covers both crates. Upgrade cadence is governed by docs/upstream-watch.md,
-# which is also why dependabot is told to ignore them (.github/dependabot.yml).
-allow-git = ["https://github.com/longbridge/gpui-component"]
+# Empty, and worth keeping that way. The GPUI→Dioxus migration removed the only
+# git dependency dat0 ever had (`gpui-component` + `gpui-component-assets`, both
+# resolving to github.com/longbridge/gpui-component at one pinned rev). The
+# lockfile now carries zero `source = "git+…"` entries, so every crate in the
+# graph comes from crates.io and `unknown-git = "deny"` above has nothing to
+# excuse. Re-adding a URL here should be a deliberate, reviewed act.
+allow-git = []
