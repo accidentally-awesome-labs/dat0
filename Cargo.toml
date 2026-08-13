@@ -66,7 +66,7 @@ reqwest = { version = "0.12", default-features = false, features = ["rustls-tls"
 
 # P3b T8: SHA-256 over the downloaded blob before atomic-rename into the
 # samples cache.
-sha2 = "0.10"
+sha2 = "0.11"
 
 # P8 T1: `.dat0` package container. Pin proven by the P8 T0 spike
 # (docs/internal/2026-06-13-p8-spike-notes.md §S2): default-features off drops
