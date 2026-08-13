@@ -27,7 +27,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@1.97.0
       # Prebuilt binary rather than `cargo install --locked`: the from-source
       # build was several minutes of the job's wall time, and a `cargo install`
