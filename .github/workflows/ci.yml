@@ -456,7 +456,7 @@ jobs:
       - name: Upload perf artifact
         if: runner.os == 'macOS' && github.event_name != 'pull_request'
         continue-on-error: true
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: perf-check-${{ github.sha }}
           path: perf-check.jsonl
@@ -492,7 +492,7 @@ jobs:
         run: cargo xtask perf --check | tee perf-gate.jsonl
       - name: Upload perf artifact
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: perf-gate-${{ github.sha }}
           path: perf-gate.jsonl
@@ -559,7 +559,7 @@ jobs:
         run: cargo llvm-cov nextest --workspace --lcov --output-path lcov.info
       - name: Upload lcov
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: lcov-${{ github.sha }}
           path: lcov.info

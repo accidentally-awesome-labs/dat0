@@ -46,9 +46,9 @@ jobs:
       # Artifact filenames stay unversioned: the publish job below and
       # xtask::sign::verify both address them by fixed path. The version is
       # applied when the assets are staged for the GitHub Release.
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with: { name: dat0-dmg, path: target/macos/dat0.dmg }
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with: { name: dat0-app-tarball, path: target/macos/dat0.app.tar.gz }
 
   linux:
@@ -140,7 +140,7 @@ jobs:
             ./squashfs-root/AppRun --version
           '
           cargo xtask verify --linux
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with: { name: dat0-appimage, path: 'target/linux/dat0.AppImage*' }
 
   publish:
