@@ -126,7 +126,7 @@ num_cpus = "1"
 clap = { version = "4", features = ["derive"] }
 rand = "0.8"
 rand_chacha = "0.3" # deterministic PRNG (cross-platform reproducibility)
-rusqlite = { version = "0.31", features = ["bundled"] }
+rusqlite = { version = "0.40", features = ["bundled"] }
 
 # Internal crates
 dat0-core = { path = "crates/dat0-core" }
