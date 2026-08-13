@@ -115,10 +115,14 @@ separate step. Dropping it would silently stop gating every doc example.
 `lcov.info` as an artifact. It is **reporting only — there is deliberately no
 threshold.**
 
-> **First measured: 84.9% of lines** — 19 789 line records over 194 files and
-> 8 005 functions, whole workspace, 1 709 tests. Measured locally on 2026-08-13
-> because the job had never completed on a hosted runner; the first green CI run
-> should confirm the same figure.
+> **First measured: 84.7% of lines** — 19 780 line records over 194 files and
+> 8 038 functions, whole workspace, 1 708 tests. From the first green hosted run
+> (`ubuntu-latest`, 2026-08-13), computed from the uploaded `lcov.info`.
+>
+> The local macOS measurement taken while diagnosing the job read 84.9% over
+> 19 789 records and 8 005 functions — same 194 files, a 0.2 point difference
+> from platform-conditional code compiled on one host and not the other. Use the
+> Linux figure as canonical, since that is the host the gate runs on.
 >
 > That measured figure — not a guessed round number — becomes the floor of a
 > later ratchet. A threshold chosen before the number is known either sits

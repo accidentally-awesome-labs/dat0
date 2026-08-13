@@ -71,7 +71,7 @@ that's modifying it; merge conflicts are signals worth investigating.
 | D-032 | Promote `perf-gate` from label-triggered to every-PR (needs dedicated macOS hardware) | open | MX3 | — |
 | D-036 | Two `block_on(Session::…)` sites remain on the GPUI main thread — `workspace_ops::spawn_workspace_window` and `package_ops::open_package_at` | open | EN4 | — |
 | D-037 | `docs/a11y.md` (and 8 more docs) still describe the GPUI build — dead crate `dat0-app`, dead test `theme_contrast_gate`, dead feature `a11y-capture`, dead paths `src/window/render.rs` | closed | GPUI→Dioxus migration | closed by the doc-accuracy pass after PR #82 |
-| D-038 | `Coverage (report only)` exhausted the runner's disk — fixed by dropping debug info from the instrumented build (21 GB vs 64 GB); awaiting first green CI run | in-progress | GPUI→Dioxus migration | — |
+| D-038 | `Coverage (report only)` exhausted the runner's disk — fixed by dropping debug info from the instrumented build (21 GB vs 64 GB) | closed | GPUI→Dioxus migration | first green run 2026-08-13, 84.7% |
 
 ## At-a-glance — Plan defects
 
@@ -1273,7 +1273,7 @@ that's modifying it; merge conflicts are signals worth investigating.
 
 ### D-038 — `Coverage (report only)` has never produced a report
 
-- **Status:** in-progress — fixed locally, awaiting the first green CI run
+- **Status:** closed
 - **Severity:** low
 - **Deferred from:** the GPUI→Dioxus migration
 - **What it was:** the coverage job arrived with this migration — `main`'s
@@ -1301,9 +1301,13 @@ that's modifying it; merge conflicts are signals worth investigating.
   first measurement would live.
 - **`continue-on-error` removed.** It was added when the job could not run at
   all; a job that completes should be allowed to speak.
-- **What is left:** confirm the same figure on a hosted runner. The 21 GB was
-  measured on macOS, and Linux binaries are not identical — the margin is
-  large but it is not yet observed on the machine that matters.
+- **Closed by:** the first green hosted run, `ubuntu-latest`, 2026-08-13. The
+  job completed in roughly 20 minutes against its 90 minute timeout and uploaded
+  `lcov.info` — the artefact it had never once produced. Computed from that
+  artefact: **84.7% of lines**, 19 780 records over 194 files, 8 038 functions,
+  1 708 tests. The local macOS number was 84.9% over the same 194 files; the 0.2
+  point gap is platform-conditional code, and `docs/ci.md` records the Linux
+  figure as canonical because that is the host the gate runs on.
 - **Originating doc:** this migration's PR
 - **Last touched:** 2026-08-13
 
