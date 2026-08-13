@@ -1,6 +1,6 @@
 ---
 source: crates/dat0-ui/tests/visual_snapshot.rs
-expression: html
+expression: "rendered[0].1"
 ---
 <div class="d0-scene" data-scene="palette/open" style="width: 1440px; height: 900px; overflow: hidden">
 <div class="d0-scrim" data-a11y-id="palette-scrim">
@@ -19,7 +19,7 @@ expression: html
 <button class="d0-palette-row" data-a11y-id="palette-row-1" role="button" aria-label="Cancel" aria-selected="false" title="Edit" tabindex="-1" style="top: 26px;">
 <span class="d0-palette-glyph" aria-hidden="true">✎</span>
 <span class="d0-palette-label">Cancel</span>
-<span class="d0-hint" aria-hidden="true">⌘.</span>
+<span class="d0-hint" aria-hidden="true">CHORD</span>
 </button>
 <button class="d0-palette-row" data-a11y-id="palette-row-2" role="button" aria-label="Cancel Import" aria-selected="false" title="Import" tabindex="-1" style="top: 52px;">
 <span class="d0-palette-glyph" aria-hidden="true">⤓</span>
@@ -52,7 +52,7 @@ expression: html
 <button class="d0-palette-row" data-a11y-id="palette-row-9" role="button" aria-label="Export…" aria-selected="false" title="File" tabindex="-1" style="top: 234px;">
 <span class="d0-palette-glyph" aria-hidden="true">▤</span>
 <span class="d0-palette-label">Export…</span>
-<span class="d0-hint" aria-hidden="true">⌘E</span>
+<span class="d0-hint" aria-hidden="true">CHORD</span>
 </button>
 <button class="d0-palette-row" data-a11y-id="palette-row-10" role="button" aria-label="Fill Down" aria-selected="false" title="Edit" tabindex="-1" style="top: 260px;">
 <span class="d0-palette-glyph" aria-hidden="true">✎</span>

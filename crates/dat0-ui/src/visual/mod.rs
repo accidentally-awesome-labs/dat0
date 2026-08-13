@@ -327,12 +327,41 @@ pub fn scene(id: &str) -> Option<&'static Scene> {
     SCENES.iter().find(|s| s.id == id)
 }
 
-/// Insert a newline between adjacent tags.
+/// Insert a newline between adjacent tags, and blank the platform's chord text.
 ///
 /// `dioxus_ssr::render` emits one line. An unreadable diff is a snapshot nobody
 /// reviews, and reviewing the diff *is* the visual check for the snapshot tier.
+///
+/// The chord hints have to go because they are platform text: `dat0_core::keymap`
+/// binds `cmd-.` on macOS and `ctrl-.` elsewhere, so the palette renders `⌘.`
+/// here and `Ctrl+.` on the Linux runner. Snapshots taken on one would fail on
+/// the other for a reason that has nothing to do with appearance — which is what
+/// happened. The `<span class="d0-hint">` element, its placement and its
+/// attributes all still snapshot; only the glyphs inside it are replaced, so a
+/// hint that moves, vanishes or gains a class is still caught. What is no longer
+/// caught is the hint's *text*, and that already has a better home:
+/// `keymap::chord_for` is unit-tested per platform.
 pub fn normalise(html: String) -> String {
-    html.replace("><", ">\n<")
+    let html = html.replace("><", ">\n<");
+    let mut out = String::with_capacity(html.len());
+    let mut rest = html.as_str();
+    const OPEN: &str = "class=\"d0-hint\" aria-hidden=\"true\">";
+    while let Some(i) = rest.find(OPEN) {
+        let (head, tail) = rest.split_at(i + OPEN.len());
+        out.push_str(head);
+        match tail.find('<') {
+            Some(j) => {
+                out.push_str("CHORD");
+                rest = &tail[j..];
+            }
+            None => {
+                rest = tail;
+                break;
+            }
+        }
+    }
+    out.push_str(rest);
+    out
 }
 
 // ── The host ─────────────────────────────────────────────────────────────────
