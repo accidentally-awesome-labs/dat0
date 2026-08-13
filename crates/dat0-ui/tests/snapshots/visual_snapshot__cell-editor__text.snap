@@ -1,0 +1,7 @@
+---
+source: crates/dat0-ui/tests/visual_snapshot.rs
+expression: "rendered[0].1"
+---
+<div class="d0-scene" data-scene="cell-editor/text" style="width: 1440px; height: 900px; overflow: hidden">
+<input class="d0-cell-editor" data-a11y-id="cell-editor" role="textbox" aria-label="Edit cell" aria-invalid="false" value="alpha" autofocus=true style="left: 100px; top: 26px; width: 100px;"/>
+</div>

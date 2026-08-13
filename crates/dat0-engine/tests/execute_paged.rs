@@ -15,7 +15,7 @@ async fn execute_paged_returns_window() {
         .execute_paged("SELECT i FROM range(100) t(i)", 10, 5)
         .await
         .unwrap();
-    assert_eq!(pq.total_rows, 100);
+    assert_eq!(pq.total_rows, Some(100));
     assert_eq!(pq.offset, 10);
     let sum: usize = pq.batches.iter().map(|b| b.num_rows()).sum();
     assert_eq!(sum, 5);

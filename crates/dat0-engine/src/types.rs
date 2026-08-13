@@ -130,7 +130,16 @@ pub struct QueryResult {
 
 #[derive(Debug, Clone)]
 pub struct PagedQueryResult {
-    pub total_rows: u64,
+    /// Exact row count of the *whole* result set, or `None` when the caller
+    /// used [`QueryEngine::execute_page`](crate::QueryEngine::execute_page)
+    /// and so deliberately paid for no `COUNT(*)`.
+    ///
+    /// `Some` therefore means two things at once: the total is known, AND the
+    /// batch loop was reconciled against it (`execute::paged::run_paged`). On
+    /// the `None` path neither holds — see D-030, which records why a
+    /// mid-stream Arrow error is indistinguishable from EOF at duckdb-rs
+    /// 1.4.4 and thus why the count is the only truncation detector we have.
+    pub total_rows: Option<u64>,
     pub offset: u64,
     pub batches: Vec<RecordBatch>,
 }
@@ -162,4 +171,24 @@ impl std::fmt::Debug for AttachOpts {
             .field("token", &self.token.as_ref().map(|_| "<redacted>"))
             .finish()
     }
+}
+
+/// Opaque, monotonically-minted identity for one in-flight engine query.
+///
+/// Minted by [`crate::DuckDBEngine::begin_query`]. Holding a token is what
+/// lets a canceller say "abort *my* query" instead of "abort whatever is
+/// running", which is all a bare `interrupt()` can express.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct QueryToken(pub u64);
+
+/// Which subsystem issued a query. Cancellation is scoped to a lane so a
+/// console Cmd+. cannot abort a grid prefetch, and a superseding view change
+/// cannot abort a console run. DuckDB gives one interrupt handle per
+/// connection, so the scoping has to live above it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum QueryLane {
+    Console,
+    Grid,
+    View,
+    Other,
 }

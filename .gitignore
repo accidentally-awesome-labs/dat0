@@ -67,3 +67,7 @@ notarization-output.json
 
 # stray rustc snippet-spike output
 rust_out
+
+# Vendored JS build inputs (the built bundle in crates/dat0-ui/assets/ IS committed;
+# node_modules is not — see crates/dat0-ui/vendor/codemirror/README.md).
+node_modules/

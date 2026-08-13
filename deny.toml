@@ -1,0 +1,125 @@
+# cargo-deny — the supply-chain gate (`supply-chain` job in .github/workflows/ci.yml).
+#
+# Relationship to `about.toml`: about.toml drives NOTICE.md generation and
+# carries the same SPDX allow-list under a different key name (`accepted`).
+# This file is the ENFORCING copy — notice.yml only proves the rendered NOTICE
+# matches the graph, it never rejects a license. Keep the two lists in sync.
+#
+# The graph settings below deliberately MIRROR about.toml so that the
+# allow-list is validated against the same dependency set it was derived from:
+# same four targets, dev-dependencies excluded. A gate whose allow-list was
+# seeded from one graph and enforced against a wider one fails for reasons
+# that have nothing to do with what dat0 ships.
+
+[graph]
+# Same four as about.toml:34-39. dat0 does not ship Windows (P3a decision).
+targets = [
+    "x86_64-unknown-linux-gnu",
+    "aarch64-unknown-linux-gnu",
+    "x86_64-apple-darwin",
+    "aarch64-apple-darwin",
+]
+# Mirrors about.toml's `ignore-dev-dependencies = true`. Dev-only crates
+# (criterion, insta, mockito, kittest, tempfile) are never linked into a
+# shipped artifact, so they carry no distribution obligation — and their
+# licenses were never in the allow-list this file inherits.
+exclude-dev = true
+
+[advisories]
+# A yanked crate in the lockfile means the version we build is one upstream has
+# withdrawn. That is a hard stop, not a warning.
+yanked = "deny"
+# Every entry here is a decision, not a mute. The rule applied: an advisory is
+# ignored only when it is unreachable from a shipped code path, or when no
+# upgrade exists anywhere in the ecosystem. Anything fixable by a version bump
+# was bumped instead — anyhow, crossbeam-epoch and lru were all upgraded rather
+# than listed below.
+ignore = [
+    # -- Build-time only. None of these run in the shipped binary. ------------
+    # `quick-xml` reaches us through `wayland-scanner`, a proc-macro that parses
+    # the Wayland protocol XML shipped inside the crate at BUILD time. Both
+    # advisories are denial-of-service on hostile XML; the only XML it ever sees
+    # is a trusted file in its own source tree, and no parser runs at runtime.
+    { id = "RUSTSEC-2026-0194", reason = "quick-xml DoS; build-time wayland-scanner only, trusted input" },
+    { id = "RUSTSEC-2026-0195", reason = "quick-xml DoS; build-time wayland-scanner only, trusted input" },
+    # Unmaintained proc-macros, no successor, no known vulnerability. `paste`
+    # via rav1e/ravif (AVIF encode in `image`); `proc-macro-error` via
+    # glib-macros and gtk3-macros. Both expand at compile time and link nothing.
+    { id = "RUSTSEC-2024-0436", reason = "paste unmaintained; build-time proc-macro, no vulnerability" },
+    { id = "RUSTSEC-2024-0370", reason = "proc-macro-error unmaintained; build-time proc-macro, no vulnerability" },
+
+    # -- Linux webview stack. Unmaintained upstream, no alternative. ----------
+    # The gtk-rs GTK3 bindings arrive through muda / tray-icon / libappindicator,
+    # which is how `dioxus-desktop` builds a menu bar and tray on Linux. GTK3 is
+    # what wry renders into; none of these crates has a GTK4 release we could
+    # move to, and dropping them means dropping the Linux menu bar. Unmaintained
+    # is a maintenance risk, not a known vulnerability. Revisit when the webview
+    # stack moves to GTK4.
+    { id = "RUSTSEC-2024-0411", reason = "gdkwayland-sys: GTK3 bindings via muda/tray-icon, no GTK4 release" },
+    { id = "RUSTSEC-2024-0412", reason = "gdk: GTK3 bindings via muda/tray-icon, no GTK4 release" },
+    { id = "RUSTSEC-2024-0413", reason = "atk: GTK3 bindings via muda/tray-icon, no GTK4 release" },
+    { id = "RUSTSEC-2024-0414", reason = "gdkx11-sys: GTK3 bindings via muda/tray-icon, no GTK4 release" },
+    { id = "RUSTSEC-2024-0415", reason = "gtk: GTK3 bindings via muda/tray-icon, no GTK4 release" },
+    { id = "RUSTSEC-2024-0416", reason = "atk-sys: GTK3 bindings via muda/tray-icon, no GTK4 release" },
+    { id = "RUSTSEC-2024-0418", reason = "gdk-sys: GTK3 bindings via muda/tray-icon, no GTK4 release" },
+    { id = "RUSTSEC-2024-0419", reason = "gtk3-macros: GTK3 bindings via muda/tray-icon, no GTK4 release" },
+    { id = "RUSTSEC-2024-0420", reason = "gtk-sys: GTK3 bindings via muda/tray-icon, no GTK4 release" },
+
+    # -- Charts. -------------------------------------------------------------
+    # `ttf-parser` is unmaintained and has no safe upgrade; it reaches us through
+    # `plotters`, which uses it to measure chart label text. The advisory is
+    # unmaintained-status only. The fonts it parses are the ones dat0 embeds, not
+    # user input. Revisit if plotters moves to skrifa, the named successor.
+    { id = "RUSTSEC-2026-0192", reason = "ttf-parser unmaintained; via plotters, parses only embedded fonts" },
+]
+
+[licenses]
+# Seeded verbatim from about.toml:16-29 (`accepted`, 12 SPDX ids). Notes on the
+# entries that are not obviously permissive, carried over from about.toml:7-14:
+#   - Unicode-3.0 / Unicode-DFS-2016: ICU crates (icu_*, tinystr) — permissive.
+#   - 0BSD: BSD Zero Clause, via enum-iterator — public-domain-equivalent.
+#   - CC0-1.0: public-domain dedication — notify, tiny-keccak, hexf-parse.
+#   - CDLA-Permissive-2.0: data license used by webpki-roots — no copyleft.
+#   - MPL-2.0: weak (file-level) copyleft, via option-ext (transitive through
+#     `dirs`). Permitted because we consume the crate unmodified; MPL-2.0 only
+#     triggers source-disclosure on MODIFIED MPL files, which we do not ship.
+allow = [
+    "Apache-2.0 WITH LLVM-exception",
+    "Apache-2.0",
+    "MIT",
+    "BSD-2-Clause",
+    "BSD-3-Clause",
+    "0BSD",
+    "ISC",
+    "Zlib",
+    "Unicode-DFS-2016",
+    "Unicode-3.0",
+    "CC0-1.0",
+    "CDLA-Permissive-2.0",
+    "MPL-2.0",
+]
+# Below this, cargo-deny reports a crate as unlicensed rather than guessing a
+# license from a low-confidence text match.
+confidence-threshold = 0.8
+
+[bans]
+# WARN, not deny. The gpui + duckdb + arrow + sentry graph carries duplicate
+# minor versions of common leaf crates that dat0 neither controls nor can
+# unify; denying would make this gate unpassable for reasons unrelated to
+# dat0's own dependency choices. The warning still prints the full list.
+multiple-versions = "warn"
+wildcards = "warn"
+
+[sources]
+unknown-registry = "deny"
+# No git dependency may enter the graph except the one URL listed below. This
+# is the clause that stops a transitive dep from silently pulling source from
+# an arbitrary host.
+unknown-git = "deny"
+allow-registry = ["https://github.com/rust-lang/crates.io-index"]
+# gpui-component AND gpui-component-assets both resolve to this single repo,
+# both pinned to rev 0f0ab35233212f8f3277028995caf0c41e13ee6c (root
+# Cargo.toml:65 and :69). cargo-deny matches on the source URL, so one entry
+# covers both crates. Upgrade cadence is governed by docs/upstream-watch.md,
+# which is also why dependabot is told to ignore them (.github/dependabot.yml).
+allow-git = ["https://github.com/longbridge/gpui-component"]

@@ -1,0 +1,17 @@
+---
+source: crates/dat0-ui/tests/visual_snapshot.rs
+expression: html
+---
+<div class="d0-scene" data-scene="import/running" style="width: 1440px">
+<div class="d0-import is-running" data-a11y-id="import-progress" role="note" aria-label="Importing · 33%" aria-live="polite">
+<span class="d0-sw sw-parquet">
+</span>
+<span class="d0-import-file d0-mono">trips.parquet</span>
+<span class="d0-import-msg d0-mono">Importing · 33%</span>
+<div class="d0-import-bar" data-a11y-id="import-bar" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="33">
+<div class="d0-import-fill" style="width: 33%">
+</div>
+</div>
+<button class="d0-btn" data-a11y-id="import-cancel" aria-label="Cancel import">Cancel import</button>
+</div>
+</div>

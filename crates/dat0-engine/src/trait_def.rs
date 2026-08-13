@@ -73,6 +73,28 @@ pub trait QueryEngine: Send + Sync {
 
     async fn execute(&self, sql: &str) -> Result<QueryResult>;
     async fn execute_paged(&self, sql: &str, offset: u64, limit: u64) -> Result<PagedQueryResult>;
+
+    /// Page a query **without** re-counting: `total_rows` in the result is
+    /// always `None`.
+    ///
+    /// Prefer this over [`execute_paged`](Self::execute_paged) whenever the
+    /// caller already knows the row count. `execute_paged` wraps the query in
+    /// `SELECT COUNT(*) FROM (<sql>) sub` before every window, which is a full
+    /// scan per page — O(N) per scroll page on a large file. The grid holds a
+    /// count from bind time and so pays that once, not once per page.
+    ///
+    /// Because there is no count, this method **cannot reconcile a short read**
+    /// (D-030: at duckdb-rs 1.4.4 `Arrow::next` yields a bare `RecordBatch`, so
+    /// a mid-stream error is indistinguishable from EOF and the count is the
+    /// only detector). `execute_paged` therefore remains the one-shot,
+    /// self-checking form; use it when nothing else knows the total.
+    ///
+    /// # Errors
+    /// - `EngineError::EngineClosed` — if the engine has been closed.
+    /// - `EngineError::Interrupted` — if a sibling task interrupted the query.
+    /// - `EngineError::DuckDb` — if `sql` is malformed or the scan fails.
+    /// - `EngineError::EnginePoisoned` — if the connection mutex was poisoned.
+    async fn execute_page(&self, sql: &str, offset: u64, limit: u64) -> Result<PagedQueryResult>;
     async fn execute_streaming(&self, sql: &str) -> Result<ArrowRecordBatchStream>;
 
     async fn describe_table(&self, name: &str, schema: Option<&str>) -> Result<Vec<ColumnInfo>>;
@@ -140,8 +162,6 @@ pub trait QueryEngine: Send + Sync {
         table: &str,
         col: &str,
     ) -> Result<crate::profile::LengthStats>;
-
-    async fn export_table(&self, name: &str, format: ExportFormat) -> Result<Vec<u8>>;
 
     /// Stream a SELECT to `dest` via DuckDB `COPY … TO`. Writes straight to
     /// disk (no in-RAM buffering), so it scales to multi-GB exports. `select_sql`

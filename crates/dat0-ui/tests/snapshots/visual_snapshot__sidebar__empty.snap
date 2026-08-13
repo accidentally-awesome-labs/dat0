@@ -1,0 +1,34 @@
+---
+source: crates/dat0-ui/tests/visual_snapshot.rs
+expression: html
+---
+<div class="d0-scene" data-scene="sidebar/empty" style="width: 1440px; height: 900px; overflow: hidden">
+<div class="d0-sidebar" data-a11y-id="sidebar" role="navigation" aria-label="Catalog">
+<div class="d0-sidebar-head">
+<span class="d0-label">catalog</span>
+<span class="d0-mono is-local">local</span>
+</div>
+<div class="d0-sidebar-body" data-a11y-id="catalog-tree" role="tree" tabindex="0">
+<div data-a11y-id="section-files" role="group" aria-label="FILES">
+<button class="d0-section-label d0-label" data-a11y-id="section-toggle-files" aria-expanded="true">
+<span class="d0-chevron">▾</span>FILES</button>
+<div class="d0-row is-empty" data-a11y-id="empty-files">no files yet — drop one here</div>
+</div>
+<div data-a11y-id="section-connections" role="group" aria-label="CONNECTIONS">
+<button class="d0-section-label d0-label" data-a11y-id="section-toggle-connections" aria-expanded="true">
+<span class="d0-chevron">▾</span>CONNECTIONS</button>
+<div class="d0-row is-empty" data-a11y-id="empty-connections">no connections</div>
+</div>
+<div data-a11y-id="section-packages" role="group" aria-label="PACKAGES">
+<button class="d0-section-label d0-label" data-a11y-id="section-toggle-packages" aria-expanded="true">
+<span class="d0-chevron">▾</span>PACKAGES</button>
+<div class="d0-row is-empty" data-a11y-id="empty-packages">no packages</div>
+</div>
+</div>
+<div class="d0-sidebar-foot">
+<span>session · 1 window · 0 tabs</span>
+<span>ai none</span>
+<span class="is-ok">egress 0 B</span>
+</div>
+</div>
+</div>

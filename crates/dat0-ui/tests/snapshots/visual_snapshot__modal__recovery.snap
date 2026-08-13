@@ -1,0 +1,43 @@
+---
+source: crates/dat0-ui/tests/visual_snapshot.rs
+expression: html
+---
+<div class="d0-scene" data-scene="modal/recovery" style="width: 1440px; height: 900px; overflow: hidden">
+<div class="d0-scrim" data-a11y-id="modal-scrim">
+<div class="d0-modal" data-a11y-id="modal" role="dialog" aria-modal="true" aria-label="Recover unfinished work" tabindex="-1">
+<div class="d0-modal-head">
+<span class="d0-label">recovery</span>
+<span class="d0-head-title">Recover unfinished work</span>
+<button class="d0-btn is-ghost d0-modal-close" data-a11y-id="modal-close" role="button" aria-label="Close">✕</button>
+</div>
+<div class="d0-modal-body" data-a11y-id="modal-body">
+<div class="d0-recovery" data-a11y-id="recovery">
+<div class="d0-label" data-a11y-id="recovery-section-orphans">Orphaned sessions</div>
+<div class="d0-recovery-row" data-a11y-id="recovery-row-0">
+<span class="d0-mono d0-recovery-label">sales, orders</span>
+<div class="d0-recovery-actions">
+<button class="d0-btn is-primary" data-a11y-id="recovery-open-0" role="button" aria-label="Open">Open</button>
+<button class="d0-btn is-ghost" data-a11y-id="recovery-discard-0" role="button" aria-label="Discard">Discard</button>
+</div>
+</div>
+<div class="d0-recovery-row" data-a11y-id="recovery-row-1">
+<span class="d0-mono d0-recovery-label">taxi_trips</span>
+<div class="d0-recovery-actions">
+<button class="d0-btn is-primary" data-a11y-id="recovery-open-1" role="button" aria-label="Open">Open</button>
+<button class="d0-btn is-ghost" data-a11y-id="recovery-discard-1" role="button" aria-label="Discard">Discard</button>
+</div>
+</div>
+<div class="d0-label" data-a11y-id="recovery-section-incomplete">Interrupted workspaces</div>
+<div class="d0-recovery-row" data-a11y-id="recovery-row-2">
+<span class="d0-mono d0-recovery-label">
+<FIXTURE>/quarterly-review (promote didn&#39;t finish)</span>
+<div class="d0-recovery-actions">
+<button class="d0-btn is-primary" data-a11y-id="recovery-resume-2" role="button" aria-label="Resume">Resume</button>
+<button class="d0-btn is-ghost" data-a11y-id="recovery-discard-2" role="button" aria-label="Discard">Discard</button>
+</div>
+</div>
+</div>
+</div>
+</div>
+</div>
+</div>

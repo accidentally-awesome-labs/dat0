@@ -6,8 +6,9 @@ dat0 depends on several pre-1.0 / fast-moving upstream components. This document
 
 | Component | Repo | Pin policy | Why we watch closely |
 |---|---|---|---|
-| **gpui** | <https://github.com/zed-industries/zed> (published to crates.io as of v0.2.0, Oct 2025) | Pinned to an exact crates.io version (`=x.y.z`); also record the publish-commit SHA in `docs/internal/gpui-api-notes.md` for traceability. Bump deliberately. | Pre-1.0; Zed monorepo evolves rapidly. Used as core UI runtime. |
-| **gpui-component** | <https://github.com/longbridge/gpui-component> | Pinned to a tagged-release commit hash. | Pre-1.0; single-maintainer org (Longbridge). Used for Table, code editor, command palette, charts, themes. |
+| **dioxus** | <https://github.com/DioxusLabs/dioxus> | Pinned to an exact crates.io version (`=0.7.x`) across `dioxus`, `dioxus-desktop`, `dioxus-core`, `dioxus-html` and `dioxus-ssr` — they are released together and a mixed set fails to compile. Bump deliberately, all at once. | Pre-1.0. The UI runtime since the GPUI→Dioxus migration. 0.7 is recent; the desktop renderer's `document::eval` semantics in particular are undocumented and dat0 depends on two of them (see `crates/dat0-ui/examples/eval_probe.rs`, which measures both and is the regression test if they change). |
+| **wry / tao** | <https://github.com/tauri-apps/wry>, <https://github.com/tauri-apps/tao> | Transitive through `dioxus-desktop`; not pinned directly. Watch anyway. | The actual window and WebView. Platform bugs surface here rather than in Dioxus, and the Linux build links WebKitGTK and libsoup through it. |
+| **CodeMirror 6** | <https://github.com/codemirror/dev> | Vendored: `crates/dat0-ui/vendor/codemirror/package.json` pins exact versions and `assets/codemirror.js` is the built bundle, committed. Rebuild with `node build.mjs` and commit both. | The SQL editor. Vendored deliberately so a release build needs no network and no Node — see the vendor README. |
 | **duckdb-rs** | <https://github.com/duckdb/duckdb-rs> | Exact-version pin (`=1.4.x`); hold the maintenance line, not the CalVer (`1.10500.x`) line. Bump deliberately. | Streaming Arrow surface (`Statement::query_arrow` / `stream_arrow`) has known rough edges (upstream issue #418): `Iterator::Item` is bare `RecordBatch`, not `Result<…>`, so mid-stream errors collapse into end-of-stream. Engine wraps the iterator with explicit error-surfacing logic. Verified pin: see "Current verified pins" below. |
 | **DuckDB** (the engine) | <https://github.com/duckdb/duckdb> | Pin to a tested patch version; document upgrade impact. | Engine upgrades may break workspace DB compatibility. See spec §6.6 (migration scaffolding). |
 | **sqlite_scanner** (DuckDB extension) | <https://github.com/duckdb/sqlite_scanner> | Bundled with DuckDB version. | Used for `.sqlite` / `.db` ingest. |
@@ -17,13 +18,13 @@ dat0 depends on several pre-1.0 / fast-moving upstream components. This document
 
 ## Current verified pins
 
-Verified by phase T0 spikes. GPUI surface verified by P1.T0 on **2026-04-26** (see [`docs/internal/gpui-api-notes.md`](internal/gpui-api-notes.md)). DuckDB surface verified by P2.T0 on **2026-04-27** (see [`docs/internal/duckdb-arrow-api-notes.md`](internal/duckdb-arrow-api-notes.md)). When bumping any pin, update both this table and the corresponding API-notes file.
+Verified by phase T0 spikes. The Dioxus surface was verified by the GPUI→Dioxus migration's Phase 0 spikes on **2026-08-09** (see [`docs/internal/2026-08-09-gpui-to-dioxus-migration-log.md`](internal/2026-08-09-gpui-to-dioxus-migration-log.md)). DuckDB surface verified by P2.T0 on **2026-04-27** (see [`docs/internal/duckdb-arrow-api-notes.md`](internal/duckdb-arrow-api-notes.md)). When bumping any pin, update both this table and the corresponding API-notes file.
 
 | Component | Version / Tag | SHA (full 40-char) | Verified | Notes |
 |---|---|---|---|---|
-| `gpui-component` (longbridge) | `v0.5.1` | `0f0ab35233212f8f3277028995caf0c41e13ee6c` | 2026-04-26 | Tagged release. Fixes macOS `core-text` build failure present in v0.5.0. |
-| `gpui` (Zed, via crates.io) | `=0.2.2` | `08d95ad9d31f616a43dacda8416568d658dca6ae` | 2026-04-26 | Publish commit in `zed-industries/zed` ("chore: Bump gpui to 0.2.2 (#40856)", 2025-10-22). Consumed via `cargo` from crates.io, not as a git dep. The `=` prefix is the literal `Cargo.toml` form (exact-version pin), per the policy in the table above. |
-| `gpui-macros` (Zed, via crates.io) | `=0.2.2` | `08d95ad9d31f616a43dacda8416568d658dca6ae` | 2026-04-26 | Companion crate; published from the same Zed commit. Same exact-version pin form as `gpui`. |
+| `dioxus` (crates.io) | `=0.7.10` | n/a | 2026-08-09 | Exact pin, with `dioxus-desktop`, `dioxus-core`, `dioxus-html` and `dioxus-ssr` held at the same version. Two undocumented behaviours dat0 relies on are measured by `crates/dat0-ui/examples/eval_probe.rs`: `document::eval` scripts run CONCURRENTLY (a slow script does not block others), and a returned script's `dioxus.send` channel SURVIVES (the SQL editor's push channel depends on it). Re-run that probe on every bump. |
+| `wry` (transitive) | `0.53.5` | n/a | 2026-08-09 | The WebView. Resolved through `dioxus-desktop`; recorded so a platform regression can be bisected against it. |
+| `tao` (transitive) | `0.34.8` | n/a | 2026-08-09 | The window and event loop. Same. |
 | `duckdb` (duckdb-rs, via crates.io) | `=1.4.4` | `46d2e094ae741a4e7a500ae4389abf2cfd7e1458` | 2026-04-27 | Tag `v1.4.4` in `duckdb/duckdb-rs`, released 2025-01-27. Bundled DuckDB native = `1.4.4`. Features enabled: `bundled`, `json`, `parquet`. `sqlite_scanner` and `motherduck` are runtime-loaded (no Cargo feature exists; D-009 contingency open). Maintenance line `1.4.x` deliberately preferred over CalVer `1.10500.x` line at P2 entry — re-evaluate at P5/P6. |
 | `fs4` (crates.io) | `0.9.1` | n/a | 2026-05-16 | Minor pin (`^0.9`). Advisory file lock for `AppLock` PID guard (P3a T2). Resolved via `Cargo.lock`. |
 | `interprocess` (crates.io) | `2.4.2` | n/a | 2026-05-16 | Minor pin (`^2`), `tokio` feature. Cross-platform UDS for second-launch IPC (P3a T2). Resolved via `Cargo.lock`. |
@@ -34,11 +35,23 @@ Verified by phase T0 spikes. GPUI surface verified by P1.T0 on **2026-04-26** (s
 | `futures` (crates.io) | `0.3.32` | n/a | 2026-05-25 | Minor pin (`^0.3`). `futures::channel::mpsc` for `MainThreadDispatcher` (P3b T1, closes PD-010). Resolved via `Cargo.lock`. |
 | `mockito` (crates.io, dev-dep) | `1.7.2` | n/a | 2026-05-25 | Minor pin (`^1`). HTTP mocking for `sample_data_fetch.rs` (P3b T8). Dev-only — excluded from NOTICE.md by `ignore-dev-dependencies = true` in `about.toml`. Resolved via `Cargo.lock`. |
 
-> **Mechanism change (since planning snapshot):** `gpui-component` v0.5.1 declares `gpui = "0.2.2"` in its workspace `Cargo.toml`, consuming `gpui` as a published crates.io crate rather than as a git dependency. The pin policy still applies, but dat0 should pin via exact-version semver (`gpui = "=0.2.2"`) plus `Cargo.lock`, and record the publish-commit SHA in `docs/internal/gpui-api-notes.md` for audit.
 
-**P1 audit closure (2026-04-26):** T23 audit confirmed SHAs above match workspace `Cargo.toml` after T0–T22 implementation. No bumps were required during P1 execution. Next scheduled bump-check: monthly cadence per "Cadence" below.
+**P1 audit closure (2026-04-26)** — historical; the gpui pins it refers to were removed by the GPUI→Dioxus migration (2026-08-10):  T23 audit confirmed SHAs above match workspace `Cargo.toml` after T0–T22 implementation. No bumps were required during P1 execution. Next scheduled bump-check: monthly cadence per "Cadence" below.
 
-**P3b audit closure (2026-05-25):** P3b T13 verified the four pre-P3b pins (`gpui-component`, `gpui`, `gpui-macros`, `duckdb`) are unchanged and added four new pins (`reqwest`, `sha2`, `futures`, `mockito`) above. `cargo about generate -c about.toml docs/about-template.hbs` produced byte-identical output to the existing `NOTICE.md` block — no NOTICE regen required this phase.
+**P3b audit closure (2026-05-25)** — historical, same note:  P3b T13 verified the four pre-P3b pins (`gpui-component`, `gpui`, `gpui-macros`, `duckdb`) are unchanged and added four new pins (`reqwest`, `sha2`, `futures`, `mockito`) above. `cargo about generate -c about.toml docs/about-template.hbs` produced byte-identical output to the existing `NOTICE.md` block — no NOTICE regen required this phase.
+
+## Watched upstream API gaps
+
+APIs dat0 needs and the pinned upstream does not have. Distinct from the pin
+table above: nothing here is broken or outdated, so a bump-check will never
+surface it. Each row is a capability a dat0 slice reached for, could not find,
+and deferred — so the weekly scan has something concrete to look for, and the
+deferral has somewhere to be closed from.
+
+| Missing API | Upstream | Verified absent at | dat0 impact | Deferral |
+|---|---|---|---|---|
+| ~~Letter-spacing / tracking on text~~ | ~~`gpui`~~ | Resolved 2026-08-10 by the GPUI→Dioxus migration, not by upstream: CSS has had `letter-spacing` since CSS1, so the v4 shell's display tracking is written in `crates/dat0-ui/assets/app.css` alongside the rest of the type. | none | [D-031](deferrals.md#d-031--display-type-letter-spacing-unavailable-on-gpui-022) (closed) |
+| A `Result`-yielding Arrow iterator. Needed: `Arrow::next` returning `Option<Result<RecordBatch, duckdb::Error>>` (or any accessor that exposes a post-bind statement error), so a mid-stream failure is distinguishable from end-of-stream. | `duckdb-rs` | `=1.4.4`. `Arrow::next` is `Some(RecordBatch::from(&self.stmt?.step()?))` (`duckdb-1.4.4/src/arrow_batch.rs:27-33`) — `step()` returns `Option`, `Item` is a bare `RecordBatch`, and there is no `Statement::error()`. Long-standing upstream issue #418. | A DuckDB error raised after a successful bind silently truncates the result on all three drain paths (`run_materialized`, `run_page`, `spawn_streaming`). Mitigated only on the counted path: `run_paged` reconciles the rows that arrived against its own `COUNT(*)` and fails with `"result stream ended early"`. The uncounted paths have no detector. | [D-030](deferrals.md#d-030--mid-stream-arrow-errors-are-invisible-on-uncounted-paths) |
 
 ## Cadence
 
@@ -69,7 +82,7 @@ A tracked component's change is considered a breakage if any of the following ho
 
 ## Vendoring
 
-For Apache-2.0 components dat0 critically depends on (especially `gpui` and `gpui-component` while pre-1.0), `cargo vendor` is run periodically to mirror the current pinned versions into `vendor/` so dat0 remains buildable even if upstream goes dark. This is a defense-in-depth measure, not a fork.
+For Apache-2.0 / MIT components dat0 critically depends on (especially `dioxus`, `wry` and `tao` while pre-1.0), `cargo vendor` is run periodically to mirror the current pinned versions into `vendor/` so dat0 remains buildable even if upstream goes dark. This is a defense-in-depth measure, not a fork.
 
 ## Tooling
 

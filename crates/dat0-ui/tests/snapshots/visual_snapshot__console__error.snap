@@ -1,0 +1,32 @@
+---
+source: crates/dat0-ui/tests/visual_snapshot.rs
+expression: "rendered[0].1"
+---
+<div class="d0-scene" data-scene="console/error" style="width: 1440px; height: 900px; overflow: hidden">
+<div class="d0-console" data-a11y-id="sql-console">
+<div class="d0-console-tabs" role="tablist" data-a11y-id="console-tabstrip">
+<button class="d0-console-tab is-active" data-a11y-id="console-tab-tab-1" role="tab" aria-selected="true" aria-label="query 1" tabindex="0">query 1</button>
+<button class="d0-console-tab" data-a11y-id="console-tab-tab-2" role="tab" aria-selected="false" aria-label="query 2" tabindex="-1">query 2</button>
+<div style="margin-left: auto">
+</div>
+<button class="d0-chip" data-a11y-id="console-run" role="button" aria-label="Run" tabindex="0">
+<span style="color: var(--d0-ok)">Run</span>
+<span class="d0-key">⌘⏎</span>
+</button>
+</div>
+<div class="d0-console-toolbar" data-a11y-id="console-toolbar">
+<button class="d0-btn" data-a11y-id="console-run-pane" role="button" aria-label="Run in results pane" tabindex="0">Run in results pane</button>
+<button class="d0-btn" data-a11y-id="console-new-tab" role="button" aria-label="New query tab" tabindex="0">New query tab</button>
+<button class="d0-btn" data-a11y-id="console-history" role="button" aria-label="History" tabindex="0">History</button>
+<button class="d0-btn" data-a11y-id="console-save-query" role="button" aria-label="Save Query…" tabindex="0">Save Query…</button>
+<button class="d0-btn" data-a11y-id="console-load-query" role="button" aria-label="Saved Queries…" tabindex="0">Saved Queries…</button>
+<button class="d0-btn" data-a11y-id="console-save-as-table" role="button" aria-label="Save as Table…" tabindex="0">Save as Table…</button>
+</div>
+<div class="d0-editor" id="cm-tab-1" data-a11y-id="sql-editor-tab-1" role="textbox" aria-label="SQL editor" aria-multiline="true" tabindex="0">
+</div>
+<div class="d0-console-strip is-error" data-a11y-id="console-error" role="alert">
+<span class="d0-mono" data-a11y-id="console-error-text">Catalog Error: Table with name saless does not exist!</span>
+<button class="d0-btn" data-a11y-id="console-error-dismiss" role="button" aria-label="Dismiss error" tabindex="0">Dismiss error</button>
+</div>
+</div>
+</div>

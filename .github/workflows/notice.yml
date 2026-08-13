@@ -10,27 +10,43 @@ on:
       - "docs/about-template.hbs"
 jobs:
   notice:
-    # WARN-ONLY in P1: cargo-about's per-platform license tiebreak (e.g. ureq's
-    # Apache-2.0/MIT dual license) makes its output non-deterministic across host
-    # platforms even with `targets = [...all 4...]` in about.toml. Tracking as
-    # PD-003 in docs/deferrals.md; tighten back to a hard gate once stable.
-    continue-on-error: true
+    # HARD GATE since QA2 (PD-003 closed).
+    #
+    # PD-003 was that `cargo about generate` is non-deterministic ACROSS HOST
+    # PLATFORMS: a dual-licensed crate (e.g. `ureq`, `Apache-2.0 OR MIT`) gets
+    # a different tiebreak on macOS than on Linux, so the committed NOTICE.md
+    # and a freshly-generated one disagree by a section-ordering line. The job
+    # was made warn-only to stop that noise reddening PRs.
+    #
+    # The cause is the CROSS-PLATFORM comparison, not cargo-about. The release
+    # runbook already mandates regenerating NOTICE.md on Linux, so pinning the
+    # generator to one canonical platform makes the diff deterministic and the
+    # gate honest — PD-003's own "suggested fix (b)". `about.toml` still lists
+    # all four targets, so the CONTENT is still the union across platforms;
+    # only the tiebreak host is fixed.
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - uses: dtolnay/rust-toolchain@1.97.0
-      - name: Install cargo-about
-        # cargo-about >=0.9 ships the binary behind the `cli` feature; without
-        # `--features=cli` the install completes but produces no executable.
-        run: cargo install cargo-about --locked --features=cli
+      # Prebuilt binary rather than `cargo install --locked`: the from-source
+      # build was several minutes of the job's wall time, and a `cargo install`
+      # resolving its own dep graph is one more source of drift in a job whose
+      # entire purpose is determinism.
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-about
       - name: Regenerate third-party list
         run: cargo about generate -c about.toml docs/about-template.hbs > /tmp/third-party.txt
       - name: Diff NOTICE
         run: |
           ./scripts/notice-extract.sh NOTICE.md > /tmp/notice-current.txt
           if ! diff /tmp/notice-current.txt /tmp/third-party.txt; then
-            echo "::warning::NOTICE.md is out of sync with the Linux dep graph (PD-003 — cross-platform license tiebreak)."
-            echo "Run locally: cargo about generate -c about.toml docs/about-template.hbs and replace the marked section in NOTICE.md."
+            echo "::error::NOTICE.md is out of sync with the dependency graph."
+            echo "Regenerate ON LINUX (the canonical tiebreak host this gate uses):"
+            echo "  cargo about generate -c about.toml docs/about-template.hbs"
+            echo "then replace the marked section in NOTICE.md. Regenerating on macOS"
+            echo "will produce a different dual-license tiebreak and fail this gate again."
             exit 1
           fi
           echo "NOTICE in sync"

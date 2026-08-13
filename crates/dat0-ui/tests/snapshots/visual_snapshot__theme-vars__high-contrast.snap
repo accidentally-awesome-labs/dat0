@@ -1,0 +1,5 @@
+---
+source: crates/dat0-ui/tests/visual_snapshot.rs
+expression: vars
+---
+:root{color-scheme:light;--d0-canvas:#ffffff;--d0-surface:#ffffff;--d0-pane-head:#f2f2f2;--d0-panel:#ededed;--d0-chrome:#ffffff;--d0-chrome-raised:#f2f2f2;--d0-chrome-border:#595959;--d0-chrome-border-2:#3d3d3d;--d0-tabstrip:#e4e4e4;--d0-tab-active:#ffffff;--d0-tab-hover:#ebebeb;--d0-tab-divider:#595959;--d0-row-hover:#ebebeb;--d0-active-bg:#d4e4fa;--d0-field:#ffffff;--d0-rule:#595959;--d0-rule-dim:#757575;--d0-input-border:#3d3d3d;--d0-ink:#000000;--d0-fg:#000000;--d0-muted:#333333;--d0-chrome-muted:#333333;--d0-accent:#00337a;--d0-ok:#0a4d18;--d0-error:#8b0010;--d0-warn-text:#5a3a00;--d0-amber:#f5a623;--d0-amber-hover:#ffb733;--d0-amber-text:#5c2900;--d0-ink-on-amber:#101318;--d0-sql-keyword:#4b1f96;--d0-sql-number:#57279e;--d0-sql-string:#0a4d18;--d0-sql-fn:#00337a;--d0-sql-comment:#333333;--d0-cyan:#0a4247;--d0-shadow-pane:0 8px 24px rgba(31,35,40,0.10);--d0-shadow-overlay:0 24px 64px rgba(31,35,40,0.18);--d0-scrim:#000000a6;--d0-inset:rgba(0,0,0,0.35);--d0-shadow-pane:none;--d0-shadow-overlay:none;}

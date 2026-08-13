@@ -1,0 +1,14 @@
+---
+source: crates/dat0-ui/tests/visual_snapshot.rs
+expression: html
+---
+<div class="d0-scene" data-scene="banner/warning" style="width: 1440px">
+<div class="d0-banner-host" data-a11y-id="banner-host">
+<div class="d0-banner is-warning" data-a11y-id="banner-0" role="note" aria-label="two sessions left behind by a previous run">
+<div class="d0-banner-text">
+<span class="d0-banner-title">two sessions left behind by a previous run</span>
+</div>
+<button class="d0-banner-dismiss" data-a11y-id="banner-0-dismiss" role="button" aria-label="Close" tabindex="0">✕</button>
+</div>
+</div>
+</div>

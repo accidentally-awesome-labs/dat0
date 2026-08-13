@@ -1,0 +1,39 @@
+---
+source: crates/dat0-ui/tests/visual_snapshot.rs
+expression: html
+---
+<div class="d0-scene" data-scene="modal/query-library" style="width: 1440px; height: 900px; overflow: hidden">
+<div class="d0-scrim" data-a11y-id="modal-scrim">
+<div class="d0-modal" data-a11y-id="modal" role="dialog" aria-modal="true" aria-label="History" tabindex="-1">
+<div class="d0-modal-head">
+<span class="d0-label">history</span>
+<span class="d0-head-title">History</span>
+<button class="d0-btn is-ghost d0-modal-close" data-a11y-id="modal-close" role="button" aria-label="Close">✕</button>
+</div>
+<div class="d0-modal-body" data-a11y-id="modal-body">
+<div class="d0-history" data-a11y-id="sql-history-list" role="listbox" aria-label="History" aria-activedescendant="hist-row-0" tabindex="0">
+<div id="hist-row-0" class="d0-row is-active" data-a11y-id="hist-row-0" role="option" aria-selected="true" aria-label="SUMMARIZE sales">
+<span class="d0-row-name d0-mono">SUMMARIZE sales</span>
+<span class="d0-row-meta d0-mono">ok · 44 ms</span>
+</div>
+<div id="hist-row-1" class="d0-row" data-a11y-id="hist-row-1" role="option" aria-selected="false" aria-label="SELECT region, SUM(revenue)">
+<span class="d0-row-name d0-mono">SELECT region, SUM(revenue)</span>
+<span class="d0-row-meta d0-mono">ok · 27 ms</span>
+</div>
+<div id="hist-row-2" class="d0-row" data-a11y-id="hist-row-2" role="option" aria-selected="false" aria-label="SELECT * FROM saless">
+<span class="d0-row-name d0-mono">SELECT * FROM saless</span>
+<span class="d0-row-meta d0-mono is-err">err · 1 ms</span>
+</div>
+<div id="hist-row-3" class="d0-row" data-a11y-id="hist-row-3" role="option" aria-selected="false" aria-label="SELECT * FROM sales">
+<span class="d0-row-name d0-mono">SELECT * FROM sales</span>
+<span class="d0-row-meta d0-mono">ok · 12 ms</span>
+</div>
+<div id="hist-row-4" class="d0-row" data-a11y-id="hist-row-4" role="option" aria-selected="false" aria-label="SELECT 1">
+<span class="d0-row-name d0-mono">SELECT 1</span>
+<span class="d0-row-meta d0-mono">ok · 3 ms</span>
+</div>
+</div>
+</div>
+</div>
+</div>
+</div>

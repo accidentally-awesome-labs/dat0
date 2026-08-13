@@ -47,14 +47,14 @@ that's modifying it; merge conflicts are signals worth investigating.
 | D-005 | Linux Secret Service "setup banner" UX             | open | P1   | TBD    |
 | D-006 | macOS x86_64 (Intel) CI matrix coverage            | open | P1   | TBD    |
 | D-007 | MotherDuck ATTACH end-to-end                       | closed | P2   | P5c    |
-| D-008 | Cancellation-token wiring through `QueryEngine` trait (→ token-free in P5a) | in-progress | P2 | P5a |
+| D-008 | Cancellation-token wiring through `QueryEngine` trait (→ token-free in P5a) | closed | P2 | P5a |
 | D-009 | Bundle `sqlite_scanner` static when duckdb-rs exposes a feature | open | P2 | TBD |
 | D-010 | Non-UTF-8 file encoding handling                   | open | P2   | TBD    |
 | D-011 | Remove `__debug_query_scalar` test-only helper     | closed | P2   | P3a    |
 | D-012 | Engine catalog `TableInfo` synthesis (origin + schema) | closed | P2   | P3a    |
-| D-013 | Self-hosted macOS CI runner (cut hosted macos-14 10× billing) | open | P2 | TBD |
+| D-013 | Self-hosted macOS CI runner (cut hosted macos-14 10× billing) | closed | P2 | superseded by MX3 → D-032 |
 | D-014 | Memory Budget Settings section | closed | P3b | P3c / P9c |
-| D-015 | AccessKit / screen-reader selection-tree exposure | open | P4b | P10b |
+| D-015 | AccessKit / screen-reader selection-tree exposure | closed | P4b | closed by the GPUI→Dioxus migration |
 | D-018 | Workspace lineage DAG — node-edge graph with auto-layout (left→right topological), pan/zoom, whole-workspace view | open | P6b | — |
 | D-019 | Workspace concurrency/sync-drive: cross-machine lock, sync-drive detection, rich in-use modal, Settings → Workspace, force-unlock | closed | P7a | P7b |
 | D-020 | Live-data refresh: file-watcher on Tab.source_path → re-import on change (re-CTAS + replay transforms, debounced) + finish recovery_panel Sheet UI | closed | P7a | P7c |
@@ -67,6 +67,11 @@ that's modifying it; merge conflicts are signals worth investigating.
 | D-027 | In-app Inspect polish (read-only badge, scratch GC, multi-source GUI replay, Unpack button) | open | P8 | — |
 | D-028 | Privileged `/Applications` auto-update (SMJobBless/SMAppService helper for authenticated install) | open | P10a-2 | v1.x |
 | D-029 | Settings panel persist-on-render → change-gate (per-frame fsync); + P10b cleanup (orphan `SettingsView`/dead `render` trait, 2 hardcoded input placeholders, orphan `settings.update.auto_check` key) + correct the "i18n-check fails on missing keys" claim (it is warn-only) | closed | P10b | P10c |
+| D-031 | Display-type letter-spacing (v4's −0.03em/−0.035em tracking) unavailable on gpui 0.2.2 — no `Styled` setter and no `TextStyle` field | closed | UI1 | closed by the GPUI→Dioxus migration |
+| D-032 | Promote `perf-gate` from label-triggered to every-PR (needs dedicated macOS hardware) | open | MX3 | — |
+| D-036 | Two `block_on(Session::…)` sites remain on the GPUI main thread — `workspace_ops::spawn_workspace_window` and `package_ops::open_package_at` | open | EN4 | — |
+| D-037 | `docs/a11y.md` (and 8 more docs) still describe the GPUI build — dead crate `dat0-app`, dead test `theme_contrast_gate`, dead feature `a11y-capture`, dead paths `src/window/render.rs` | open | GPUI→Dioxus migration | — |
+| D-038 | `Coverage (report only)` has never completed on a hosted runner — instruments the whole workspace and exhausts the runner mid-step; now `continue-on-error` | open | GPUI→Dioxus migration | — |
 
 ## At-a-glance — Plan defects
 
@@ -74,7 +79,7 @@ that's modifying it; merge conflicts are signals worth investigating.
 |--------|--------------------------------------------------------------------|--------|----------|
 | PD-001 | tracing EnvFilter directive `dat0=debug` doesn't match dat0 crates | open   | low      |
 | PD-002 | Settings store atomic-write missing `fsync` before rename          | closed | low      |
-| PD-003 | cargo-about NOTICE output not deterministic across host platforms  | open   | low      |
+| PD-003 | cargo-about NOTICE output not deterministic across host platforms  | closed | low      |
 | PD-004 | Linux Secret Service backend not reachable from CI keychain tests  | open   | low      |
 | PD-011 | P3b plan §3.7 ambiguity rule references sniff outputs that don't exist: no candidate-delimiter scores, no encoding column, no per-column confidence in `sniff_csv` | open | low |
 | PD-012 | `NYC_TAXI_SHA256 = "FILL_AT_T8"` — release asset not yet uploaded, so the fetch path always fails the checksum check at runtime | open | low |
@@ -85,7 +90,7 @@ that's modifying it; merge conflicts are signals worth investigating.
 | PD-017 | P4b T3 plan premise wrong: it assumed `register_file` "finalizes a CTAS import", but `register_file` emits `CREATE OR REPLACE VIEW … AS SELECT * FROM read_csv/json/parquet(…)` — a VIEW, which cannot be `ALTER TABLE`-d, so the eager `__dat0_rowid` surrogate only lands via `create_table` (base tables). The app imports files exclusively via `register_file` (`file_drop.rs:133`), so imported grids are VIEWs with no `__dat0_rowid`, and the P4b edit/delete overlay (`WHERE __dat0_rowid NOT IN …`, `CASE WHEN __dat0_rowid = …`) references a non-existent column → edit/delete fail on real imports. T3 engine work is correct + complete; resolution is app-side (materialize imports to base tables, or back-fill via `ensure_rowid` on first bind). **Closed via Path A:** new `QueryEngine::register_file_as_table` materializes imports into rowid-bearing base tables (reusing all P3b sniffing); `file_drop.rs` now calls it. | closed | high |
 | PD-018 | Pre-existing (P3a-era) grid-render gap surfaced during P4b T7: `GridTableDelegate::render_td` (`grid/mod.rs`) renders the em-dash placeholder for EVERY cell — it never calls `render_cell` or `page_for`, and `page_for` (the only method that populates the page LRU from DuckDB) has ZERO production callers (no `load_more`/visible-range/prefetch). So in the running app the grid shows `—` and the cache is empty. P4b's cache-only reads (`cell_display`/`row_key`/`column_arrow_type`) resolve nothing on screen, so copy reads empty strings and paste/cut/edit skip every cell. P4b edit/select/clipboard LOGIC is correct + fully test-green (engine round-trips), but the headline T14 manual Excel/Sheets UAT is BLOCKED until the paged-render cache is wired (render_td → real values via the page LRU + prefetch visible page on bind). Out of every P4b plan task's scope. **Closed (Path A):** `render_td` now does a synchronous LRU lookup → real `render_cell` value; the LRU is populated off-thread by `WorkspaceShell::prefetch_visible_rows` (page-0 prefetch on grid bind + the gpui-component `TableDelegate::visible_rows_changed` scroll hook), notifying the main thread via the `MainThreadDispatcher`. Also wired the right-click context menu (`ContextMenuExt`), a per-cell focus ring, and the forward-incompat recover banner. | closed | high |
 | PD-019 | P4c T13 wired header single-click → select-column but could NOT wire row-gutter click → select-row: the gpui-component `TableDelegate` trait (rev `0f0ab35`) has no `render_row_header`/gutter seam, and `TableState::render_table_row` owns the row layout internally. Two alternatives were rejected: (a) subscribing to `TableEvent::SelectRow` makes every row-body click select a whole row, clobbering the single-cell click selection wired in T5; (b) a fake first column holding row numbers corrupts the `col_ix` passed to `render_td` and breaks column addressing. `WorkspaceShell::select_row_at` IS implemented + reachable programmatically; the click wiring is unwired. | open | low |
-| PD-020 | P4c T14 wired inline-editor `Enter` → commit + move-DOWN + focus-on-mount, but `Tab` → commit + move-RIGHT could NOT be wired: gpui-component `Input` (rev `0f0ab35`) consumes Tab internally for focus tab-stops and surfaces no `InputEvent::PressTab` variant (`InputEvent` is `{ Change, PressEnter, Focus, Blur }`). `EditorAdvance` is enum-shaped so adding `Right` is a one-line extension once an upstream Tab seam exists. | open | low |
+| PD-020 | P4c T14 wired inline-editor `Enter` → commit + move-DOWN + focus-on-mount, but `Tab` → commit + move-RIGHT could NOT be wired: gpui-component `Input` (rev `0f0ab35`) consumes Tab internally for focus tab-stops and surfaces no `InputEvent::PressTab` variant (`InputEvent` is `{ Change, PressEnter, Focus, Blur }`). **Closed by Phase 6 of the GPUI→Dioxus migration (2026-08-10):** the limitation was the toolkit's, and a plain `<input>` surfaces Tab like any other key, so `dat0-ui`'s cell editor commits and steps one column right on Tab, one left on Shift-Tab, clamped at the row's ends. | closed | low |
 | PD-021 | P4c (T11 review): `error_ux::push` enqueues success/error banners into the global `PENDING` queue, but NOTHING drains it in the runtime render tree — only `#[cfg(test)]` code calls `drain_pending`. So export completion/failure feedback (`window.rs::run_export`) AND the pre-existing P4b paste-reject banner (`grid/edit_ops.rs`) are invisible to the user at runtime. **Closed by P6a T1:** `WorkspaceShell::render` now calls `error_ux::banner::merge_pending` into a per-window `banners` field and renders a host strip atop the shell. | closed | medium |
 | PD-022 | P6a (T12 review): the Inspector profile is refreshed on forward data/schema mutations (cell edit, paste, cut, delete, rename, reorder, transform-apply via `route_change`), but NOT on `undo`/`redo` or SQL-console grid-bind — those rebind via `apply_view_change`, which has no inspector hook. So undoing an edit (or rebinding a grid from the SQL console) leaves the inspector profile stale until the next forward mutation. Single well-scoped fix: hook `apply_view_change` (or an `on_rebind_complete` seam) to invalidate/re-profile the inspected table. Not a regression — the inspector did not refresh at all before P6a. | closed | low |
 
@@ -299,7 +304,7 @@ that's modifying it; merge conflicts are signals worth investigating.
 
 ### D-008 — Cancellation-token wiring through `QueryEngine` trait
 
-- **Status:** in-progress (P5a)
+- **Status:** closed — functionally delivered token-free by P5a (2026-06-02).
 - **Deferred from:** P2
 - **Target phase:** P5a (SQL Console — editor + run + cancel + multi-tab)
 - **What P5a delivers (2026-06-02):** Query cancellation for the SQL Console,
@@ -317,9 +322,16 @@ that's modifying it; merge conflicts are signals worth investigating.
   (runtime-registered `tree-sitter-sequel`), multi-tab persistence (session v5),
   and run-statement-under-cursor — but cancellation is the D-008 outcome proper.
   Keybinds: `Cmd+Enter` run / `Cmd+.` cancel / `Cmd+Shift+C` toggle console.
-- **Will flip to `closed`** in the P5a retro with the closing commit (squash
-  SHA), once the manual UAT cancel-path check (`docs/plans/2026-06-02-dat0-p5a-uat.md`)
-  is run.
+- **Closed by:** P5a, token-free, as described above. The deferral's remaining
+  ambition — the `cancel: CancellationToken` trait amendment under "What target
+  phase delivers" below — is **superseded**, not owed. Production-v1 slice EN2
+  (lane-scoped cancellation) replaces it with a better-shaped mechanism: a
+  `QueryToken` + `QueryLane` pair held on `DuckDBEngine` itself, with
+  `begin_query` / `end_query` / `interrupt_scoped` / `interrupt_lane`. That puts
+  the scoping where the single per-connection `duckdb::InterruptHandle` actually
+  lives, instead of threading a token parameter through every `execute*`
+  signature. Anything still wanted from the original token design is tracked as
+  EN2 work, so D-008 carries no open remainder.
 - **Reason:** P2 has zero callers passing tokens — adding a
   `cancel: CancellationToken` parameter on every `execute*` trait method now
   would ship dead-weight ergonomics that can't be evaluated against a real
@@ -339,8 +351,9 @@ that's modifying it; merge conflicts are signals worth investigating.
   channel; Cmd+. UX wiring in the P5 SQL Console.
 - **Originating doc:** `docs/specs/2026-04-27-dat0-p2-engine-design.md` §7
   + §2.2.
-- **Last touched:** 2026-06-02 (status → in-progress; token-free cancel via
-  `QueryCancel` drop-guard + `engine.interrupt()`, no trait change).
+- **Last touched:** 2026-08-08 (status → closed; P5a delivered the token-free
+  cancel path, and EN2's lane-scoped cancellation supersedes the trait
+  amendment).
 
 ### D-009 — Bundle `sqlite_scanner` static when duckdb-rs exposes a feature
 
@@ -483,7 +496,7 @@ that's modifying it; merge conflicts are signals worth investigating.
 
 ### D-013 — Self-hosted macOS CI runner (cut hosted macos-14 10× billing)
 
-- **Status:** open
+- **Status:** closed — superseded (2026-08-08, MX3)
 - **Deferred from:** P2 (PR #3 — `ci(p2)` split + self-hosted Linux routing)
 - **Target phase:** TBD — gated on hardware purchase (dedicated Mac mini).
 - **Reason:** PR #3 routed the `linux-x86_64` matrix entry to a runnerkit
@@ -516,8 +529,19 @@ that's modifying it; merge conflicts are signals worth investigating.
 - **Note (2026-06-25):** P10c left this deferred — no Mac mini available; the
   GlitchTip/crash-reporting half of P10 shipped, but the perf-gate runner stays
   gated on hardware.
-- **Note (2026-06-25, beta channel):** beta channel still gated on a tester cohort; P10c did not start it.
-- **Last touched:** 2026-06-25
+- **Note (2026-08-08, MX3) — SUPERSEDED, closing.** The premise was that
+  enforcing a perf budget required dedicated Apple hardware. MX2 removed it:
+  `cargo xtask perf` measures a real 1440×900 window on ANY host and gates on
+  two independent things — the absolute budgets in
+  `docs/internal/perf-baselines.json`, and a per-host recorded baseline keyed by
+  `os-arch-$DAT0_PERF_HOST` so a virtualized runner is never compared against a
+  dev box. The budget is therefore enforced today, on the release host, as a
+  numbered step in `docs/release-runbook.md`. Dedicated hardware would only
+  change WHICH runner executes it, which is a cost question, not a correctness
+  one. The cost half is re-filed as D-032; the billing rationale above is
+  preserved there rather than kept open under a title that now overstates what
+  is blocked.
+- **Last touched:** 2026-08-08
 
 ### D-014 — Memory Budget Settings section
 
@@ -549,7 +573,17 @@ that's modifying it; merge conflicts are signals worth investigating.
 
 ### D-015 — AccessKit / screen-reader selection-tree exposure
 
-- **Status:** open
+- **Status:** closed — 2026-08-10, by Phase 7 of the GPUI→Dioxus migration.
+  The deferral was a statement about GPUI: AccessKit was entirely absent from
+  the pinned 0.2.2, so the only accessibility dat0 could produce was a
+  test-only `TreeUpdate` that `kittest` read and no screen reader ever saw.
+  A WebView has an accessibility tree by construction. `dat0-ui` emits real
+  ARIA in release builds — `role` from `a11y::AccessRole`, names from
+  `aria-label`, tab participation from `a11y::TabStop` — and the platform
+  adapter is the one the OS already ships for WebKit and WebKit2GTK. The
+  `a11y-capture` cargo feature, the hand-built `TreeUpdate`, `kittest`,
+  `accesskit` and `accesskit_consumer` are all gone from the tree.
+- **Was:** open
 - **Deferred from:** P4b (T0 probe finding; design decision 5)
 - **Target phase:** P10b
 - **Reason:** The P4b T0 probe (`docs/internal/dat0-p4b-t0-probe.md` §2) verified
@@ -966,6 +1000,279 @@ that's modifying it; merge conflicts are signals worth investigating.
   (pre-merge at time of writing).
 - **Last touched:** 2026-06-25
 
+### D-031 — Display-type letter-spacing unavailable on gpui 0.2.2
+
+- **Status:** closed — 2026-08-10, by Phase 7 of the GPUI→Dioxus migration.
+  The deferral was gated on a GPUI feature that never arrived: no `Styled`
+  setter, no `TextStyle` field, nothing to set. CSS has had `letter-spacing`
+  since CSS1, so the tracking the v4 shell specifies is now simply written
+  where the rest of the type is, in `crates/dat0-ui/assets/app.css`.
+- **Was:** open
+- **Severity:** low
+- **Deferred from:** UI1 (2026-08-08)
+- **Target phase:** gated on upstream — see `docs/upstream-watch.md`
+- **Affected files:** `crates/dat0-app/src/theme/tokens.rs` (`TextRole`)
+- **Reason:** the v4 shell specifies negative tracking on every display size —
+  `-0.035em` on h1 and the waitlist h2, `-0.03em` on the compare h2 and the
+  pane h2s, `-0.05em` on the wordmark
+  (`dat0-site/.planning/sketches/009-redesign-landing-v4/DESIGN-SPEC.md` §4).
+  There is no API for it on the pinned toolchain, and this was verified against
+  the vendored source rather than assumed:
+  - `gpui::Styled` (`gpui-0.2.2/src/styled.rs`) exposes `font_weight` (`:404`),
+    `text_size` (`:424`), `font_family` (`:616`) and `line_height` (`:644`).
+    There is no tracking/letter-spacing setter.
+  - `gpui::TextStyle` (`gpui-0.2.2/src/style.rs:354-398`) has sixteen fields —
+    `color`, `font_family`, `font_features`, `font_fallbacks`, `font_size`,
+    `line_height`, `font_weight`, `font_style`, `background_color`,
+    `underline`, `strikethrough`, `white_space`, `text_overflow`, `text_align`,
+    `line_clamp` — and none of them is letter-spacing.
+  - A case-insensitive scan of `gpui-0.2.2/src/` for `letter_spacing` /
+    `letterspacing` / `tracking` returns only unrelated hits (a macOS mouse
+    tracking area, Wayland serial tracking, and three doc comments).
+  So the gap is in the renderer, not in dat0's token layer: `TextRole` could
+  carry a tracking value today, but nothing downstream could apply it.
+- **What UI1 shipped instead:** the rest of the v4 ladder lands in full — sizes
+  11 / 12.5 / 13 / 15 / 20 / 28 px, weights NORMAL/SEMIBOLD, and the tightening
+  leading (1.4 → 1.03). Display type is therefore correct in every dimension
+  except optical tightness, which reads as very slightly loose at 20 px and
+  28 px and is invisible below that.
+- **What target phase delivers:** once gpui exposes the setter, add
+  `TextRole::tracking()` beside `size()`/`weight()`/`line_height_factor()`,
+  apply it in `TypoStyled::text_role`, and extend
+  `text_role_ladder_exact_values` with the fourth column. No call site changes —
+  that is the whole reason the ladder is centralised.
+- **Why not now:** the only workarounds are worse than the defect. Per-character
+  positioning would mean abandoning `text_role` for a custom element on every
+  heading; forking gpui would break the exact-pin policy in root `Cargo.toml`
+  and `docs/upstream-watch.md`.
+- **Originating doc:** UI1 (production-v1 plan, UI workstream).
+- **Last touched:** 2026-08-08
+
+### D-032 — Promote `perf-gate` from label-triggered to every-PR (needs dedicated macOS hardware)
+
+- **Status:** open
+- **Severity:** low
+- **Deferred from:** MX3 (2026-08-08), splitting D-013
+- **Target phase:** gated on hardware purchase (dedicated Apple Silicon Mac mini)
+- **Reason:** MX2/MX3 made the perf budget enforceable anywhere, which closed
+  D-013's correctness half. What is left is purely a question of *where* the
+  gate runs, and it is a cost question:
+  - `ci.yml`'s three-scenario perf step is `continue-on-error: true` on
+    `macos-14` hosted runners. It has to be. A virtualized GPU cannot defend a
+    frame-rate claim, and a gate that reddens `main` on hardware noise gets
+    disabled within a week — which is strictly worse than an advisory one.
+  - The blocking six-scenario `perf-gate` job therefore runs only behind the
+    `run-perf` PR label, the same shape `heavy.yml` uses.
+  - Hosted `macos-14` also bills at the 10× multiplier, which was D-013's
+    original driver and is still the dominant contributor to the org Actions
+    cap. Self-hosting macOS needs Apple hardware (the EULA permits macOS guests
+    only on Apple-branded hosts).
+- **What target phase delivers:** a Mac mini running Tart-managed ephemeral
+  macOS VMs as Actions runners. Then `perf-gate`'s `runs-on:` changes and its
+  label condition is dropped — **that is the entire diff**, which is the point
+  of having built the harness host-independently. Validate Metal Toolchain,
+  Xcode CLT, rustup and the Secret Service test paths in the VM image, and
+  record the new host's baseline with `cargo xtask perf --update-baseline` in
+  its own commit.
+- **Why not now:** no Mac mini available. Running CI on the active dev Mac was
+  rejected in P2 and the reason still holds — background CI fights interactive
+  work for CPU/RAM, and on a *perf* gate specifically that contention is not
+  merely slow, it corrupts the measurement.
+- **Originating doc:** MX3; supersedes the runner half of D-013.
+- **Last touched:** 2026-08-08
+
+### D-030 — Mid-stream Arrow errors are invisible on uncounted paths
+
+- **Status:** open
+- **Deferred from:** EN3 (production v1)
+- **Target phase:** blocked upstream — see `docs/upstream-watch.md` (duckdb-rs
+  `Result`-yielding Arrow iterator)
+- **What it is:** `duckdb::Arrow::next` is
+  `Some(RecordBatch::from(&self.stmt?.step()?))`
+  (`duckdb-1.4.4/src/arrow_batch.rs:27-33`). `step()` returns an `Option`, not a
+  `Result`, and the iterator's `Item` is a bare `RecordBatch`. A DuckDB error
+  raised *after* the statement bound successfully therefore terminates the batch
+  loop in exactly the same observable way as end-of-stream, and duckdb-rs 1.4.4
+  exposes no statement-error accessor to disambiguate them. The consumer sees a
+  short result and a successful `Ok(_)`.
+
+  Every code path that drains that iterator is affected:
+  `execute::run_materialized` (`execute/mod.rs`), `execute::paged::run_page`
+  (`execute/paged.rs`), and `execute::streaming::spawn_streaming`
+  (`execute/streaming.rs`). Prepare/bind-time errors are unaffected — those
+  return a real `Err` and are translated normally.
+- **What EN3 delivered instead of a fix:** reconciliation on the ONE path that
+  can afford a detector. `execute::paged::run_paged` already computes
+  `SELECT COUNT(*)`, so after the batch loop it compares the rows that arrived
+  against `min(limit, total - offset)` and returns
+  `EngineError::EngineFailed("result stream ended early: expected N rows, got M")`
+  on a mismatch. That covers every SQL-console result page and every
+  `execute_paged` caller. It deliberately does NOT cover `execute_page` (EN1's
+  count-free grid path), `execute`, or `execute_streaming`: none of them has a
+  count to compare against, and fabricating one would reintroduce the O(N)-per-page
+  scan EN1 removed.
+- **Why no probe was invented:** the obvious candidates do not exist at this pin.
+  There is no `Statement::error()`, the `Arrow` iterator borrows the statement so
+  it cannot be re-interrogated after the loop, and re-running the query to
+  compare is both a second full scan and racy against concurrent DDL. A
+  heuristic here would report truncation that did not happen, which is worse
+  than the current silence.
+- **Fix when picked up:** replace the drain loops with the upstream
+  `Result`-yielding iterator once it lands, and delete the reconcile block in
+  `run_paged` (its cost is one comparison, but its existence is only justified by
+  this gap). Until then the three drain sites carry a `D-030` reference comment
+  so the limitation is traceable from the code.
+- **Originating doc:** EN3, `docs/plans/2026-08-08-dat0-production-v1-plan.md`
+- **Last touched:** 2026-08-08
+
+### D-033 — MotherDuck traffic is unmetered by the egress counter
+
+- **Status:** open
+- **Deferred from:** SH1 (production v1)
+- **Target phase:** blocked upstream — needs a byte-accounting hook in the
+  DuckDB MotherDuck extension, or a dat0-supplied transport for it
+- **What it is:** `crate::telemetry::egress::total_sent()` counts
+  application-layer request bytes dat0 itself puts on the wire, and the status
+  bar renders that number under the marketing page's `0 bytes left this
+  machine` claim. Four of the five outbound seams are fully counted. The fifth
+  is not: `connections::connect::run_connect` hands a token to DuckDB's
+  MotherDuck extension via `ATTACH 'md:'`, and from that point the extension
+  owns its own socket to the service. Every query dat0 routes at an `md:`
+  database leaves this machine over a connection dat0 never sees and cannot
+  size.
+- **What SH1 delivered instead of a fix:** honesty about the gap, in the
+  product rather than only in this file. The attach seam records the credential
+  handoff it does originate and calls
+  `telemetry::egress::note_unmetered_channel()`. Once that latches,
+  `has_unmetered_channel()` is true forever (the bytes already left; a
+  disconnect does not un-send them) and the sidebar footer renders
+  `egress <n> +` — the `+` marks the figure as a FLOOR. A bare number after an
+  attach would read as a complete accounting it cannot be, which is the failure
+  mode this deferral exists to prevent.
+- **Why no estimate was invented:** any number dat0 could synthesise for MD
+  query traffic (SQL text length, result-set size) would be off by orders of
+  magnitude in both directions and would look more authoritative than the
+  em-dash it replaced. A measured floor marked as a floor is the only honest
+  shape available at this pin.
+- **Fix when picked up:** if the extension gains a byte-counter pragma or dat0
+  proxies MD over its own transport, record real totals at that seam and delete
+  the `UNMETERED` latch plus the footer's `+` branch.
+- **Originating doc:** SH1, `docs/plans/2026-08-08-dat0-production-v1-plan.md`
+- **Last touched:** 2026-08-08
+
+### D-034 — Sidebar footer reports no tab count
+
+- **Status:** open
+- **Severity:** low
+- **Deferred from:** SH2 (production v1)
+- **What it is:** the plan specified the footer's first row as "window/tab
+  counts from `window_registry::WindowRegistry`". The registry tracks windows
+  only (`WindowRegistry::windows: Vec<WindowHandle>`); tabs live in
+  `session::Session.tabs`, behind the shell's `Arc<Mutex<Session>>`.
+  `catalog::panel::render_catalog` — the seam the footer renders from —
+  receives `(tree, collapsed, active, focus_handle, cx)` and has no route to
+  the session. So the row reports `N windows · M workspaces`, both of which the
+  registry genuinely has (`len()` and the `workspace_path.is_some()` count),
+  and no tab count.
+- **Why not just widen the signature:** `render_catalog`'s caller is
+  `WorkspaceShell::render_catalog_body` in `window/dock.rs`, which does have
+  `&self`. Threading a tab count through is a two-line change — but a tab count
+  is per-window state and the other two numbers on that row are process-wide,
+  so mixing them would make one row answer two different questions. If the row
+  should carry tabs, it should be a fourth row scoped to this window, which is
+  a design call for AX2's visual pass rather than something to guess here.
+- **Fix when picked up:** either add `tabs: usize` to
+  `view::sidebar_footer::SidebarFooterModel` and pass it from
+  `render_catalog_body`, or drop the idea and record that windows+workspaces is
+  the intended census.
+- **Originating doc:** SH2, `docs/plans/2026-08-08-dat0-production-v1-plan.md`
+- **Last touched:** 2026-08-08
+
+### D-036 — Two `block_on(Session::…)` sites remain on the GPUI main thread
+
+- **Status:** open
+- **Severity:** low
+- **Deferred from:** EN4 (production v1)
+- **What it is:** EN4 removed the two `block_on(Session::new(...))` calls the
+  plan named — `window/boot.rs`'s `spawn_window` (Cmd-N / UDS second instance)
+  and `run_app`'s cold start — and with them the SAFETY note admitting the
+  first would become a nested-runtime abort the day gpui dispatched an action
+  from inside a tokio task. Two structurally identical calls survive:
+  `window/workspace_ops.rs`'s `spawn_workspace_window`
+  (`rt.block_on(Session::recover_workspace(...))`) and
+  `window/package_ops.rs`'s `open_package_at` (`rt.block_on` around an unpack
+  plus `Session::from_parts`). Both carry the same latent hazard and both
+  freeze every open window for the length of a DuckDB open.
+- **Why not in EN4:** neither is a `Session::new`, and neither reduces to
+  "open the window, post the session in". `spawn_workspace_window` must hold a
+  `WorkspaceLock` + `LockManifestGuard` that are acquired BEFORE the window and
+  released if the recover fails, so a `Booting` window would have to own the
+  guards and hand them back on failure. `open_package_at` unpacks a `.dat0`
+  into a scratch dir and builds the session `from_parts` with the parsed tabs,
+  saved queries and charts already installed — a `Booting` shell would need a
+  way to receive that payload, not just an `Arc<Mutex<Session>>`. Both are also
+  behind a user gesture that already paused for a native file picker, so the
+  perceived freeze is smaller than Cmd-N's was.
+- **Fix when picked up:** `SessionSlot` and `boot::open_shell_window` are the
+  infrastructure this needs and both exist now. Widen
+  `WorkspaceShell::adopt_session` (or add a sibling) to take the extra payload,
+  give `SessionSlot::Booting` an optional guard slot, and route both callers
+  through `spawn_session_boot`'s dispatcher hop.
+- **Originating doc:** EN4, `docs/plans/2026-08-08-dat0-production-v1-plan.md`
+- **Last touched:** 2026-08-08
+
+### D-037 — Nine docs still describe the GPUI build
+
+- **Status:** open
+- **Severity:** low
+- **Deferred from:** the GPUI→Dioxus migration
+- **What it is:** the migration swept the contributor-facing docs (README,
+  CONTRIBUTING, SECURITY, the CI configs, the PR template) and
+  `docs/release-prerequisites.md`, whose `dat0-app` references were pure path
+  renames into `dat0-core`. Nine deeper documents were left alone, `docs/a11y.md`
+  chief among them.
+- **Why it was not swept with the others:** those files do not merely *mention*
+  the old crate, they document its architecture. `a11y.md` gives commands for a
+  test that no longer exists (`theme_contrast_gate`), a feature that no longer
+  exists (`a11y-capture`), and files that no longer exist
+  (`src/window/render.rs`). A path rename would make every one of those read as
+  current while staying wrong, which is worse than visibly stale: a reader can
+  tell that `crates/dat0-app/...` is history, but not that
+  `cargo test -p dat0-core --test theme_contrast_gate` is a command that cannot
+  work. Rewriting them means re-deriving what each claim maps to on the Dioxus
+  surface — real editing, not a `sed`, and not something to rush into a merge.
+- **Fix when picked up:** take `docs/a11y.md` first; it is the largest and the
+  one most likely to be read. The live equivalents are the `dat0-ui` nav suite,
+  `theme_live_switch` + `style_lint` for contrast/theming, and the `data-a11y-id`
+  handles, which now ship in release rather than behind a capture feature.
+- **Originating doc:** this migration's PR
+- **Last touched:** 2026-08-12
+
+---
+
+### D-038 — `Coverage (report only)` has never produced a report
+
+- **Status:** open
+- **Severity:** low
+- **Deferred from:** the GPUI→Dioxus migration
+- **What it is:** the coverage job arrived with this migration — `main`'s
+  `ci.yml` has no such job — and has not once succeeded. It runs
+  `cargo llvm-cov nextest --workspace`, which instruments every crate and all
+  60-odd test binaries, and the hosted runner dies partway: the job is marked
+  failed while `cargo llvm-cov` is still `in_progress`, no logs are uploaded,
+  and it gives up around 27 minutes against a 90 minute timeout. A job that
+  dies without logs is out of disk or out of memory, not failing a test.
+- **Why it is `continue-on-error` for now:** the job asserts no threshold by
+  design, so it can only ever be advisory. Leaving it red on every PR trains
+  people to skim the check list, which costs more than the report is worth
+  while the report does not exist.
+- **Fix when picked up:** either make it fit — instrument the library crates
+  rather than every test binary, or take the `Free disk space` step further —
+  or delete the job. Shipping a permanently dying advisory job is the one
+  option that should not survive.
+- **Originating doc:** this migration's PR
+- **Last touched:** 2026-08-12
+
 ---
 
 ## Plan defects
@@ -1017,8 +1324,8 @@ that's modifying it; merge conflicts are signals worth investigating.
 
 ### PD-003 — cargo-about NOTICE output not deterministic across host platforms
 
-- **Status:** open
-- **Severity:** low (warn-only CI gate, not a blocker)
+- **Status:** closed
+- **Severity:** low (was a warn-only CI gate, not a blocker)
 - **Affected files:** `about.toml`, `.github/workflows/notice.yml`, `NOTICE.md`
 - **Symptom:** `cargo about generate` produces different output on macOS vs Linux
   hosts even with `targets = [all-4-targets]` in `about.toml`. Specifically,
@@ -1040,7 +1347,18 @@ that's modifying it; merge conflicts are signals worth investigating.
   Option (a) is the most-honest if the dual-license selection is genuinely a
   policy choice; option (b) is the simplest if NOTICE is intended as a
   generic union.
-- **Last touched:** 2026-04-28
+- **Closed by:** QA2 — suggested fix (b). The non-determinism was never in
+  cargo-about; it was in comparing output generated on one host against output
+  generated on another. `.github/workflows/notice.yml` now pins the job to
+  `ubuntu-latest` (which `docs/release-runbook.md` already mandates as the
+  regeneration host), installs `cargo-about` from a prebuilt binary via
+  `taiki-e/install-action` instead of `cargo install` (one less resolution to
+  drift), and `continue-on-error` is removed — the job is a hard gate and the
+  drift message is now `::error::`, naming Linux as the canonical host so a
+  contributor does not "fix" it by regenerating on macOS.
+  `about.toml` still lists all four targets, so the NOTICE CONTENT is still
+  the union across platforms; only the tiebreak host is fixed.
+- **Last touched:** 2026-08-08
 
 ---
 
@@ -1080,7 +1398,27 @@ that's modifying it; merge conflicts are signals worth investigating.
     integration tests macOS-only. Cleaner separation but less coverage.
   - **(c) Self-hosted Linux runner with persistent gnome-keyring** —
     overkill for what's tested.
-- **Last touched:** 2026-04-28
+- **Diagnostic instrument (QA4, 2026-08-08):**
+  `.github/workflows/pd004-diagnose.yml` — `workflow_dispatch` only, not a gate.
+  It runs `cargo test -p dat0-keychain --test round_trip -- --include-ignored`
+  on hosted `ubuntu-latest` under **two** arms and uploads both logs:
+  - **Arm A** — exactly the setup `ci.yml:191-198` already performs
+    (`dbus-launch` + `gnome-keyring-daemon --unlock --start --components=secrets`,
+    propagated across steps via `$GITHUB_ENV`). This arm exists because the
+    obvious remedy has been sitting in `ci.yml` since P1 and the symptom above
+    was never re-checked against it. **No duplicate of that command was added.**
+  - **Arm B** — suggested fix (a) above, `dbus-run-session` wrapping daemon and
+    test in one invocation.
+
+  **This deferral stays open until the captured error is pasted here.** Run the
+  workflow, then replace this sentence with the failing arm's exact output. The
+  deliverable of QA4 was the instrument and the diagnosis, not a fix: the
+  `#[cfg_attr(target_os = "linux", ignore)]` at
+  `crates/dat0-keychain/tests/round_trip.rs:3` is deliberately **left in place**.
+  Remove it only if the captured cause is then fixed AND the real `ci.yml` job
+  is made to run the test — a green scratch workflow proves nothing about the
+  gate.
+- **Last touched:** 2026-08-08
 
 ---
 
@@ -1625,7 +1963,12 @@ that's modifying it; merge conflicts are signals worth investigating.
 
 ### PD-020 — Inline-editor `Tab` → move-RIGHT advance unwired (gpui-component `Input` exposes no Tab event)
 
-- **Status:** open
+- **Status:** CLOSED — 2026-08-10 (Phase 6, GPUI→Dioxus migration). The deferral was a
+  `gpui-component` limitation, not a dat0 one: a plain `<input>` surfaces Tab like any other key,
+  so `crates/dat0-ui/src/components/grid/cell_editor.rs` commits and moves the active cell one
+  column right on Tab, one left on Shift-Tab, clamped at the row's ends. Covered by
+  `crates/dat0-ui/tests/grid_edit.rs::tab_commits_and_steps_right_closing_pd_020` /
+  `shift_tab_steps_left` and `crates/dat0-ui/tests/cell_editor_nav.rs::tab_walks_the_row_and_stops_at_its_ends`.
 - **Severity:** low (the `Enter` → move-DOWN advance + focus-on-mount are shipped; `Tab` still
   works as the input's own tab-stop, it just doesn't commit-and-advance one cell right).
 - **Affected files:** `crates/dat0-app/src/grid/cell_editor.rs` (`CellEditor`),
@@ -1654,7 +1997,7 @@ that's modifying it; merge conflicts are signals worth investigating.
     `CommitAndMove(value, EditorAdvance::Right)` exactly like the `PressEnter` → `Down` path.
 - **Discovered:** P4c T14 implementation (2026-06-01).
 - **Originating doc:** `docs/plans/2026-05-31-dat0-p4c-plan.md` T14 (Step 3).
-- **Last touched:** 2026-06-01.
+- **Last touched:** 2026-08-10.
 
 ---
 

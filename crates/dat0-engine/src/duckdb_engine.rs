@@ -2,6 +2,7 @@
 
 use std::collections::HashMap;
 use std::path::PathBuf;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, RwLock};
 
 use tracing::{debug, error, instrument};
@@ -9,7 +10,7 @@ use tracing::{debug, error, instrument};
 use crate::Result;
 use crate::catalog::quote_ident;
 use crate::error::EngineError;
-use crate::types::{EngineStatus, MemoryBudget, TableOrigin};
+use crate::types::{EngineStatus, MemoryBudget, QueryLane, QueryToken, TableOrigin};
 
 pub struct DuckDBEngine {
     pub(crate) conn: Arc<Mutex<duckdb::Connection>>,
@@ -17,7 +18,35 @@ pub struct DuckDBEngine {
     pub(crate) budget: MemoryBudget,
     pub(crate) scratch_path: PathBuf,
     pub(crate) status: Arc<RwLock<EngineStatus>>,
-    pub(crate) table_origins: Arc<RwLock<HashMap<String, TableOrigin>>>,
+    /// Table name → provenance. `parking_lot::RwLock`, not `std::sync`, on
+    /// purpose: the ten call sites below sit on catalog paths a window renders
+    /// from, and a poisoned `std::sync::RwLock` turned every one of them into
+    /// `.expect("table_origins poisoned")` — a single panic anywhere in the
+    /// process bricked the catalog forever after (EN5). `parking_lot` does not
+    /// poison, so there is nothing to unwrap.
+    ///
+    /// `status` above deliberately stays `std::sync`: poisoning is load-bearing
+    /// there — the lifecycle contract in `types.rs` says a poisoned mutex
+    /// transitions the engine to `Failed`, which is exactly what
+    /// `assert_open` / `status()` read the poison flag to do.
+    pub(crate) table_origins: Arc<parking_lot::RwLock<HashMap<String, TableOrigin>>>,
+    /// The one query the connection is currently running, with the lane that
+    /// issued it. DuckDB exposes a single interrupt handle per connection, so
+    /// "cancel my query" is not expressible below this line — the slot is what
+    /// turns the connection-wide handle into a scoped one (EN2).
+    ///
+    /// At most one query *runs* at a time (`conn` is a Mutex), so a single slot
+    /// is sufficient; a `begin_query` that arrives while the slot is occupied
+    /// overwrites it and the displaced token simply becomes stale.
+    pub(crate) inflight: Arc<parking_lot::Mutex<Option<(QueryToken, QueryLane)>>>,
+    /// Monotonic token source. Never reused, so a stale token can never alias a
+    /// live one and mis-target an interrupt.
+    pub(crate) next_token: Arc<AtomicU64>,
+    /// Count of interrupts this engine has actually FIRED through the scoped
+    /// surface. Exists so supersede is assertable without sleeping on a wall
+    /// clock (`crates/dat0-app/tests/view_supersede.rs`); nothing in production
+    /// reads it.
+    pub(crate) interrupts_fired: Arc<AtomicU64>,
 }
 
 impl DuckDBEngine {
@@ -33,12 +62,87 @@ impl DuckDBEngine {
             budget,
             scratch_path,
             status: Arc::new(RwLock::new(EngineStatus::Initializing)),
-            table_origins: Arc::new(RwLock::new(HashMap::new())),
+            table_origins: Arc::new(parking_lot::RwLock::new(HashMap::new())),
+            inflight: Arc::new(parking_lot::Mutex::new(None)),
+            next_token: Arc::new(AtomicU64::new(1)),
+            interrupts_fired: Arc::new(AtomicU64::new(0)),
         })
     }
 
-    /// External cancel handle. Callable from any task; cooperative — in-flight
-    /// query returns `EngineError::Interrupted` from spawn_blocking on next yield.
+    /// Mint a token for a query about to run and mark it in flight for `lane`.
+    ///
+    /// Tokens are monotonic and never reused. If another query is already in
+    /// the slot it is displaced: the connection Mutex means at most one query
+    /// is actually *running*, and the displaced token degrades to a stale one,
+    /// whose scoped interrupt becomes a silent no-op.
+    pub fn begin_query(&self, lane: QueryLane) -> QueryToken {
+        let token = QueryToken(self.next_token.fetch_add(1, Ordering::Relaxed));
+        *self.inflight.lock() = Some((token, lane));
+        token
+    }
+
+    /// Clear the in-flight slot, but only if it still holds `token`.
+    ///
+    /// A later `begin_query` may already have displaced this token; clearing
+    /// unconditionally would then disarm cancellation for the *newer* query.
+    pub fn end_query(&self, token: QueryToken) {
+        let mut slot = self.inflight.lock();
+        if slot.map(|(t, _)| t) == Some(token) {
+            *slot = None;
+        }
+    }
+
+    /// Interrupt the running query only if it is the one `token` identifies.
+    /// Returns whether the interrupt fired.
+    ///
+    /// A stale token — one whose query already finished, or that was displaced
+    /// by a later `begin_query` — is a SILENT no-op returning `false`, never an
+    /// error. That is the point: a console Cmd+. arriving after the run
+    /// completed must not abort whatever started next.
+    pub fn interrupt_scoped(&self, token: QueryToken) -> bool {
+        let slot = self.inflight.lock();
+        match *slot {
+            Some((t, _)) if t == token => {
+                self.fire_interrupt();
+                true
+            }
+            _ => false,
+        }
+    }
+
+    /// Interrupt the running query if it belongs to `lane`. Returns whether the
+    /// interrupt fired.
+    ///
+    /// This is the supersede primitive: newest request in a lane wins. A view
+    /// change calls it before starting so a stale filter/sort round-trip is
+    /// abandoned, while a console run or a grid prefetch in another lane is
+    /// left alone.
+    pub fn interrupt_lane(&self, lane: QueryLane) -> bool {
+        let slot = self.inflight.lock();
+        match *slot {
+            Some((_, l)) if l == lane => {
+                self.fire_interrupt();
+                true
+            }
+            _ => false,
+        }
+    }
+
+    /// Number of interrupts fired through the scoped surface. Test observability
+    /// only (see the `interrupts_fired` field).
+    pub fn interrupts_fired(&self) -> u64 {
+        self.interrupts_fired.load(Ordering::Relaxed)
+    }
+
+    fn fire_interrupt(&self) {
+        self.interrupts_fired.fetch_add(1, Ordering::Relaxed);
+        self.interrupt.interrupt();
+    }
+
+    /// Unscoped, connection-wide cancel. Test-only and shutdown-only: it aborts
+    /// whatever query is running regardless of who issued it. Production uses
+    /// [`Self::interrupt_scoped`] / [`Self::interrupt_lane`].
+    #[doc(hidden)]
     pub fn interrupt(&self) {
         self.interrupt.interrupt();
     }
@@ -204,7 +308,6 @@ impl crate::QueryEngine for DuckDBEngine {
         };
         self.table_origins
             .write()
-            .expect("table_origins poisoned")
             .insert(info.name.clone(), TableOrigin::File(path));
         // NOTE: `register_file` does NOT eagerly inject `__dat0_rowid`. Unlike
         // `create_table` (a real CTAS → base table), every register path builds a
@@ -318,7 +421,6 @@ impl crate::QueryEngine for DuckDBEngine {
         };
         self.table_origins
             .write()
-            .expect("table_origins poisoned")
             .insert(info.name.clone(), TableOrigin::File(path));
         Ok(info)
     }
@@ -363,7 +465,6 @@ impl crate::QueryEngine for DuckDBEngine {
         // cleanly into the insert here.
         self.table_origins
             .write()
-            .expect("table_origins poisoned")
             .insert(name, TableOrigin::Derived(origin));
         Ok(info)
     }
@@ -382,10 +483,7 @@ impl crate::QueryEngine for DuckDBEngine {
         .await
         .map_err(|e| EngineError::TaskJoin(e.to_string()))??;
         // Remove origin entry only after the DB op succeeds.
-        self.table_origins
-            .write()
-            .expect("table_origins poisoned")
-            .remove(&name);
+        self.table_origins.write().remove(&name);
         Ok(())
     }
 
@@ -412,7 +510,7 @@ impl crate::QueryEngine for DuckDBEngine {
         // Atomically rekey origin entry only after the DB op succeeds.
         // If the old name has no entry (e.g. table created outside register_file /
         // create_table), do nothing — don't fabricate an entry for the new name.
-        let mut origins = self.table_origins.write().expect("table_origins poisoned");
+        let mut origins = self.table_origins.write();
         if let Some(origin) = origins.remove(&old) {
             origins.insert(new, origin);
         }
@@ -450,6 +548,24 @@ impl crate::QueryEngine for DuckDBEngine {
         .map_err(|e| EngineError::TaskJoin(e.to_string()))?
     }
 
+    #[instrument(skip(self), fields(sql_len = sql.len(), offset, limit))]
+    async fn execute_page(
+        &self,
+        sql: &str,
+        offset: u64,
+        limit: u64,
+    ) -> Result<crate::types::PagedQueryResult> {
+        self.assert_open()?;
+        let conn = self.conn.clone();
+        let sql = sql.to_owned();
+        tokio::task::spawn_blocking(move || -> Result<crate::types::PagedQueryResult> {
+            let conn = conn.lock().map_err(|_| EngineError::EnginePoisoned)?;
+            crate::execute::paged::run_page(&conn, &sql, offset, limit)
+        })
+        .await
+        .map_err(|e| EngineError::TaskJoin(e.to_string()))?
+    }
+
     #[instrument(skip(self), fields(sql_len = sql.len()))]
     async fn execute_streaming(&self, sql: &str) -> Result<crate::types::ArrowRecordBatchStream> {
         self.assert_open()?;
@@ -478,11 +594,7 @@ impl crate::QueryEngine for DuckDBEngine {
     async fn get_tables(&self) -> Result<Vec<crate::types::TableInfo>> {
         self.assert_open()?;
         let conn = self.conn.clone();
-        let origins = self
-            .table_origins
-            .read()
-            .expect("table_origins poisoned")
-            .clone();
+        let origins = self.table_origins.read().clone();
         tokio::task::spawn_blocking(move || -> Result<Vec<crate::types::TableInfo>> {
             let conn = conn.lock().map_err(|_| EngineError::EnginePoisoned)?;
             crate::catalog::get_tables(&conn, &origins)
@@ -564,23 +676,6 @@ impl crate::QueryEngine for DuckDBEngine {
         tokio::task::spawn_blocking(move || -> Result<crate::profile::LengthStats> {
             let conn = conn.lock().map_err(|_| EngineError::EnginePoisoned)?;
             crate::profile::length_blocking(&conn, &table, &col)
-        })
-        .await
-        .map_err(|e| EngineError::TaskJoin(e.to_string()))?
-    }
-
-    #[instrument(skip(self), fields(name = name, format = ?format))]
-    async fn export_table(
-        &self,
-        name: &str,
-        format: crate::types::ExportFormat,
-    ) -> Result<Vec<u8>> {
-        self.assert_open()?;
-        let conn = self.conn.clone();
-        let name = name.to_owned();
-        tokio::task::spawn_blocking(move || -> Result<Vec<u8>> {
-            let conn = conn.lock().map_err(|_| EngineError::EnginePoisoned)?;
-            crate::export::export_table_bytes(&conn, &name, format)
         })
         .await
         .map_err(|e| EngineError::TaskJoin(e.to_string()))?
@@ -718,7 +813,7 @@ impl crate::QueryEngine for DuckDBEngine {
                 })
                 .await
                 .map_err(|e| EngineError::TaskJoin(e.to_string()))??;
-                let mut origins = self.table_origins.write().expect("table_origins poisoned");
+                let mut origins = self.table_origins.write();
                 for (db, table) in pairs {
                     origins.insert(
                         table,
@@ -766,7 +861,7 @@ impl crate::QueryEngine for DuckDBEngine {
         // Bare-name keying matches the existing `table_origins` convention
         // (last-writer-wins): a local and attached table sharing a name collide.
         // Qualified-key resolution is out of P6a scope.
-        let mut origins = self.table_origins.write().expect("table_origins poisoned");
+        let mut origins = self.table_origins.write();
         for name in names {
             origins.insert(
                 name,
@@ -794,12 +889,9 @@ impl crate::QueryEngine for DuckDBEngine {
         // D-012: prune the origins this alias contributed. Keyed by bare table
         // name (matching the existing convention), so we match on the recorded
         // Attached.alias rather than the table name.
-        self.table_origins
-            .write()
-            .expect("table_origins poisoned")
-            .retain(|_, o| {
-                !matches!(o, crate::types::TableOrigin::Attached { alias: a, .. } if a == alias)
-            });
+        self.table_origins.write().retain(
+            |_, o| !matches!(o, crate::types::TableOrigin::Attached { alias: a, .. } if a == alias),
+        );
         Ok(())
     }
 
@@ -873,11 +965,7 @@ impl DuckDBEngine {
     /// T7 passes the origins map directly to `catalog::get_tables` rather than
     /// going through this accessor. Available for T8/T9 call sites and tests.
     pub fn table_origin(&self, name: &str) -> Option<TableOrigin> {
-        self.table_origins
-            .read()
-            .expect("table_origins poisoned")
-            .get(name)
-            .cloned()
+        self.table_origins.read().get(name).cloned()
     }
 }
 

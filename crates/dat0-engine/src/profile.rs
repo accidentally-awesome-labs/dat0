@@ -85,26 +85,35 @@ pub(crate) fn profile_blocking(conn: &Connection, target: &str) -> Result<TableP
     let mut columns = Vec::new();
     let mut rows_total: u64 = 0;
     for batch in rb_iter {
-        let idx = |name: &str| -> usize {
+        // Column index by NAME, fallibly. This used to `panic!` on a missing
+        // column, inside a `spawn_blocking` worker that holds the connection
+        // mutex — so a DuckDB release renaming a SUMMARIZE column would poison
+        // that mutex and brick every subsequent query in the window, not just
+        // the profile (EN5).
+        let idx = |name: &str| -> Result<usize> {
             batch
                 .schema()
                 .fields()
                 .iter()
                 .position(|f| f.name() == name)
-                .unwrap_or_else(|| panic!("SUMMARIZE missing column `{name}`"))
+                .ok_or_else(|| {
+                    EngineError::EngineFailed(format!(
+                        "SUMMARIZE result missing column `{name}`; DuckDB version mismatch"
+                    ))
+                })
         };
-        let c_name = batch.column(idx("column_name"));
-        let c_type = batch.column(idx("column_type"));
-        let c_min = batch.column(idx("min"));
-        let c_max = batch.column(idx("max"));
-        let c_uniq = batch.column(idx("approx_unique"));
-        let c_avg = batch.column(idx("avg"));
-        let c_std = batch.column(idx("std"));
-        let c_q25 = batch.column(idx("q25"));
-        let c_q50 = batch.column(idx("q50"));
-        let c_q75 = batch.column(idx("q75"));
-        let c_count = batch.column(idx("count"));
-        let c_null = batch.column(idx("null_percentage"));
+        let c_name = batch.column(idx("column_name")?);
+        let c_type = batch.column(idx("column_type")?);
+        let c_min = batch.column(idx("min")?);
+        let c_max = batch.column(idx("max")?);
+        let c_uniq = batch.column(idx("approx_unique")?);
+        let c_avg = batch.column(idx("avg")?);
+        let c_std = batch.column(idx("std")?);
+        let c_q25 = batch.column(idx("q25")?);
+        let c_q50 = batch.column(idx("q50")?);
+        let c_q75 = batch.column(idx("q75")?);
+        let c_count = batch.column(idx("count")?);
+        let c_null = batch.column(idx("null_percentage")?);
         for row in 0..batch.num_rows() {
             let count = cell_f64(c_count, row).unwrap_or(0.0) as u64;
             rows_total = rows_total.max(count); // lower bound (max non-null count per col); overridden by exact count(*) below

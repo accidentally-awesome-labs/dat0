@@ -3,16 +3,9 @@
 > **dat0** (pronounced "data" / "dat-zero") is a local-first data workbench that scales to terabytes and travels as a single file.
 
 [![License: Apache 2.0](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](LICENSE)
-[![Status: Pre-Implementation](https://img.shields.io/badge/Status-Pre--Implementation-orange.svg)](docs/specs/2026-04-26-dat0-design.md)
 [![Platform: macOS · Linux](https://img.shields.io/badge/Platform-macOS_·_Linux-lightgrey.svg)]()
 
 Open any data file or database, edit and transform with full lineage, share the entire workflow as a `.dat0` package anyone can replay, push compute to the cloud only when you choose to.
-
-## Status
-
-dat0 is **pre-implementation**. The current artifact is the [design specification](docs/specs/2026-04-26-dat0-design.md). Code does not yet exist.
-
-If you want to follow along or contribute to the planning phase, watch this repo and the [GitHub Discussions](https://github.com/accidentally-awesome-labs/dat0/discussions) (when the repo goes public).
 
 ## Three product pillars
 
@@ -51,8 +44,20 @@ libraries listed in [CONTRIBUTING.md](CONTRIBUTING.md)).
 3. **Or drop your own file.** Drag a CSV, Parquet, JSON, or SQLite file onto the
    drop zone. No import wizard, no waiting.
 
-<!-- TODO(T11): enriched first-run hero screenshot -->
-> _Screenshot coming — enriched hero capture is gated on the T11 asset pass._
+<!--
+  Screenshot owed: enriched first-run hero capture.
+
+  To produce it: `cargo run -p dat0-app` against a clean state root (no recents,
+  so the enriched hero + tour carousel show), capture the window, and commit the
+  PNG as `docs/img/first-run-hero.png` before linking it here.
+
+  This capture is owed by the AX2 manual UAT pass of the production-v1 plan; it
+  cannot be produced headlessly. No such image exists in the tree today, so this
+  section deliberately carries no image reference rather than a broken link.
+-->
+
+> _Screenshot pending — the first-run hero capture is owed by the production-v1
+> manual UAT pass (AX2)._
 
 ### What you get
 
@@ -69,7 +74,7 @@ libraries listed in [CONTRIBUTING.md](CONTRIBUTING.md)).
 ## Tech stack (from design spec §3)
 
 - **Language:** Rust 2024
-- **UI:** GPUI + longbridge/gpui-component
+- **UI:** Dioxus 0.7 (desktop), rendering into a wry/WebKit webview
 - **Engine:** DuckDB native via the `duckdb` crate
 - **Wire format:** Apache Arrow (record batches, in-process)
 - **Async:** tokio

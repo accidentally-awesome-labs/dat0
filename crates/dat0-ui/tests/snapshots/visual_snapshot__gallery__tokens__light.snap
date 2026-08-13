@@ -1,0 +1,366 @@
+---
+source: crates/dat0-ui/tests/visual_snapshot.rs
+expression: html
+---
+<div class="d0-scene" data-scene="gallery/tokens" style="width: 1440px; height: 900px; overflow: hidden">
+<link rel="stylesheet" href="/dat0/app.css"/>
+<style id="d0-theme">:root{color-scheme:light;--d0-canvas:#fcfcfb;--d0-surface:#ffffff;--d0-pane-head:#f7f8fa;--d0-panel:#f1f3f5;--d0-chrome:#e8eaed;--d0-chrome-raised:#eff1f4;--d0-chrome-border:#dfe3e8;--d0-chrome-border-2:#ccd2d9;--d0-tabstrip:#dcdfe4;--d0-tab-active:#e4e7ea;--d0-tab-hover:#e0e3e7;--d0-tab-divider:#c8ced7;--d0-row-hover:#eef1f4;--d0-active-bg:#e8f1fb;--d0-field:#fdfdfd;--d0-rule:#d0d7de;--d0-rule-dim:#dde2e8;--d0-input-border:#afb8c1;--d0-ink:#0a0b0d;--d0-fg:#1f2328;--d0-muted:#4f5760;--d0-chrome-muted:#5a636e;--d0-accent:#03459b;--d0-ok:#136229;--d0-error:#a01420;--d0-warn-text:#7a5200;--d0-amber:#f5a623;--d0-amber-hover:#ffb733;--d0-amber-text:#8a3f07;--d0-ink-on-amber:#101318;--d0-sql-keyword:#5a32a3;--d0-sql-number:#6f42c1;--d0-sql-string:#116329;--d0-sql-fn:#03459b;--d0-sql-comment:#4f5760;--d0-cyan:#0e565c;--d0-shadow-pane:0 8px 24px rgba(31,35,40,0.10);--d0-shadow-overlay:0 24px 64px rgba(31,35,40,0.18);--d0-scrim:#1f232840;--d0-inset:rgba(31,35,40,0.16);}</style>
+<div class="d0-gallery" data-a11y-id="gallery">
+<header class="d0-gallery-head">
+<span class="d0-wordmark">dat<span class="d0-logomark">
+</span>
+</span>
+<span class="d0-head-title">token gallery</span>
+<div class="d0-gallery-themes">
+<button class="d0-btn is-primary" data-a11y-id="theme-light">light</button>
+<button class="d0-btn" data-a11y-id="theme-dark">dark</button>
+<button class="d0-btn" data-a11y-id="theme-high-contrast">high-contrast</button>
+</div>
+</header>
+<section class="d0-gallery-section">
+<h2 class="d0-label">colour</h2>
+<div class="d0-swatch-grid">
+<div class="d0-swatch-cell">
+<div class="d0-swatch-chip" style="background: var(--d0-canvas)">
+</div>
+<span class="d0-mono">--d0-canvas</span>
+<span class="d0-mono d0-swatch-value">#fcfcfb</span>
+</div>
+<div class="d0-swatch-cell">
+<div class="d0-swatch-chip" style="background: var(--d0-surface)">
+</div>
+<span class="d0-mono">--d0-surface</span>
+<span class="d0-mono d0-swatch-value">#ffffff</span>
+</div>
+<div class="d0-swatch-cell">
+<div class="d0-swatch-chip" style="background: var(--d0-pane-head)">
+</div>
+<span class="d0-mono">--d0-pane-head</span>
+<span class="d0-mono d0-swatch-value">#f7f8fa</span>
+</div>
+<div class="d0-swatch-cell">
+<div class="d0-swatch-chip" style="background: var(--d0-panel)">
+</div>
+<span class="d0-mono">--d0-panel</span>
+<span class="d0-mono d0-swatch-value">#f1f3f5</span>
+</div>
+<div class="d0-swatch-cell">
+<div class="d0-swatch-chip" style="background: var(--d0-chrome)">
+</div>
+<span class="d0-mono">--d0-chrome</span>
+<span class="d0-mono d0-swatch-value">#e8eaed</span>
+</div>
+<div class="d0-swatch-cell">
+<div class="d0-swatch-chip" style="background: var(--d0-chrome-raised)">
+</div>
+<span class="d0-mono">--d0-chrome-raised</span>
+<span class="d0-mono d0-swatch-value">#eff1f4</span>
+</div>
+<div class="d0-swatch-cell">
+<div class="d0-swatch-chip" style="background: var(--d0-chrome-border)">
+</div>
+<span class="d0-mono">--d0-chrome-border</span>
+<span class="d0-mono d0-swatch-value">#dfe3e8</span>
+</div>
+<div class="d0-swatch-cell">
+<div class="d0-swatch-chip" style="background: var(--d0-chrome-border-2)">
+</div>
+<span class="d0-mono">--d0-chrome-border-2</span>
+<span class="d0-mono d0-swatch-value">#ccd2d9</span>
+</div>
+<div class="d0-swatch-cell">
+<div class="d0-swatch-chip" style="background: var(--d0-tabstrip)">
+</div>
+<span class="d0-mono">--d0-tabstrip</span>
+<span class="d0-mono d0-swatch-value">#dcdfe4</span>
+</div>
+<div class="d0-swatch-cell">
+<div class="d0-swatch-chip" style="background: var(--d0-tab-active)">
+</div>
+<span class="d0-mono">--d0-tab-active</span>
+<span class="d0-mono d0-swatch-value">#e4e7ea</span>
+</div>
+<div class="d0-swatch-cell">
+<div class="d0-swatch-chip" style="background: var(--d0-tab-hover)">
+</div>
+<span class="d0-mono">--d0-tab-hover</span>
+<span class="d0-mono d0-swatch-value">#e0e3e7</span>
+</div>
+<div class="d0-swatch-cell">
+<div class="d0-swatch-chip" style="background: var(--d0-tab-divider)">
+</div>
+<span class="d0-mono">--d0-tab-divider</span>
+<span class="d0-mono d0-swatch-value">#c8ced7</span>
+</div>
+<div class="d0-swatch-cell">
+<div class="d0-swatch-chip" style="background: var(--d0-row-hover)">
+</div>
+<span class="d0-mono">--d0-row-hover</span>
+<span class="d0-mono d0-swatch-value">#eef1f4</span>
+</div>
+<div class="d0-swatch-cell">
+<div class="d0-swatch-chip" style="background: var(--d0-active-bg)">
+</div>
+<span class="d0-mono">--d0-active-bg</span>
+<span class="d0-mono d0-swatch-value">#e8f1fb</span>
+</div>
+<div class="d0-swatch-cell">
+<div class="d0-swatch-chip" style="background: var(--d0-field)">
+</div>
+<span class="d0-mono">--d0-field</span>
+<span class="d0-mono d0-swatch-value">#fdfdfd</span>
+</div>
+<div class="d0-swatch-cell">
+<div class="d0-swatch-chip" style="background: var(--d0-rule)">
+</div>
+<span class="d0-mono">--d0-rule</span>
+<span class="d0-mono d0-swatch-value">#d0d7de</span>
+</div>
+<div class="d0-swatch-cell">
+<div class="d0-swatch-chip" style="background: var(--d0-rule-dim)">
+</div>
+<span class="d0-mono">--d0-rule-dim</span>
+<span class="d0-mono d0-swatch-value">#dde2e8</span>
+</div>
+<div class="d0-swatch-cell">
+<div class="d0-swatch-chip" style="background: var(--d0-input-border)">
+</div>
+<span class="d0-mono">--d0-input-border</span>
+<span class="d0-mono d0-swatch-value">#afb8c1</span>
+</div>
+<div class="d0-swatch-cell">
+<div class="d0-swatch-chip" style="background: var(--d0-ink)">
+</div>
+<span class="d0-mono">--d0-ink</span>
+<span class="d0-mono d0-swatch-value">#0a0b0d</span>
+</div>
+<div class="d0-swatch-cell">
+<div class="d0-swatch-chip" style="background: var(--d0-fg)">
+</div>
+<span class="d0-mono">--d0-fg</span>
+<span class="d0-mono d0-swatch-value">#1f2328</span>
+</div>
+<div class="d0-swatch-cell">
+<div class="d0-swatch-chip" style="background: var(--d0-muted)">
+</div>
+<span class="d0-mono">--d0-muted</span>
+<span class="d0-mono d0-swatch-value">#4f5760</span>
+</div>
+<div class="d0-swatch-cell">
+<div class="d0-swatch-chip" style="background: var(--d0-chrome-muted)">
+</div>
+<span class="d0-mono">--d0-chrome-muted</span>
+<span class="d0-mono d0-swatch-value">#5a636e</span>
+</div>
+<div class="d0-swatch-cell">
+<div class="d0-swatch-chip" style="background: var(--d0-accent)">
+</div>
+<span class="d0-mono">--d0-accent</span>
+<span class="d0-mono d0-swatch-value">#03459b</span>
+</div>
+<div class="d0-swatch-cell">
+<div class="d0-swatch-chip" style="background: var(--d0-ok)">
+</div>
+<span class="d0-mono">--d0-ok</span>
+<span class="d0-mono d0-swatch-value">#136229</span>
+</div>
+<div class="d0-swatch-cell">
+<div class="d0-swatch-chip" style="background: var(--d0-error)">
+</div>
+<span class="d0-mono">--d0-error</span>
+<span class="d0-mono d0-swatch-value">#a01420</span>
+</div>
+<div class="d0-swatch-cell">
+<div class="d0-swatch-chip" style="background: var(--d0-warn-text)">
+</div>
+<span class="d0-mono">--d0-warn-text</span>
+<span class="d0-mono d0-swatch-value">#7a5200</span>
+</div>
+<div class="d0-swatch-cell">
+<div class="d0-swatch-chip" style="background: var(--d0-amber)">
+</div>
+<span class="d0-mono">--d0-amber</span>
+<span class="d0-mono d0-swatch-value">#f5a623</span>
+</div>
+<div class="d0-swatch-cell">
+<div class="d0-swatch-chip" style="background: var(--d0-amber-hover)">
+</div>
+<span class="d0-mono">--d0-amber-hover</span>
+<span class="d0-mono d0-swatch-value">#ffb733</span>
+</div>
+<div class="d0-swatch-cell">
+<div class="d0-swatch-chip" style="background: var(--d0-amber-text)">
+</div>
+<span class="d0-mono">--d0-amber-text</span>
+<span class="d0-mono d0-swatch-value">#8a3f07</span>
+</div>
+<div class="d0-swatch-cell">
+<div class="d0-swatch-chip" style="background: var(--d0-ink-on-amber)">
+</div>
+<span class="d0-mono">--d0-ink-on-amber</span>
+<span class="d0-mono d0-swatch-value">#101318</span>
+</div>
+<div class="d0-swatch-cell">
+<div class="d0-swatch-chip" style="background: var(--d0-sql-keyword)">
+</div>
+<span class="d0-mono">--d0-sql-keyword</span>
+<span class="d0-mono d0-swatch-value">#5a32a3</span>
+</div>
+<div class="d0-swatch-cell">
+<div class="d0-swatch-chip" style="background: var(--d0-sql-number)">
+</div>
+<span class="d0-mono">--d0-sql-number</span>
+<span class="d0-mono d0-swatch-value">#6f42c1</span>
+</div>
+<div class="d0-swatch-cell">
+<div class="d0-swatch-chip" style="background: var(--d0-sql-string)">
+</div>
+<span class="d0-mono">--d0-sql-string</span>
+<span class="d0-mono d0-swatch-value">#116329</span>
+</div>
+<div class="d0-swatch-cell">
+<div class="d0-swatch-chip" style="background: var(--d0-sql-fn)">
+</div>
+<span class="d0-mono">--d0-sql-fn</span>
+<span class="d0-mono d0-swatch-value">#03459b</span>
+</div>
+<div class="d0-swatch-cell">
+<div class="d0-swatch-chip" style="background: var(--d0-sql-comment)">
+</div>
+<span class="d0-mono">--d0-sql-comment</span>
+<span class="d0-mono d0-swatch-value">#4f5760</span>
+</div>
+<div class="d0-swatch-cell">
+<div class="d0-swatch-chip" style="background: var(--d0-cyan)">
+</div>
+<span class="d0-mono">--d0-cyan</span>
+<span class="d0-mono d0-swatch-value">#0e565c</span>
+</div>
+<div class="d0-swatch-cell">
+<div class="d0-swatch-chip" style="background: var(--d0-shadow-pane)">
+</div>
+<span class="d0-mono">--d0-shadow-pane</span>
+<span class="d0-mono d0-swatch-value">0 8px 24px rgba(31,35,40,0.10)</span>
+</div>
+<div class="d0-swatch-cell">
+<div class="d0-swatch-chip" style="background: var(--d0-shadow-overlay)">
+</div>
+<span class="d0-mono">--d0-shadow-overlay</span>
+<span class="d0-mono d0-swatch-value">0 24px 64px rgba(31,35,40,0.18)</span>
+</div>
+<div class="d0-swatch-cell">
+<div class="d0-swatch-chip" style="background: var(--d0-scrim)">
+</div>
+<span class="d0-mono">--d0-scrim</span>
+<span class="d0-mono d0-swatch-value">#1f232840</span>
+</div>
+<div class="d0-swatch-cell">
+<div class="d0-swatch-chip" style="background: var(--d0-inset)">
+</div>
+<span class="d0-mono">--d0-inset</span>
+<span class="d0-mono d0-swatch-value">rgba(31,35,40,0.16)</span>
+</div>
+</div>
+</section>
+<section class="d0-gallery-section">
+<h2 class="d0-label">type</h2>
+<div class="d0-gallery-type">
+<div class="d0-head-title">Head title — Geist 15/1.2</div>
+<div class="d0-label">label — uppercase micro</div>
+<div class="d0-mono">mono 12.5 — SELECT * FROM sales WHERE qty &#62; 10</div>
+<div class="d0-num">1,048,576</div>
+</div>
+</section>
+<section class="d0-gallery-section">
+<h2 class="d0-label">controls</h2>
+<div class="d0-gallery-row">
+<button class="d0-btn">default</button>
+<button class="d0-btn is-primary">primary</button>
+<button class="d0-btn is-ghost">ghost</button>
+<button class="d0-btn" disabled=true>disabled</button>
+<input class="d0-field" placeholder="sample input"/>
+</div>
+<div class="d0-gallery-row">
+<span class="d0-chip">
+<span class="d0-swatch sw-csv">
+</span>csv</span>
+<span class="d0-chip">
+<span class="d0-swatch sw-parquet">
+</span>parquet</span>
+<span class="d0-chip">
+<span class="d0-swatch sw-sqlite">
+</span>sqlite</span>
+<span class="d0-chip">
+<span class="d0-swatch sw-json">
+</span>json</span>
+<span class="d0-chip">
+<span class="d0-swatch sw-dat0">
+</span>dat0</span>
+<span class="d0-chip">
+<span class="d0-swatch sw-other">
+</span>other</span>
+</div>
+</section>
+<section class="d0-gallery-section">
+<h2 class="d0-label">icons</h2>
+<div class="d0-icon-grid">
+<div class="d0-icon-cell">
+<img src="dat0://icons/bookmark.svg" width="16" height="16"/>
+<span class="d0-mono">bookmark.svg</span>
+</div>
+<div class="d0-icon-cell">
+<img src="dat0://icons/chevron-down.svg" width="16" height="16"/>
+<span class="d0-mono">chevron-down.svg</span>
+</div>
+<div class="d0-icon-cell">
+<img src="dat0://icons/chevron-right.svg" width="16" height="16"/>
+<span class="d0-mono">chevron-right.svg</span>
+</div>
+<div class="d0-icon-cell">
+<img src="dat0://icons/chevron-up.svg" width="16" height="16"/>
+<span class="d0-mono">chevron-up.svg</span>
+</div>
+<div class="d0-icon-cell">
+<img src="dat0://icons/chevrons-up-down.svg" width="16" height="16"/>
+<span class="d0-mono">chevrons-up-down.svg</span>
+</div>
+<div class="d0-icon-cell">
+<img src="dat0://icons/clock.svg" width="16" height="16"/>
+<span class="d0-mono">clock.svg</span>
+</div>
+<div class="d0-icon-cell">
+<img src="dat0://icons/close.svg" width="16" height="16"/>
+<span class="d0-mono">close.svg</span>
+</div>
+<div class="d0-icon-cell">
+<img src="dat0://icons/database.svg" width="16" height="16"/>
+<span class="d0-mono">database.svg</span>
+</div>
+<div class="d0-icon-cell">
+<img src="dat0://icons/funnel.svg" width="16" height="16"/>
+<span class="d0-mono">funnel.svg</span>
+</div>
+<div class="d0-icon-cell">
+<img src="dat0://icons/layers.svg" width="16" height="16"/>
+<span class="d0-mono">layers.svg</span>
+</div>
+<div class="d0-icon-cell">
+<img src="dat0://icons/play.svg" width="16" height="16"/>
+<span class="d0-mono">play.svg</span>
+</div>
+<div class="d0-icon-cell">
+<img src="dat0://icons/plug.svg" width="16" height="16"/>
+<span class="d0-mono">plug.svg</span>
+</div>
+<div class="d0-icon-cell">
+<img src="dat0://icons/search.svg" width="16" height="16"/>
+<span class="d0-mono">search.svg</span>
+</div>
+<div class="d0-icon-cell">
+<img src="dat0://icons/sparkles.svg" width="16" height="16"/>
+<span class="d0-mono">sparkles.svg</span>
+</div>
+</div>
+</section>
+</div>
+</div>

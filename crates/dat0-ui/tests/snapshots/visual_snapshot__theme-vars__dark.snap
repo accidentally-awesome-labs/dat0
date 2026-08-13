@@ -1,0 +1,5 @@
+---
+source: crates/dat0-ui/tests/visual_snapshot.rs
+expression: vars
+---
+:root{color-scheme:dark;--d0-canvas:#101318;--d0-surface:#141a21;--d0-pane-head:#1a2028;--d0-panel:#171c23;--d0-chrome:#080b0e;--d0-chrome-raised:#0f1217;--d0-chrome-border:#1b2027;--d0-chrome-border-2:#252b33;--d0-tabstrip:#05070a;--d0-tab-active:#12171d;--d0-tab-hover:#0d1116;--d0-tab-divider:#1f242c;--d0-row-hover:#20262f;--d0-active-bg:#1e2836;--d0-field:#03050a;--d0-rule:#343b45;--d0-rule-dim:#2f3641;--d0-input-border:#3d444d;--d0-ink:#f0f3f6;--d0-fg:#c9d1d9;--d0-muted:#9aa5b1;--d0-chrome-muted:#78818c;--d0-accent:#58a6ff;--d0-ok:#3fb950;--d0-error:#f85149;--d0-warn-text:#e3a72f;--d0-amber:#f5a623;--d0-amber-hover:#ffb733;--d0-amber-text:#f5a623;--d0-ink-on-amber:#101318;--d0-sql-keyword:#bc8cff;--d0-sql-number:#d2a8ff;--d0-sql-string:#56d364;--d0-sql-fn:#58a6ff;--d0-sql-comment:#9aa5b1;--d0-cyan:#39c5cf;--d0-shadow-pane:0 8px 24px rgba(0,0,0,0.35);--d0-shadow-overlay:0 24px 64px rgba(0,0,0,0.55);--d0-scrim:#00000080;--d0-inset:rgba(0,0,0,0.6);}

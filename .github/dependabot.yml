@@ -1,0 +1,53 @@
+version: 2
+
+updates:
+  - package-ecosystem: cargo
+    directory: "/"
+    schedule:
+      interval: weekly
+      day: monday
+      time: "06:00"
+    open-pull-requests-limit: 5
+    # One PR per week for the whole non-breaking tail instead of a dozen.
+    # Majors stay individual — those need a human reading a changelog.
+    groups:
+      cargo-minor-and-patch:
+        update-types:
+          - minor
+          - patch
+    ignore:
+      # These five are EXACT-pinned on purpose, with the rationale recorded
+      # beside each pin, and their upgrade cadence is governed by
+      # docs/upstream-watch.md — not by a bot.
+      #
+      #   dioxus / dioxus-desktop / dioxus-ssr / dioxus-core
+      #     (crates/dat0-ui/Cargo.toml) — all `=0.7.10`, and they must move
+      #     together. `dioxus-ssr` renders the same `VirtualDom` the desktop
+      #     renderer mounts, so a bot bumping one and not the others mixes two
+      #     versions of the same core types in one build.
+      #   duckdb (Cargo.toml) — `=1.4.4`; Arrow types are consumed via
+      #     `duckdb::arrow` re-exports, so the version is a type-chain
+      #     constraint, not a dependency preference.
+      #
+      # The four `gpui*` entries this list used to carry were retired with the
+      # GPUI renderer: they named crates that are no longer in the tree, so the
+      # bot was guarding nothing while the pins that replaced them were
+      # unguarded.
+      - dependency-name: dioxus
+      - dependency-name: dioxus-desktop
+      - dependency-name: dioxus-ssr
+      - dependency-name: dioxus-core
+      - dependency-name: duckdb
+
+  - package-ecosystem: github-actions
+    directory: "/"
+    schedule:
+      interval: weekly
+      day: monday
+      time: "06:00"
+    open-pull-requests-limit: 5
+    groups:
+      actions-minor-and-patch:
+        update-types:
+          - minor
+          - patch

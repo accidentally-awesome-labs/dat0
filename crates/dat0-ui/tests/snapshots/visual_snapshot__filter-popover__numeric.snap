@@ -1,0 +1,32 @@
+---
+source: crates/dat0-ui/tests/visual_snapshot.rs
+expression: "rendered[0].1"
+---
+<div class="d0-scene" data-scene="filter-popover/numeric" style="width: 1440px; height: 900px; overflow: hidden">
+<div class="d0-menu-dismiss" data-a11y-id="filter-popover-dismiss">
+</div>
+<div class="d0-popover" data-a11y-id="filter-popover" role="dialog" aria-label="Filter column: revenue" tabindex="0" autofocus=true style="left: 620px; top: 120px;">
+<span class="d0-label">revenue</span>
+<select class="d0-field" data-a11y-id="filter-op" aria-label="Operator">
+<option value="0">= Equals</option>
+<option value="1">≠ Not equals</option>
+<option value="2">&#60; Less than</option>
+<option value="3">≤ Less than or equal</option>
+<option value="4">&#62; Greater than</option>
+<option value="5">≥ Greater than or equal</option>
+<option value="6" selected=true>↔ Between</option>
+<option value="7">∈ In list</option>
+<option value="8">∅ Is empty</option>
+<option value="9">◉ Is not empty</option>
+</select>
+<input class="d0-field" data-a11y-id="filter-range-lo" aria-label="From" type="text" value="500"/>
+<input class="d0-field" data-a11y-id="filter-range-hi" aria-label="To" type="text" value="1500"/>
+<label class="d0-mono">
+<input data-a11y-id="filter-range-inclusive" type="checkbox" checked=true/>Inclusive</label>
+<div class="d0-popover-actions">
+<button class="d0-btn is-primary" data-a11y-id="filter-apply" role="button" aria-label="Apply" tabindex="0" aria-disabled="false">Apply</button>
+<button class="d0-btn is-ghost" data-a11y-id="filter-cancel" role="button" aria-label="Cancel" tabindex="0">Cancel</button>
+<button class="d0-btn is-ghost" data-a11y-id="filter-clear" role="button" aria-label="Clear" tabindex="0">Clear</button>
+</div>
+</div>
+</div>

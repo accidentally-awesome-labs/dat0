@@ -1,0 +1,29 @@
+---
+source: crates/dat0-ui/tests/visual_snapshot.rs
+expression: "rendered[0].1"
+---
+<div class="d0-scene" data-scene="filter-popover/text" style="width: 1440px; height: 900px; overflow: hidden">
+<div class="d0-menu-dismiss" data-a11y-id="filter-popover-dismiss">
+</div>
+<div class="d0-popover" data-a11y-id="filter-popover" role="dialog" aria-label="Filter column: region" tabindex="0" autofocus=true style="left: 360px; top: 120px;">
+<span class="d0-label">region</span>
+<select class="d0-field" data-a11y-id="filter-op" aria-label="Operator">
+<option value="0" selected=true>= Equals</option>
+<option value="1">≠ Not equals</option>
+<option value="2">⊇ Contains</option>
+<option value="3">⊅ Not contains</option>
+<option value="4">↦ Starts with</option>
+<option value="5">↤ Ends with</option>
+<option value="6">∈ In list</option>
+<option value="7">⌗ Regex</option>
+<option value="8">∅ Is empty</option>
+<option value="9">◉ Is not empty</option>
+</select>
+<input class="d0-field" data-a11y-id="filter-value" aria-label="Value" type="text" value=""/>
+<div class="d0-popover-actions">
+<button class="d0-btn is-primary" data-a11y-id="filter-apply" role="button" aria-label="Apply" tabindex="0" disabled=true aria-disabled="true">Apply</button>
+<button class="d0-btn is-ghost" data-a11y-id="filter-cancel" role="button" aria-label="Cancel" tabindex="0">Cancel</button>
+<button class="d0-btn is-ghost" data-a11y-id="filter-clear" role="button" aria-label="Clear" tabindex="0">Clear</button>
+</div>
+</div>
+</div>

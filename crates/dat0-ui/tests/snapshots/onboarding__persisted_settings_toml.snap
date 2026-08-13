@@ -1,0 +1,33 @@
+---
+source: crates/dat0-ui/tests/onboarding.rs
+expression: toml
+---
+schema_version = 3
+update_auto_check = true
+memory_budget_mb = 1024
+log_level = "info,dat0=debug"
+first_run_done = true
+
+[profile]
+author_name = ""
+author_email = ""
+
+[theme]
+name = "light"
+
+[telemetry]
+crash_submission_enabled = false
+
+[workspace]
+treat_paths_as_networked = []
+treat_all_as_networked = false
+
+[ai]
+enabled = false
+model = ""
+custom_base_url = ""
+advanced_override = false
+include_sample_rows = false
+privacy_ack = false
+
+[ui]

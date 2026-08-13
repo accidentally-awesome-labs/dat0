@@ -1,0 +1,2601 @@
+/*
+ * dat0 — the application stylesheet.
+ *
+ * The ONLY file in the repo allowed to contain a colour literal outside
+ * `dat0-core/src/theme/builtins/*.json`, and even here only inside the
+ * `@font-face` block and the two `prefers-*` fallbacks. Everything else reads
+ * `var(--d0-…)`; `tests/design_contract.rs` asserts both directions of that
+ * correspondence, so a rule cannot reference a token that does not exist and a
+ * token cannot exist without a rule.
+ *
+ * The `:root{…}` block itself is NOT here — it is emitted at runtime by
+ * `ThemeTokens::css_vars()` into `<style id="d0-theme">`, which is what makes a
+ * theme switch a signal write rather than a window refresh.
+ *
+ * Section order: reset → fonts → scales → type → primitives → chrome → sidebar
+ * → panes → grid → overlays → motion.
+ */
+
+/* ── Reset ─────────────────────────────────────────────────────────────── */
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+html {
+  font-size: 14px;
+}
+
+html,
+body,
+#main {
+  margin: 0;
+  padding: 0;
+  height: 100%;
+  overflow: hidden;
+}
+
+body {
+  background: var(--d0-canvas);
+  color: var(--d0-fg);
+  font-family: var(--d0-sans);
+  -webkit-font-smoothing: antialiased;
+  text-wrap: pretty;
+  /* The window chrome is ours; a stray text selection drag across it reads as
+     a bug. Content surfaces opt back in below. */
+  -webkit-user-select: none;
+  user-select: none;
+}
+
+/* ── Fonts ─────────────────────────────────────────────────────────────── */
+/* Served from the binary over the `dat0` custom protocol — there is no
+   `assets/` directory beside a bundled `.app` or `.AppImage`, so a relative
+   file URL would 404 exactly where it matters. `font-display: block` because a
+   flash of a fallback metric reflows the whole 26px-row grid. */
+
+@font-face {
+  font-family: "Geist";
+  src: url("/dat0/fonts/Geist-Regular.ttf") format("truetype");
+  font-weight: 400;
+  font-display: block;
+}
+@font-face {
+  font-family: "Geist";
+  src: url("/dat0/fonts/Geist-Medium.ttf") format("truetype");
+  font-weight: 500;
+  font-display: block;
+}
+@font-face {
+  font-family: "Geist";
+  src: url("/dat0/fonts/Geist-SemiBold.ttf") format("truetype");
+  font-weight: 600;
+  font-display: block;
+}
+@font-face {
+  font-family: "Geist";
+  src: url("/dat0/fonts/Geist-Bold.ttf") format("truetype");
+  font-weight: 700;
+  font-display: block;
+}
+@font-face {
+  font-family: "Geist Mono";
+  src: url("/dat0/fonts/GeistMono-Regular.ttf") format("truetype");
+  font-weight: 400;
+  font-display: block;
+}
+@font-face {
+  font-family: "Geist Mono";
+  src: url("/dat0/fonts/GeistMono-Medium.ttf") format("truetype");
+  font-weight: 500;
+  font-display: block;
+}
+@font-face {
+  font-family: "Geist Mono";
+  src: url("/dat0/fonts/GeistMono-SemiBold.ttf") format("truetype");
+  font-weight: 600;
+  font-display: block;
+}
+@font-face {
+  font-family: "Geist Mono";
+  src: url("/dat0/fonts/GeistMono-Bold.ttf") format("truetype");
+  font-weight: 700;
+  font-display: block;
+}
+
+/* ── Scales, geometry, motion ──────────────────────────────────────────── */
+
+:root {
+  --d0-sans: "Geist", ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  --d0-monospace: "Geist Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+
+  --sp-1: 1px;
+  --sp-2: 2px;
+  --sp-3: 4px;
+  --sp-4: 6px;
+  --sp-5: 8px;
+  --sp-6: 12px;
+  --sp-7: 16px;
+  --sp-8: 24px;
+  --sp-9: 32px;
+
+  --d0-r: 5px;
+  --d0-r-sm: 3px;
+  --d0-r-pill: 99px;
+
+  --d0-titlebar-h: 44px;
+  --d0-tabstrip-h: 38px;
+  --d0-statusbar-h: 30px;
+  --d0-sidebar-w: 238px;
+  --d0-sidebar-section-h: 30px;
+  --d0-pane-head-h: 32px;
+  --d0-row-h: 26px;
+
+  --d0-ease: cubic-bezier(0.2, 0, 0, 1);
+  --d0-pane-transition: flex-grow 0.45s var(--d0-ease), flex-basis 0.45s var(--d0-ease);
+  --d0-body-fade: opacity 0.3s var(--d0-ease);
+  --d0-chevron-transition: transform 0.35s var(--d0-ease);
+}
+
+/* ── Type ──────────────────────────────────────────────────────────────── */
+
+.d0-h1 {
+  font-family: var(--d0-sans);
+  font-weight: 600;
+  font-size: clamp(34px, 3.4vw, 48px);
+  line-height: 1.03;
+  letter-spacing: -0.035em;
+  color: var(--d0-ink);
+  margin: 0;
+}
+
+.d0-h2 {
+  font-family: var(--d0-sans);
+  font-weight: 600;
+  font-size: 28px;
+  line-height: 1.1;
+  letter-spacing: -0.03em;
+  color: var(--d0-ink);
+  margin: 0;
+}
+
+.d0-lead {
+  font-family: var(--d0-sans);
+  font-weight: 400;
+  font-size: 15.5px;
+  line-height: 1.6;
+}
+
+.d0-body {
+  font-family: var(--d0-sans);
+  font-weight: 400;
+  font-size: 15px;
+  line-height: 1.58;
+  max-width: 62ch;
+}
+
+.d0-small {
+  font-family: var(--d0-sans);
+  font-weight: 400;
+  font-size: 13px;
+}
+
+/* Pane-header titles. */
+.d0-head-title {
+  font-family: var(--d0-sans);
+  font-weight: 500;
+  font-size: 13px;
+  color: var(--d0-ink);
+}
+
+/* The app's data voice: the grid, the sidebar, the status bar, chips, the
+   palette and the SQL editor are all this. Sans is only for prose, pane titles
+   and buttons. */
+.d0-mono {
+  font-family: var(--d0-monospace);
+  font-weight: 400;
+  font-size: 12.5px;
+}
+
+/* Every section label. */
+.d0-label {
+  font-family: var(--d0-monospace);
+  font-weight: 400;
+  font-size: 11px;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--d0-muted);
+}
+
+/* Grid column headers. */
+.d0-colhead {
+  font-family: var(--d0-monospace);
+  font-weight: 400;
+  font-size: 11px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--d0-muted);
+}
+
+.d0-wordmark {
+  font-family: var(--d0-monospace);
+  font-weight: 700;
+  font-size: 17px;
+  letter-spacing: -0.05em;
+  color: var(--d0-ink);
+}
+
+/* ── Primitives ────────────────────────────────────────────────────────── */
+
+.d0-icon {
+  width: 14px;
+  height: 14px;
+  flex: 0 0 auto;
+  display: block;
+}
+
+/* Focus is always blue and always visible. `:focus-visible`, not `:focus`, so a
+   mouse click on a cell does not paint a ring the pointer already explains. */
+:focus-visible {
+  outline: 2px solid var(--d0-accent);
+  outline-offset: -1px;
+}
+
+button {
+  font: inherit;
+  color: inherit;
+  background: none;
+  border: none;
+  padding: 0;
+  cursor: pointer;
+}
+
+/* Format identity: a 7x7 swatch precedes any file name, everywhere. One shape,
+   one size, colour by kind. */
+.d0-sw {
+  width: 7px;
+  height: 7px;
+  border-radius: 2px;
+  flex: 0 0 auto;
+  display: inline-block;
+}
+.sw-csv { background: var(--d0-ok); }
+.sw-parquet { background: var(--d0-sql-keyword); }
+.sw-sqlite { background: var(--d0-cyan); }
+.sw-json { background: var(--d0-warn-text); }
+.sw-dat0 { background: var(--d0-amber); }
+.sw-other { background: var(--d0-chrome-border-2); }
+
+/* Text that must read as amber. The fill token may never reach a `color:`
+   declaration — see the design's first hard rule and the token gate that
+   enforces it. */
+.d0-amber-text {
+  color: var(--d0-amber-text);
+}
+
+/* Metric tiles and inset blocks: a recessed panel inside a pane. */
+.d0-tile {
+  background: var(--d0-panel);
+  border-radius: var(--d0-r);
+  padding: var(--sp-6);
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-3);
+}
+
+/* Chips and pills. */
+.d0-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--sp-4);
+  border: 1px solid var(--d0-input-border);
+  background: var(--d0-pane-head);
+  border-radius: var(--d0-r);
+  padding: var(--sp-3) var(--sp-5);
+  font-family: var(--d0-monospace);
+  font-size: 12.5px;
+  color: var(--d0-fg);
+}
+
+.d0-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--sp-4);
+  border: 1px solid var(--d0-chrome-border-2);
+  background: var(--d0-chrome-raised);
+  border-radius: var(--d0-r-pill);
+  padding: var(--sp-3) var(--sp-5);
+}
+
+.d0-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: var(--d0-r-pill);
+  flex: 0 0 auto;
+  background: var(--d0-chrome-border-2);
+}
+.d0-dot.is-live {
+  background: var(--d0-ok);
+  animation: d0-pulse 2.4s ease-in-out infinite;
+}
+.d0-dot.is-error {
+  background: var(--d0-error);
+}
+
+/* A keycap. Used by the ⌘K launcher, the status bar and the console header. */
+.d0-key {
+  border: 1px solid var(--d0-input-border);
+  border-radius: var(--d0-r-sm);
+  padding: 1px var(--sp-3);
+  font-family: var(--d0-monospace);
+  font-size: 11px;
+  color: var(--d0-chrome-muted);
+}
+
+/* The one amber control. Amber is a fill; the ink on it never changes. */
+.d0-cta {
+  background: var(--d0-amber);
+  color: var(--d0-ink-on-amber);
+  border-radius: var(--d0-r);
+  padding: var(--sp-4) var(--sp-6);
+  font-weight: 500;
+}
+.d0-cta:hover {
+  background: var(--d0-amber-hover);
+}
+
+/* ── Shell chrome ──────────────────────────────────────────────────────── */
+
+.d0-shell {
+  display: grid;
+  grid-template-columns: var(--d0-sidebar-w) minmax(0, 1fr);
+  height: 100vh;
+  padding-top: calc(var(--d0-titlebar-h) + var(--d0-tabstrip-h));
+  padding-bottom: var(--d0-statusbar-h);
+}
+.d0-shell.sidebar-collapsed {
+  grid-template-columns: 0 minmax(0, 1fr);
+}
+
+.d0-titlebar {
+  position: fixed;
+  inset: 0 0 auto 0;
+  height: var(--d0-titlebar-h);
+  display: flex;
+  align-items: center;
+  gap: var(--sp-6);
+  padding: 0 var(--sp-6);
+  background: var(--d0-chrome);
+  border-bottom: 1px solid var(--d0-chrome-border);
+  -webkit-app-region: drag;
+  z-index: 30;
+}
+.d0-titlebar .no-drag,
+.d0-titlebar button {
+  -webkit-app-region: no-drag;
+}
+
+/* Reserves the macOS traffic lights, which are inset to (12, 18). */
+.d0-traffic-spacer {
+  width: 88px;
+  flex: 0 0 auto;
+}
+
+/* The `0` of the wordmark is an amber square with the logomark knocked out. */
+.d0-logomark {
+  width: 16px;
+  height: 16px;
+  border-radius: 4.5px;
+  background: var(--d0-amber);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.d0-tabstrip {
+  position: fixed;
+  inset: var(--d0-titlebar-h) 0 auto 0;
+  height: var(--d0-tabstrip-h);
+  display: flex;
+  align-items: stretch;
+  background: var(--d0-tabstrip);
+  box-shadow: inset 0 3px 5px -2px var(--d0-inset);
+  z-index: 29;
+}
+
+/* The command launcher, aligned to the sidebar. Styled as a search field
+   because that is what clicking it does. */
+/* The gutter occupies exactly the sidebar's width so the two columns line up.
+   The inset lives on a slot rather than as a margin on the button: a margin
+   sits *outside* the flex basis, so `flex: 0 0 238px` plus `margin: 6px` makes
+   the strip's first column 250px and the alignment is quietly 12px out. */
+.d0-search-slot {
+  flex: 0 0 var(--d0-sidebar-w);
+  min-width: 0;
+  padding: var(--sp-4);
+  display: flex;
+}
+
+.d0-search-gutter {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--sp-5);
+  padding: 0 var(--sp-5);
+  border-radius: var(--d0-r);
+  background: var(--d0-field);
+  box-shadow:
+    inset 0 0 0 1px var(--d0-chrome-border-2),
+    inset 0 1px 2px var(--d0-inset);
+  cursor: text;
+  font-family: var(--d0-monospace);
+  font-size: 12.5px;
+  color: var(--d0-chrome-muted);
+}
+.d0-search-gutter:focus-visible {
+  outline: none;
+  box-shadow: inset 0 0 0 2px var(--d0-accent);
+}
+
+.d0-tab {
+  flex: 1 0 0;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: var(--sp-4);
+  padding: 0 var(--sp-6);
+  border-left: 1px solid var(--d0-tab-divider);
+  font-family: var(--d0-monospace);
+  font-size: 12.5px;
+  color: var(--d0-chrome-muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.d0-tab:hover {
+  background: var(--d0-tab-hover);
+}
+.d0-tab.is-active {
+  background: var(--d0-tab-active);
+  color: var(--d0-ink);
+  box-shadow: inset 0 2px 0 var(--d0-accent);
+}
+
+.d0-statusbar {
+  position: fixed;
+  inset: auto 0 0 0;
+  height: var(--d0-statusbar-h);
+  display: flex;
+  align-items: center;
+  gap: var(--sp-7);
+  padding: 0 var(--sp-6);
+  background: var(--d0-chrome);
+  border-top: 1px solid var(--d0-chrome-border);
+  font-family: var(--d0-monospace);
+  font-size: 12.5px;
+  color: var(--d0-chrome-muted);
+  z-index: 30;
+}
+.d0-statusbar .d0-num {
+  color: var(--d0-ink);
+}
+.d0-statusbar .d0-spacer {
+  margin-left: auto;
+}
+.d0-statusbar .d0-key {
+  background: var(--d0-chrome-raised);
+  border-color: var(--d0-chrome-border-2);
+  border-radius: 4px;
+  padding: var(--sp-2) var(--sp-5);
+}
+
+/* ── Catalog sidebar ───────────────────────────────────────────────────── */
+
+.d0-sidebar {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  background: var(--d0-chrome);
+  border-right: 1px solid var(--d0-chrome-border);
+}
+
+.d0-sidebar-head {
+  height: var(--d0-sidebar-section-h);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 var(--sp-6);
+  border-bottom: 1px solid var(--d0-chrome-border);
+}
+.d0-sidebar-head .is-local {
+  color: var(--d0-ok);
+}
+
+.d0-sidebar-body {
+  flex: 1 1 auto;
+  overflow: auto;
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-7);
+  padding: var(--sp-6) var(--sp-5);
+}
+
+.d0-section-label {
+  margin: 0 0 var(--sp-3) var(--sp-3);
+}
+
+.d0-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--sp-5);
+  padding: var(--sp-3) var(--sp-5);
+  border-radius: var(--d0-r);
+  font-family: var(--d0-monospace);
+  font-size: 12.5px;
+  color: var(--d0-chrome-muted);
+  width: 100%;
+  text-align: left;
+}
+.d0-row + .d0-row {
+  margin-top: var(--sp-2);
+}
+.d0-row:hover {
+  background: var(--d0-row-hover);
+  color: var(--d0-fg);
+}
+.d0-row.is-active {
+  background: var(--d0-active-bg);
+  color: var(--d0-ink);
+}
+/* An attach parent's children: one indent level, no deeper — the catalog is
+   two levels by construction (`nav::visible_rows`). */
+.d0-row.is-child .d0-row-name {
+  padding-left: var(--sp-6);
+}
+/* The keyboard cursor, distinct from selection: an arrow key moves this
+   without opening anything. */
+.d0-row.is-cursor {
+  box-shadow: inset 2px 0 0 var(--d0-accent);
+  color: var(--d0-ink);
+}
+.d0-row .d0-row-name {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-4);
+  min-width: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.d0-row .d0-row-meta {
+  flex: 0 1 auto;
+  min-width: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  color: var(--d0-muted);
+}
+/* An empty section keeps its heading and says so, so the shell's shape is
+   stable from cold launch. */
+.d0-row.is-empty {
+  font-style: italic;
+  color: var(--d0-muted);
+  cursor: default;
+}
+
+.d0-sidebar-foot {
+  border-top: 1px solid var(--d0-chrome-border);
+  padding: var(--sp-6);
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-3);
+  font-family: var(--d0-monospace);
+  font-size: 12.5px;
+  color: var(--d0-chrome-muted);
+}
+.d0-sidebar-foot .is-ok {
+  color: var(--d0-ok);
+}
+
+/* ── Panes ─────────────────────────────────────────────────────────────── */
+
+/* The centre work surface. Flush, deliberately.
+
+   It used to carry `gap: 8px; padding: 12px 20px`, lifted from the design
+   source's pane stack — but that source is the MARKETING page, whose stack
+   holds eight bordered accordion cards that want to float on the canvas. This
+   stack holds the data grid, and a grid is not a card: the inset detached it
+   from the shell on all four sides, and because `.d0-grid` has no border or
+   shadow the padding read as a gap rather than as a margin around something.
+
+   Nothing is lost by removing it, because every child already owns its own
+   inset: `.d0-banner-host` 6/16, `.d0-pipeline` 6/16 with a `border-bottom`
+   that only spans correctly when the strip is full-width, and `.d0-hero`
+   32/24. The grid, which wants none, now gets none. */
+.d0-pane-stack {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  min-width: 0;
+}
+
+.d0-pane {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  border: 1px solid var(--d0-rule);
+  border-radius: var(--d0-r);
+  background: var(--d0-surface);
+  box-shadow: var(--d0-shadow-pane);
+  transition: var(--d0-pane-transition);
+  overflow: hidden;
+}
+.d0-pane.is-collapsed {
+  flex: 0 0 var(--d0-pane-head-h);
+  border-color: var(--d0-rule-dim);
+  box-shadow: none;
+}
+.d0-pane.is-collapsed .d0-pane-body {
+  opacity: 0;
+  pointer-events: none;
+}
+
+.d0-pane-head {
+  height: var(--d0-pane-head-h);
+  flex: 0 0 var(--d0-pane-head-h);
+  display: flex;
+  align-items: center;
+  gap: var(--sp-5);
+  padding: 0 var(--sp-6);
+  background: var(--d0-pane-head);
+  border-bottom: 1px solid var(--d0-rule-dim);
+  width: 100%;
+  text-align: left;
+}
+.d0-pane-head .d0-chevron {
+  transition: var(--d0-chevron-transition);
+}
+.d0-pane.is-collapsed .d0-pane-head .d0-chevron {
+  transform: rotate(-90deg);
+}
+.d0-pane-head .d0-pane-meta {
+  margin-left: auto;
+}
+
+.d0-pane-body {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: auto;
+  transition: var(--d0-body-fade);
+  -webkit-user-select: text;
+  user-select: text;
+}
+
+/* Dock splitters.
+
+   They sit in a ZERO-width track and straddle the boundary, rather than
+   occupying 4px of it. A 4px transparent track put four pixels of canvas
+   between the sidebar's own `border-right` and the grid — a visible gutter
+   with nothing in it, which read as the grid being detached from the shell.
+   The divider is the neighbouring surface's border; the splitter is only a
+   place to grab.
+
+   `justify-self`/`align-self: center` over a 0px grid area centres the 9px
+   box on the boundary, so the grab zone reaches 4.5px either side and costs
+   no layout. `z-index` puts it above both neighbours so it, not they, takes
+   the pointer.
+
+   Hover paints a 2px line through the middle, not the whole 9px box: the
+   affordance should look like the edge it moves, and a 9px slab of accent
+   lying across two surfaces looks like a rendering fault. */
+.d0-splitter {
+  position: relative;
+  z-index: 5;
+  background: transparent;
+}
+.d0-splitter.is-col {
+  width: 9px;
+  justify-self: center;
+  cursor: col-resize;
+}
+.d0-splitter.is-row {
+  height: 9px;
+  align-self: center;
+  cursor: row-resize;
+}
+.d0-splitter::after {
+  content: "";
+  position: absolute;
+  background: transparent;
+}
+.d0-splitter.is-col::after {
+  top: 0;
+  bottom: 0;
+  left: 50%;
+  width: 2px;
+  transform: translateX(-50%);
+}
+.d0-splitter.is-row::after {
+  left: 0;
+  right: 0;
+  top: 50%;
+  height: 2px;
+  transform: translateY(-50%);
+}
+.d0-splitter:hover::after,
+.d0-splitter.is-dragging::after {
+  background: var(--d0-accent);
+}
+
+/* ── Grid ──────────────────────────────────────────────────────────────── */
+
+.d0-grid {
+  position: relative;
+  height: 100%;
+  min-height: 0;
+  background: var(--d0-surface);
+  display: flex;
+  flex-direction: column;
+}
+
+.d0-grid-head {
+  flex: 0 0 var(--d0-row-h);
+  height: var(--d0-row-h);
+  position: relative;
+  overflow: hidden;
+  background: var(--d0-pane-head);
+  border-bottom: 1px solid var(--d0-rule);
+}
+
+.d0-colheader {
+  position: absolute;
+  top: 0;
+  height: var(--d0-row-h);
+  display: flex;
+  align-items: center;
+  gap: var(--sp-3);
+  padding: 0 var(--sp-5);
+  font-family: var(--d0-monospace);
+  font-weight: 400;
+  font-size: 11px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--d0-muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.d0-colheader .d0-grip {
+  position: absolute;
+  left: 0;
+  top: 0;
+  bottom: 0;
+  width: 6px;
+  cursor: col-resize;
+}
+.d0-col-resize {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  right: -3px;
+  width: 6px;
+  cursor: col-resize;
+  z-index: 2;
+}
+.d0-col-resize:hover {
+  background: var(--d0-accent);
+}
+
+/* Takes every pointer move and the release while a drag is live, so the
+   gesture keeps working once the pointer leaves the element that started it. */
+.d0-drag-shield {
+  position: fixed;
+  inset: 0;
+  z-index: 200;
+  cursor: col-resize;
+}
+
+.d0-colheader.is-dragging::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: var(--d0-active-bg);
+  opacity: 0.6;
+}
+
+.d0-grid-viewport {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: auto;
+  will-change: scroll-position;
+}
+
+.d0-grid-canvas {
+  position: relative;
+}
+
+.d0-grid-row {
+  position: absolute;
+  height: var(--d0-row-h);
+  border-bottom: 1px solid var(--d0-rule-dim);
+}
+.d0-grid-row:hover {
+  background: var(--d0-row-hover);
+}
+
+.d0-cell {
+  position: absolute;
+  top: 0;
+  height: var(--d0-row-h);
+  display: flex;
+  align-items: center;
+  padding: 0 var(--sp-5);
+  font-family: var(--d0-monospace);
+  font-size: 12.5px;
+  color: var(--d0-fg);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  -webkit-user-select: none;
+  user-select: none;
+}
+.d0-cell.is-right {
+  justify-content: flex-end;
+}
+.d0-cell.is-null {
+  color: var(--d0-muted);
+  font-style: italic;
+}
+.d0-cell.is-selected {
+  background: var(--d0-active-bg);
+}
+.d0-cell.is-active {
+  box-shadow: inset 0 0 0 2px var(--d0-accent);
+}
+
+/* Marching-ants clipboard boundary: four independent edges, because the
+   selection's outline is not always a rectangle's worth of one element. */
+.d0-cell.sel-edge-t { border-top: 1px dashed var(--d0-accent); }
+.d0-cell.sel-edge-r { border-right: 1px dashed var(--d0-accent); }
+.d0-cell.sel-edge-b { border-bottom: 1px dashed var(--d0-accent); }
+.d0-cell.sel-edge-l { border-left: 1px dashed var(--d0-accent); }
+
+/* The cell editor sits over the cell it edits, not in a fixed overlay. */
+.d0-cell-editor {
+  position: absolute;
+  height: var(--d0-row-h);
+  padding: 0 var(--sp-4);
+  font-family: var(--d0-monospace);
+  font-size: 12.5px;
+  color: var(--d0-ink);
+  background: var(--d0-surface);
+  border: none;
+  box-shadow: inset 0 0 0 2px var(--d0-accent);
+  z-index: 5;
+}
+
+/* ── Overlays ──────────────────────────────────────────────────────────── */
+
+.d0-scrim {
+  position: fixed;
+  inset: 0;
+  background: var(--d0-scrim);
+  z-index: 100;
+  display: flex;
+  justify-content: center;
+}
+
+.d0-modal {
+  align-self: center;
+  width: min(560px, 92vw);
+  border: 1px solid var(--d0-input-border);
+  border-radius: var(--d0-r);
+  background: var(--d0-surface);
+  box-shadow: var(--d0-shadow-overlay);
+  -webkit-user-select: text;
+  user-select: text;
+}
+
+.d0-palette {
+  align-self: flex-start;
+  margin-top: 14vh;
+  width: min(640px, 92vw);
+  border: 1px solid var(--d0-input-border);
+  border-radius: var(--d0-r);
+  background: var(--d0-surface);
+  box-shadow: var(--d0-shadow-overlay);
+  overflow: hidden;
+}
+.d0-palette-input {
+  height: 46px;
+  display: flex;
+  align-items: center;
+  gap: var(--sp-5);
+  padding: 0 var(--sp-6);
+  border-bottom: 1px solid var(--d0-rule-dim);
+}
+.d0-palette-prompt {
+  color: var(--d0-accent);
+}
+.d0-palette-input input {
+  flex: 1 1 auto;
+  min-width: 0;
+  border: none;
+  outline: none;
+  background: transparent;
+  font-family: var(--d0-monospace);
+  font-size: 12.5px;
+  color: var(--d0-ink);
+  caret-color: var(--d0-accent);
+}
+.d0-palette-list {
+  max-height: 46vh;
+  overflow: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+.d0-palette-row {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-5);
+  padding: var(--sp-4) var(--sp-6);
+  font-family: var(--d0-monospace);
+  font-size: 12.5px;
+  color: var(--d0-fg);
+  width: 100%;
+  text-align: left;
+}
+.d0-palette-row.is-selected {
+  background: var(--d0-active-bg);
+  box-shadow: inset 2px 0 0 var(--d0-accent);
+  color: var(--d0-ink);
+}
+.d0-palette-row .d0-hint {
+  margin-left: auto;
+  color: var(--d0-muted);
+}
+.d0-palette-foot {
+  display: flex;
+  gap: var(--sp-7);
+  padding: var(--sp-4) var(--sp-6);
+  background: var(--d0-pane-head);
+  border-top: 1px solid var(--d0-rule-dim);
+}
+
+.d0-menu {
+  position: absolute;
+  min-width: 200px;
+  padding: var(--sp-3) 0;
+  border: 1px solid var(--d0-input-border);
+  border-radius: var(--d0-r);
+  background: var(--d0-surface);
+  box-shadow: var(--d0-shadow-overlay);
+  z-index: 90;
+}
+.d0-menu-sep {
+  height: 1px;
+  margin: var(--sp-3) 0;
+  background: var(--d0-rule-dim);
+}
+
+/* Catches a click anywhere outside the menu. Below the menu, above the app. */
+.d0-menu-dismiss {
+  position: fixed;
+  inset: 0;
+  z-index: 89;
+}
+
+.d0-menu-item {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-5);
+  width: 100%;
+  padding: var(--sp-3) var(--sp-6);
+  font-family: var(--d0-monospace);
+  font-size: 12.5px;
+  color: var(--d0-fg);
+  text-align: left;
+}
+.d0-menu-item:hover:not([aria-disabled="true"]),
+.d0-menu-item.is-active {
+  background: var(--d0-row-hover);
+}
+.d0-menu-item[aria-disabled="true"] {
+  color: var(--d0-muted);
+  cursor: default;
+}
+
+.d0-banner {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-5);
+  padding: var(--sp-5) var(--sp-6);
+  border: 1px solid var(--d0-rule);
+  border-radius: var(--d0-r);
+  background: var(--d0-pane-head);
+}
+.d0-banner.is-warning { border-left: 3px solid var(--d0-warn-text); }
+.d0-banner.is-error { border-left: 3px solid var(--d0-error); }
+.d0-banner.is-info { border-left: 3px solid var(--d0-accent); }
+
+/* The drag-over tint for a file drop. */
+.d0-droptarget.is-over {
+  box-shadow: inset 0 0 0 2px var(--d0-accent);
+  background: var(--d0-active-bg);
+}
+
+.d0-console {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+}
+
+.d0-console-tabs {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-3);
+  padding: var(--sp-3) var(--sp-5);
+  border-bottom: 1px solid var(--d0-rule-dim);
+  background: var(--d0-pane-head);
+}
+
+.d0-console-tab {
+  padding: var(--sp-2) var(--sp-5);
+  border-radius: var(--d0-r);
+  font-family: var(--d0-monospace);
+  font-size: 12.5px;
+  color: var(--d0-muted);
+}
+.d0-console-tab:hover {
+  background: var(--d0-row-hover);
+}
+.d0-console-tab.is-active {
+  background: var(--d0-active-bg);
+  color: var(--d0-ink);
+}
+
+/* The fixed toolbar: the console's commands, discoverable without the palette. */
+.d0-console-toolbar {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-3);
+  padding: var(--sp-2) var(--sp-5);
+  border-bottom: 1px solid var(--d0-rule-dim);
+}
+
+/* The transient bars: an NL->SQL draft, an Explain, or a failed run. */
+.d0-console-strip {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-4);
+  padding: var(--sp-3) var(--sp-5);
+  border-bottom: 1px solid var(--d0-rule-dim);
+  background: var(--d0-panel);
+}
+.d0-console-strip pre {
+  flex: 1 1 auto;
+  margin: 0;
+  max-height: 96px;
+  overflow: auto;
+  white-space: pre-wrap;
+  color: var(--d0-fg);
+}
+.d0-console-strip.is-error {
+  border-top: 1px solid var(--d0-rule-dim);
+  border-bottom: 0;
+  border-left: 3px solid var(--d0-error);
+  background: var(--d0-surface);
+}
+.d0-console-strip.is-error .d0-mono {
+  flex: 1 1 auto;
+  color: var(--d0-error);
+}
+
+/* ── SQL editor ────────────────────────────────────────────────────────── */
+/* CodeMirror injects its own styles from JS, themed from the same tokens (see
+   vendor/codemirror/src/index.js). Only the mount point is styled here. */
+
+.d0-editor {
+  height: 100%;
+  min-height: 0;
+  overflow: hidden;
+}
+
+/* ── Motion ────────────────────────────────────────────────────────────── */
+
+@keyframes d0-pulse {
+  0%, 100% { opacity: 0.35; transform: scale(0.85); }
+  50% { opacity: 1; transform: scale(1); }
+}
+
+@keyframes d0-caret {
+  50% { opacity: 0; }
+}
+
+.d0-caret {
+  animation: d0-caret 1.1s step-end infinite;
+}
+
+/* A workbench is used for hours. Honour the setting completely: the pane
+   transition, the live pulse and the caret blink all stop. */
+@media (prefers-reduced-motion: reduce) {
+  .d0-pane,
+  .d0-pane-body,
+  .d0-pane-head .d0-chevron {
+    transition: none;
+  }
+  .d0-dot.is-live,
+  .d0-caret {
+    animation: none;
+  }
+  .d0-dot.is-live {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+/* Below the design's own breakpoint the sidebar hides entirely; the ⌘K
+   launcher and the tab strip stay reachable. */
+@media (max-width: 1080px) {
+  .d0-shell {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .d0-sidebar {
+    display: none;
+  }
+  .d0-search-slot {
+    flex-basis: 168px;
+  }
+}
+
+/* ── Shell layout ──────────────────────────────────────────────────────── */
+
+/* The window root. Only a drop target and a stacking context; every visible
+   surface is a child. */
+.d0-window {
+  height: 100vh;
+  overflow: hidden;
+}
+.d0-window.is-drag-over::after {
+  content: "";
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  box-shadow: inset 0 0 0 2px var(--d0-accent);
+  background: color-mix(in srgb, var(--d0-accent) 6%, transparent);
+}
+
+/* The work area: centre column plus the optional right column, with a 4px
+   splitter track between them. The track is part of the grid rather than an
+   overlay, so nothing has to be measured to place it. */
+.d0-workarea {
+  display: grid;
+  min-width: 0;
+  min-height: 0;
+  height: 100%;
+}
+.d0-workarea:has(> .d0-splitter) {
+  grid-template-columns: minmax(0, 1fr) 0 auto;
+}
+
+.d0-centre {
+  display: grid;
+  min-width: 0;
+  min-height: 0;
+}
+.d0-centre:has(> .d0-splitter) {
+  grid-template-rows: minmax(0, 1fr) 0 auto;
+}
+
+.d0-right {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-5);
+  padding: var(--sp-6) 20px var(--sp-6) 0;
+  min-height: 0;
+  overflow: hidden;
+}
+
+/* Eats the tab strip's leftover width so tabs keep their own size instead of
+   stretching across an empty window. */
+.d0-tab-filler {
+  flex: 1 1 auto;
+}
+
+/* The S8 format swatch: one 7px square, coloured per file kind. */
+.d0-swatch {
+  width: 7px;
+  height: 7px;
+  border-radius: 2px;
+  flex: 0 0 7px;
+  display: inline-block;
+}
+
+/* A section header is a button, and must not look like one. */
+.d0-section-label {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-3);
+  width: 100%;
+  background: none;
+  border: 0;
+  padding: 0 0 var(--sp-3) var(--sp-3);
+  margin: 0;
+  cursor: pointer;
+  text-align: left;
+}
+.d0-section-label:hover {
+  color: var(--d0-fg);
+}
+
+.d0-chevron {
+  display: inline-block;
+  font-size: 9px;
+  line-height: 1;
+  color: var(--d0-chrome-muted);
+  transition: var(--d0-chevron-transition);
+}
+.d0-chevron.is-collapsed {
+  transform: rotate(-90deg);
+}
+
+/* A failed engine session: red, and deliberately not pulsing — a pulse reads
+   as "working". */
+.d0-dot.is-error {
+  background: var(--d0-error);
+  animation: none;
+}
+
+/* ── Inspector ─────────────────────────────────────────────────────────── */
+
+.d0-insp {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-5);
+  padding: var(--sp-5);
+  overflow: auto;
+}
+
+.d0-insp-overview {
+  color: var(--d0-fg);
+}
+
+/* The mode toggle sits in a column flex, which would otherwise stretch it to
+   the panel's full width and make a two-word control look like a banner. */
+.d0-insp > .d0-btn {
+  align-self: flex-start;
+}
+
+/* Lineage: a flat list whose rows indent themselves from `step.depth`. No
+   nesting, so a 20-deep chain costs 20 sibling divs, not 20 nested ones. */
+.d0-insp-lineage {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-2);
+}
+
+.d0-insp-chain {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-5);
+  border-radius: var(--d0-r);
+  padding: var(--sp-2) var(--sp-3);
+  color: var(--d0-muted);
+  min-width: 0;
+}
+.d0-insp-chain.is-open {
+  cursor: pointer;
+}
+.d0-insp-chain.is-open:hover {
+  background: var(--d0-row-hover);
+  color: var(--d0-fg);
+}
+
+.d0-insp-glyph {
+  flex: 0 0 auto;
+}
+
+/* The node name yields before the edge label: truncating "orders" is better
+   than truncating "transform (3 ops)" into "transform (3 o…". */
+.d0-insp-chain-name {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.d0-insp-chain-edge {
+  flex: 0 0 auto;
+}
+
+.d0-insp-target {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-3);
+  border: 1px solid var(--d0-rule);
+  border-radius: var(--d0-r);
+  padding: var(--sp-2) var(--sp-3);
+  background: var(--d0-active-bg);
+  color: var(--d0-ink);
+}
+
+.d0-insp-cards,
+.d0-insp-hidden {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-5);
+}
+
+.d0-insp-card {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-3);
+  border: 1px solid var(--d0-rule);
+  border-radius: var(--d0-r);
+  padding: var(--sp-5);
+  background: var(--d0-surface);
+}
+/* Hidden-section cards stay legible but read as secondary — they describe
+   columns the grid is not showing. */
+.d0-insp-card.is-dimmed {
+  opacity: 0.55;
+}
+
+.d0-insp-card-head {
+  color: var(--d0-ink);
+}
+
+.d0-insp-stat {
+  color: var(--d0-muted);
+}
+
+.d0-insp-hidden-head {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-3);
+  color: var(--d0-muted);
+}
+.d0-insp-hidden-head:hover {
+  color: var(--d0-fg);
+}
+
+/* Inline mini-charts. The SVG carries no fill of its own — the bars take
+   theirs from these rules, so a theme switch re-colours every sparkline
+   without re-rendering a single chart. */
+.d0-mini-wrap {
+  margin-top: var(--sp-3);
+}
+
+.d0-mini {
+  display: block;
+  overflow: visible;
+}
+
+.d0-mini-bar {
+  fill: var(--d0-accent);
+}
+
+.d0-mini-bar-topn {
+  fill: var(--d0-sql-keyword);
+}
+
+.d0-mini-label {
+  fill: var(--d0-muted);
+  font-family: var(--d0-monospace);
+  font-size: 11px;
+}
+
+/* ── Charts pane ───────────────────────────────────────────────────────── */
+
+.d0-chart {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-4);
+  padding: var(--sp-5);
+  height: 100%;
+  overflow: auto;
+}
+
+/* The toolbar wraps: an axis button's label carries its picked column name
+   ("X: order_date"), so the row's width is data-dependent and a single line
+   would truncate the pick the button exists to show. */
+.d0-chart-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--sp-4);
+  align-items: center;
+}
+
+.d0-chart-canvas {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+  align-items: flex-start;
+  justify-content: center;
+  background: var(--d0-surface);
+  border: 1px solid var(--d0-rule-dim);
+  border-radius: var(--d0-r);
+  padding: var(--sp-4);
+}
+
+.d0-chart-svg {
+  width: 100%;
+}
+
+/* plotters emits width/height attributes in absolute px; overriding them here
+   is what makes the chart scale with the pane instead of clipping. */
+.d0-chart-svg svg {
+  width: 100%;
+  height: auto;
+  display: block;
+}
+
+.d0-chart-empty {
+  color: var(--d0-muted);
+  padding: var(--sp-6);
+}
+
+.d0-chart-error {
+  color: var(--d0-error);
+  padding: var(--sp-6);
+}
+
+/* ── Command palette ───────────────────────────────────────────────────── */
+/* The result list is virtualized like the grid: a canvas sized to the whole
+   list, with only the visible window plus overscan as DOM. Rows are therefore
+   absolutely positioned, and the 1px design gap between them is the difference
+   between the 26px row pitch and this 25px row box. */
+
+.d0-palette-canvas {
+  position: relative;
+  width: 100%;
+  /* The list is a flex column; without this the canvas shrinks to the
+     container and the scrollbar stops describing the whole list. */
+  flex: 0 0 auto;
+}
+
+.d0-palette-input .d0-hint {
+  color: var(--d0-muted);
+}
+
+.d0-palette-canvas .d0-palette-row {
+  position: absolute;
+  left: 0;
+  right: 0;
+  height: 25px;
+  padding: 0 var(--sp-6);
+  box-sizing: border-box;
+  border: 0;
+  background: none;
+  cursor: pointer;
+}
+.d0-palette-canvas .d0-palette-row:hover {
+  background: var(--d0-row-hover);
+}
+
+.d0-palette-glyph {
+  flex: 0 0 16px;
+  color: var(--d0-muted);
+}
+
+/* The label yields to the chord hint rather than pushing it off the row. */
+.d0-palette-label {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.d0-palette-empty {
+  margin: 0;
+  padding: var(--sp-6);
+  color: var(--d0-muted);
+}
+
+/* ── Pipeline bar ──────────────────────────────────────────────────────── */
+
+/* The transform strip above the grid. Chips, not a toolbar: the bar reports
+   state, and every chip in it is also the gesture that returns to that state. */
+.d0-pipeline {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-5);
+  padding: var(--sp-4) var(--sp-7);
+  background: var(--d0-canvas);
+  border-bottom: 1px solid var(--d0-rule-dim);
+  overflow-x: auto;
+}
+
+.d0-pipeline-strip,
+.d0-pipeline-steps {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-3);
+  min-width: 0;
+}
+.d0-pipeline-steps {
+  flex-direction: column;
+  align-items: stretch;
+}
+
+.d0-pipeline-step,
+.d0-pipeline-row {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-3);
+}
+
+.d0-pipeline-sep {
+  color: var(--d0-muted);
+  font-family: var(--d0-monospace);
+  font-size: 12.5px;
+}
+
+/* Scrubbed past: still there, still clickable, no longer what the grid shows. */
+.d0-pipeline .d0-chip.is-past {
+  color: var(--d0-muted);
+  border-style: dashed;
+  opacity: 0.6;
+}
+.d0-pipeline .d0-chip:hover {
+  background: var(--d0-row-hover);
+}
+
+.d0-pipeline-remove {
+  color: var(--d0-error);
+  font-size: 11px;
+  padding: 0 var(--sp-3);
+}
+
+.d0-pipeline-tail {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-3);
+  margin-left: auto;
+}
+
+/* ── Empty-state hero ──────────────────────────────────────────────────── */
+
+.d0-hero {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-8);
+  height: 100%;
+  min-height: 0;
+  overflow: auto;
+  padding: var(--sp-9) var(--sp-8);
+  background: var(--d0-canvas);
+}
+
+.d0-hero .is-muted { color: var(--d0-muted); }
+.d0-hero .is-ok { color: var(--d0-ok); }
+
+.d0-hero-headline {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-4);
+}
+.d0-hero-headline p {
+  margin: 0;
+}
+
+.d0-hero-band {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-7);
+  padding-bottom: var(--sp-7);
+  border-bottom: 1px solid var(--d0-rule-dim);
+}
+.d0-hero-band-top {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--sp-7);
+}
+
+.d0-hero-demo {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-7);
+  padding: var(--sp-7);
+  background: var(--d0-panel);
+  border-radius: var(--d0-r);
+}
+
+.d0-hero-cols {
+  display: flex;
+  flex: 1 1 auto;
+  min-height: 0;
+  gap: var(--sp-8);
+}
+
+.d0-hero-drop {
+  flex: 1 1 auto;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: var(--sp-5);
+  text-align: center;
+}
+.d0-hero-drop p {
+  margin: 0;
+}
+
+/* Fixed, because the hero's right column is a list of names and a list of names
+   that reflows as the window resizes is unreadable. */
+.d0-hero-right {
+  flex: 0 0 280px;
+}
+
+.d0-hero-list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-5);
+}
+
+.d0-hero-card {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-2);
+  align-items: flex-start;
+  text-align: left;
+  padding: var(--sp-5) var(--sp-6);
+  border: 1px solid var(--d0-rule);
+  border-radius: var(--d0-r);
+  background: var(--d0-surface);
+}
+.d0-hero-card:hover {
+  background: var(--d0-row-hover);
+}
+
+.d0-hero-recents {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-2);
+}
+
+.d0-hero-recent {
+  display: block;
+  width: 100%;
+  text-align: left;
+  padding: var(--sp-3) var(--sp-5);
+  border-radius: var(--d0-r);
+  font-family: var(--d0-monospace);
+  font-size: 12.5px;
+  color: var(--d0-fg);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.d0-hero-recent:hover {
+  background: var(--d0-row-hover);
+}
+.d0-hero-recent.is-active {
+  background: var(--d0-active-bg);
+  box-shadow: inset 0 0 0 2px var(--d0-accent);
+  color: var(--d0-ink);
+}
+
+/* Standing in for copy that is about to be true: the session is still opening,
+   and promising "no waiting" while the user waits is the one thing the hero must
+   not do. */
+.d0-skel {
+  height: 10px;
+  border-radius: var(--d0-r-sm);
+  background: var(--d0-panel);
+  animation: d0-skel-fade 1.4s ease-in-out infinite;
+}
+.d0-skel.is-secondary {
+  opacity: 0.6;
+}
+
+@keyframes d0-skel-fade {
+  0%, 100% { opacity: 0.4; }
+  50% { opacity: 1; }
+}
+
+/* ── Banners ───────────────────────────────────────────────────────────── */
+
+.d0-banner-host {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-4);
+  padding: var(--sp-4) var(--sp-7);
+}
+
+.d0-banner-text {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-2);
+  min-width: 0;
+  flex: 1 1 auto;
+}
+
+.d0-banner-title {
+  font-family: var(--d0-sans);
+  font-weight: 600;
+  font-size: 13px;
+  color: var(--d0-ink);
+}
+
+.d0-banner .is-muted { color: var(--d0-muted); }
+
+.d0-banner-actions {
+  display: flex;
+  gap: var(--sp-5);
+  flex: 0 0 auto;
+}
+
+.d0-banner-dismiss {
+  flex: 0 0 auto;
+  align-self: flex-start;
+  color: var(--d0-muted);
+  font-size: 11px;
+  padding: 0 var(--sp-3);
+}
+.d0-banner-dismiss:hover {
+  color: var(--d0-fg);
+}
+
+/* ── Filter popover ────────────────────────────────────────────────────── */
+
+/* Hangs off the header's funnel zone, so it points at the column it filters. */
+.d0-popover {
+  position: absolute;
+  z-index: 90;
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-5);
+  min-width: 240px;
+  max-width: 320px;
+  padding: var(--sp-6);
+  border: 1px solid var(--d0-input-border);
+  border-radius: var(--d0-r);
+  background: var(--d0-surface);
+  box-shadow: var(--d0-shadow-overlay);
+}
+
+.d0-popover .is-ok { color: var(--d0-ok); }
+.d0-popover .is-error { color: var(--d0-error); }
+
+.d0-popover label {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-4);
+  color: var(--d0-fg);
+}
+
+.d0-popover-actions {
+  display: flex;
+  gap: var(--sp-5);
+  padding-top: var(--sp-3);
+  border-top: 1px solid var(--d0-rule-dim);
+}
+
+.d0-filter-list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-3);
+  max-height: 220px;
+  overflow-y: auto;
+}
+
+.d0-filter-list .d0-chip {
+  justify-content: flex-start;
+  width: 100%;
+}
+.d0-filter-list .d0-chip:hover {
+  background: var(--d0-row-hover);
+}
+.d0-filter-list .d0-chip.is-on {
+  background: var(--d0-active-bg);
+  color: var(--d0-ink);
+}
+
+.d0-check {
+  color: var(--d0-accent);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .d0-skel {
+    animation: none;
+  }
+}
+
+/* ── Form primitives (shared) ──────────────────────────────────────────── */
+/* Buttons and text fields for every dialog and panel. Shared deliberately:
+   five surfaces landed in parallel and a `.d0-export-button` beside a
+   `.d0-settings-button` is how two identical controls drift apart. */
+
+.d0-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--sp-3);
+  border: 1px solid var(--d0-input-border);
+  border-radius: var(--d0-r);
+  padding: var(--sp-3) var(--sp-5);
+  background: var(--d0-pane-head);
+  color: var(--d0-fg);
+  font-family: var(--d0-sans);
+  font-weight: 500;
+  font-size: 13px;
+  line-height: 1;
+  cursor: pointer;
+}
+.d0-btn:hover:not(:disabled) {
+  background: var(--d0-row-hover);
+  color: var(--d0-ink);
+}
+.d0-btn.is-primary {
+  background: var(--d0-accent);
+  border-color: var(--d0-accent);
+  color: var(--d0-surface);
+}
+.d0-btn.is-ghost {
+  background: transparent;
+}
+/* A disabled control must not merely look inert — it must not respond to a
+   hover either, or it reads as a button the app is failing to honour. */
+.d0-btn:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
+.d0-field {
+  flex: 1 1 auto;
+  min-width: 0;
+  border: none;
+  border-radius: var(--d0-r);
+  padding: var(--sp-4) var(--sp-5);
+  background: var(--d0-field);
+  color: var(--d0-ink);
+  font-family: var(--d0-monospace);
+  font-size: 12.5px;
+  box-shadow:
+    inset 0 0 0 1px var(--d0-input-border),
+    inset 0 1px 2px var(--d0-inset);
+  caret-color: var(--d0-accent);
+  -webkit-user-select: text;
+  user-select: text;
+}
+.d0-field:focus {
+  outline: none;
+  box-shadow: inset 0 0 0 2px var(--d0-accent);
+}
+.d0-field[aria-invalid="true"] {
+  box-shadow: inset 0 0 0 1px var(--d0-error);
+}
+
+.d0-form-row {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-4);
+  min-width: 0;
+}
+
+.d0-form-actions {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-4);
+  padding-top: var(--sp-3);
+}
+
+.d0-form-error {
+  color: var(--d0-error);
+}
+
+/* A radio group is one tab stop; the arrow keys move within it, so the
+   individual radios are buttons with `tabindex="-1"`. */
+.d0-radiogroup {
+  display: flex;
+  flex-direction: row;
+  gap: var(--sp-4);
+}
+.d0-radiogroup.is-vertical {
+  flex-direction: column;
+  align-items: flex-start;
+}
+.d0-radiogroup:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 2px var(--d0-accent);
+  border-radius: var(--d0-r);
+}
+.d0-radio {
+  border: 1px solid var(--d0-input-border);
+  border-radius: var(--d0-r);
+  padding: var(--sp-3) var(--sp-5);
+  background: var(--d0-pane-head);
+  color: var(--d0-muted);
+  font-family: var(--d0-monospace);
+  font-size: 12.5px;
+  cursor: pointer;
+}
+.d0-radio.is-selected {
+  background: var(--d0-active-bg);
+  border-color: var(--d0-accent);
+  color: var(--d0-ink);
+}
+
+/* ── Export dialog ─────────────────────────────────────────────────────── */
+
+.d0-export {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-4);
+  padding: var(--sp-6);
+}
+.d0-export-dest {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--d0-fg);
+}
+.d0-export-dest.is-unset {
+  color: var(--d0-muted);
+  font-style: italic;
+}
+/* The extension is derived from the format, never typed, so it sits outside
+   the field rather than inside it as editable text. */
+.d0-export-ext {
+  flex: 0 0 auto;
+  color: var(--d0-muted);
+}
+
+/* ── Name prompt ───────────────────────────────────────────────────────── */
+
+.d0-prompt {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-4);
+  padding: var(--sp-6);
+}
+
+/* ── Saved-query picker / query history ────────────────────────────────── */
+
+.d0-picker,
+.d0-history {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-2);
+  padding: var(--sp-5);
+  max-height: 46vh;
+  overflow: auto;
+}
+.d0-picker:focus-visible,
+.d0-history:focus-visible {
+  outline: none;
+  box-shadow: inset 0 0 0 2px var(--d0-accent);
+}
+.d0-picker-list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-2);
+  min-height: 0;
+}
+.d0-picker-list:focus-visible {
+  outline: none;
+  box-shadow: inset 0 0 0 2px var(--d0-accent);
+}
+/* The delete affordance only earns its width on the row you are on. */
+.d0-picker-del {
+  margin-left: auto;
+  padding: 0 var(--sp-3);
+  border-color: transparent;
+  color: var(--d0-muted);
+}
+.d0-row:hover .d0-picker-del,
+.d0-row.is-active .d0-picker-del {
+  color: var(--d0-error);
+}
+.d0-history .d0-row-meta.is-err {
+  color: var(--d0-error);
+}
+
+/* ── Connections ───────────────────────────────────────────────────────── */
+
+.d0-conn {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-6);
+  padding: var(--sp-6);
+}
+.d0-conn-section {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-4);
+}
+.d0-conn-status {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-4);
+}
+/* Connecting: amber, and pulsing, because it genuinely is working. An error
+   uses the still red dot defined with the primitives. */
+.d0-dot.is-busy {
+  background: var(--d0-amber);
+  animation: d0-pulse 2.4s ease-in-out infinite;
+}
+.d0-conn-dbs {
+  list-style: none;
+  margin: 0;
+  padding: 0 0 0 var(--sp-6);
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-2);
+  color: var(--d0-muted);
+}
+.d0-conn-test {
+  color: var(--d0-ok);
+}
+
+/* ── Dialog bodies: about, report, tour, recovery, update, confirms ────── */
+/* One footer rule for every dialog in this group rather than five identical
+   ones. Right-aligned, unlike the shared `.d0-form-actions` used inside a
+   form body: a dialog's footer is where the decision lives, and the decision
+   sits at the end of the reading order. */
+
+.d0-about-actions,
+.d0-report-actions,
+.d0-confirm-actions,
+.d0-update-actions {
+  display: flex;
+  justify-content: flex-end;
+  align-items: center;
+  gap: var(--sp-4);
+  padding-top: var(--sp-6);
+}
+
+.d0-about,
+.d0-report,
+.d0-confirm,
+.d0-update,
+.d0-recovery,
+.d0-tour {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-5);
+  padding: var(--sp-6);
+}
+
+.d0-about-lines {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-2);
+  color: var(--d0-fg);
+}
+
+/* The note field is the only multi-line input in the app; `.d0-field` is
+   sized for one line. */
+.d0-report-note {
+  resize: vertical;
+  min-height: 72px;
+  line-height: 1.5;
+}
+
+/* ── Onboarding tour ───────────────────────────────────────────────────── */
+
+.d0-tour-art {
+  width: 100%;
+  max-width: 360px;
+  aspect-ratio: 3 / 2;
+  align-self: center;
+  border-radius: var(--d0-r);
+  background: var(--d0-panel);
+  object-fit: cover;
+}
+
+.d0-tour-controls {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--sp-5);
+  padding-top: var(--sp-6);
+}
+
+.d0-tour-advance {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-4);
+}
+
+.d0-tour-pager {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-3);
+}
+
+.d0-tour-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: var(--d0-r-pill);
+  background: var(--d0-chrome-border-2);
+  /* Size, not opacity: the pager has to read at a glance against both the
+     light and the dark surface, and a faded dot disappears on one of them. */
+  transition: background var(--d0-ease) 0.2s;
+}
+.d0-tour-dot.is-on {
+  background: var(--d0-accent);
+}
+
+/* ── Recovery panel ────────────────────────────────────────────────────── */
+
+.d0-recovery-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--sp-6);
+  padding: var(--sp-4) 0;
+  border-bottom: 1px solid var(--d0-rule-dim);
+}
+.d0-recovery-row:last-child {
+  border-bottom: none;
+}
+
+/* The label is the only part that may shrink: the two verbs must stay
+   readable however long a restored table list or a workspace path is. */
+.d0-recovery-label {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--d0-fg);
+}
+
+.d0-recovery-actions {
+  display: flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: var(--sp-4);
+}
+
+/* ── Import progress ───────────────────────────────────────────────────── */
+
+.d0-import {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-5);
+  padding: var(--sp-4) var(--sp-6);
+  border: 1px solid var(--d0-rule);
+  border-radius: var(--d0-r);
+  background: var(--d0-pane-head);
+}
+.d0-import.is-running { border-left: 3px solid var(--d0-accent); }
+.d0-import.is-ok { border-left: 3px solid var(--d0-ok); }
+.d0-import.is-warning { border-left: 3px solid var(--d0-warn-text); }
+.d0-import.is-error { border-left: 3px solid var(--d0-error); }
+
+.d0-import-file {
+  color: var(--d0-ink);
+  white-space: nowrap;
+}
+.d0-import-msg {
+  color: var(--d0-muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* The bar takes the slack so the buttons stay pinned right. */
+.d0-import-bar {
+  flex: 1 1 auto;
+  min-width: 60px;
+  height: 4px;
+  border-radius: var(--d0-r-pill);
+  background: var(--d0-panel);
+  overflow: hidden;
+}
+.d0-import-fill {
+  height: 100%;
+  background: var(--d0-accent);
+  transition: width 0.2s var(--d0-ease);
+}
+/* No total: a sliding sliver, because a static 0 % bar reads as "stuck". */
+.d0-import-fill.is-indeterminate {
+  width: 30%;
+  animation: d0-indeterminate 1.4s ease-in-out infinite;
+}
+
+@keyframes d0-indeterminate {
+  0% { margin-left: -30%; }
+  100% { margin-left: 100%; }
+}
+
+/* ── Import wizard ─────────────────────────────────────────────────────── */
+
+.d0-wizard {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-5);
+  width: min(720px, 94vw);
+  padding: var(--sp-7);
+}
+
+.d0-wizard-head {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-5);
+}
+.d0-wizard-head .d0-label { margin-left: auto; }
+
+.d0-wizard-steps {
+  display: flex;
+  gap: var(--sp-3);
+}
+.d0-wizard-step {
+  flex: 1 1 0;
+  padding: var(--sp-3) var(--sp-5);
+  border-radius: var(--d0-r);
+  background: var(--d0-panel);
+  font-family: var(--d0-monospace);
+  font-size: 11px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--d0-muted);
+}
+.d0-wizard-step.is-active {
+  background: var(--d0-active-bg);
+  box-shadow: inset 2px 0 0 var(--d0-accent);
+  color: var(--d0-ink);
+}
+
+.d0-wizard-body {
+  min-height: 180px;
+  max-height: 46vh;
+  overflow: auto;
+}
+
+.d0-wizard-fields {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-5);
+}
+.d0-wizard-field {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-3);
+}
+.d0-wizard-field.is-inline {
+  flex-direction: row;
+  align-items: center;
+  gap: var(--sp-4);
+}
+
+.d0-wizard-cols {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-2);
+}
+/* One grid template on both the head and the rows, so a header never drifts
+   off the column it labels. */
+.d0-wizard-col {
+  display: grid;
+  grid-template-columns: 28px minmax(0, 1fr) minmax(0, 1fr) 140px;
+  align-items: center;
+  gap: var(--sp-4);
+}
+.d0-wizard-col.is-head {
+  padding-bottom: var(--sp-3);
+  border-bottom: 1px solid var(--d0-rule-dim);
+}
+.d0-wizard-source {
+  color: var(--d0-muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.d0-wizard-confirm {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--sp-4);
+}
+.d0-wizard-sql {
+  flex: 1 1 100%;
+  margin: 0;
+  padding: var(--sp-5);
+  border: 1px solid var(--d0-rule-dim);
+  border-radius: var(--d0-r);
+  background: var(--d0-panel);
+  color: var(--d0-fg);
+  white-space: pre-wrap;
+  word-break: break-all;
+}
+
+.d0-wizard-issues {
+  margin: 0;
+  padding: var(--sp-4) var(--sp-6);
+  list-style: none;
+  border-left: 3px solid var(--d0-error);
+  background: var(--d0-pane-head);
+  color: var(--d0-error);
+}
+
+.d0-wizard-foot {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-4);
+}
+.d0-wizard-foot .d0-spacer { margin-left: auto; }
+
+/* ── AI panel ──────────────────────────────────────────────────────────── */
+
+.d0-ai {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: var(--sp-4);
+  padding: var(--sp-5);
+}
+.d0-ai-row {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-4);
+  width: 100%;
+}
+.d0-ai .is-ok { color: var(--d0-ok); }
+.d0-ai .is-error { color: var(--d0-error); }
+
+.d0-ai-result { color: var(--d0-fg); }
+.d0-ai-egress { color: var(--d0-ok); }
+
+.d0-ai-stream {
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-3);
+  padding: var(--sp-5);
+  border: 1px solid var(--d0-rule-dim);
+  border-radius: var(--d0-r);
+  background: var(--d0-panel);
+}
+.d0-ai-stream pre {
+  margin: 0;
+  white-space: pre-wrap;
+  color: var(--d0-fg);
+}
+/* The caret only blinks while text is still arriving. */
+.d0-ai-stream[data-phase="streaming"] pre::after {
+  content: "\258F";
+  color: var(--d0-accent);
+  animation: d0-caret 1.1s step-end infinite;
+}
+
+@keyframes d0-caret {
+  50% { opacity: 0; }
+}
+
+/* ── Settings window ───────────────────────────────────────────────────── */
+
+.d0-settings {
+  display: grid;
+  grid-template-columns: 200px minmax(0, 1fr);
+  height: 100vh;
+  background: var(--d0-canvas);
+  color: var(--d0-fg);
+}
+
+.d0-settings-nav {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-2);
+  padding: var(--sp-6) var(--sp-4);
+  border-right: 1px solid var(--d0-chrome-border);
+  background: var(--d0-chrome);
+  overflow: auto;
+}
+.d0-settings-tab {
+  padding: var(--sp-3) var(--sp-5);
+  border-radius: var(--d0-r);
+  text-align: left;
+  color: var(--d0-chrome-muted);
+}
+.d0-settings-tab:hover {
+  background: var(--d0-row-hover);
+  color: var(--d0-fg);
+}
+.d0-settings-tab.is-active {
+  background: var(--d0-active-bg);
+  color: var(--d0-ink);
+}
+
+.d0-settings-body {
+  padding: var(--sp-7);
+  overflow: auto;
+}
+
+.d0-settings-fields {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: var(--sp-6);
+  max-width: 62ch;
+}
+.d0-settings-field {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-3);
+  width: 100%;
+}
+
+.d0-settings-toggle {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-4);
+  padding: var(--sp-3) var(--sp-5);
+  border-radius: var(--d0-r);
+  color: var(--d0-fg);
+  text-align: left;
+}
+.d0-settings-toggle:hover { background: var(--d0-row-hover); }
+.d0-settings-toggle .d0-settings-box { color: var(--d0-muted); }
+.d0-settings-toggle.is-on .d0-settings-box { color: var(--d0-accent); }
+
+.d0-settings-paths {
+  margin: 0;
+  padding-left: var(--sp-6);
+  color: var(--d0-muted);
+}
+
+.d0-settings-confirm {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-5);
+  padding: var(--sp-7);
+}
+.d0-settings-confirm-foot {
+  display: flex;
+  justify-content: flex-end;
+  gap: var(--sp-4);
+}
+
+/* Motion in these four surfaces is progress and a caret; both are
+   informational, so they stop rather than merely slow down. */
+@media (prefers-reduced-motion: reduce) {
+  .d0-import-fill,
+  .d0-import-fill.is-indeterminate,
+  .d0-ai-stream[data-phase="streaming"] pre::after {
+    animation: none;
+    transition: none;
+  }
+}
+
+/* ── Modal host ────────────────────────────────────────────────────────── */
+/* The scrim and the panel itself are in "Overlays"; this is the chrome the
+   host puts around whichever body the slot is showing. */
+
+.d0-modal-head {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-5);
+  height: 32px;
+  padding: 0 var(--sp-4) 0 var(--sp-6);
+  border-bottom: 1px solid var(--d0-rule-dim);
+  background: var(--d0-pane-head);
+  border-radius: var(--d0-r) var(--d0-r) 0 0;
+}
+
+/* Pushes the ✕ to the right edge whether or not a title wraps. */
+.d0-modal-head .d0-head-title {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.d0-modal-close {
+  flex: 0 0 auto;
+  border-color: transparent;
+  padding: var(--sp-2) var(--sp-4);
+  color: var(--d0-muted);
+}
+
+.d0-modal-body {
+  padding: var(--sp-6);
+  /* The panel is centred in the viewport, so an over-tall body must scroll
+     rather than push its own header off the top of the screen. */
+  max-height: 70vh;
+  overflow: auto;
+}
+
+/* ── Token gallery (dev-only surface) ──────────────────────────────────── */
+
+.d0-gallery {
+  height: 100vh;
+  overflow: auto;
+  background: var(--d0-canvas);
+  color: var(--d0-fg);
+  padding-bottom: var(--sp-8);
+}
+
+.d0-gallery-head {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  display: flex;
+  align-items: center;
+  gap: var(--sp-6);
+  height: var(--d0-titlebar-h);
+  padding: 0 var(--sp-6);
+  background: var(--d0-chrome);
+  border-bottom: 1px solid var(--d0-chrome-border);
+}
+.d0-gallery-themes {
+  margin-left: auto;
+  display: flex;
+  gap: var(--sp-4);
+}
+
+.d0-gallery-section {
+  padding: var(--sp-6) 20px;
+  border-bottom: 1px solid var(--d0-rule-dim);
+}
+.d0-gallery-section > h2 {
+  margin: 0 0 var(--sp-5) 0;
+}
+
+.d0-gallery-row {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--sp-5);
+  margin-bottom: var(--sp-5);
+}
+
+.d0-gallery-type > * {
+  margin-bottom: var(--sp-4);
+}
+
+/* Auto-fill rather than a fixed column count: the token set grows, and a
+   hard-coded grid would start wrapping badly the moment it does. */
+.d0-swatch-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+  gap: var(--sp-5);
+}
+.d0-swatch-cell {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-4);
+  min-width: 0;
+}
+.d0-swatch-chip {
+  width: 28px;
+  height: 28px;
+  flex: 0 0 28px;
+  border-radius: var(--d0-r);
+  border: 1px solid var(--d0-rule);
+}
+.d0-swatch-value {
+  margin-left: auto;
+  color: var(--d0-chrome-muted);
+}
+
+.d0-icon-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
+  gap: var(--sp-5);
+}
+.d0-icon-cell {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-4);
+  min-width: 0;
+}
+.d0-icon-cell span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}

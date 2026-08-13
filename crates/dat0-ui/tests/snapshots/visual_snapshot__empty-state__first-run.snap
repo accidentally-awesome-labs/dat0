@@ -1,0 +1,47 @@
+---
+source: crates/dat0-ui/tests/visual_snapshot.rs
+expression: html
+---
+<div class="d0-scene" data-scene="empty-state/first-run" style="width: 1440px; height: 900px; overflow: hidden">
+<div class="d0-hero" data-a11y-id="empty-state">
+<div class="d0-hero-band">
+<div class="d0-hero-band-top">
+<div class="d0-hero-headline">
+<h1 class="d0-h1" data-a11y-id="hero-title" role="note" aria-label="Your data outgrew the spreadsheet.">Your data outgrew the spreadsheet.</h1>
+<p class="d0-h2 is-muted">It never outgrew your laptop.</p>
+<p class="d0-lead is-muted">Open a 12 GB Parquet like a 5 MB CSV, join it to live Postgres in one SELECT, and seal the whole analysis — data, queries, lineage — into a single file anyone can replay, inspect, or diff.</p>
+</div>
+<button class="d0-btn" data-a11y-id="hero-take-tour" role="button" aria-label="Take a tour" tabindex="0">Take a tour</button>
+</div>
+<div class="d0-hero-demo">
+<span class="d0-head-title">Try the demo workspace</span>
+<button class="d0-cta" data-a11y-id="hero-open-demo" role="button" aria-label="Open demo.dat0" tabindex="0">▶ Open demo.dat0</button>
+</div>
+<span class="d0-label">Or start from a sample:</span>
+</div>
+<div class="d0-hero-cols">
+<div class="d0-hero-drop" data-a11y-id="hero-drop">
+<p class="d0-body">Drop a CSV, Parquet, JSON, or SQLite file. No import wizard, no waiting.</p>
+<span class="d0-mono is-ok">nothing imported · 0 bytes left this machine</span>
+</div>
+<div class="d0-hero-right">
+<div class="d0-hero-list" data-a11y-id="hero-samples">
+<span class="d0-label">Samples</span>
+<button class="d0-hero-card" data-a11y-id="hero-sample-iris" role="button" aria-label="Iris" tabindex="0">
+<span class="d0-head-title">Iris</span>
+<span class="d0-mono is-muted">150 rows × 5 cols — classic CSV</span>
+</button>
+<button class="d0-hero-card" data-a11y-id="hero-sample-chinook" role="button" aria-label="Chinook" tabindex="0">
+<span class="d0-head-title">Chinook</span>
+<span class="d0-mono is-muted">~1 MB SQLite — multi-table demo</span>
+</button>
+<button class="d0-hero-card" data-a11y-id="hero-sample-nyc-taxi" role="button" aria-label="NYC taxi" tabindex="0">
+<span class="d0-head-title">NYC taxi</span>
+<span class="d0-mono is-muted">~50 MB Parquet — remote fetch on first use</span>
+</button>
+<button class="d0-btn" data-a11y-id="hero-open-file-samples" role="button" aria-label="Open file…" tabindex="0">Open file…</button>
+</div>
+</div>
+</div>
+</div>
+</div>

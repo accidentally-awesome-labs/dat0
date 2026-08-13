@@ -1,0 +1,42 @@
+---
+source: crates/dat0-ui/tests/visual_snapshot.rs
+expression: html
+---
+<div class="d0-scene" data-scene="modal/connections" style="width: 1440px; height: 900px; overflow: hidden">
+<div class="d0-scrim" data-a11y-id="modal-scrim">
+<div class="d0-modal" data-a11y-id="modal" role="dialog" aria-modal="true" aria-label="Connections" tabindex="-1">
+<div class="d0-modal-head">
+<span class="d0-label">connections</span>
+<span class="d0-head-title">Connections</span>
+</div>
+<div class="d0-modal-body" data-a11y-id="modal-body">
+<div class="d0-conn" data-a11y-id="connections">
+<section class="d0-conn-section" data-a11y-id="connections-md">
+<div class="d0-label">MotherDuck</div>
+<div class="d0-conn-status">
+<span class="d0-dot" data-a11y-id="connections-md-dot">
+</span>
+<span class="d0-mono" data-a11y-id="connections-md-status" role="note" aria-label="Disconnected">Disconnected</span>
+</div>
+<div class="d0-form-actions">
+<button class="d0-btn is-primary" data-a11y-id="connections-md-connect" role="button" aria-label="Connect">Connect</button>
+<button class="d0-btn is-ghost" data-a11y-id="connections-md-test" role="button" aria-label="Test connection">Test connection</button>
+</div>
+</section>
+<section class="d0-conn-section" data-a11y-id="connections-files">
+<div class="d0-label">Attached files</div>
+<div class="d0-row" data-a11y-id="connections-file-crm">
+<span class="d0-row-name d0-mono">
+<span class="d0-swatch sw-sqlite">
+</span>crm · /data/crm.db</span>
+<button class="d0-btn is-ghost" data-a11y-id="connections-detach-crm" role="button" aria-label="Detach">Detach</button>
+</div>
+<div class="d0-form-actions">
+<button class="d0-btn is-ghost" data-a11y-id="connections-attach-sqlite" role="button" aria-label="Attach SQLite…">Attach SQLite…</button>
+</div>
+</section>
+</div>
+</div>
+</div>
+</div>
+</div>

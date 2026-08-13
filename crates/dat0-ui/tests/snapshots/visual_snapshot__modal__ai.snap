@@ -1,0 +1,34 @@
+---
+source: crates/dat0-ui/tests/visual_snapshot.rs
+expression: html
+---
+<div class="d0-scene" data-scene="modal/ai" style="width: 1440px; height: 900px; overflow: hidden">
+<div class="d0-scrim" data-a11y-id="modal-scrim">
+<div class="d0-modal" data-a11y-id="modal" role="dialog" aria-modal="true" aria-label="AI Providers" tabindex="-1">
+<div class="d0-modal-head">
+<span class="d0-label">ai</span>
+<span class="d0-head-title">AI Providers</span>
+<button class="d0-btn is-ghost d0-modal-close" data-a11y-id="modal-close" role="button" aria-label="Close">✕</button>
+</div>
+<div class="d0-modal-body" data-a11y-id="modal-body">
+<div class="d0-ai" data-a11y-id="ai-panel" role="navigation" aria-label="AI Providers">
+<button class="d0-btn" data-a11y-id="ai-toggle-enabled" role="button" aria-label="AI disabled" aria-disabled="false">AI disabled</button>
+<button class="d0-btn" data-a11y-id="ai-provider-cycle" role="button" aria-label="None" aria-disabled="false">None</button>
+<div class="d0-ai-row">
+<span class="d0-mono" data-a11y-id="ai-key-state">No key</span>
+<button class="d0-btn" data-a11y-id="ai-key-set" role="button" aria-label="Save key" aria-disabled="false">Save key</button>
+<button class="d0-btn" data-a11y-id="ai-key-forget" role="button" aria-label="Forget key" aria-disabled="true">Forget key</button>
+</div>
+<div class="d0-ai-row">
+<span class="d0-mono" data-a11y-id="ai-model-state">Model</span>
+<button class="d0-btn" data-a11y-id="ai-model-set" role="button" aria-label="Save model" aria-disabled="false">Save model</button>
+</div>
+<button class="d0-btn" data-a11y-id="ai-toggle-advanced" role="button" aria-label="Restrict to https and public endpoints" aria-disabled="false">Restrict to https and public endpoints</button>
+<button class="d0-btn" data-a11y-id="ai-toggle-sample-rows" role="button" aria-label="Do not include sample rows in requests" aria-disabled="false">Do not include sample rows in requests</button>
+<button class="d0-btn" data-a11y-id="ai-test-connection" role="button" aria-label="Test connection" aria-disabled="false">Test connection</button>
+<div class="d0-mono d0-ai-egress is-ok" data-a11y-id="ai-egress" role="note" aria-label="egress 0 B">egress 0 B</div>
+</div>
+</div>
+</div>
+</div>
+</div>

@@ -1,0 +1,37 @@
+---
+source: crates/dat0-ui/tests/visual_snapshot.rs
+expression: "rendered[0].1"
+---
+<div class="d0-scene" data-scene="modal/about" style="width: 1440px; height: 900px; overflow: hidden">
+<div class="d0-scrim" data-a11y-id="modal-scrim">
+<div class="d0-modal" data-a11y-id="modal" role="dialog" aria-modal="true" aria-label="dat0" tabindex="-1">
+<div class="d0-modal-head">
+<span class="d0-label">about</span>
+<span class="d0-head-title">dat0</span>
+<button class="d0-btn is-ghost d0-modal-close" data-a11y-id="modal-close" role="button" aria-label="Close">✕</button>
+</div>
+<div class="d0-modal-body" data-a11y-id="modal-body">
+<div class="d0-about" data-a11y-id="about">
+<div class="d0-about-lines" data-a11y-id="about-body" role="note" aria-label="dat0
+Version 0.1.0
+Build <SHA>
+License Apache-2.0
+Open-source acknowledgements (NOTICE)
+Update available: 0.2.0">
+<div class="d0-mono">dat0</div>
+<div class="d0-mono">Version 0.1.0</div>
+<div class="d0-mono">Build <SHA>
+</div>
+<div class="d0-mono">License Apache-2.0</div>
+<div class="d0-mono">Open-source acknowledgements (NOTICE)</div>
+<div class="d0-mono">Update available: 0.2.0</div>
+</div>
+<div class="d0-about-actions">
+<button class="d0-btn is-ghost" data-a11y-id="about-cancel" role="button" aria-label="Cancel">Cancel</button>
+<button class="d0-btn is-primary" data-a11y-id="about-download" role="button" aria-label="Download">Download</button>
+</div>
+</div>
+</div>
+</div>
+</div>
+</div>

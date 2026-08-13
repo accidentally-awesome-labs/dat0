@@ -1,0 +1,18 @@
+---
+source: crates/dat0-ui/tests/visual_snapshot.rs
+expression: html
+---
+<div class="d0-scene" data-scene="banner/error" style="width: 1440px">
+<div class="d0-banner-host" data-a11y-id="banner-host">
+<div class="d0-banner is-error" data-a11y-id="banner-0" role="alert" aria-label="the query failed">
+<div class="d0-banner-text">
+<span class="d0-banner-title">the query failed</span>
+<span class="d0-mono is-muted" data-a11y-id="banner-0-body" role="note" aria-label="Catalog Error: Table with name saless does not exist!">Catalog Error: Table with name saless does not exist!</span>
+</div>
+<div class="d0-banner-actions">
+<button class="d0-btn is-primary" data-a11y-id="banner-0-act-primary" role="button" aria-label="open the console" tabindex="0">open the console</button>
+</div>
+<button class="d0-banner-dismiss" data-a11y-id="banner-0-dismiss" role="button" aria-label="Close" tabindex="0">✕</button>
+</div>
+</div>
+</div>

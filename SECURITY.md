@@ -20,7 +20,7 @@ When reporting, please include (as much as you can):
 - **Initial assessment:** within 14 days
 - **Fix or mitigation plan:** within 30 days for high-severity issues
 
-These are best-effort targets while the project is pre-implementation. Once code ships, response targets will tighten.
+These are best-effort targets for a small team; they are not a contractual SLA.
 
 ## Coordinated disclosure
 
@@ -42,6 +42,6 @@ In scope:
 - Issues in dat0's signing, update, or telemetry pipelines
 
 Out of scope (please report to the upstream project instead):
-- Vulnerabilities in `gpui`, `gpui-component`, `duckdb` / `duckdb-rs`, MotherDuck, or any other upstream dependency unless dat0's specific use of the dependency creates a unique vulnerability
+- Vulnerabilities in `dioxus`, `wry` / `tao`, `duckdb` / `duckdb-rs`, MotherDuck, or any other upstream dependency unless dat0's specific use of the dependency creates a unique vulnerability
 - Issues in third-party LLM providers (OpenAI, Anthropic, OpenRouter)
 - Issues in user-supplied themes from external sources

@@ -82,3 +82,77 @@ widget exercised through a live `Window`.
 |------|-----------|-------|--------------------|-----|
 | 2026-05-25 | macOS 25.5.0 / arm64 (dev box, Apple Silicon) | 1.95.0 | deferred to CI (local run timed out at compile) | — |
 
+---
+
+## Superseded — see `docs/internal/perf-baselines.json`
+
+Everything above is a **historical record of a micro-benchmark**. The
+authoritative performance source for dat0 is now
+`docs/internal/perf-baselines.json`, written and checked by
+`cargo xtask perf [--check]`. That harness opens a real window with a real
+`WorkspaceShell` and records frame intervals, wall-clock open times, and RSS
+per named scenario against committed budgets. Cite it — not this file — for any
+frame-rate or latency claim.
+
+**Why the numbers above cannot bound frame time.** The module doc at
+`crates/dat0-app/benches/grid_scroll.rs:26-46` states it directly, and it is
+repeated here so a reader of the table does not have to find it: `grid_scroll`
+calls `renderers::render_cell` in a plain loop over a synthetic Arrow batch. It
+never constructs a `Window`, a `WorkspaceShell`, or the
+`gpui_component::Table` widget, so it is structurally blind to how the grid is
+mounted — the `TableDelegate`, `render_td`, the per-cell theme reads inside it,
+and the entire element tree above the table. Its sensitivity surface is
+`render_cell` plus Arrow column access and nothing else.
+
+The consequence stated there applies to every row in this document: readings
+that "held" across changes to grid mounting were measuring something that could
+not contain those changes. They are not evidence of no regression; they are
+evidence of nothing, and must not be cited as reassurance. The `~67 700 fps`
+figure above is a per-cell dispatch throughput, **not** a frame rate, and the
+"significant headroom" conclusion in *Reading the result* is unsupported by it.
+
+`grid_scroll` is retained as a `render_cell` watchdog, which it genuinely is —
+that function is on the per-cell hot path. Real per-frame timing belongs to
+`cargo xtask perf`.
+
+---
+
+## EN4 — `cold_launch` was re-recorded, because it stopped measuring the same thing
+
+`docs/internal/perf-baselines.json`'s `macos-aarch64-dev` `cold_launch` entry
+moved from **231.55 ms** to **302.45 ms** in the EN4 commit. That is not a
+regression in what a user experiences; it is the metric's definition changing
+under it, and the number must move with it or the regression arm reports noise
+forever.
+
+`cold_launch` measures `perf::PROCESS_START` → the first completed
+`WorkspaceShell::render`. Before EN4, `run_app` finished `Session::new` —
+DuckDB open, `PRAGMA`s, migrations — under `block_on` *before* `Application::run`
+was even entered, so the DB open was serialised entirely ahead of the first
+frame and the frame itself had an idle machine to paint on. After EN4 the window
+opens first and `Session::new` runs concurrently on a tokio worker, so the first
+paint now races the DB open for CPU. The user-visible behaviour strictly
+improves (a window exists during the open instead of after it); the *metric*
+gets slower under load, because it times the frame and the frame now has
+competition.
+
+Measured on an M1 Max, release, this tree:
+
+| context | wall_ms |
+|---|---|
+| `--scenario cold_launch` alone, quiet box | 191, 197, 201, 208, 208, 224, 234, 236, 243, 246 |
+| after `scroll_1m` / `scroll_10m` / the two `open_*` skips | 201–208 |
+| full six-scenario `--check` | 286, 302, 320, 330 |
+
+Only the full sequence — two 10-second scroll runs that each build and attach a
+1 M / 10 M row DuckDB fixture, then two fixture-probing skips — is loaded enough
+to show it. The recorded value is the second full-run observation, an actual
+measurement rather than a chosen number, and the 20% band around it (363 ms)
+covers every full-run sample while staying 3.3× under the 1000 ms budget the
+spec sets (`docs/specs/2026-04-26-dat0-design.md:756-761`).
+
+`idle_rss` was NOT re-recorded. It reads 104 MB whenever the harness gets no
+vsync (the normal state on this box) and ~131 MB on the runs where it does get
+vsync and actually composites 600 frames — a Metal drawable plus atlas that an
+unpainted window never allocates. That is display-session state, not EN4, and
+baking the painted number in would hide a real 30 MB regression later.

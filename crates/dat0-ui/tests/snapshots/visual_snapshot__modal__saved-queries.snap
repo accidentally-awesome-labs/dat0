@@ -1,0 +1,37 @@
+---
+source: crates/dat0-ui/tests/visual_snapshot.rs
+expression: html
+---
+<div class="d0-scene" data-scene="modal/saved-queries" style="width: 1440px; height: 900px; overflow: hidden">
+<div class="d0-scrim" data-a11y-id="modal-scrim">
+<div class="d0-modal" data-a11y-id="modal" role="dialog" aria-modal="true" aria-label="Saved Queries…" tabindex="-1">
+<div class="d0-modal-head">
+<span class="d0-label">saved</span>
+<span class="d0-head-title">Saved Queries…</span>
+<button class="d0-btn is-ghost d0-modal-close" data-a11y-id="modal-close" role="button" aria-label="Close">✕</button>
+</div>
+<div class="d0-modal-body" data-a11y-id="modal-body">
+<div class="d0-picker" data-a11y-id="saved-queries">
+<div class="d0-picker-list" data-a11y-id="sql-saved-list" role="listbox" aria-label="Saved Queries…" aria-activedescendant="saved-row-0" tabindex="0">
+<div id="saved-row-0" class="d0-row is-active" data-a11y-id="saved-row-0" role="option" aria-selected="true" aria-label="revenue by region">
+<span class="d0-row-name d0-mono">revenue by region</span>
+<button class="d0-btn is-ghost d0-picker-del" data-a11y-id="saved-del-0" role="button" aria-label="Delete saved query">✕</button>
+</div>
+<div id="saved-row-1" class="d0-row" data-a11y-id="saved-row-1" role="option" aria-selected="false" aria-label="active only">
+<span class="d0-row-name d0-mono">active only</span>
+<button class="d0-btn is-ghost d0-picker-del" data-a11y-id="saved-del-1" role="button" aria-label="Delete saved query">✕</button>
+</div>
+<div id="saved-row-2" class="d0-row" data-a11y-id="saved-row-2" role="option" aria-selected="false" aria-label="top ten">
+<span class="d0-row-name d0-mono">top ten</span>
+<button class="d0-btn is-ghost d0-picker-del" data-a11y-id="saved-del-2" role="button" aria-label="Delete saved query">✕</button>
+</div>
+<div id="saved-row-3" class="d0-row" data-a11y-id="saved-row-3" role="option" aria-selected="false" aria-label="row count">
+<span class="d0-row-name d0-mono">row count</span>
+<button class="d0-btn is-ghost d0-picker-del" data-a11y-id="saved-del-3" role="button" aria-label="Delete saved query">✕</button>
+</div>
+</div>
+</div>
+</div>
+</div>
+</div>
+</div>

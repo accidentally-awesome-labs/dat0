@@ -1,0 +1,113 @@
+---
+source: crates/dat0-ui/tests/visual_snapshot.rs
+expression: html
+---
+<div class="d0-scene" data-scene="modal/import-wizard" style="width: 1440px; height: 900px; overflow: hidden">
+<div class="d0-scrim" data-a11y-id="modal-scrim">
+<div class="d0-modal" data-a11y-id="modal" role="dialog" aria-modal="true" aria-label="Import CSV" tabindex="-1">
+<div class="d0-modal-head">
+<span class="d0-label">import</span>
+<span class="d0-head-title">Import CSV</span>
+</div>
+<div class="d0-modal-body" data-a11y-id="modal-body">
+<div class="d0-wizard" data-a11y-id="import-wizard" role="dialog" aria-label="Import CSV">
+<div class="d0-wizard-head">
+<span class="d0-sw sw-csv">
+</span>
+<span class="d0-head-title">Import CSV</span>
+<span class="d0-label">sales.csv</span>
+</div>
+<div class="d0-wizard-steps" role="list">
+<div role="listitem" class="d0-wizard-step" data-a11y-id="wizard-step-dialect">1. Dialect</div>
+<div role="listitem" class="d0-wizard-step is-active" data-a11y-id="wizard-step-columns" aria-current="step">2. Columns</div>
+<div role="listitem" class="d0-wizard-step" data-a11y-id="wizard-step-confirm">3. Confirm</div>
+</div>
+<div class="d0-wizard-body">
+<div class="d0-wizard-cols" data-a11y-id="wizard-columns">
+<div class="d0-wizard-col is-head d0-colhead">
+<span>Import</span>
+<span>In file</span>
+<span>Import as</span>
+<span>Type</span>
+</div>
+<div class="d0-wizard-col">
+<input type="checkbox" data-a11y-id="wizard-include-0" aria-label="Import id" checked=true/>
+<span class="d0-mono d0-wizard-source">id</span>
+<input class="d0-field d0-mono" data-a11y-id="wizard-name-0" aria-label="Import as id" value="id"/>
+<select class="d0-field d0-mono" data-a11y-id="wizard-type-0" aria-label="Type id" value="BIGINT">
+<option value="VARCHAR">VARCHAR</option>
+<option value="BIGINT" selected=true>BIGINT</option>
+<option value="INTEGER">INTEGER</option>
+<option value="DOUBLE">DOUBLE</option>
+<option value="BOOLEAN">BOOLEAN</option>
+<option value="DATE">DATE</option>
+<option value="TIMESTAMP">TIMESTAMP</option>
+<option value="TIME">TIME</option>
+<option value="BLOB">BLOB</option>
+</select>
+</div>
+<div class="d0-wizard-col">
+<input type="checkbox" data-a11y-id="wizard-include-1" aria-label="Import region" checked=true/>
+<span class="d0-mono d0-wizard-source">region</span>
+<input class="d0-field d0-mono" data-a11y-id="wizard-name-1" aria-label="Import as region" value="region"/>
+<select class="d0-field d0-mono" data-a11y-id="wizard-type-1" aria-label="Type region" value="VARCHAR">
+<option value="VARCHAR" selected=true>VARCHAR</option>
+<option value="BIGINT">BIGINT</option>
+<option value="INTEGER">INTEGER</option>
+<option value="DOUBLE">DOUBLE</option>
+<option value="BOOLEAN">BOOLEAN</option>
+<option value="DATE">DATE</option>
+<option value="TIMESTAMP">TIMESTAMP</option>
+<option value="TIME">TIME</option>
+<option value="BLOB">BLOB</option>
+</select>
+</div>
+<div class="d0-wizard-col">
+<input type="checkbox" data-a11y-id="wizard-include-2" aria-label="Import revenue" checked=true/>
+<span class="d0-mono d0-wizard-source">revenue</span>
+<input class="d0-field d0-mono" data-a11y-id="wizard-name-2" aria-label="Import as revenue" value=""/>
+<select class="d0-field d0-mono" data-a11y-id="wizard-type-2" aria-label="Type revenue" value="DOUBLE">
+<option value="VARCHAR">VARCHAR</option>
+<option value="BIGINT">BIGINT</option>
+<option value="INTEGER">INTEGER</option>
+<option value="DOUBLE" selected=true>DOUBLE</option>
+<option value="BOOLEAN">BOOLEAN</option>
+<option value="DATE">DATE</option>
+<option value="TIMESTAMP">TIMESTAMP</option>
+<option value="TIME">TIME</option>
+<option value="BLOB">BLOB</option>
+</select>
+</div>
+<div class="d0-wizard-col">
+<input type="checkbox" data-a11y-id="wizard-include-3" aria-label="Import active" checked=true/>
+<span class="d0-mono d0-wizard-source">active</span>
+<input class="d0-field d0-mono" data-a11y-id="wizard-name-3" aria-label="Import as active" value="active"/>
+<select class="d0-field d0-mono" data-a11y-id="wizard-type-3" aria-label="Type active" value="BOOLEAN">
+<option value="VARCHAR">VARCHAR</option>
+<option value="BIGINT">BIGINT</option>
+<option value="INTEGER">INTEGER</option>
+<option value="DOUBLE">DOUBLE</option>
+<option value="BOOLEAN" selected=true>BOOLEAN</option>
+<option value="DATE">DATE</option>
+<option value="TIMESTAMP">TIMESTAMP</option>
+<option value="TIME">TIME</option>
+<option value="BLOB">BLOB</option>
+</select>
+</div>
+</div>
+</div>
+<ul class="d0-wizard-issues" data-a11y-id="wizard-issues" role="alert" aria-label="Problems to fix before importing">
+<li class="d0-mono">Column 3 — Give this column a name</li>
+</ul>
+<div class="d0-wizard-foot">
+<button class="d0-btn is-ghost" data-a11y-id="wizard-cancel" aria-label="Cancel">Cancel</button>
+<span class="d0-spacer">
+</span>
+<button class="d0-btn" data-a11y-id="wizard-back" aria-label="Back" aria-disabled="false">Back</button>
+<button class="d0-btn is-primary" data-a11y-id="wizard-next" aria-label="Next" aria-disabled="true">Next</button>
+</div>
+</div>
+</div>
+</div>
+</div>
+</div>
