@@ -503,21 +503,23 @@ jobs:
   # figure from the first run, and that measured figure becomes the floor of a
   # later ratchet.
   #
-  # `continue-on-error` because the name has to be true. This job is new with
-  # the Dioxus migration and has never completed on a hosted runner: it
-  # instruments the whole workspace, and the runner dies mid-step — job marked
-  # failed, `cargo llvm-cov` still `in_progress`, no logs uploaded, ~27 min in
-  # against a 90 min timeout. That is the runner being exhausted, not a test
-  # failing. Without this flag an advisory job with no threshold reddens every
-  # PR, which is how required checks get ignored wholesale.
+  # This job could not run at all until the `CARGO_PROFILE_DEV_DEBUG` below.
+  # It died every time with `No space left on device` — not a test failure, the
+  # runner itself could not write its own diagnostic log, so no logs survived
+  # to say so. `libduckdb-sys` alone is a 1.6 GB rlib and the workspace builds
+  # 190 integration-test binaries against it; instrumenting all of that on top
+  # of a debug build the `build-and-test` job already calls its low-water mark
+  # was never going to fit.
   #
-  # It still runs, and still uploads `lcov.info` when it survives. Making it
-  # fit — or dropping it — is D-038.
+  # Debug info is what made it not fit, and coverage does not need it: llvm-cov
+  # takes line numbers from the coverage map `-C instrument-coverage` emits, not
+  # from DWARF. Measured locally on the whole workspace — 21 GB of target dir
+  # against 64 GB for the ordinary debug build, and the report is undiminished:
+  # 19 789 line records over 194 files, 8 005 functions, 84.9% lines.
   coverage:
     name: Coverage (report only)
     runs-on: ubuntu-latest
     timeout-minutes: 90
-    continue-on-error: true
     steps:
       - uses: actions/checkout@v5
       - uses: dtolnay/rust-toolchain@1.97.0
@@ -556,6 +558,11 @@ jobs:
           # Same OOM cap as build-and-test: instrumented builds link the same
           # duckdb rlib chain, only larger.
           CARGO_BUILD_JOBS: 2
+          # The line that makes this job possible — see the block above. Without
+          # it the runner fills its disk and dies before reporting anything.
+          # llvm-cov reads its line numbers from the coverage map, not DWARF, so
+          # this costs the report nothing.
+          CARGO_PROFILE_DEV_DEBUG: 0
         run: cargo llvm-cov nextest --workspace --lcov --output-path lcov.info
       - name: Upload lcov
         if: always()

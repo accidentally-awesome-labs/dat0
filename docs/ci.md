@@ -59,7 +59,7 @@ cost", `.github/workflows/ci.yml`):
 | `build-and-test` / macos-arm64 | **~40 min** | same |
 
 Both legs ran with **zero Rust caching** — every job re-fetched and rebuilt
-the DuckDB + GPUI + Arrow source graph from scratch.
+the DuckDB + Dioxus + Arrow source graph from scratch.
 
 ### Post-change
 
@@ -92,15 +92,16 @@ exist because the runner PROCESS has died with `No space left on device`
 mid-step (it reddened `main` on b55758b). Caching a target dir the job then
 deletes would upload gigabytes per run for nothing, and restoring one would
 recreate the exhaustion the reclaims prevent. The registry + git half of
-`rust-cache` still applies and is pure win: it removes the DuckDB / GPUI /
+`rust-cache` still applies and is pure win: it removes the DuckDB / Dioxus /
 Arrow source fetch. `fmt` and `clippy` have no such ceiling and use
 `cache-targets: true`.
 
 ### Why nextest
 
-`cargo nextest run` executes each test in its own process. dat0 has 21 tests
-using `serial_test` and several that mutate process-global `OnceCell`s
-(`crates/dat0-app/src/window_registry.rs:33-66`). Inside a single `cargo test`
+`cargo nextest run` executes each test in its own process. dat0 has 136 tests
+using `serial_test` and several that mutate process-global `OnceLock`s
+(`crates/dat0-core/src/globals.rs:20-25` — the state root and the recents
+store, both write-once and installed during boot). Inside a single `cargo test`
 binary those must serialize against one another, and a global left dirty by
 one test is visible to the next. Per-test processes remove both problems.
 
@@ -114,14 +115,41 @@ separate step. Dropping it would silently stop gating every doc example.
 `lcov.info` as an artifact. It is **reporting only — there is deliberately no
 threshold.**
 
-> **NOT YET MEASURED.** Record the line coverage from the first run here:
->
-> - First measured line coverage: _(fill in)_ % — run URL _(fill in)_
+> **First measured: 84.9% of lines** — 19 789 line records over 194 files and
+> 8 005 functions, whole workspace, 1 709 tests. Measured locally on 2026-08-13
+> because the job had never completed on a hosted runner; the first green CI run
+> should confirm the same figure.
 >
 > That measured figure — not a guessed round number — becomes the floor of a
 > later ratchet. A threshold chosen before the number is known either sits
 > uselessly below reality or fails on day one; either way it teaches everyone
 > to ignore it.
+
+### Why the job sets `CARGO_PROFILE_DEV_DEBUG: 0`
+
+Without it the job cannot run at all. It failed every time with `No space left
+on device`, and gave up no logs explaining why: the runner had filled its disk
+so completely that it could not write its own diagnostic file, so the job
+surfaced as "failed" with `cargo llvm-cov` still `in_progress`. The evidence was
+only visible as a check annotation.
+
+The workspace builds 190 integration-test binaries, each linking a
+`libduckdb-sys` rlib that is 1.6 GB on its own. `build-and-test` already calls
+the ordinary debug build its low-water mark for disk; instrumenting the same
+workload on top of that never had room.
+
+Debug info is what did not fit, and coverage does not need it — llvm-cov takes
+line numbers from the coverage map that `-C instrument-coverage` emits, not from
+DWARF. Measured on the whole workspace:
+
+| build | target dir |
+|-------|-----------|
+| ordinary debug (`debug = "line-tables-only"`) | 64 GB |
+| instrumented, `CARGO_PROFILE_DEV_DEBUG=0` | **21 GB** |
+
+The report is undiminished at 21 GB: the line, file and function counts above
+are from exactly that build. Dropping debug info costs the coverage numbers
+nothing and is the only reason this job reports at all.
 
 ## Supply chain
 
@@ -138,19 +166,20 @@ Notable settings and why:
 
 - `[advisories] yanked = "deny"` — a yanked crate in the lockfile means we build
   a version upstream withdrew.
-- `[bans] multiple-versions = "warn"` — the gpui + duckdb + arrow + sentry graph
+- `[bans] multiple-versions = "warn"` — the dioxus + duckdb + arrow + sentry graph
   carries duplicate minor versions dat0 neither controls nor can unify. Denying
   would make the gate unpassable for reasons unrelated to dat0's own choices.
-- `[sources] unknown-git = "deny"` with exactly one allowed URL,
-  `https://github.com/longbridge/gpui-component` (covers both `gpui-component`
-  and `gpui-component-assets`, which share a repo and a pinned rev).
+- `[sources] unknown-git = "deny"` with an **empty** `allow-git`. The migration
+  removed dat0's only git dependency, so the lockfile now carries zero
+  `source = "git+…"` entries and nothing needs excusing.
 
 `.github/dependabot.yml` runs weekly for `cargo` and `github-actions`, grouping
-minor+patch into one PR each. It **ignores** `gpui`, `gpui-macros`,
-`gpui-component`, `gpui-component-assets` and `duckdb`: all five are exact-pinned
-with recorded rationale (root `Cargo.toml:53-69`, `:141-144`) and their upgrade
-cadence is governed by `docs/upstream-watch.md`, not by a bot. A silent bump of
-`gpui-component-assets` alone serves a different icon set with **no build error**.
+minor+patch into one PR each. It **ignores** `dioxus`, `dioxus-desktop`,
+`dioxus-ssr`, `dioxus-core` and `duckdb`: all five are exact-pinned with recorded
+rationale (`crates/dat0-ui/Cargo.toml`, root `Cargo.toml`) and their upgrade
+cadence is governed by `docs/upstream-watch.md`, not by a bot. The dioxus crates
+share a `VirtualDom` across the four, so a bot bumping one of them alone mixes
+two versions of the same core types in one build.
 
 ## Perf gate
 
@@ -251,7 +280,7 @@ those keys checkable. Current consumers: `error_ux::engine::ENGINE_ERROR_KEYS`,
 
 The scan is scoped to `crates/*/src`. Tests are excluded on purpose: several
 reference deliberately-absent keys to assert the miss behaviour itself
-(`crates/dat0-i18n/tests/basic.rs:10`, `crates/dat0-app/tests/i18n_p10c_keys.rs:18`),
+(`crates/dat0-i18n/tests/basic.rs:10`, `crates/dat0-core/tests/i18n_p10c_keys.rs:18`),
 so scanning them would make the gate demand the very keys other tests demand be
 absent.
 
