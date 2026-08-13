@@ -93,7 +93,7 @@ jobs:
         run: cargo build --release -p dat0-engine -p dat0-fixtures
       - name: Cache fixtures
         id: cache-fixtures
-        uses: actions/cache@v5
+        uses: actions/cache@v6
         with:
           path: tests/fixtures/large/
           key: fixtures-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('crates/dat0-fixtures/**') }}-seed-42
