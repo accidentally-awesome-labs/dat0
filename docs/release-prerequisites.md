@@ -222,7 +222,7 @@ with the real DSN.
 ## After the checklist
 
 ```bash
-cargo test -p dat0-core --test update_key_is_production   # step 1
+cargo test -p dat0-core --test update_key_is_production -- --ignored  # step 1
 cargo test -p dat0-core --test update_manifest_roundtrip  # wire contract (no secrets needed)
 gh workflow run release.yml && gh run watch              # steps 2 + 3 end to end
 ```
