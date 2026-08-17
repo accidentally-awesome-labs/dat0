@@ -66,7 +66,7 @@ jobs:
         uses: jlumbroso/free-disk-space@v1.3.1
         with:
           tool-cache: false
-      - uses: dtolnay/rust-toolchain@1.97.0
+      - uses: dtolnay/rust-toolchain@1.100.0
         with:
           targets: x86_64-unknown-linux-gnu
       # Skipped on self-hosted (runnerkit images lack NOPASSWD sudo).
@@ -148,7 +148,7 @@ jobs:
         uses: jlumbroso/free-disk-space@v1.3.1
         with:
           tool-cache: false
-      - uses: dtolnay/rust-toolchain@1.97.0
+      - uses: dtolnay/rust-toolchain@1.100.0
         with:
           targets: x86_64-unknown-linux-gnu
       - name: Linux deps (libduckdb-sys build)
