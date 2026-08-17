@@ -47,7 +47,7 @@ jobs:
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@v5
-      - uses: dtolnay/rust-toolchain@1.97.0
+      - uses: dtolnay/rust-toolchain@1.100.0
         with: { components: rustfmt }
       # Registry + git + target caching. `fmt` compiles nothing, but the
       # registry/git half still removes the DuckDB + Dioxus source fetch from
@@ -62,7 +62,7 @@ jobs:
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@v5
-      - uses: dtolnay/rust-toolchain@1.97.0
+      - uses: dtolnay/rust-toolchain@1.100.0
         with: { components: clippy }
       # `--all-targets` on Linux now compiles the webview stack's `-sys` build
       # scripts, which pkg-config against glib/gtk/soup. Before the Dioxus
@@ -209,7 +209,7 @@ jobs:
           echo '| phase | avail | used | target/ |' >> "$GITHUB_STEP_SUMMARY"
           echo '|---|---|---|---|' >> "$GITHUB_STEP_SUMMARY"
           ./.github/scripts/disk-report.sh baseline "${{ matrix.target.triple }}"
-      - uses: dtolnay/rust-toolchain@1.97.0
+      - uses: dtolnay/rust-toolchain@1.100.0
         with:
           targets: ${{ matrix.target.triple }}
       # Registry + git caching ONLY. `cache-targets: false` is load-bearing:
@@ -482,7 +482,7 @@ jobs:
     timeout-minutes: 60
     steps:
       - uses: actions/checkout@v5
-      - uses: dtolnay/rust-toolchain@1.97.0
+      - uses: dtolnay/rust-toolchain@1.100.0
       - uses: Swatinem/rust-cache@v2
         with:
           cache-targets: false
@@ -522,7 +522,7 @@ jobs:
     timeout-minutes: 90
     steps:
       - uses: actions/checkout@v5
-      - uses: dtolnay/rust-toolchain@1.97.0
+      - uses: dtolnay/rust-toolchain@1.100.0
         with: { components: llvm-tools-preview }
       - uses: Swatinem/rust-cache@v2
         with:
