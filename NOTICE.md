@@ -176,11 +176,26 @@ Used by:
 - arrow-select 56.2.0 — https://github.com/apache/arrow-rs
 - arrow-string 56.2.0 — https://github.com/apache/arrow-rs
 - arrow 56.2.0 — https://github.com/apache/arrow-rs
+- cmov 0.5.4 — https://github.com/RustCrypto/utils
+- ctutils 0.4.2 — https://github.com/RustCrypto/utils
 - iri-string 0.7.12 — https://github.com/lo48576/iri-string
 - utf8_iter 1.0.4 — https://github.com/hsivonen/utf8_iter
 - x11rb-protocol 0.13.2 — https://github.com/psychon/x11rb
 - x11rb 0.13.2 — https://github.com/psychon/x11rb
 - zeroize 1.8.2 — https://github.com/RustCrypto/utils
+
+## Apache License 2.0 (SPDX: Apache-2.0)
+
+Used by:
+- linux-raw-sys 0.12.1 — https://github.com/sunfishcode/linux-raw-sys
+- linux-raw-sys 0.4.15 — https://github.com/sunfishcode/linux-raw-sys
+- rustix 0.38.44 — https://github.com/bytecodealliance/rustix
+- rustix 1.1.4 — https://github.com/bytecodealliance/rustix
+
+## Apache License 2.0 (SPDX: Apache-2.0)
+
+Used by:
+- ring 0.17.14 — https://github.com/briansmith/ring
 
 ## Apache License 2.0 (SPDX: Apache-2.0)
 
@@ -219,9 +234,9 @@ Used by:
 - anstyle-parse 1.0.0 — https://github.com/rust-cli/anstyle.git
 - anstyle-query 1.1.5 — https://github.com/rust-cli/anstyle.git
 - anstyle 1.0.14 — https://github.com/rust-cli/anstyle.git
-- clap 4.6.1 — https://github.com/clap-rs/clap
-- clap_builder 4.6.0 — https://github.com/clap-rs/clap
-- clap_derive 4.6.1 — https://github.com/clap-rs/clap
+- clap 4.6.6 — https://github.com/clap-rs/clap
+- clap_builder 4.6.6 — https://github.com/clap-rs/clap
+- clap_derive 4.6.4 — https://github.com/clap-rs/clap
 - clap_lex 1.1.0 — https://github.com/clap-rs/clap
 - colorchoice 1.0.5 — https://github.com/rust-cli/anstyle.git
 - crc32fast 1.5.0 — https://github.com/srijs/rust-crc32fast
@@ -256,15 +271,15 @@ Used by:
 ## Apache License 2.0 (SPDX: Apache-2.0)
 
 Used by:
-- futures-channel 0.3.32 — https://github.com/rust-lang/futures-rs
-- futures-core 0.3.32 — https://github.com/rust-lang/futures-rs
-- futures-executor 0.3.32 — https://github.com/rust-lang/futures-rs
-- futures-io 0.3.32 — https://github.com/rust-lang/futures-rs
-- futures-macro 0.3.32 — https://github.com/rust-lang/futures-rs
-- futures-sink 0.3.32 — https://github.com/rust-lang/futures-rs
-- futures-task 0.3.32 — https://github.com/rust-lang/futures-rs
-- futures-util 0.3.32 — https://github.com/rust-lang/futures-rs
-- futures 0.3.32 — https://github.com/rust-lang/futures-rs
+- futures-channel 0.3.34 — https://github.com/rust-lang/futures-rs
+- futures-core 0.3.34 — https://github.com/rust-lang/futures-rs
+- futures-executor 0.3.34 — https://github.com/rust-lang/futures-rs
+- futures-io 0.3.34 — https://github.com/rust-lang/futures-rs
+- futures-macro 0.3.34 — https://github.com/rust-lang/futures-rs
+- futures-sink 0.3.34 — https://github.com/rust-lang/futures-rs
+- futures-task 0.3.34 — https://github.com/rust-lang/futures-rs
+- futures-util 0.3.34 — https://github.com/rust-lang/futures-rs
+- futures 0.3.34 — https://github.com/rust-lang/futures-rs
 
 ## Apache License 2.0 (SPDX: Apache-2.0)
 
@@ -310,6 +325,11 @@ Used by:
 
 Used by:
 - rustls-pki-types 1.14.1 — https://github.com/rustls/pki-types
+
+## Apache License 2.0 (SPDX: Apache-2.0)
+
+Used by:
+- notify-types 2.1.0 — https://github.com/notify-rs/notify.git
 
 ## Apache License 2.0 (SPDX: Apache-2.0)
 
@@ -378,7 +398,6 @@ Used by:
 - event-listener-strategy 0.5.4 — https://github.com/smol-rs/event-listener-strategy
 - event-listener 5.4.1 — https://github.com/smol-rs/event-listener
 - fastrand 2.4.1 — https://github.com/smol-rs/fastrand
-- filetime 0.2.27 — https://github.com/alexcrichton/filetime
 - flate2 1.1.9 — https://github.com/rust-lang/flate2-rs
 - fnv 1.0.7 — https://github.com/servo/rust-fnv
 - font-kit 0.14.3 — https://github.com/servo/font-kit
@@ -388,7 +407,6 @@ Used by:
 - gethostname 1.1.0 — https://codeberg.org/swsnr/gethostname.rs.git
 - gimli 0.32.3 — https://github.com/gimli-rs/gimli
 - global-hotkey 0.7.0 — https://github.com/amrbashir/global-hotkey
-- hashbrown 0.14.5 — https://github.com/rust-lang/hashbrown
 - hashbrown 0.15.5 — https://github.com/rust-lang/hashbrown
 - hashbrown 0.16.1 — https://github.com/rust-lang/hashbrown
 - hashbrown 0.17.0 — https://github.com/rust-lang/hashbrown
@@ -408,6 +426,7 @@ Used by:
 - lock_api 0.4.14 — https://github.com/Amanieu/parking_lot
 - log 0.4.29 — https://github.com/rust-lang/log
 - longest-increasing-subsequence 0.1.0 — https://github.com/fitzgen/longest-increasing-subsequence
+- mime 0.3.17 — https://github.com/hyperium/mime
 - muda 0.17.2 — https://github.com/tauri-apps/muda
 - num-bigint 0.4.6 — https://github.com/rust-num/num-bigint
 - num-complex 0.4.6 — https://github.com/rust-num/num-complex
@@ -433,9 +452,9 @@ Used by:
 - pollster 0.4.0 — https://github.com/zesterer/pollster
 - rayon-core 1.13.0 — https://github.com/rayon-rs/rayon
 - rayon 1.12.0 — https://github.com/rayon-rs/rayon
-- regex-automata 0.4.14 — https://github.com/rust-lang/regex
-- regex-syntax 0.8.10 — https://github.com/rust-lang/regex
-- regex 1.12.3 — https://github.com/rust-lang/regex
+- regex-automata 0.4.18 — https://github.com/rust-lang/regex
+- regex-syntax 0.8.11 — https://github.com/rust-lang/regex
+- regex 1.13.1 — https://github.com/rust-lang/regex
 - ring 0.17.14 — https://github.com/briansmith/ring
 - rustc-demangle 0.1.27 — https://github.com/rust-lang/rustc-demangle
 - rustc-hash 1.1.0 — https://github.com/rust-lang-nursery/rustc-hash
@@ -444,7 +463,7 @@ Used by:
 - rustls 0.23.39 — https://github.com/rustls/rustls
 - scoped-tls 1.0.1 — https://github.com/alexcrichton/scoped-tls
 - scopeguard 1.2.0 — https://github.com/bluss/scopeguard
-- secret-service 5.1.0 — https://github.com/hwchen/secret-service-rs.git
+- secret-service 5.2.0 — https://github.com/hwchen/secret-service-rs.git
 - security-framework-sys 2.17.0 — https://github.com/kornelski/rust-security-framework
 - security-framework 2.11.1 — https://github.com/kornelski/rust-security-framework
 - security-framework 3.7.0 — https://github.com/kornelski/rust-security-framework
@@ -461,18 +480,20 @@ Used by:
 - tray-icon 0.21.3 — https://github.com/tauri-apps/tray-icon
 - ttf-parser 0.20.0 — https://github.com/RazrFalcon/ttf-parser
 - tungstenite 0.28.0 — https://github.com/snapview/tungstenite-rs
+- unicase 2.9.0 — https://github.com/seanmonstar/unicase
 - unicode-segmentation 1.13.2 — https://github.com/unicode-rs/unicode-segmentation
 - unicode-width 0.2.2 — https://github.com/unicode-rs/unicode-width
 - unicode-xid 0.2.6 — https://github.com/unicode-rs/unicode-xid
+- ureq 2.12.1 — https://github.com/algesten/ureq
 - url 2.5.8 — https://github.com/servo/rust-url
-- uuid 1.23.1 — https://github.com/uuid-rs/uuid
+- uuid 1.26.0 — https://github.com/uuid-rs/uuid
 - wry 0.53.5 — https://github.com/tauri-apps/wry
 
 ## Apache License 2.0 (SPDX: Apache-2.0)
 
 Used by:
 - hashlink 0.10.0 — https://github.com/kyren/hashlink
-- hashlink 0.9.1 — https://github.com/kyren/hashlink
+- hashlink 0.12.2 — https://github.com/djc/hashlink
 
 ## Apache License 2.0 (SPDX: Apache-2.0)
 
@@ -489,23 +510,30 @@ Used by:
 ## Apache License 2.0 (SPDX: Apache-2.0)
 
 Used by:
-- hkdf 0.12.4 — https://github.com/RustCrypto/KDFs/
+- hkdf 0.13.0 — https://github.com/RustCrypto/KDFs/
 
 ## Apache License 2.0 (SPDX: Apache-2.0)
 
 Used by:
-- aes 0.8.4 — https://github.com/RustCrypto/block-ciphers
+- aes 0.9.3 — https://github.com/RustCrypto/block-ciphers
 - block-buffer 0.10.4 — https://github.com/RustCrypto/utils
-- block-padding 0.3.3 — https://github.com/RustCrypto/utils
-- cbc 0.1.2 — https://github.com/RustCrypto/block-modes
-- cipher 0.4.4 — https://github.com/RustCrypto/traits
+- block-buffer 0.12.1 — https://github.com/RustCrypto/utils
+- block-padding 0.4.2 — https://github.com/RustCrypto/utils
+- cbc 0.2.1 — https://github.com/RustCrypto/block-modes
+- cipher 0.5.2 — https://github.com/RustCrypto/traits
+- const-oid 0.10.2 — https://github.com/RustCrypto/formats
+- cpubits 0.1.1 — https://github.com/RustCrypto/utils
 - cpufeatures 0.2.17 — https://github.com/RustCrypto/utils
+- cpufeatures 0.3.1 — https://github.com/RustCrypto/utils
 - crypto-common 0.1.7 — https://github.com/RustCrypto/traits
+- crypto-common 0.2.2 — https://github.com/RustCrypto/traits
 - digest 0.10.7 — https://github.com/RustCrypto/traits
-- hmac 0.12.1 — https://github.com/RustCrypto/MACs
-- inout 0.1.4 — https://github.com/RustCrypto/utils
+- digest 0.11.3 — https://github.com/RustCrypto/traits
+- hmac 0.13.0 — https://github.com/RustCrypto/MACs
+- hybrid-array 0.4.14 — https://github.com/RustCrypto/hybrid-array
+- inout 0.2.2 — https://github.com/RustCrypto/utils
 - sha1 0.10.7 — https://github.com/RustCrypto/hashes
-- sha2 0.10.9 — https://github.com/RustCrypto/hashes
+- sha2 0.11.0 — https://github.com/RustCrypto/hashes
 
 ## Apache License 2.0 (SPDX: Apache-2.0)
 
@@ -579,7 +607,7 @@ Used by:
 - allocator-api2 0.2.21 — https://github.com/zakarumych/allocator-api2
 - anyhow 1.0.104 — https://github.com/dtolnay/anyhow
 - arboard 3.6.1 — https://github.com/1Password/arboard
-- async-trait 0.1.89 — https://github.com/dtolnay/async-trait
+- async-trait 0.1.92 — https://github.com/dtolnay/async-trait
 - const-serialize-macro 0.7.2 — https://github.com/dioxuslabs/dioxus
 - const-serialize-macro 0.8.0-alpha.1 — https://github.com/dioxuslabs/dioxus
 - const-serialize 0.7.2 — https://github.com/dioxuslabs/dioxus
@@ -619,10 +647,10 @@ Used by:
 - image-webp 0.2.4 — https://github.com/image-rs/image-webp
 - image 0.24.9 — https://github.com/image-rs/image
 - image 0.25.10 — https://github.com/image-rs/image
-- interprocess 2.4.2 — https://github.com/kotauskas/interprocess
+- interprocess 2.4.4 — https://github.com/kotauskas/interprocess
 - itoa 1.0.18 — https://github.com/dtolnay/itoa
 - libappindicator-sys 0.9.0
-- libc 0.2.186 — https://github.com/rust-lang/libc
+- libc 0.2.189 — https://github.com/rust-lang/libc
 - macro-string 0.1.4 — https://github.com/dtolnay/macro-string
 - manganis-core 0.7.10 — https://github.com/DioxusLabs/dioxus/tree/main/packages/manganis/manganis-core
 - manganis-macro 0.7.10 — https://github.com/DioxusLabs/dioxus/tree/main/packages/manganis/manganis-macro
@@ -654,20 +682,21 @@ Used by:
 - rustc-hash 2.1.2 — https://github.com/rust-lang/rustc-hash
 - rustversion 1.0.22 — https://github.com/dtolnay/rustversion
 - ryu 1.0.23 — https://github.com/dtolnay/ryu
-- serde 1.0.228 — https://github.com/serde-rs/serde
-- serde_core 1.0.228 — https://github.com/serde-rs/serde
-- serde_derive 1.0.228 — https://github.com/serde-rs/serde
-- serde_json 1.0.149 — https://github.com/serde-rs/json
+- serde 1.0.229 — https://github.com/serde-rs/serde
+- serde_core 1.0.229 — https://github.com/serde-rs/serde
+- serde_derive 1.0.229 — https://github.com/serde-rs/serde
+- serde_json 1.0.151 — https://github.com/serde-rs/json
 - serde_repr 0.1.20 — https://github.com/dtolnay/serde-repr
 - serde_urlencoded 0.7.1 — https://github.com/nox/serde_urlencoded
 - subsecond-types 0.7.10 — https://github.com/DioxusLabs/dioxus/tree/main/packages/subsecond
 - subsecond 0.7.10 — https://github.com/DioxusLabs/dioxus/tree/main/packages/subsecond
 - syn 2.0.117 — https://github.com/dtolnay/syn
+- syn 3.0.5 — https://github.com/dtolnay/syn
 - sync_wrapper 1.0.2 — https://github.com/Actyx/sync_wrapper
 - thiserror-impl 1.0.69 — https://github.com/dtolnay/thiserror
-- thiserror-impl 2.0.18 — https://github.com/dtolnay/thiserror
+- thiserror-impl 2.0.20 — https://github.com/dtolnay/thiserror
 - thiserror 1.0.69 — https://github.com/dtolnay/thiserror
-- thiserror 2.0.18 — https://github.com/dtolnay/thiserror
+- thiserror 2.0.20 — https://github.com/dtolnay/thiserror
 - time-core 0.1.8 — https://github.com/time-rs/time
 - time-macros 0.2.27 — https://github.com/time-rs/time
 - time 0.3.47 — https://github.com/time-rs/time
@@ -683,6 +712,11 @@ Used by:
 
 Used by:
 - chrono 0.4.44 — https://github.com/chronotope/chrono
+
+## BSD 2-Clause &quot;Simplified&quot; License (SPDX: BSD-2-Clause)
+
+Used by:
+- rav1e 0.8.1 — https://github.com/xiph/rav1e/
 
 ## BSD 2-Clause &quot;Simplified&quot; License (SPDX: BSD-2-Clause)
 
@@ -727,7 +761,7 @@ Used by:
 ## Creative Commons Zero v1.0 Universal (SPDX: CC0-1.0)
 
 Used by:
-- notify 6.1.1 — https://github.com/notify-rs/notify.git
+- notify 8.2.0 — https://github.com/notify-rs/notify.git
 
 ## Community Data License Agreement Permissive 2.0 (SPDX: CDLA-Permissive-2.0)
 
@@ -738,17 +772,92 @@ Used by:
 ## ISC License (SPDX: ISC)
 
 Used by:
+- ring 0.17.14 — https://github.com/briansmith/ring
+
+## ISC License (SPDX: ISC)
+
+Used by:
+- ring 0.17.14 — https://github.com/briansmith/ring
+
+## ISC License (SPDX: ISC)
+
+Used by:
 - untrusted 0.9.0 — https://github.com/briansmith/untrusted
 
 ## ISC License (SPDX: ISC)
 
 Used by:
-- inotify-sys 0.1.5 — https://github.com/hannobraun/inotify-sys
+- ring 0.17.14 — https://github.com/briansmith/ring
 
 ## ISC License (SPDX: ISC)
 
 Used by:
-- inotify 0.9.6 — https://github.com/hannobraun/inotify
+- ring 0.17.14 — https://github.com/briansmith/ring
+
+## ISC License (SPDX: ISC)
+
+Used by:
+- ring 0.17.14 — https://github.com/briansmith/ring
+
+## ISC License (SPDX: ISC)
+
+Used by:
+- ring 0.17.14 — https://github.com/briansmith/ring
+
+## ISC License (SPDX: ISC)
+
+Used by:
+- ring 0.17.14 — https://github.com/briansmith/ring
+
+## ISC License (SPDX: ISC)
+
+Used by:
+- ring 0.17.14 — https://github.com/briansmith/ring
+
+## ISC License (SPDX: ISC)
+
+Used by:
+- ring 0.17.14 — https://github.com/briansmith/ring
+
+## ISC License (SPDX: ISC)
+
+Used by:
+- ring 0.17.14 — https://github.com/briansmith/ring
+
+## ISC License (SPDX: ISC)
+
+Used by:
+- ring 0.17.14 — https://github.com/briansmith/ring
+
+## ISC License (SPDX: ISC)
+
+Used by:
+- ring 0.17.14 — https://github.com/briansmith/ring
+
+## ISC License (SPDX: ISC)
+
+Used by:
+- ring 0.17.14 — https://github.com/briansmith/ring
+
+## ISC License (SPDX: ISC)
+
+Used by:
+- ring 0.17.14 — https://github.com/briansmith/ring
+
+## ISC License (SPDX: ISC)
+
+Used by:
+- ring 0.17.14 — https://github.com/briansmith/ring
+
+## ISC License (SPDX: ISC)
+
+Used by:
+- inotify-sys 0.1.8 — https://github.com/hannobraun/inotify-sys
+
+## ISC License (SPDX: ISC)
+
+Used by:
+- inotify 0.11.5 — https://github.com/hannobraun/inotify-rs
 
 ## ISC License (SPDX: ISC)
 
@@ -769,24 +878,68 @@ Used by:
 ## MIT License (SPDX: MIT)
 
 Used by:
+- freetype-sys 0.20.1 — https://github.com/PistonDevelopers/freetype-sys.git
+
+## MIT License (SPDX: MIT)
+
+Used by:
+- freetype-sys 0.20.1 — https://github.com/PistonDevelopers/freetype-sys.git
+
+## MIT License (SPDX: MIT)
+
+Used by:
+- freetype-sys 0.20.1 — https://github.com/PistonDevelopers/freetype-sys.git
+
+## MIT License (SPDX: MIT)
+
+Used by:
+- freetype-sys 0.20.1 — https://github.com/PistonDevelopers/freetype-sys.git
+
+## MIT License (SPDX: MIT)
+
+Used by:
+- freetype-sys 0.20.1 — https://github.com/PistonDevelopers/freetype-sys.git
+
+## MIT License (SPDX: MIT)
+
+Used by:
+- freetype-sys 0.20.1 — https://github.com/PistonDevelopers/freetype-sys.git
+
+## MIT License (SPDX: MIT)
+
+Used by:
+- freetype-sys 0.20.1 — https://github.com/PistonDevelopers/freetype-sys.git
+
+## MIT License (SPDX: MIT)
+
+Used by:
+- freetype-sys 0.20.1 — https://github.com/PistonDevelopers/freetype-sys.git
+
+## MIT License (SPDX: MIT)
+
+Used by:
+- freetype-sys 0.20.1 — https://github.com/PistonDevelopers/freetype-sys.git
+
+## MIT License (SPDX: MIT)
+
+Used by:
 - openssl-sys 0.9.117 — https://github.com/rust-openssl/rust-openssl
 
 ## MIT License (SPDX: MIT)
 
 Used by:
-- mio 0.8.11 — https://github.com/tokio-rs/mio
 - mio 1.2.0 — https://github.com/tokio-rs/mio
 
 ## MIT License (SPDX: MIT)
 
 Used by:
-- nom 8.0.0 — https://github.com/rust-bakery/nom
+- libsqlite3-sys 0.38.2 — https://github.com/rusqlite/rusqlite
+- rusqlite 0.40.2 — https://github.com/rusqlite/rusqlite
 
 ## MIT License (SPDX: MIT)
 
 Used by:
-- libsqlite3-sys 0.28.0 — https://github.com/rusqlite/rusqlite
-- rusqlite 0.31.0 — https://github.com/rusqlite/rusqlite
+- nom 8.0.0 — https://github.com/rust-bakery/nom
 
 ## MIT License (SPDX: MIT)
 
@@ -915,7 +1068,12 @@ Used by:
 ## MIT License (SPDX: MIT)
 
 Used by:
-- lru 0.18.2 — https://github.com/jeromefroe/lru-rs.git
+- wayland-protocols 0.32.12 — https://github.com/smithay/wayland-rs
+
+## MIT License (SPDX: MIT)
+
+Used by:
+- lru 0.18.4 — https://github.com/jeromefroe/lru-rs.git
 
 ## MIT License (SPDX: MIT)
 
@@ -1002,6 +1160,7 @@ Used by:
 
 Used by:
 - rfd 0.15.4 — https://github.com/PolyMeilex/rfd
+- rfd 0.17.2 — https://github.com/PolyMeilex/rfd
 
 ## MIT License (SPDX: MIT)
 
@@ -1055,7 +1214,7 @@ Used by:
 
 Used by:
 - tokio-util 0.7.18 — https://github.com/tokio-rs/tokio
-- tokio 1.52.1 — https://github.com/tokio-rs/tokio
+- tokio 1.53.1 — https://github.com/tokio-rs/tokio
 
 ## MIT License (SPDX: MIT)
 
@@ -1118,6 +1277,7 @@ Used by:
 ## MIT License (SPDX: MIT)
 
 Used by:
+- tracing-core 0.1.36 — https://github.com/tokio-rs/tracing
 - zip 8.6.0 — https://github.com/zip-rs/zip2
 
 ## MIT License (SPDX: MIT)
@@ -1174,9 +1334,9 @@ Used by:
 ## MIT License (SPDX: MIT)
 
 Used by:
-- rust-embed-impl 8.11.0 — https://pyrossh.dev/repos/rust-embed
-- rust-embed-utils 8.11.0 — https://pyrossh.dev/repos/rust-embed
-- rust-embed 8.11.0 — https://pyrossh.dev/repos/rust-embed
+- rust-embed-impl 8.12.0 — https://pyrossh.dev/repos/rust-embed
+- rust-embed-utils 8.12.0 — https://pyrossh.dev/repos/rust-embed
+- rust-embed 8.12.0 — https://pyrossh.dev/repos/rust-embed
 
 ## MIT License (SPDX: MIT)
 
@@ -1187,6 +1347,11 @@ Used by:
 
 Used by:
 - nu-ansi-term 0.50.3 — https://github.com/nushell/nu-ansi-term
+
+## MIT License (SPDX: MIT)
+
+Used by:
+- mime_guess 2.0.5 — https://github.com/abonander/mime_guess
 
 ## MIT License (SPDX: MIT)
 
