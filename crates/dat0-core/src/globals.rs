@@ -129,7 +129,10 @@ mod tests {
 
         register_live_window(id);
         assert!(live_windows().contains(&id));
-        assert!(is_live_scratch_dir(&dir), "an open window's directory is live");
+        assert!(
+            is_live_scratch_dir(&dir),
+            "an open window's directory is live"
+        );
 
         unregister_live_window(id);
         assert!(!live_windows().contains(&id));
