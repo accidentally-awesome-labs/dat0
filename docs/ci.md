@@ -183,7 +183,14 @@ minor+patch into one PR each. It **ignores** `dioxus`, `dioxus-desktop`,
 rationale (`crates/dat0-ui/Cargo.toml`, root `Cargo.toml`) and their upgrade
 cadence is governed by `docs/upstream-watch.md`, not by a bot. The dioxus crates
 share a `VirtualDom` across the four, so a bot bumping one of them alone mixes
-two versions of the same core types in one build.
+two versions of the same core types in one build. It also ignores the
+`dtolnay/rust-toolchain` action: that action's ref is the Rust version, which
+moves with `rust-toolchain.toml` in one deliberate PR.
+
+A Dependabot PR gets no Actions secrets, so `build-and-test` skips the live
+MotherDuck and OpenRouter steps for it (and for fork PRs), announcing the skip
+with a notice; they run on the push to `main`. Every other run still hard-fails
+without the secrets.
 
 ## Perf gate
 
