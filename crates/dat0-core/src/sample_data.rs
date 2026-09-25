@@ -186,7 +186,7 @@ pub async fn fetch_remote(
 
     let mut h = Sha256::new();
     h.update(&bytes);
-    let got_sha = format!("{:x}", h.finalize());
+    let got_sha = hex::encode(h.finalize());
     let expected_norm = expected_sha_hex.to_lowercase();
     if got_sha != expected_norm {
         return Err(anyhow!(

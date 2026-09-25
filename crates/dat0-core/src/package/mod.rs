@@ -91,7 +91,7 @@ fn make_source(
         .unwrap_or(name)
         .to_string();
     let content_hash = match std::fs::read(path) {
-        Ok(bytes) => format!("sha256:{:x}", Sha256::digest(&bytes)),
+        Ok(bytes) => format!("sha256:{}", hex::encode(Sha256::digest(&bytes))),
         Err(_) => String::new(),
     };
     PackageSource {

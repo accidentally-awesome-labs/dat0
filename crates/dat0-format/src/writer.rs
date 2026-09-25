@@ -76,7 +76,10 @@ impl Writer {
                 path: dest.into(), // write target is the zip, not the temp source
                 source: e,
             })?;
-            checksums.insert(entry, format!("sha256:{:x}", Sha256::digest(&bytes)));
+            checksums.insert(
+                entry,
+                format!("sha256:{}", hex::encode(Sha256::digest(&bytes))),
+            );
         }
 
         // 2. JSON sidecars (Deflated). EVERY sidecar is checksummed, not just
@@ -99,7 +102,7 @@ impl Writer {
             |zip: &mut zip::ZipWriter<std::fs::File>, name: &str, bytes: &[u8]| -> Result<()> {
                 checksums.insert(
                     name.to_string(),
-                    format!("sha256:{:x}", Sha256::digest(bytes)),
+                    format!("sha256:{}", hex::encode(Sha256::digest(bytes))),
                 );
                 write_json(zip, name, bytes, deflated)
             };

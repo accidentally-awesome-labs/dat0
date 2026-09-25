@@ -153,7 +153,12 @@ fn a_tampered_sidecar_now_fails_verification() {
     let tmp = tempfile::tempdir().unwrap();
     let p = tmp.path().join("tampered-sources.dat0");
 
-    let sha = |b: &[u8]| format!("sha256:{:x}", <sha2::Sha256 as sha2::Digest>::digest(b));
+    let sha = |b: &[u8]| {
+        format!(
+            "sha256:{}",
+            hex::encode(<sha2::Sha256 as sha2::Digest>::digest(b))
+        )
+    };
 
     let recipe_bytes = serde_json::to_vec_pretty(&Recipe { tables: vec![] }).unwrap();
     let honest_sources = serde_json::to_vec_pretty(&Sources { sources: vec![] }).unwrap();
@@ -234,8 +239,8 @@ fn a_pre_change_package_without_sidecar_checksums_still_opens() {
     checksums.insert(
         "recipe.json".to_string(),
         format!(
-            "sha256:{:x}",
-            <sha2::Sha256 as sha2::Digest>::digest(&recipe_bytes)
+            "sha256:{}",
+            hex::encode(<sha2::Sha256 as sha2::Digest>::digest(&recipe_bytes))
         ),
     );
     let manifest = PackageManifest {

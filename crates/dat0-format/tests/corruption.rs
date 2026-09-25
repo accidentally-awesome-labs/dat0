@@ -43,7 +43,10 @@ fn build_zip(path: &Path, entries: &[(String, Vec<u8>)]) {
 }
 
 fn sha(bytes: &[u8]) -> String {
-    format!("sha256:{:x}", <sha2::Sha256 as sha2::Digest>::digest(bytes))
+    format!(
+        "sha256:{}",
+        hex::encode(<sha2::Sha256 as sha2::Digest>::digest(bytes))
+    )
 }
 
 fn entry(name: &str, bytes: Vec<u8>) -> (String, Vec<u8>) {

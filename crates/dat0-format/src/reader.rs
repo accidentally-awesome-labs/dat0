@@ -75,7 +75,7 @@ impl Reader {
                 path: entry.into(),
                 source: e,
             })?;
-            let got = format!("sha256:{:x}", Sha256::digest(&buf));
+            let got = format!("sha256:{}", hex::encode(Sha256::digest(&buf)));
             if &got != expected {
                 return Err(FormatError::ChecksumMismatch {
                     entry: entry.clone(),
