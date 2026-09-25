@@ -93,7 +93,7 @@ function run() {
     case "fns":
       return { ok: cm.completions(ID) !== null, list: cm.completions(ID) || [] };
     case "run":
-      return { ok: cm.key(ID, "Enter", { meta: true }) };
+      return { ok: cm.key(ID, "Enter", { MOD_KEY: true }) };
     case "final": {
       const content = document.querySelector(".cm-content");
       const gutter = document.querySelector(".cm-gutters");
@@ -176,7 +176,16 @@ struct Step {
 
 /// Run one step. Each is its own eval, so the queue is never held.
 async fn step(name: &str) -> Step {
-    let script = STEP.replace("STEP_NAME", &format!("{name:?}"));
+    // The console binds `Mod-Enter`, which CodeMirror reads as ⌘ on macOS and
+    // Ctrl everywhere else; pressing ⌘ on Linux runs nothing.
+    let modifier = if cfg!(target_os = "macos") {
+        "meta"
+    } else {
+        "ctrl"
+    };
+    let script = STEP
+        .replace("STEP_NAME", &format!("{name:?}"))
+        .replace("MOD_KEY", modifier);
     let mut eval = document::eval(&script);
     match eval.recv::<Step>().await {
         Ok(s) => s,
