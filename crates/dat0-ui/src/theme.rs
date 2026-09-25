@@ -39,6 +39,17 @@ impl Theme {
         Self(use_context())
     }
 
+    /// The context-provided theme, from outside a component body.
+    ///
+    /// [`use_current`](Self::use_current) is a hook. Called from an event
+    /// handler or a task it appends a hook slot to the running scope, and the
+    /// next out-of-render hook of another type at that index panics — which
+    /// the release profile turns into an abort. The action router runs in the
+    /// bus task, so it reads the theme this way.
+    pub fn current() -> Self {
+        Self(consume_context())
+    }
+
     /// Switch themes. One signal write; the `<style>` element re-renders.
     pub fn set(&mut self, id: &str) {
         self.0.set(builtin_or_default(id));

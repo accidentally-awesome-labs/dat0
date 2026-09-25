@@ -77,7 +77,7 @@ pub fn route(ws: Workspace, events: &AppEvents, surface: SurfaceSlot, id: &str) 
             // Cycles light → dark → light. High contrast is deliberately not
             // in the cycle: it is an accessibility choice made once in
             // settings, not something to land on by pressing a key twice.
-            let mut theme = crate::theme::Theme::use_current();
+            let mut theme = crate::theme::Theme::current();
             let next = if theme.tokens().id == "light" {
                 "dark"
             } else {
