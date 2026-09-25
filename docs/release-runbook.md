@@ -122,8 +122,15 @@ output is not byte-identical across macOS and Linux; the CI gate runs on Linux,
 so the committed NOTICE must match what Linux generates):
 
 ```bash
-cargo about generate -c about.toml docs/about-template.hbs > NOTICE.md
+scripts/notice-regen.sh
 ```
+
+It rewrites only the block between the `cargo-about generated` markers, and
+refuses to run with any cargo-about but the version it pins (the one the gate
+uses). Do not redirect `cargo about generate` into `NOTICE.md`: that replaces
+the hand-written notice, icon, font and vendored-JavaScript sections with the
+bare crate list. On macOS, take the regenerated `NOTICE.md` from the failed
+`notice` check's artifacts instead.
 
 If no dependency changed since the last regeneration, skip this step — the
 existing `NOTICE.md` is already in sync (confirmed by the CI `notice` job).

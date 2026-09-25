@@ -192,6 +192,17 @@ MotherDuck and OpenRouter steps for it (and for fork PRs), announcing the skip
 with a notice; they run on the push to `main`. Every other run still hard-fails
 without the secrets.
 
+## NOTICE gate
+
+`notice.yml` regenerates `NOTICE.md` with `scripts/notice-regen.sh` and fails
+if the result differs from the committed file. The script rewrites only the
+block between the `cargo-about generated` markers and pins the cargo-about
+version the job installs; the job runs on Linux because the dual-licence
+tiebreak differs on macOS (PD-003). Every dependency bump changes the block,
+since it lists versions. When the gate fails, the regenerated file is attached
+to the run as the `NOTICE.md` artifact: committing it is the fix, from any
+machine, including for a Dependabot PR.
+
 ## Perf gate
 
 Two entry points, deliberately:

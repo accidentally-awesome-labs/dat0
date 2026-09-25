@@ -33,20 +33,35 @@ jobs:
       # build was several minutes of the job's wall time, and a `cargo install`
       # resolving its own dep graph is one more source of drift in a job whose
       # entire purpose is determinism.
+      #
+      # Pinned, and pinned in one place — scripts/notice-regen.sh — because an
+      # unpinned install took whatever cargo-about was newest that day, so the
+      # gate's output could change with no change to this repository.
+      - name: cargo-about version
+        id: pin
+        run: echo "version=$(sed -n 's/^CARGO_ABOUT_VERSION=//p' scripts/notice-regen.sh)" >> "$GITHUB_OUTPUT"
       - uses: taiki-e/install-action@v2
         with:
-          tool: cargo-about
-      - name: Regenerate third-party list
-        run: cargo about generate -c about.toml docs/about-template.hbs > /tmp/third-party.txt
+          tool: cargo-about@${{ steps.pin.outputs.version }}
+      - name: Regenerate NOTICE.md
+        run: ./scripts/notice-regen.sh "$RUNNER_TEMP/NOTICE.md"
       - name: Diff NOTICE
         run: |
-          ./scripts/notice-extract.sh NOTICE.md > /tmp/notice-current.txt
-          if ! diff /tmp/notice-current.txt /tmp/third-party.txt; then
+          if ! diff NOTICE.md "$RUNNER_TEMP/NOTICE.md"; then
             echo "::error::NOTICE.md is out of sync with the dependency graph."
-            echo "Regenerate ON LINUX (the canonical tiebreak host this gate uses):"
-            echo "  cargo about generate -c about.toml docs/about-template.hbs"
-            echo "then replace the marked section in NOTICE.md. Regenerating on macOS"
-            echo "will produce a different dual-license tiebreak and fail this gate again."
+            echo "The regenerated NOTICE.md is attached to this run as an artifact:"
+            echo "commit it over NOTICE.md, or run scripts/notice-regen.sh on Linux."
+            echo "Do not regenerate on macOS: its dual-license tiebreak differs (PD-003)."
             exit 1
           fi
           echo "NOTICE in sync"
+      # So a drifted NOTICE is one download to fix from any machine, including
+      # a Mac that cannot produce the Linux tiebreak, and a Dependabot PR,
+      # which cannot regenerate anything itself.
+      - name: Attach the regenerated NOTICE.md
+        if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: NOTICE.md
+          path: ${{ runner.temp }}/NOTICE.md
+          retention-days: 14

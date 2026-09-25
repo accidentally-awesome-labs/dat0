@@ -15,7 +15,7 @@ You may obtain a copy of the License at:
 
 ## Third-party software
 
-dat0 incorporates the following third-party components. The list below is generated mechanically by [`cargo-about`](https://github.com/EmbarkStudios/cargo-about) against the actual workspace dependency tree, and a CI gate (`.github/workflows/notice.yml`) fails any PR that drifts from the regenerated output. Do not edit between the marker comments by hand — re-run `cargo about generate -c about.toml docs/about-template.hbs` and replace the marked block.
+dat0 incorporates the following third-party components. The list below is generated mechanically by [`cargo-about`](https://github.com/EmbarkStudios/cargo-about) against the actual workspace dependency tree, and a CI gate (`.github/workflows/notice.yml`) fails any PR that drifts from the regenerated output. Do not edit between the marker comments by hand — run `scripts/notice-regen.sh` on Linux, which rewrites that block and nothing else.
 
 ## Bundled assets
 
@@ -31,11 +31,9 @@ artwork or fonts inside or beside them, so both are recorded here by hand.
   migration, which no longer has a widget library supplying them —
   `close.svg`, `chevron-down.svg`, `chevron-up.svg`, `chevron-right.svg`,
   `chevrons-up-down.svg`, `search.svg`.
-- **86 further icons** still reach the GPUI build through the
-  `gpui-component-assets` crate (listed in the generated section below as an
-  Apache-2.0 dependency; the artwork inside it is Lucide's). That crate leaves
-  the tree when `crates/dat0-app` does, at which point the vendored set above
-  is the whole inventory.
+- That is the whole inventory. The 86 further Lucide icons that reached the
+  GPUI build through the `gpui-component-assets` crate left the tree with
+  `crates/dat0-app`.
 
 Lucide is dual-licensed. Most icons are ISC; icons derived from the Feather
 project are MIT (Copyright (c) 2013-present Cole Bemis). dat0 ships icons under
@@ -65,8 +63,10 @@ OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
 
 ### Fonts
 
-dat0 embeds eight TrueType faces vendored into `crates/dat0-ui/assets/fonts/`
-and registered at boot by `dat0_app::assets::register_fonts`:
+dat0 embeds eight TrueType faces vendored into `crates/dat0-ui/assets/fonts/`,
+served out of the binary over the `dat0` asset protocol
+(`crates/dat0-ui/src/protocol.rs`) and loaded by the `@font-face` rules in
+`app.css`:
 
 - **Geist** — `Geist-Regular.ttf`, `Geist-Medium.ttf`, `Geist-SemiBold.ttf`,
   `Geist-Bold.ttf`
@@ -1275,8 +1275,8 @@ Used by:
 
 - The hand-curated NOTICE statement (Copyright, Apache 2.0 declaration) above is committed during P0 (project bootstrap).
 - The third-party block between the `<!-- BEGIN cargo-about generated -->` and `<!-- END cargo-about generated -->` markers is regenerated mechanically by [`cargo-about`](https://github.com/EmbarkStudios/cargo-about) against `Cargo.lock`. The CI gate at `.github/workflows/notice.yml` re-runs the generator on every PR that touches `Cargo.toml`, `Cargo.lock`, `about.toml`, the template, or this file, and fails the build on drift.
-- To regenerate locally: `cargo install cargo-about --locked --features=cli && cargo about generate -c about.toml docs/about-template.hbs > /tmp/third-party.txt`, then replace the marked block with `/tmp/third-party.txt`.
-- When upstream components are pinned to specific commits (e.g., `gpui-component`, pre-1.0), the pinned commit hashes are recorded in [`docs/upstream-watch.md`](docs/upstream-watch.md) for traceability.
+- To regenerate: run `scripts/notice-regen.sh` on Linux, with the cargo-about version it pins. It rewrites only the marked block. On macOS, download the regenerated `NOTICE.md` from the failed `notice` check's artifacts rather than generating it there (PD-003).
+- Exact version pins on upstream components (`duckdb`, the `dioxus` crates) are recorded with their rationale in [`docs/upstream-watch.md`](docs/upstream-watch.md).
 
 ## Trademarks
 
