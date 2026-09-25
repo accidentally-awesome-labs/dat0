@@ -238,7 +238,14 @@ fn ratchet_report_covers_over_under_missing_and_untabled() {
 /// Measured, not estimated. Fails over AND stale-under, like `MAX_LINES` — a
 /// slice that removes fields must lower this in the same commit, which is what
 /// makes shrinking visible rather than silently forgotten.
-const MAX_WORKSPACE_FIELDS: usize = 13;
+///
+/// 13 → 14 for `banners` (PD-024). It was a signal private to the shell, which
+/// left code outside the shell — `session_boot::open_paths`, the session
+/// failure in `land` — with only the process-global queue to report through,
+/// and that queue is how a refusal in one window was shown in another. A
+/// window's banners are written by more than one module, so they are window
+/// state, not one surface's.
+const MAX_WORKSPACE_FIELDS: usize = 14;
 
 /// Slack on the field ratchet's under-arm.
 ///

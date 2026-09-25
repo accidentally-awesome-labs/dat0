@@ -61,7 +61,6 @@ pub fn Shell() -> Element {
 
     // Surfaces the shell owns state for. Each is a signal rather than a field
     // on `Workspace` because nothing outside this subtree reads them.
-    let mut banners = use_signal(Vec::<dat0_core::error_ux::Banner>::new);
     let inspector = InspectorState::use_new();
     // `ChartSpec` has no `Default` — a chart with no source is not a chart —
     // so the shell holds the empty-source spec the pane renders as its empty
@@ -99,15 +98,28 @@ pub fn Shell() -> Element {
         }
     });
 
-    // Pending banners are raised from anywhere — `error_ux::push` is a global,
-    // because the code that fails is usually nowhere near a component. Drain
-    // them into the window's list on every render pass.
-    {
-        let mut banners = banners;
-        use_effect(move || {
-            dat0_core::error_ux::banner::merge_pending(&mut banners.write());
-        });
-    }
+    // Banners raised with no window in hand — at boot, or from core code that
+    // has no `Workspace` — wait in the process-global queue. Drain it now and
+    // again on every push.
+    //
+    // This was a `use_effect` whose only signal access was a `write()`, and a
+    // write does not subscribe: it ran once per mount, so every banner raised
+    // after the first frame stayed queued until some other window mounted and
+    // showed it there (PD-024). Window-originated banners never touch the
+    // queue (`Workspace::push_banner`), so they cannot land in another window.
+    use_future(move || async move {
+        let mut banners = ws.banners;
+        let mut pushed = dat0_core::error_ux::banner::subscribe();
+        loop {
+            let pending = dat0_core::error_ux::banner::drain_pending();
+            if !pending.is_empty() {
+                banners.write().extend(pending);
+            }
+            if pushed.changed().await.is_err() {
+                return;
+            }
+        }
+    });
 
     // The window's own size feeds the mount clamp: a dock size restored from a
     // bigger display must not push the centre off screen.
@@ -445,12 +457,20 @@ pub fn Shell() -> Element {
 
                         div { class: "d0-pane-stack", "data-a11y-id": "pane-stack",
                             BannerHost {
-                                banners: banners(),
+                                banners: ws.banners.cloned(),
                                 on_action: move |id: String| {
                                     registry.dispatch(&id, &banner_events);
                                 },
                                 on_dismiss: move |i: usize| {
-                                    banners.write().remove(i);
+                                    let mut banners = ws.banners;
+                                    let mut list = banners.write();
+                                    // A second click on a ✕ that has already
+                                    // gone names an index that no longer
+                                    // exists; `remove` would panic, and the
+                                    // release profile aborts on panic.
+                                    if i < list.len() {
+                                        list.remove(i);
+                                    }
                                 },
                             }
 
@@ -482,7 +502,7 @@ pub fn Shell() -> Element {
                                     on_take_tour: move |_| {
                                         ws.modal.set(Some(Modal::Onboarding));
                                     },
-                                    on_open_demo: move |_| open_demo(demo_events.clone()),
+                                    on_open_demo: move |_| open_demo(ws, demo_events.clone()),
                                 }
                             } else {
                                 PipelineBar {
@@ -633,7 +653,7 @@ pub fn Shell() -> Element {
 /// takes, so a sample cannot behave differently from a real file.
 pub fn open_sample(ws: Workspace, kind: SampleKind) {
     let Some(state_root) = dat0_core::globals::state_root() else {
-        dat0_core::error_ux::push(dat0_core::error_ux::Banner::error(
+        ws.push_banner(dat0_core::error_ux::Banner::error(
             dat0_i18n::t("sample.open_failed"),
             dat0_i18n::t("sample.no_state_root"),
         ));
@@ -655,7 +675,7 @@ pub fn open_sample(ws: Workspace, kind: SampleKind) {
                         crate::session_boot::open_paths(ws, vec![path]).await;
                     });
                 }
-                Err(e) => dat0_core::error_ux::push(dat0_core::error_ux::Banner::error(
+                Err(e) => ws.push_banner(dat0_core::error_ux::Banner::error(
                     dat0_i18n::t("sample.extract_failed"),
                     e.to_string(),
                 )),
@@ -672,9 +692,9 @@ pub fn open_sample(ws: Workspace, kind: SampleKind) {
                 match dat0_core::sample_data::fetch_remote(url, sha256, &root, dest_filename).await
                 {
                     Ok(path) => crate::session_boot::open_paths(ws, vec![path]).await,
-                    Err(ref e) => dat0_core::error_ux::push(
-                        dat0_core::sample_data::fetch_failed_banner(url, e),
-                    ),
+                    Err(ref e) => {
+                        ws.push_banner(dat0_core::sample_data::fetch_failed_banner(url, e))
+                    }
                 }
             });
         }
@@ -685,7 +705,7 @@ pub fn open_sample(ws: Workspace, kind: SampleKind) {
 ///
 /// A fresh directory per click, deliberately: the demo is meant to be edited,
 /// and a shared destination would hand the next click somebody's leftovers.
-fn open_demo(events: dat0_core::events::AppEvents) {
+fn open_demo(ws: Workspace, events: dat0_core::events::AppEvents) {
     let base = dat0_core::globals::state_root()
         .map(|p| p.to_path_buf())
         .unwrap_or_else(std::env::temp_dir);
@@ -694,7 +714,7 @@ fn open_demo(events: dat0_core::events::AppEvents) {
         // Overwriting is safe: the bytes are compiled in, so they are the same
         // bytes every time.
         if let Err(e) = std::fs::write(&staging, dat0_core::sample_data::DEMO_DAT0) {
-            dat0_core::error_ux::push(dat0_core::error_ux::Banner::warning_with_body(
+            ws.push_banner(dat0_core::error_ux::Banner::warning_with_body(
                 dat0_i18n::t("package.open.failed.title"),
                 e.to_string(),
             ));
@@ -703,7 +723,7 @@ fn open_demo(events: dat0_core::events::AppEvents) {
         let dest = base.join("demo").join(uuid::Uuid::now_v7().to_string());
         match dat0_core::cli::unpack_async(&staging, &dest).await {
             Ok(()) => events.send(dat0_core::events::AppEvent::OpenWindow { paths: vec![dest] }),
-            Err(e) => dat0_core::error_ux::push(dat0_core::error_ux::Banner::warning_with_body(
+            Err(e) => ws.push_banner(dat0_core::error_ux::Banner::warning_with_body(
                 dat0_i18n::t("package.unpack.failed.title"),
                 format!("{e:#}"),
             )),
@@ -1002,7 +1022,7 @@ fn surface_command(
             // rasterises PNG itself, and re-parsing our own SVG to get back to
             // the numbers would be a lossy round trip for no gain.
             let Some(data) = chart_data.peek().clone().flatten() else {
-                dat0_core::error_ux::push(dat0_core::error_ux::Banner::warning(dat0_i18n::t(
+                ws.push_banner(dat0_core::error_ux::Banner::warning(dat0_i18n::t(
                     "chart.export.nothing",
                 )));
                 return true;
@@ -1035,14 +1055,12 @@ fn surface_command(
                         let mut b =
                             dat0_core::error_ux::Banner::info(dat0_i18n::t("chart.export.done"));
                         b.body = path.display().to_string();
-                        dat0_core::error_ux::push(b);
+                        ws.push_banner(b);
                     }
-                    Err(e) => {
-                        dat0_core::error_ux::push(dat0_core::error_ux::Banner::warning_with_body(
-                            dat0_i18n::t("chart.export.failed"),
-                            e,
-                        ))
-                    }
+                    Err(e) => ws.push_banner(dat0_core::error_ux::Banner::warning_with_body(
+                        dat0_i18n::t("chart.export.failed"),
+                        e,
+                    )),
                 }
             });
         }
@@ -1070,7 +1088,7 @@ fn surface_command(
         | ids::VIEW_REDO
         | ids::VIEW_SAVE_AS_TABLE => {
             if *ws.read_only.read() {
-                dat0_core::error_ux::push(dat0_core::error_ux::Banner::warning(dat0_i18n::t(
+                ws.push_banner(dat0_core::error_ux::Banner::warning(dat0_i18n::t(
                     "view.read_only",
                 )));
                 return true;

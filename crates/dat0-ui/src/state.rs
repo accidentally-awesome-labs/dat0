@@ -216,6 +216,14 @@ pub struct Workspace {
     pub status: Signal<Status>,
     /// The single modal slot.
     pub modal: Signal<Option<Modal>>,
+    /// Banners shown in this window's pane stack.
+    ///
+    /// Per window, so a failure caused by something this window did is shown
+    /// here — not in whichever window happens to drain the process-global
+    /// queue first. Code holding a `Workspace` pushes with
+    /// [`Workspace::push_banner`]; code that has none (core, boot) uses
+    /// `error_ux::push`, which the shell drains on every push.
+    pub banners: Signal<Vec<dat0_core::error_ux::Banner>>,
     /// Whether the command palette is open.
     pub palette: Signal<bool>,
     /// A file drag is over the window.
@@ -258,6 +266,7 @@ impl Workspace {
             layout: Signal::new(DockLayout::default()),
             status: Signal::new(Status::default()),
             modal: Signal::new(None),
+            banners: Signal::new(Vec::new()),
             palette: Signal::new(false),
             drag_over: Signal::new(false),
             session: Signal::new(Arc::new(SessionSlot::Booting)),
@@ -270,6 +279,12 @@ impl Workspace {
     /// Read the workspace provided above.
     pub fn use_current() -> Self {
         use_context()
+    }
+
+    /// Show `banner` in this window.
+    pub fn push_banner(&self, banner: dat0_core::error_ux::Banner) {
+        let mut banners = self.banners;
+        banners.write().push(banner);
     }
 
     /// The sidebar's width in pixels, or 0 when collapsed.

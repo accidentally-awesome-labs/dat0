@@ -9,7 +9,9 @@ pub mod engine;
 pub mod modal;
 pub mod toast;
 
-pub use banner::{Banner, BannerAction, BannerKind, BannerLink, drain_pending, push, push_warning};
+pub use banner::{
+    Banner, BannerAction, BannerKind, BannerLink, drain_pending, push, push_warning, subscribe,
+};
 pub use engine::{ENGINE_ERROR_KEYS, banner_for};
 pub use modal::Modal;
 pub use toast::{Toast, ToastSeverity};

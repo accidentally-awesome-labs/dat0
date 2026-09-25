@@ -338,6 +338,7 @@
   "save_as_table.failed.title": "Save as Table failed",
   "session.booting": "Opening the data engine…",
   "session.failed": "Could not open this window's data engine",
+  "session.persist_failed": "Opened, but this window's session could not be saved — it will not be recovered after a crash",
   "session.retry": "Try again",
   "settings": "Settings",
   "settings.advanced": "Advanced",

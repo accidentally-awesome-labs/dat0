@@ -181,7 +181,7 @@ async fn land(ws: Workspace, slot: SessionSlot) {
 
     if let Some(message) = failure {
         ws.pending_open.write().clear();
-        dat0_core::error_ux::push(failure_banner(&message));
+        ws.push_banner(failure_banner(&message));
         return;
     }
 
@@ -289,13 +289,20 @@ pub async fn open_paths(ws: Workspace, paths: Vec<PathBuf>) {
             DropOutcome::Unsupported { path, extension } => {
                 let what = extension.unwrap_or_default();
                 tracing::info!(?path, extension = %what, "unsupported file dropped");
-                dat0_core::error_ux::push(dat0_core::error_ux::Banner::warning(dat0_i18n::t(
-                    "drop.unsupported",
-                )));
+                // Name the file: when several are dropped at once, "that
+                // file type" is only actionable if it says which file.
+                let name = path
+                    .file_name()
+                    .map(|n| n.to_string_lossy().into_owned())
+                    .unwrap_or_else(|| path.display().to_string());
+                ws.push_banner(dat0_core::error_ux::Banner::warning_with_body(
+                    dat0_i18n::t("drop.unsupported"),
+                    name,
+                ));
             }
             DropOutcome::EngineError { path, error } => {
                 tracing::warn!(?path, %error, "register failed");
-                dat0_core::error_ux::push(dat0_core::error_ux::Banner::error(
+                ws.push_banner(dat0_core::error_ux::Banner::error(
                     dat0_i18n::t("drop.register_failed"),
                     error,
                 ));

@@ -150,6 +150,22 @@ fn Host(props: HostProps) -> Element {
         .map(|i| i.to_string())
         .unwrap_or_else(|| "-".into());
     let engine_ok = ws.status.read().engine_ok;
+    // What this window would show in its banner host: `title|body|action` per
+    // banner. Read from the window's own list, because a banner that only
+    // reached the process-global queue is one no user saw.
+    let banners: Vec<String> = ws
+        .banners
+        .read()
+        .iter()
+        .map(|b| {
+            let action = b
+                .primary
+                .as_ref()
+                .map(|a| a.action_id.as_str())
+                .unwrap_or("");
+            format!("{}|{}|{}", b.title, b.body, action)
+        })
+        .collect();
 
     rsx! {
         div { "data-a11y-id": "host",
@@ -157,6 +173,7 @@ fn Host(props: HostProps) -> Element {
                 "data-a11y-id": "readback",
                 "phase={phase} queue=[{queue.join(\",\")}] tabs=[{tabs.join(\",\")}] active={active} engine_ok={engine_ok}"
             }
+            div { "data-a11y-id": "banners", "{banners.join(\";\")}" }
             for (i, paths) in props.gestures.iter().cloned().enumerate() {
                 button {
                     key: "{i}",
@@ -203,6 +220,19 @@ fn readback(h: &Harness) -> String {
         .by_a11y_id("readback")
         .expect("the host renders a readback");
     h.text_of(key)
+}
+
+/// The window's banners, one `title|body|action` string each.
+fn window_banners(h: &Harness) -> Vec<String> {
+    let key = h
+        .by_a11y_id("banners")
+        .expect("the host renders its banners");
+    let text = h.text_of(key);
+    if text.is_empty() {
+        Vec::new()
+    } else {
+        text.split(';').map(str::to_string).collect()
+    }
 }
 
 /// Settle, then sleep, until `done` or two minutes.
@@ -517,18 +547,29 @@ fn a_failed_session_raises_a_retry_banner_and_does_not_loop() {
          pretend something is still in flight"
     );
 
-    let banners = drain_pending();
+    // In THIS window's list. The global queue is not a place a user can see:
+    // a banner that only reached it is the PD-024 failure, where the shell
+    // drained it once at mount and never again.
+    let banners = window_banners(&h);
     let failure = banners
         .iter()
-        .find(|b| b.title == dat0_i18n::t("session.failed"))
-        .unwrap_or_else(|| panic!("the Failed arm must raise a banner; saw {banners:?}"));
+        .find(|b| b.starts_with(&format!("{}|", dat0_i18n::t("session.failed"))))
+        .unwrap_or_else(|| panic!("the Failed arm must raise a banner here; saw {banners:?}"));
+    let mut parts = failure.splitn(3, '|');
+    let (_, body, action) = (parts.next(), parts.next(), parts.next());
     assert!(
-        !failure.body.is_empty(),
-        "the anyhow chain is the only diagnosis available; it must be shown"
+        body.is_some_and(|b| !b.is_empty()),
+        "the anyhow chain is the only diagnosis available; it must be shown: {failure}"
     );
     assert_eq!(
-        failure.primary.as_ref().map(|a| a.action_id.as_str()),
-        Some(dat0_core::actions::builtin::ids::SESSION_RETRY)
+        action,
+        Some(dat0_core::actions::builtin::ids::SESSION_RETRY),
+        "{failure}"
+    );
+    assert!(
+        drain_pending().is_empty(),
+        "a window-originated banner must not also sit in the global queue, where \
+         another window's drain would show it a second time"
     );
 
     // Terminal: nothing re-armed the boot on its own, and no second banner
@@ -542,9 +583,57 @@ fn a_failed_session_raises_a_retry_banner_and_does_not_loop() {
         "a failed session must not retry itself: {}",
         readback(&h)
     );
+    assert_eq!(
+        window_banners(&h).len(),
+        1,
+        "a retry loop would show as a growing pile of identical banners: {:?}",
+        window_banners(&h)
+    );
+}
+
+#[test]
+#[serial]
+fn a_refused_drop_is_announced_once_in_the_window_that_received_it() {
+    let _rt = runtime();
+    let _guard = _rt.0.enter();
+    let root = state_root();
+    let _ = drain_pending();
+
+    let refused = root.join("drops-refused").join("blob.bin");
+    std::fs::create_dir_all(refused.parent().unwrap()).unwrap();
+    std::fs::write(&refused, b"\x00\x01\x02").unwrap();
+
+    let mut h = Harness::new(
+        Host,
+        HostProps {
+            window_id: uuid::Uuid::now_v7(),
+            cli_paths: Vec::new(),
+            gestures: vec![vec![refused]],
+        },
+    );
+    await_phase(&mut h, "ready");
+
+    // A drop AFTER the first frame — the case the mount-time drain never saw.
+    h.click("drop-0");
+    assert!(
+        pump(&mut h, |h| !window_banners(h).is_empty()),
+        "a refused file must be announced in the window it was dropped on"
+    );
+
+    let banners = window_banners(&h);
+    assert_eq!(
+        banners.len(),
+        1,
+        "one refusal, one banner — core and shell each raising one was the \
+         duplicate this replaces: {banners:?}"
+    );
+    assert!(
+        banners[0].starts_with(&format!("{}|blob.bin|", dat0_i18n::t("drop.unsupported"))),
+        "the banner names the refused file: {banners:?}"
+    );
     assert!(
         drain_pending().is_empty(),
-        "a retry loop would show as a growing pile of identical banners"
+        "and nothing was left in the global queue for another window to show"
     );
 }
 
