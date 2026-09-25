@@ -202,6 +202,13 @@ pub fn use_session(ws: Workspace, cli_paths: Vec<PathBuf>) {
     // Hangs off the same hook so a window cannot get a session without also
     // getting its layout: they are one lifecycle, not two.
     use_layout_persistence(ws);
+    // Live from mount, before its scratch directory exists, so the recovery
+    // panel can never list a directory that is still being created — and
+    // until the window closes, after which that directory is an orphan like
+    // any other.
+    let window_id = ws.window_id;
+    use_hook(move || dat0_core::globals::register_live_window(window_id));
+    use_drop(move || dat0_core::globals::unregister_live_window(window_id));
     use_future(move || {
         let paths = cli_paths.clone();
         async move {

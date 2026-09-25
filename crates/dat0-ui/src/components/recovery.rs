@@ -66,7 +66,18 @@ pub fn load_for_open(orphan_dir: &Path) -> Result<RestoredSession> {
 }
 
 /// Permanently remove an orphan scratch directory and everything under it.
+///
+/// Refuses the directory of a window that is still open. [`collect_rows`]
+/// already leaves those out; this is the second lock on the same door,
+/// because the cost of getting it wrong is deleting a live session's database
+/// out from under its engine.
 pub fn discard(orphan_dir: &Path) -> Result<()> {
+    if dat0_core::globals::is_live_scratch_dir(orphan_dir) {
+        anyhow::bail!(
+            "{} belongs to a window that is still open; it is not an orphan",
+            orphan_dir.display()
+        );
+    }
     fs::remove_dir_all(orphan_dir).with_context(|| format!("remove {}", orphan_dir.display()))
 }
 
@@ -98,11 +109,18 @@ pub enum RecoveryRow {
 /// A row's table list is best-effort: an unparseable `session.json` still
 /// yields a row with no tables, because it is still recoverable and still
 /// discardable, and hiding it would strand the directory forever.
+///
+/// Open windows are not orphans. Every running window keeps its own
+/// `session.json` under this root, so without the live check the panel
+/// offered the current session for recovery — and for Discard.
 pub fn collect_rows(scratch_root: &Path, recent_roots: &[PathBuf]) -> Vec<RecoveryRow> {
     let mut rows = Vec::new();
     if let Ok(read) = fs::read_dir(scratch_root) {
         for entry in read.flatten() {
             let dir = entry.path();
+            if dat0_core::globals::is_live_scratch_dir(&dir) {
+                continue;
+            }
             if dir.join("session.json").is_file() {
                 let tables = load_for_open(&dir)
                     .map(|s| s.tabs.into_iter().map(|t| t.table).collect())
