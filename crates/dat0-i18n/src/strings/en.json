@@ -118,6 +118,7 @@
   "engine.error.io": "File access failed",
   "engine.error.migration": "Workspace upgrade failed",
   "engine.error.mother_duck_auth": "MotherDuck sign-in failed",
+  "engine.error.not_a_single_query": "That SQL is not a single query",
   "engine.error.not_implemented": "Not implemented yet",
   "engine.error.task_join": "Background task failed",
   "engine.error.unknown_attach_scheme": "Unknown connection type",

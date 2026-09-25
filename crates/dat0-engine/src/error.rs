@@ -56,4 +56,10 @@ pub enum EngineError {
 
     #[error("Engine is in Failed state: {0}")]
     EngineFailed(String),
+
+    /// SQL that must be exactly one query was not: several statements,
+    /// something other than a query, or not parseable at all. See
+    /// [`crate::QueryEngine::check_single_query`].
+    #[error("Not a single query: {0}")]
+    NotASingleQuery(String),
 }

@@ -46,6 +46,7 @@ pub const ENGINE_ERROR_KEYS: &[&str] = &[
     "engine.error.engine_closed",
     "engine.error.engine_poisoned",
     "engine.error.engine_failed",
+    "engine.error.not_a_single_query",
 ];
 
 /// The i18n key for `err`'s variant.
@@ -71,6 +72,7 @@ fn key_for(err: &EngineError) -> &'static str {
         EngineError::EngineClosed => "engine.error.engine_closed",
         EngineError::EnginePoisoned => "engine.error.engine_poisoned",
         EngineError::EngineFailed(_) => "engine.error.engine_failed",
+        EngineError::NotASingleQuery(_) => "engine.error.not_a_single_query",
     }
 }
 
@@ -102,7 +104,7 @@ mod tests {
         // `key_for` is the source of truth; `ENGINE_ERROR_KEYS` is what the i18n
         // gate reads. This pins the two together for the variants constructible
         // without a real duckdb::Error (the full sweep lives in
-        // tests/engine_error_banner.rs, which can build all sixteen).
+        // tests/engine_error_banner.rs, which can build every one).
         for err in [
             EngineError::MotherDuckAuth,
             EngineError::Interrupted,

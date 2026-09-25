@@ -943,6 +943,14 @@ mod tests {
         async fn get_tables(&self) -> dat0_engine::Result<Vec<dat0_engine::TableInfo>> {
             unreached!("get_tables")
         }
+        async fn check_single_query(&self, _: &str) -> dat0_engine::Result<()> {
+            unreached!("check_single_query")
+        }
+
+        async fn confine_to(&self, _: &std::path::Path) -> dat0_engine::Result<()> {
+            unreached!("confine_to")
+        }
+
         async fn referenced_tables(&self, _: &str) -> dat0_engine::Result<Vec<String>> {
             unreached!("referenced_tables")
         }

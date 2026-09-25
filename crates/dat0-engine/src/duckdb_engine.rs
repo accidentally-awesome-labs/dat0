@@ -909,6 +909,30 @@ impl crate::QueryEngine for DuckDBEngine {
         .map_err(|e| EngineError::TaskJoin(e.to_string()))?
     }
 
+    async fn check_single_query(&self, sql: &str) -> Result<()> {
+        self.assert_open()?;
+        let conn = self.conn.clone();
+        let sql = sql.to_owned();
+        tokio::task::spawn_blocking(move || -> Result<()> {
+            let conn = conn.lock().map_err(|_| EngineError::EnginePoisoned)?;
+            crate::confine::check_single_query_blocking(&conn, &sql)
+        })
+        .await
+        .map_err(|e| EngineError::TaskJoin(e.to_string()))?
+    }
+
+    async fn confine_to(&self, dir: &std::path::Path) -> Result<()> {
+        self.assert_open()?;
+        let conn = self.conn.clone();
+        let dir = dir.to_path_buf();
+        tokio::task::spawn_blocking(move || -> Result<()> {
+            let conn = conn.lock().map_err(|_| EngineError::EnginePoisoned)?;
+            crate::confine::confine_blocking(&conn, &dir)
+        })
+        .await
+        .map_err(|e| EngineError::TaskJoin(e.to_string()))?
+    }
+
     #[instrument(skip(self, sql), fields(name = name, sql_len = sql.len()))]
     async fn create_or_replace_view(&self, name: &str, sql: &str) -> Result<()> {
         self.assert_open()?;
