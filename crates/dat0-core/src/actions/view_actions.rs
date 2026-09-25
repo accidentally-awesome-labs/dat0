@@ -26,6 +26,11 @@ pub fn register(reg: &ActionRegistry) -> Result<(), RegisterError> {
             Navigation,
         ),
         (
+            ids::INSPECTOR_TOGGLE,
+            dat0_i18n::t("inspector.toggle"),
+            Navigation,
+        ),
+        (
             ids::CHART_VISUALIZE,
             dat0_i18n::t("chart.visualize"),
             Navigation,

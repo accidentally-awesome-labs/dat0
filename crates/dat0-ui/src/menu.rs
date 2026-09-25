@@ -31,15 +31,31 @@ pub mod menu_ids {
     pub const ABOUT: &str = "menu.about";
     pub const CHECK_UPDATES: &str = "menu.check_updates";
     pub const DOCS: &str = "menu.docs";
-    pub const DISCORD: &str = "menu.discord";
+    pub const GITHUB: &str = "menu.github";
     pub const OPEN_PACKAGE: &str = "menu.open_package";
     pub const EXPORT_PACKAGE: &str = "menu.export_package";
     pub const UNPACK_PACKAGE: &str = "menu.unpack_package";
     pub const REPLAY_PACKAGE: &str = "menu.replay_package";
-    pub const TOGGLE_SIDEBAR: &str = "menu.toggle_sidebar";
-    pub const TOGGLE_INSPECTOR: &str = "menu.toggle_inspector";
     /// `recents.open.0` … `recents.open.9`.
     pub const RECENT_PREFIX: &str = "recents.open.";
+}
+
+/// Menu-local ids with no handler yet: the package verbs and the update check
+/// (PD-023). Built disabled, like the [`crate::router::UNWIRED`] actions, so
+/// the menu bar offers nothing that does nothing.
+pub const UNWIRED_LOCAL: &[&str] = &[
+    menu_ids::OPEN_PACKAGE,
+    menu_ids::EXPORT_PACKAGE,
+    menu_ids::UNPACK_PACKAGE,
+    menu_ids::REPLAY_PACKAGE,
+    menu_ids::CHECK_UPDATES,
+];
+
+/// Whether the menu bar builds the item for `id` enabled.
+///
+/// Public so `tests/menu_reachability.rs` checks the same rule `build` uses.
+pub fn enabled(id: &str) -> bool {
+    crate::router::is_wired(id) && !UNWIRED_LOCAL.contains(&id)
 }
 
 /// File → Open Recent is capped at ten.
@@ -79,12 +95,17 @@ fn accelerator(action_id: &str) -> Option<String> {
 /// An item whose id is an action id and whose accelerator comes from the keymap.
 fn item(action_id: &'static str, label_key: &str) -> MenuItem {
     let accel = accelerator(action_id).and_then(|a| a.parse().ok());
-    MenuItem::with_id(action_id, dat0_i18n::t(label_key), true, accel)
+    MenuItem::with_id(
+        action_id,
+        dat0_i18n::t(label_key),
+        enabled(action_id),
+        accel,
+    )
 }
 
 /// An item with no chord (window management, external links).
 fn plain(id: &'static str, label_key: &str) -> MenuItem {
-    MenuItem::with_id(id, dat0_i18n::t(label_key), true, None)
+    MenuItem::with_id(id, dat0_i18n::t(label_key), enabled(id), None)
 }
 
 /// The recent-workspace items, newest first.
@@ -193,8 +214,8 @@ pub fn build() -> Menu {
     // ── View ─────────────────────────────────────────────────────────────────
     let view = Submenu::new(dat0_i18n::t("menu.view"), true);
     let _ = view.append_items(&[
-        &plain(menu_ids::TOGGLE_SIDEBAR, "catalog.toggle"),
-        &plain(menu_ids::TOGGLE_INSPECTOR, "inspector.toggle"),
+        &item(ids::SIDEBAR_TOGGLE, "catalog.toggle"),
+        &item(ids::INSPECTOR_TOGGLE, "inspector.toggle"),
         &item(ids::CHART_VISUALIZE, "chart.visualize"),
         &PredefinedMenuItem::separator(),
         &item(ids::CONSOLE_TOGGLE, "sql.console_toggle"),
@@ -220,7 +241,7 @@ pub fn build() -> Menu {
         &plain(menu_ids::CHECK_UPDATES, "menu.help.check_updates"),
         &PredefinedMenuItem::separator(),
         &plain(menu_ids::DOCS, "menu.help.docs"),
-        &plain(menu_ids::DISCORD, "menu.help.discord"),
+        &plain(menu_ids::GITHUB, "menu.help.github"),
     ]);
 
     let _ = menu.append_items(&[&app, &file, &edit, &view, &window, &help]);
@@ -266,15 +287,15 @@ pub fn emitted_ids() -> Vec<String> {
         ids::SQL_CANCEL,
         ids::AI_PANEL_OPEN,
         ids::ONBOARDING_TAKE_TOUR,
+        ids::SIDEBAR_TOGGLE,
+        ids::INSPECTOR_TOGGLE,
         menu_ids::OPEN_PACKAGE,
         menu_ids::EXPORT_PACKAGE,
         menu_ids::UNPACK_PACKAGE,
         menu_ids::REPLAY_PACKAGE,
-        menu_ids::TOGGLE_SIDEBAR,
-        menu_ids::TOGGLE_INSPECTOR,
         menu_ids::CHECK_UPDATES,
         menu_ids::DOCS,
-        menu_ids::DISCORD,
+        menu_ids::GITHUB,
     ]
     .into_iter()
     .map(str::to_string)
@@ -289,13 +310,11 @@ pub fn local_ids() -> Vec<String> {
         menu_ids::ABOUT,
         menu_ids::CHECK_UPDATES,
         menu_ids::DOCS,
-        menu_ids::DISCORD,
+        menu_ids::GITHUB,
         menu_ids::OPEN_PACKAGE,
         menu_ids::EXPORT_PACKAGE,
         menu_ids::UNPACK_PACKAGE,
         menu_ids::REPLAY_PACKAGE,
-        menu_ids::TOGGLE_SIDEBAR,
-        menu_ids::TOGGLE_INSPECTOR,
     ]
     .into_iter()
     .map(str::to_string)
@@ -355,7 +374,7 @@ pub fn label_keys() -> Vec<&'static str> {
         "menu.help.take_tour",
         "menu.help.check_updates",
         "menu.help.docs",
-        "menu.help.discord",
+        "menu.help.github",
     ]
 }
 

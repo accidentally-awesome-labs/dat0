@@ -2238,6 +2238,12 @@ that's modifying it; merge conflicts are signals worth investigating.
   id is *claimed*, and a stub that logs claims it; the banner tests read the
   global queue rather than the screen (PD-024); the visual suite renders state
   that fixtures inject and production never produces.
+- **Tracking:** `dat0_ui::router::UNWIRED` lists the commands that do nothing
+  yet (22 when it was introduced). The palette hides them and the menu bar and
+  grid context menu disable them; `tests/action_effects.rs` (which replaced
+  `action_routing.rs`) requires an observable effect from every command still
+  offered, and lets `UNWIRED` only shrink. Each surface ported under this entry
+  removes its ids from that list in the same change.
 - **Discovered:** project review, 2026-09-25 — seven read-only audits plus a
   Linux release build driven under Xvfb.
 - **Fix:** port each surface's orchestration from `95627c8` onto the

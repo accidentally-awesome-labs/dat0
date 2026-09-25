@@ -67,6 +67,20 @@ pub fn entries(has_selection: bool, read_only: bool) -> Vec<MenuEntry> {
     ]
 }
 
+/// [`entries`], less what this build cannot do: an item whose action is in
+/// [`crate::router::UNWIRED`] is shown disabled, so the menu never offers a
+/// verb that silently does nothing (PD-023). `entries` stays the pure
+/// selection and read-only rule.
+pub fn offered_entries(has_selection: bool, read_only: bool) -> Vec<MenuEntry> {
+    entries(has_selection, read_only)
+        .into_iter()
+        .map(|mut e| {
+            e.enabled &= crate::router::is_wired(e.id);
+            e
+        })
+        .collect()
+}
+
 #[derive(Clone, Props, PartialEq)]
 pub struct ContextMenuProps {
     /// Where the pointer was, in client coordinates.
@@ -84,7 +98,7 @@ pub struct ContextMenuProps {
 
 #[component]
 pub fn ContextMenu(props: ContextMenuProps) -> Element {
-    let items = entries(props.has_selection, props.read_only);
+    let items = offered_entries(props.has_selection, props.read_only);
     // The keyboard cursor starts on the first item a press could actually do
     // something with, so Enter is never a no-op on open.
     let first = items.iter().position(|i| i.enabled).unwrap_or(0);
@@ -96,6 +110,9 @@ pub fn ContextMenu(props: ContextMenuProps) -> Element {
     let (x, y) = props.at;
     let n = items.len();
     let enabled: Vec<bool> = items.iter().map(|i| i.enabled).collect();
+    // With nothing pickable there is no cursor to show: highlighting a
+    // disabled row would suggest Enter does something.
+    let any_enabled = enabled.iter().any(|e| *e);
     let ids_list: Vec<&'static str> = items.iter().map(|i| i.id).collect();
 
     rsx! {
@@ -128,7 +145,7 @@ pub fn ContextMenu(props: ContextMenuProps) -> Element {
             for (i, entry) in items.iter().enumerate() {
                 {
                     let id = entry.id;
-                    let active = i == cursor() && n > 0;
+                    let active = any_enabled && i == cursor() && n > 0;
                     rsx! {
                         // The separator is a child of the item rather than a
                         // sibling: rsx only allows `key` on the first node in a
@@ -210,6 +227,22 @@ mod tests {
             } else {
                 assert!(!e.enabled, "{} must be refused when read-only", e.id);
             }
+        }
+    }
+
+    #[test]
+    fn a_verb_this_build_cannot_perform_is_offered_disabled() {
+        for e in offered_entries(true, false) {
+            if !crate::router::is_wired(e.id) {
+                assert!(!e.enabled, "{} does nothing yet but is offered", e.id);
+            }
+        }
+        // The gate only ever takes away: nothing `entries` disables comes back.
+        for (offered, rule) in offered_entries(false, true)
+            .iter()
+            .zip(entries(false, true))
+        {
+            assert!(!offered.enabled || rule.enabled, "{}", offered.id);
         }
     }
 

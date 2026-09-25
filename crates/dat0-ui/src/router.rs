@@ -21,6 +21,54 @@ use dat0_core::events::{AppEvent, AppEvents};
 
 use crate::state::{Modal, Workspace};
 
+/// Registered actions that do nothing in this build.
+///
+/// Each has a descriptor, so the palette, the menu bar, the grid's context
+/// menu and the keymap all know it, but its handler only logs, opens a dialog
+/// whose reply is thrown away, or hands its input to a path that refuses it
+/// (PD-023). Offering them is the failure this router exists to prevent, one
+/// level down: the id is claimed and nothing happens.
+///
+/// So every surface that offers a command asks [`is_wired`] first. The list is
+/// a ratchet: `tests/action_effects.rs` fails if it grows, and an id leaves it
+/// in the same change as the test that shows its effect.
+pub const UNWIRED: &[&str] = &[
+    // SQL console: Run and Cancel only clear the error, the library dialogs
+    // open empty, and the save prompts discard their answer.
+    ids::SQL_RUN,
+    ids::SQL_CANCEL,
+    ids::SQL_HISTORY,
+    ids::SQL_LOAD_QUERY,
+    ids::SQL_SAVE_QUERY,
+    ids::SQL_SAVE_AS_TABLE,
+    // Grid edits: logged, never applied.
+    ids::VIEW_COPY,
+    ids::VIEW_CUT,
+    ids::VIEW_PASTE,
+    ids::VIEW_FILL_DOWN,
+    ids::VIEW_SET_NULL,
+    ids::VIEW_SET_VALUE,
+    ids::VIEW_DELETE_ROWS,
+    ids::VIEW_DELETE_COLUMN,
+    ids::VIEW_UNDO,
+    ids::VIEW_REDO,
+    ids::VIEW_SAVE_AS_TABLE,
+    // Dialogs whose reply is discarded.
+    ids::VIEW_EXPORT,
+    ids::LIVE_REFRESH,
+    // Workspaces: a picked folder is refused as an unsupported file, and Save
+    // only logs the path it was given.
+    ids::WORKSPACE_OPEN,
+    ids::WORKSPACE_SAVE,
+    // Flips a flag the shell never renders.
+    ids::PERF_HUD_TOGGLE,
+];
+
+/// Whether `id` does something in this build. See [`UNWIRED`].
+pub fn is_wired(id: &str) -> bool {
+    !UNWIRED.contains(&id)
+}
+
 /// A shell-installed handler for the actions whose state the shell owns.
 ///
 /// Most commands are window state and this module performs them directly. The
@@ -65,6 +113,10 @@ pub fn route(ws: Workspace, events: &AppEvents, surface: SurfaceSlot, id: &str) 
         // ── Window and shell ───────────────────────────────────────────────
         ids::WINDOW_NEW => events.send(AppEvent::OpenWindow { paths: Vec::new() }),
         ids::SIDEBAR_TOGGLE => ws.toggle_sidebar(),
+        ids::INSPECTOR_TOGGLE => {
+            let open = ws.layout.read().inspector_visible;
+            ws.layout.write().inspector_visible = !open;
+        }
         ids::CONSOLE_TOGGLE => {
             let open = ws.layout.read().console_open;
             ws.layout.write().console_open = !open;

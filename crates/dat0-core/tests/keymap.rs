@@ -46,6 +46,8 @@ const UNBOUND: &[&str] = &[
     "chart.visualize",
     "file.open",
     "import.cancel",
+    // A View-menu item and the inspector's own header button.
+    "inspector.toggle",
     "live.refresh",
     "onboarding.take_tour",
     "perf.hud.toggle",

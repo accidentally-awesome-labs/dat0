@@ -95,11 +95,13 @@ fn builtins_register_the_expected_count() {
     // + one from the GPUI→Dioxus migration (sidebar.toggle — S1 folds the
     //   three-way left dock into one always-present catalog sidebar, so
     //   "hide it" becomes a command for the first time; ⌘B) = 40.
+    // + one from the 2026-09-25 review (inspector.toggle — View → Toggle
+    //   Inspector was a menu-local id with no handler) = 41.
     //
     // The name deliberately carries no number: it said "thirty_four" while
     // asserting 35, and a count in a test name rots on the next slice that adds
     // an action. The ledger above is the real record.
-    assert_eq!(reg.count(), 40);
+    assert_eq!(reg.count(), 41);
     let titles: Vec<String> = reg.iter().map(|d| d.title).collect();
     assert!(titles.contains(&"New Window".to_string()));
     assert!(titles.contains(&"Open Settings".to_string()));

@@ -74,6 +74,12 @@ pub mod ids {
     /// left dock was a three-way mode switch driven by the activity rail, and
     /// "hide it" was not one of the three modes.
     pub const SIDEBAR_TOGGLE: &str = "sidebar.toggle";
+    /// Show or hide the inspector in the right column.
+    ///
+    /// View → Toggle Inspector used to be a menu-local id with no handler, so
+    /// the only working toggle was the button in the inspector's own header —
+    /// which is not there once the inspector is closed.
+    pub const INSPECTOR_TOGGLE: &str = "inspector.toggle";
     pub const SQL_RUN: &str = "sql.run";
     pub const SQL_CANCEL: &str = "sql.cancel";
     pub const SQL_NEW_TAB: &str = "sql.new_tab";
