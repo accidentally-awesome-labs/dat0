@@ -67,9 +67,12 @@ that's modifying it; merge conflicts are signals worth investigating.
 | D-027 | In-app Inspect polish (read-only badge, scratch GC, multi-source GUI replay, Unpack button) | open | P8 | — |
 | D-028 | Privileged `/Applications` auto-update (SMJobBless/SMAppService helper for authenticated install) | open | P10a-2 | v1.x |
 | D-029 | Settings panel persist-on-render → change-gate (per-frame fsync); + P10b cleanup (orphan `SettingsView`/dead `render` trait, 2 hardcoded input placeholders, orphan `settings.update.auto_check` key) + correct the "i18n-check fails on missing keys" claim (it is warn-only) | closed | P10b | P10c |
+| D-030 | Mid-stream Arrow errors are invisible on uncounted paths | open | EN3 | blocked upstream |
 | D-031 | Display-type letter-spacing (v4's −0.03em/−0.035em tracking) unavailable on gpui 0.2.2 — no `Styled` setter and no `TextStyle` field | closed | UI1 | closed by the GPUI→Dioxus migration |
 | D-032 | Promote `perf-gate` from label-triggered to every-PR (needs dedicated macOS hardware) | open | MX3 | — |
-| D-036 | Two `block_on(Session::…)` sites remain on the GPUI main thread — `workspace_ops::spawn_workspace_window` and `package_ops::open_package_at` | open | EN4 | — |
+| D-033 | MotherDuck traffic is unmetered by the egress counter | open | SH1 | blocked upstream |
+| D-034 | Sidebar footer reports no tab count | closed | SH2 | closed by the GPUI→Dioxus migration (the Dioxus footer counts tabs) |
+| D-036 | Two `block_on(Session::…)` sites remain on the GPUI main thread — `workspace_ops::spawn_workspace_window` and `package_ops::open_package_at` | closed | EN4 | moot — both sites were deleted with `dat0-app`; the flows they served are PD-023 |
 | D-037 | `docs/a11y.md` (and 8 more docs) still describe the GPUI build — dead crate `dat0-app`, dead test `theme_contrast_gate`, dead feature `a11y-capture`, dead paths `src/window/render.rs` | closed | GPUI→Dioxus migration | closed by the doc-accuracy pass after PR #82 |
 | D-038 | `Coverage (report only)` exhausted the runner's disk — fixed by dropping debug info from the instrumented build (21 GB vs 64 GB) | closed | GPUI→Dioxus migration | first green run 2026-08-13, 84.7% |
 
@@ -77,11 +80,11 @@ that's modifying it; merge conflicts are signals worth investigating.
 
 | ID     | Title                                                              | Status | Severity |
 |--------|--------------------------------------------------------------------|--------|----------|
-| PD-001 | tracing EnvFilter directive `dat0=debug` doesn't match dat0 crates | open   | low      |
+| PD-001 | tracing EnvFilter directive `dat0=debug` doesn't match dat0 crates | cancelled | low   |
 | PD-002 | Settings store atomic-write missing `fsync` before rename          | closed | low      |
 | PD-003 | cargo-about NOTICE output not deterministic across host platforms  | closed | low      |
 | PD-004 | Linux Secret Service backend not reachable from CI keychain tests  | open   | low      |
-| PD-011 | P3b plan §3.7 ambiguity rule references sniff outputs that don't exist: no candidate-delimiter scores, no encoding column, no per-column confidence in `sniff_csv` | open | low |
+| PD-011 | P3b plan §3.7 ambiguity rule references sniff outputs that don't exist: no candidate-delimiter scores, no encoding column, no per-column confidence in `sniff_csv` | closed | low |
 | PD-012 | `NYC_TAXI_SHA256 = "FILL_AT_T8"` — release asset not yet uploaded, so the fetch path always fails the checksum check at runtime | open | low |
 | PD-013 | P4a T0 plan-snippet drifts: `dat0-fixtures` assumed to be a lib crate; `dat0-engine` assumed to have a `benches/` dir + criterion dev-dep; plan snippet pinned `criterion = "0.5"` instead of using workspace inheritance | closed | low |
 | PD-014 | P4a design §3 used `#[serde(untagged)]` on `FilterValue` + `Scalar`, causing Str/Date/Timestamp collisions and FilterValue::None/Scalar::Null collision; reworked to tagged wire shapes | closed | low |
@@ -89,10 +92,23 @@ that's modifying it; merge conflicts are signals worth investigating.
 | PD-016 | P4a UI-click → ViewChange wirings unowned by plan T13: funnel-click → open popover, popover `Outcome::Apply` → `vm.apply`, sort-zone-click → `vm.set_sort`. T7/T9/T10b/T12 implementers each commented "T13 wires" but plan T13 Steps 1-4 cover only keybind undo/redo + supersede-cancel test. Closed by P4b T0: `on_sort_zone_click`/`on_funnel_click`/`route_outcome` → `spawn_view_change`; `click_wiring.rs` (7 tests). | closed | medium |
 | PD-017 | P4b T3 plan premise wrong: it assumed `register_file` "finalizes a CTAS import", but `register_file` emits `CREATE OR REPLACE VIEW … AS SELECT * FROM read_csv/json/parquet(…)` — a VIEW, which cannot be `ALTER TABLE`-d, so the eager `__dat0_rowid` surrogate only lands via `create_table` (base tables). The app imports files exclusively via `register_file` (`file_drop.rs:133`), so imported grids are VIEWs with no `__dat0_rowid`, and the P4b edit/delete overlay (`WHERE __dat0_rowid NOT IN …`, `CASE WHEN __dat0_rowid = …`) references a non-existent column → edit/delete fail on real imports. T3 engine work is correct + complete; resolution is app-side (materialize imports to base tables, or back-fill via `ensure_rowid` on first bind). **Closed via Path A:** new `QueryEngine::register_file_as_table` materializes imports into rowid-bearing base tables (reusing all P3b sniffing); `file_drop.rs` now calls it. | closed | high |
 | PD-018 | Pre-existing (P3a-era) grid-render gap surfaced during P4b T7: `GridTableDelegate::render_td` (`grid/mod.rs`) renders the em-dash placeholder for EVERY cell — it never calls `render_cell` or `page_for`, and `page_for` (the only method that populates the page LRU from DuckDB) has ZERO production callers (no `load_more`/visible-range/prefetch). So in the running app the grid shows `—` and the cache is empty. P4b's cache-only reads (`cell_display`/`row_key`/`column_arrow_type`) resolve nothing on screen, so copy reads empty strings and paste/cut/edit skip every cell. P4b edit/select/clipboard LOGIC is correct + fully test-green (engine round-trips), but the headline T14 manual Excel/Sheets UAT is BLOCKED until the paged-render cache is wired (render_td → real values via the page LRU + prefetch visible page on bind). Out of every P4b plan task's scope. **Closed (Path A):** `render_td` now does a synchronous LRU lookup → real `render_cell` value; the LRU is populated off-thread by `WorkspaceShell::prefetch_visible_rows` (page-0 prefetch on grid bind + the gpui-component `TableDelegate::visible_rows_changed` scroll hook), notifying the main thread via the `MainThreadDispatcher`. Also wired the right-click context menu (`ContextMenuExt`), a per-cell focus ring, and the forward-incompat recover banner. | closed | high |
-| PD-019 | P4c T13 wired header single-click → select-column but could NOT wire row-gutter click → select-row: the gpui-component `TableDelegate` trait (rev `0f0ab35`) has no `render_row_header`/gutter seam, and `TableState::render_table_row` owns the row layout internally. Two alternatives were rejected: (a) subscribing to `TableEvent::SelectRow` makes every row-body click select a whole row, clobbering the single-cell click selection wired in T5; (b) a fake first column holding row numbers corrupts the `col_ix` passed to `render_td` and breaks column addressing. `WorkspaceShell::select_row_at` IS implemented + reachable programmatically; the click wiring is unwired. | open | low |
+| PD-019 | P4c T13 wired header single-click → select-column but could NOT wire row-gutter click → select-row: the gpui-component `TableDelegate` trait (rev `0f0ab35`) has no `render_row_header`/gutter seam, and `TableState::render_table_row` owns the row layout internally. Two alternatives were rejected: (a) subscribing to `TableEvent::SelectRow` makes every row-body click select a whole row, clobbering the single-cell click selection wired in T5; (b) a fake first column holding row numbers corrupts the `col_ix` passed to `render_td` and breaks column addressing. `WorkspaceShell::select_row_at` IS implemented + reachable programmatically; the click wiring is unwired. | closed — superseded by PD-023 | low |
 | PD-020 | P4c T14 wired inline-editor `Enter` → commit + move-DOWN + focus-on-mount, but `Tab` → commit + move-RIGHT could NOT be wired: gpui-component `Input` (rev `0f0ab35`) consumes Tab internally for focus tab-stops and surfaces no `InputEvent::PressTab` variant (`InputEvent` is `{ Change, PressEnter, Focus, Blur }`). **Closed by Phase 6 of the GPUI→Dioxus migration (2026-08-10):** the limitation was the toolkit's, and a plain `<input>` surfaces Tab like any other key, so `dat0-ui`'s cell editor commits and steps one column right on Tab, one left on Shift-Tab, clamped at the row's ends. | closed | low |
 | PD-021 | P4c (T11 review): `error_ux::push` enqueues success/error banners into the global `PENDING` queue, but NOTHING drains it in the runtime render tree — only `#[cfg(test)]` code calls `drain_pending`. So export completion/failure feedback (`window.rs::run_export`) AND the pre-existing P4b paste-reject banner (`grid/edit_ops.rs`) are invisible to the user at runtime. **Closed by P6a T1:** `WorkspaceShell::render` now calls `error_ux::banner::merge_pending` into a per-window `banners` field and renders a host strip atop the shell. | closed | medium |
 | PD-022 | P6a (T12 review): the Inspector profile is refreshed on forward data/schema mutations (cell edit, paste, cut, delete, rename, reorder, transform-apply via `route_change`), but NOT on `undo`/`redo` or SQL-console grid-bind — those rebind via `apply_view_change`, which has no inspector hook. So undoing an edit (or rebinding a grid from the SQL console) leaves the inspector profile stale until the next forward mutation. Single well-scoped fix: hook `apply_view_change` (or an `on_rebind_complete` seam) to invalidate/re-profile the inspected table. Not a regression — the inspector did not refresh at all before P6a. | closed | low |
+| PD-023 | The Dioxus shell is not wired to `dat0-core`: 22 of 40 registered actions only log, open an empty dialog, or discard the reply. SQL does not run; sort, filter, edit, clipboard, undo, export, packages, workspaces, MotherDuck, AI key entry, updates, recovery and live refresh are unreachable. "Logic green, screen dead" at app scale, recorded nowhere until 2026-09-25 | open | high |
+| PD-024 | Banners raised after a window's first frame were never shown — the shell drained the queue once per mount; a refused drop surfaced later, twice, in another window | closed | high |
+| PD-025 | The recovery panel listed the running window's own session as an orphan, and its Discard deleted it | closed | high |
+| PD-026 | The grid cannot scroll past row ~1,290,555: the canvas is rows × 26 px, uncapped, and WebKit clamps layout at ~33.5M px | open | high |
+| PD-027 | The first window owns the event bus: commands raised in any window act on window 1, and closing window 1 silences menus, palette, chords and second-launch forwarding | open | medium |
+| PD-028 | A file drop aborted the app when `session.json` could not be written (`.expect` under `panic = "abort"`) | closed | medium |
+
+> **Missing originating docs (noted 2026-09-25).** D-030 and D-032–D-036 cite
+> `docs/plans/2026-08-08-dat0-production-v1-plan.md`, and the migration log cites
+> "the plan" for the GPUI→Dioxus port. Neither file was ever committed; their slice
+> ids (EN, SH, MX, MT, UI, AX, RL, QA) survive only in these entries, code comments
+> and `docs/plans/2026-08-08-dat0-production-v1-uat.md`. Commit them if they still
+> exist, so these links resolve.
 
 ## At-a-glance — Closed plan defects
 
@@ -704,7 +720,10 @@ that's modifying it; merge conflicts are signals worth investigating.
 - **Follow-ups opened by P7c:** D-022 (live-view import mode), D-023
   (cross-table refresh cascade), D-024 (auto-refresh toggle + multi-table
   watching).
-- **Last touched:** 2026-06-12.
+- **Regressed (noted 2026-09-25):** the Dioxus shell never starts a
+  `SourceWatcher`, and the live-refresh confirm opens with 0/0 counts and a
+  no-op reply (`crates/dat0-ui/src/router.rs`). Tracked as PD-023.
+- **Last touched:** 2026-09-25
 - **What it is (historical):** A `notify`-crate file-watcher on each `Tab.source_path` (the
   original source file for imported tables) that re-imports the table when the
   source file changes: re-runs CTAS (same sniffing path as the original import),
@@ -1162,7 +1181,7 @@ that's modifying it; merge conflicts are signals worth investigating.
 
 ### D-034 — Sidebar footer reports no tab count
 
-- **Status:** open
+- **Status:** closed — 2026-09-25
 - **Severity:** low
 - **Deferred from:** SH2 (production v1)
 - **What it is:** the plan specified the footer's first row as "window/tab
@@ -1186,11 +1205,15 @@ that's modifying it; merge conflicts are signals worth investigating.
   `render_catalog_body`, or drop the idea and record that windows+workspaces is
   the intended census.
 - **Originating doc:** SH2, `docs/plans/2026-08-08-dat0-production-v1-plan.md`
-- **Last touched:** 2026-08-08
+- **Closed by:** the GPUI→Dioxus migration. The Dioxus sidebar footer renders
+  `session · N window · M tabs`, reading the tab count from the window's own
+  state. Two of its values are still placeholders — the window count is
+  hardcoded to 1 and the AI row to `ai none` — and those belong to PD-023.
+- **Last touched:** 2026-09-25
 
 ### D-036 — Two `block_on(Session::…)` sites remain on the GPUI main thread
 
-- **Status:** open
+- **Status:** closed — moot (2026-09-25)
 - **Severity:** low
 - **Deferred from:** EN4 (production v1)
 - **What it is:** EN4 removed the two `block_on(Session::new(...))` calls the
@@ -1219,7 +1242,13 @@ that's modifying it; merge conflicts are signals worth investigating.
   give `SessionSlot::Booting` an optional guard slot, and route both callers
   through `spawn_session_boot`'s dispatcher hop.
 - **Originating doc:** EN4, `docs/plans/2026-08-08-dat0-production-v1-plan.md`
-- **Last touched:** 2026-08-08
+- **Closed by:** the GPUI→Dioxus migration deleted both call sites with
+  `dat0-app`, and `dat0-ui` has no UI-thread `block_on`: Dioxus `spawn` plus
+  `SessionSlot` replaced the pattern. The two flows they served — opening a
+  workspace folder and opening a `.dat0` package — are not wired in the Dioxus
+  shell (PD-023); when they are rebuilt, they must boot the session
+  asynchronously, the way `session_boot::use_session` does.
+- **Last touched:** 2026-09-25
 
 ### D-037 — Nine docs still describe the GPUI build
 
@@ -1317,7 +1346,7 @@ that's modifying it; merge conflicts are signals worth investigating.
 
 ### PD-001 — tracing EnvFilter directive `dat0=debug` doesn't match dat0 crates
 
-- **Status:** open
+- **Status:** cancelled — 2026-09-25 (the premise is wrong)
 - **Severity:** low
 - **Affected files:** `crates/dat0-app/src/boot.rs:init_logging`
 - **Symptom:** `EnvFilter::new("info,dat0=debug")` matches by *module path*.
@@ -1332,7 +1361,13 @@ that's modifying it; merge conflicts are signals worth investigating.
 - **Suggested fix:** Replace with explicit per-crate directives —
   `info,dat0_app=debug,dat0_engine=debug,dat0_format=debug,dat0_i18n=debug,dat0_keychain=debug`
   — or use a shared helper that enumerates dat0 crate prefixes.
-- **Last touched:** 2026-04-28
+- **Closed by:** review, 2026-09-25. `EnvFilter` target directives match by
+  *prefix*, not by exact module path: tracing-subscriber 0.3.23 tests
+  `meta.target().starts_with(&target[..])` (`src/filter/env/directive.rs:246`).
+  `dat0=debug` therefore matches `dat0_core::…`, `dat0_ui::…` and every other
+  `dat0_*` crate, which is the intent. The directive now lives in
+  `crates/dat0-core/src/boot.rs` and `settings/schema.rs`; nothing to change.
+- **Last touched:** 2026-09-25
 
 ### PD-002 — Settings store atomic-write missing `fsync` before rename
 
@@ -1654,7 +1689,7 @@ that's modifying it; merge conflicts are signals worth investigating.
 
 ### PD-011 — P3b plan §3.7 ambiguity rule references sniff outputs that don't exist
 
-- **Status:** open
+- **Status:** closed — 2026-09-25
 - **Severity:** low (the import wizard still ships; only the trigger heuristic
   changes shape)
 - **Affected files:** `docs/plans/2026-05-25-dat0-p3b-plan.md` T9 task description
@@ -1702,7 +1737,16 @@ that's modifying it; merge conflicts are signals worth investigating.
   references at the bottom of each).
 - **Target phase:** P3b T9 (no separate target phase — this defect is
   surfaced by T0 and consumed by T9 before T9 begins implementation).
-- **Last touched:** 2026-05-25
+- **Closed by:** P3b T9 (`8303b50`, follow-up `e1fc14e`), which implemented
+  the dual-sniff + UTF-8 substitute this entry specifies
+  (`crates/dat0-core/src/import_wizard.rs`). The P3b retro records it closed and
+  kept this row open only because spec §3.7's wording still names the
+  non-existent outputs; that dated spec is a historical record, and this entry
+  is where the substitute rule is written down. Per-column confidence remains
+  deliberately unimplemented. **Separately, and open:** the import wizard is
+  unreachable in the Dioxus shell — an ambiguous drop is only logged — which is
+  PD-023.
+- **Last touched:** 2026-09-25
 
 ---
 
@@ -1896,7 +1940,10 @@ that's modifying it; merge conflicts are signals worth investigating.
 - **Next phase:** P4b T0 must wire: (1) `grid/mod.rs` funnel-zone click → `filter_popover_entity.rs` mount + present via `WorkspaceShell`; (2) `filter_popover_entity.rs` `Outcome::Apply` → `vm.apply` + `spawn_view_change`; (3) `grid/mod.rs` sort-zone click (plain + shift) → `vm.set_sort` + `spawn_view_change`; (4) a click-path integration test covering the full UI-click → ViewChange → rebind loop.
 - **Discovered:** T13 implementation review (2026-05-29). Documented by the controller after the T13 implementer correctly noted plan §T13 Steps 1-4 don't cover these wirings.
 - **Originating doc:** `docs/plans/2026-05-27-dat0-p4a-plan.md` §T13.
-- **Last touched:** 2026-05-31 (closed by P4b T0 — see `click_wiring.rs`)
+- **Regressed (noted 2026-09-25):** the Dioxus grid's sort and funnel zones
+  render with no click handler and `FilterPopover` is never mounted — the same
+  unowned wiring, lost again in the port. Tracked as PD-023.
+- **Last touched:** 2026-09-25
 
 ---
 
@@ -1967,7 +2014,7 @@ that's modifying it; merge conflicts are signals worth investigating.
 
 ### PD-019 — Row-gutter click → select-row unwired (no `render_row_header` seam in gpui-component)
 
-- **Status:** open
+- **Status:** closed — superseded by PD-023 (2026-09-25)
 - **Severity:** low (column-select fully wired; select-row reachable programmatically + via keyboard)
 - **Affected files:** `crates/dat0-app/src/window.rs` (`WorkspaceShell::select_row_at`)
 - **Symptom:** P4c T13 wired header single-click → `select_column_at` (column-select) but could NOT
@@ -1995,7 +2042,12 @@ that's modifying it; merge conflicts are signals worth investigating.
     Fragile (must track row height + scroll offset), but requires no upstream change.
 - **Discovered:** P4c T13 implementation review (2026-06-01).
 - **Originating doc:** `docs/plans/2026-05-31-dat0-p4c-plan.md` T13.
-- **Last touched:** 2026-06-01.
+- **Closed by:** the gpui-component seam this was blocked on no longer exists:
+  the grid is a Dioxus component, where a row gutter is ordinary markup. But the
+  Dioxus grid has no row gutter at all, and `SelectionModel::select_row` /
+  `select_column` have no `dat0-ui` caller, so header-click → select-column has
+  regressed too. Both are part of PD-023's grid work.
+- **Last touched:** 2026-09-25
 
 ---
 
@@ -2089,7 +2141,9 @@ that's modifying it; merge conflicts are signals worth investigating.
   (`render_banner` per banner, kind-accented left border) is mounted as the first
   child of the shell root, before the tab strip. Test
   `merge_pending_moves_global_into_live_vec` in `error_ux/banner.rs`.
-- **Last touched:** 2026-06-06.
+- **Regressed, then closed again as PD-024 (2026-09-25):** the Dioxus shell's
+  drain ran once per window mount, so banners raised later were not shown.
+- **Last touched:** 2026-09-25
 
 ### PD-022 — Inspector profile not refreshed on undo/redo or SQL-console grid-bind
 
@@ -2132,6 +2186,192 @@ that's modifying it; merge conflicts are signals worth investigating.
 - **Last touched:** 2026-06-06.
 
 ---
+
+### PD-023 — The Dioxus shell is not wired to `dat0-core`
+
+- **Status:** open
+- **Severity:** high — the failure mode this register reserves `high` for,
+  at the scale of the whole application
+- **Target:** feature parity in the Dioxus shell, one surface at a time
+- **Affected files:** `crates/dat0-ui/src/components/shell.rs`
+  (`console_intent`, `surface_command`), `crates/dat0-ui/src/router.rs`,
+  `crates/dat0-ui/src/components/mod.rs` (`menu_local`),
+  `crates/dat0-ui/src/session_boot.rs`
+- **Symptom:** the GPUI→Dioxus port rebuilt the components and the shell
+  chrome, but not the orchestration that connected them to the core — about
+  4,600 lines in `crates/dat0-app/src/window/{sql,charts,catalog_inspector,
+  data_io,workspace_ops,package_ops,live_refresh,connections,ai}.rs` at
+  `95627c8`. Of the 40 registered actions, 22 only log, open a dialog with an
+  empty list, or open one whose reply is `ModalReply::new(|_| {})`. Verified
+  in code; items marked **[R]** were also reproduced on a Linux release build
+  driven under Xvfb.
+  - **SQL console:** Run and Cancel only clear the error **[R]**; history and
+    saved queries open empty; the save prompts discard their answer;
+    completion knows functions but not tables or columns.
+  - **Grid:** the sort and funnel zones have no handler and `FilterPopover` is
+    never mounted; the pipeline bar gets an empty stack; `on_edit` /
+    `on_action` are not passed, so validated cell edits are discarded;
+    copy, paste, fill, delete, undo and redo only `debug!`; dragging a header
+    moves the column's width, not the column.
+  - **Opening things:** `.dat0` packages, workspace folders and the hero's
+    "Open demo.dat0" all reach `handle_drop` and are refused as unsupported
+    **[R]**; recents are never recorded; an ambiguous CSV that needs the
+    import wizard is only logged. SQLite files are refused on drop by design
+    (attaching one is a connection, not an import) — yet the hero's Chinook
+    sample, the tour and the README all offer SQLite as something to drop.
+    That predates the port: the GPUI build routed the Chinook sample through
+    the same `handle_drop` (`95627c8:…/window/data_io.rs`), so the sample card
+    has never opened. The fix is to attach a dropped SQLite file, not to change
+    the copy.
+  - **Everything behind a modal or a menu:** export, save chart, the
+    inspector (never targeted), MotherDuck (`connections.open` is not a
+    registered action), AI key entry (the entry outbox has no reader), the
+    update check, the crash prompt on relaunch, recovery Open/Resume, live
+    refresh, the perf HUD, and theme persistence (`Theme::provide(None)`;
+    `ThemeChanged` is never handled). Open/Export/Unpack/Replay Package,
+    Toggle Sidebar, Toggle Inspector and Check for Updates log
+    "menu item has no handler yet" **[R]**.
+  - **Chrome:** the status bar's `mem` / `rows` / `fps` / `egress` are never
+    written, so `egress 0 B` is a constant, not a measurement; the footer
+    hardcodes `1 window` and `ai none`; ⌘K is shown and bound to nothing.
+- **Why every gate stayed green:** `tests/action_routing.rs` asserts that an
+  id is *claimed*, and a stub that logs claims it; the banner tests read the
+  global queue rather than the screen (PD-024); the visual suite renders state
+  that fixtures inject and production never produces.
+- **Discovered:** project review, 2026-09-25 — seven read-only audits plus a
+  Linux release build driven under Xvfb.
+- **Fix:** port each surface's orchestration from `95627c8` onto the
+  `dat0-core` APIs that already exist, one surface per change, each with a
+  test that asserts the effect — rows in the grid, a file on disk, a DOM
+  change — rather than the routing. Order: event routing (PD-027) → SQL run →
+  grid ↔ `ViewModel` (and PD-026) → opening packages, workspaces and SQLite →
+  export, charts and the inspector → MotherDuck and AI → lifecycle (updates,
+  crash prompt, recovery, scratch cleanup) → honest chrome.
+- **Originating doc:** `docs/internal/2026-08-09-gpui-to-dioxus-migration-log.md`
+  (Phases 5–6: "router::route claiming all 40 ids")
+- **Last touched:** 2026-09-25
+
+### PD-024 — Banners raised after a window's first frame were never shown
+
+- **Status:** closed — 2026-09-25
+- **Severity:** high (logic green, screen dead: every error after startup was
+  invisible)
+- **Affected files:** `crates/dat0-ui/src/components/shell.rs`,
+  `crates/dat0-ui/src/state.rs`, `crates/dat0-ui/src/session_boot.rs`,
+  `crates/dat0-core/src/error_ux/banner.rs`, `crates/dat0-core/src/file_drop.rs`
+- **Symptom:** the shell drained `error_ux`'s process-global queue in a
+  `use_effect` whose only signal access was `banners.write()`. A write does
+  not subscribe, so the effect ran once per window mount. Every banner raised
+  after the first frame — a refused drop, a register failure, the
+  session-failure banner whose Retry is the only way out, chart-export
+  results, sample-download failures — stayed in the queue until another
+  window mounted and showed it there. Reproduced on a Linux release build:
+  opening `chinook.sqlite` after boot showed nothing, and the refusal appeared
+  later in the next window to open — twice, because `handle_drop` and the
+  shell each raised a banner for the same outcome. PD-021's shape, again.
+- **Fix:** `error_ux::push` bumps a `tokio::sync::watch` generation and
+  `error_ux::subscribe()` exposes it; each window drains the queue in a
+  `use_future` woken on every push. Banners raised with a window in hand go
+  straight to that window (`Workspace::banners` / `Workspace::push_banner`),
+  so they cannot surface in another one. `handle_drop` no longer raises a
+  banner for an outcome it returns, and dismissing a stale index no longer
+  panics.
+- **Tests:** `crates/dat0-ui/tests/banner_drain.rs` mounts the real `Shell`
+  and requires a banner pushed after the first frame to reach the screen;
+  `session_boot_slot.rs` asserts the window's own list — one banner each —
+  for the session failure and a refused drop; `dat0-core`'s `file_drop` and
+  `error_ux::banner` unit tests pin the no-duplicate and wake-up contracts.
+- **Closed by:** commit `3d7f87a` ("fix(ui): show banners raised after the
+  first frame, in their own window"), branch
+  `claude/project-review-next-steps-a2t52o`
+- **Last touched:** 2026-09-25
+
+### PD-025 — The recovery panel offered the running window's own session for Discard
+
+- **Status:** closed — 2026-09-25
+- **Severity:** high (data loss)
+- **Affected files:** `crates/dat0-ui/src/components/recovery.rs`,
+  `crates/dat0-core/src/globals.rs`, `crates/dat0-ui/src/session_boot.rs`
+- **Symptom:** `recovery::collect_rows` listed every `scratch/*` directory
+  holding a `session.json`. Every running window keeps one there, so the
+  palette's "Review recovery" listed the current session as an orphan, and
+  its Discard ran `remove_dir_all` on the live session's DuckDB directory.
+  `dat0_core::session::scan_orphans(state_root, live)` already knew how to
+  exclude live windows; the panel did not use it.
+- **Fix:** a process-wide set of live window ids in `dat0_core::globals`
+  (`register_live_window`, `unregister_live_window`, `is_live_scratch_dir`),
+  registered by `session_boot::use_session` on mount — before the directory
+  exists — and removed when the window closes. `collect_rows` skips live
+  directories and `discard` refuses them.
+- **Tests:** `crates/dat0-ui/tests/recovery_panel.rs`
+  (`an_open_window_is_not_offered_for_recovery`,
+  `discarding_an_open_windows_directory_is_refused`); `dat0-core`'s `globals`
+  unit tests.
+- **Closed by:** commit `05580ca` ("fix(ui): never offer an open window's
+  session for recovery or discard"), branch
+  `claude/project-review-next-steps-a2t52o`
+- **Last touched:** 2026-09-25
+
+### PD-026 — The grid cannot scroll past row ~1,290,555
+
+- **Status:** open
+- **Severity:** high (pillar 1 — millions of rows is the product's claim)
+- **Affected files:** `crates/dat0-ui/src/components/grid/mod.rs`
+  (`total_h = total_rows * ROW_H`; each row placed at `top: r * ROW_H`)
+- **Symptom:** the virtualized grid sizes its scroll canvas to the whole
+  table — rows × 26 px, uncapped. WebKit clamps layout lengths at about
+  33.5M px (its fixed-point `LayoutUnit`), so every row past
+  33,554,431 / 26 ≈ 1,290,555 is unreachable. Reproduced on WebKitGTK (WKWebView
+  shares the engine): a 3,000,000-row CSV, End → the viewport stops at rows
+  1,290,534–1,290,554, leaving 57% of the table out of reach. Ctrl+End moves
+  the active cell to the last row, but nothing scrolls it into view.
+- **Why the gates missed it:** `grid_virtualization.rs` runs headless, with no
+  layout engine; the `scroll_10m` perf scenario scrolls 600 frames — about the
+  first 1,850 rows.
+- **Fix:** scaled scrolling — cap the canvas at a safe height and, once the
+  extent exceeds it, map scroll position to row index proportionally (keeping
+  1:1 below the cap, so small tables are unchanged); scroll the active cell
+  into view on keyboard moves; add a windowed check that the last row of a
+  table larger than the cap is reachable.
+- **Last touched:** 2026-09-25
+
+### PD-027 — The first window owns the event bus
+
+- **Status:** open
+- **Severity:** medium
+- **Affected files:** `crates/dat0-ui/src/components/mod.rs` (`App`, `handle`)
+- **Symptom:** exactly one window — the first to mount — takes the process's
+  `AppEventRx` and routes every event with its own `Workspace` and surface.
+  Menus, chords, palette rows and banner buttons all post
+  `AppEvent::RunAction { window: None }`, so a command raised in window 2 acts
+  on window 1. When window 1 closes, its VirtualDom takes the receiver with
+  it, and every later `RunAction` and second-launch `OpenWindow` is dropped at
+  debug level. Every window also registers a `muda` handler, and a menu event
+  reaches all of them, so one click can fire once per open window. Verified
+  in code; the runtime effects are inferred from `dioxus-desktop` 0.7.10 and
+  not yet reproduced.
+- **Fix:** drain the bus at process level, carry the originating window's id
+  on `RunAction`, route to that window's surface, and register the menu
+  handler once per process.
+- **Last touched:** 2026-09-25
+
+### PD-028 — A file drop aborted the app when `session.json` could not be written
+
+- **Status:** closed — 2026-09-25
+- **Severity:** medium
+- **Affected files:** `crates/dat0-core/src/file_drop.rs`
+- **Symptom:** after registering a dropped file, `handle_one` called
+  `Session::add_tab(…).expect("session::add_tab: persist tab state")`.
+  `add_tab` records the tab in memory and then writes `session.json`; on a full
+  disk or a read-only state directory the write fails, and the release
+  profile's `panic = "abort"` took the whole app down on a file drop.
+- **Fix:** the file stays open — it is registered and in memory — and a
+  warning banner says the session could not be saved and will not be
+  recovered after a crash (`session.persist_failed`).
+- **Closed by:** commit `3d7f87a` ("fix(ui): show banners raised after the
+  first frame, in their own window"), branch
+  `claude/project-review-next-steps-a2t52o`
+- **Last touched:** 2026-09-25
 
 ## How to add an entry
 
