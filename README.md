@@ -9,9 +9,22 @@ Open any data file or database, edit and transform with full lineage, share the 
 
 ## Three product pillars
 
-1. **File-native at scale** — Drop a multi-GB Parquet, work like it's a 5 MB CSV. Native DuckDB + GPU-accelerated virtualized grid. No cloud upload, no infrastructure.
+1. **File-native at scale** — Drop a multi-GB Parquet, work like it's a 5 MB CSV. Native DuckDB + a virtualized grid. No cloud upload, no infrastructure.
 2. **Reproducible packaging** — A `.dat0` file bundles data + transforms + queries + UI session + lineage in one attachable artifact. Email it. Replay it on new source data. Diff two of them.
 3. **Compute portability** — Same workbench works against a local file, a local database, or an attached MotherDuck workspace.
+
+## Status
+
+**Pre-release.** No binary has been published yet. The engine, the `.dat0`
+package format and the command line are complete and tested; the desktop UI is
+being reconnected to them after its move from GPUI to Dioxus (tracked as
+PD-023 in [`docs/deferrals.md`](docs/deferrals.md)).
+
+| Works in the current build | Being reconnected |
+|---|---|
+| Opening CSV, TSV, JSON and Parquet — file picker, drag-and-drop, command line — into a virtualized grid | Running SQL from the console; sort, filter, cell edits, undo and export |
+| The SQL editor itself: tabs, highlighting, function completion | Opening `.dat0` packages and workspaces, the demo workspace, SQLite and MotherDuck |
+| `dat0 inspect` / `unpack` / `replay` / `diff` / `export` for `.dat0` packages | Charts, the inspector, AI assist, updates, crash reporting |
 
 ## Quick start
 
@@ -21,17 +34,19 @@ Open any data file or database, edit and transform with full lineage, share the 
 
 ### Install
 
-Download the latest signed binary for your platform from
-[**GitHub Releases**](https://github.com/accidentally-awesome-labs/dat0/releases):
+There is no release yet. Signed builds will be published on
+[**GitHub Releases**](https://github.com/accidentally-awesome-labs/dat0/releases)
+from the first beta:
 
 | Platform | Artifact |
 |----------|----------|
 | macOS (arm64 + x86_64) | `dat0-<version>-universal.dmg` — mount, drag to Applications |
 | Linux x86_64 | `dat0-<version>-x86_64.AppImage` — `chmod +x`, then run |
-| Linux aarch64 | `dat0-<version>-aarch64.AppImage` — `chmod +x`, then run |
 
-Or build from source: `cargo build --release` (requires Rust stable and the system
-libraries listed in [CONTRIBUTING.md](CONTRIBUTING.md)).
+Linux aarch64 is planned but not yet built by the release pipeline.
+
+Until then, build from source: `cargo build --release` (requires the pinned Rust
+toolchain and the system libraries listed in [CONTRIBUTING.md](CONTRIBUTING.md)).
 
 ### First run
 
@@ -40,9 +55,10 @@ libraries listed in [CONTRIBUTING.md](CONTRIBUTING.md)).
    finish the tour.
 2. **Try the demo workspace.** Click **[ ▶ Open demo.dat0 ]** on the hero to open a
    curated Chinook dataset — multi-table SQL, a saved chart, and a pre-filled query
-   ready to run. No setup required.
-3. **Or drop your own file.** Drag a CSV, Parquet, JSON, or SQLite file onto the
-   drop zone. No import wizard, no waiting.
+   ready to run. _Not working in the current build — see [Status](#status)._
+3. **Or drop your own file.** Drag a CSV, TSV, JSON or Parquet file onto the drop
+   zone. No import wizard, no waiting. (SQLite arrives with the connections work
+   above.)
 
 <!--
   Screenshot owed: enriched first-run hero capture.
@@ -61,6 +77,8 @@ libraries listed in [CONTRIBUTING.md](CONTRIBUTING.md)).
 
 ### What you get
 
+The v1 feature set — see [Status](#status) for what the current build does today.
+
 - **Native-fast grid** — sort, filter, and inspect millions of rows at 60 fps. No
   cloud upload, no infrastructure.
 - **SQL + charts** — full DuckDB SQL with autocomplete, an NL→SQL AI assist chip,
@@ -71,7 +89,11 @@ libraries listed in [CONTRIBUTING.md](CONTRIBUTING.md)).
 
 ---
 
-## Tech stack (from design spec §3)
+## Tech stack
+
+The design spec's §3 still names the original GPUI renderer; the UI moved to
+Dioxus in August 2026 (see
+[the migration log](docs/internal/2026-08-09-gpui-to-dioxus-migration-log.md)).
 
 - **Language:** Rust 2024
 - **UI:** Dioxus 0.7 (desktop), rendering into a wry/WebKit webview

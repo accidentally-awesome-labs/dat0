@@ -180,7 +180,7 @@
   "hero.demo.heading": "Try the demo workspace",
   "hero.drop": "Drop a CSV, Parquet, JSON, or SQLite file. No import wizard, no waiting.",
   "hero.drop_zone": "Drop a file to start",
-  "hero.lead": "Open a 12 GB Parquet like a 5 MB CSV, join it to live Postgres in one SELECT, and seal the whole analysis — data, queries, lineage — into a single file anyone can replay, inspect, or diff.",
+  "hero.lead": "Open a 12 GB Parquet like a 5 MB CSV, query it alongside SQLite or MotherDuck in one SELECT, and seal the whole analysis — data, queries, lineage — into a single file anyone can replay, inspect, or diff.",
   "hero.open_file": "Open file…",
   "hero.play_demo": "Open demo workspace",
   "hero.privacy": "nothing imported · 0 bytes left this machine",

@@ -67,7 +67,7 @@ expression: "rendered[0].1"
 <div class="d0-hero-headline">
 <h1 class="d0-h1" data-a11y-id="hero-title" role="note" aria-label="Your data outgrew the spreadsheet.">Your data outgrew the spreadsheet.</h1>
 <p class="d0-h2 is-muted">It never outgrew your laptop.</p>
-<p class="d0-lead is-muted">Open a 12 GB Parquet like a 5 MB CSV, join it to live Postgres in one SELECT, and seal the whole analysis — data, queries, lineage — into a single file anyone can replay, inspect, or diff.</p>
+<p class="d0-lead is-muted">Open a 12 GB Parquet like a 5 MB CSV, query it alongside SQLite or MotherDuck in one SELECT, and seal the whole analysis — data, queries, lineage — into a single file anyone can replay, inspect, or diff.</p>
 </div>
 <div class="d0-hero-cols">
 <div class="d0-hero-drop" data-a11y-id="hero-drop">
