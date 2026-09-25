@@ -36,6 +36,7 @@ impl Writer {
     /// types faithfully, so no CAST-pinning is needed).
     ///
     /// # Errors
+    /// - [`FormatError::UnsafeTableName`] — a table name cannot be a file name.
     /// - [`FormatError::Io`] — `dest` unwritable, or a temp parquet unreadable.
     /// - [`FormatError::Engine`] — a table export failed.
     /// - [`FormatError::Zip`] / [`FormatError::Json`] — zip/serialize failures.
@@ -46,6 +47,30 @@ impl Writer {
     ) -> Result<()> {
         let tmp = tempfile::tempdir().map_err(|e| FormatError::Io {
             path: dest.into(),
+            source: e,
+        })?;
+        Self::write_using(contents, engine, dest, tmp.path()).await
+    }
+
+    /// [`write`](Self::write), staging each table's Parquet under `scratch`
+    /// rather than a fresh system temp directory — for an engine confined to
+    /// `scratch` (`QueryEngine::confine_to`), which can write nowhere else.
+    pub async fn write_using(
+        contents: &PackageContents,
+        engine: &dyn QueryEngine,
+        dest: &Path,
+        scratch: &Path,
+    ) -> Result<()> {
+        // Before anything touches the disk: each name becomes a path below.
+        for t in &contents.recipe.tables {
+            if !crate::is_safe_table_name(&t.name) || t.data != crate::data_entry(&t.name) {
+                return Err(FormatError::UnsafeTableName {
+                    name: t.name.clone(),
+                });
+            }
+        }
+        let tmp = tempfile::tempdir_in(scratch).map_err(|e| FormatError::Io {
+            path: scratch.into(),
             source: e,
         })?;
         let file = std::fs::File::create(dest).map_err(|e| FormatError::Io {

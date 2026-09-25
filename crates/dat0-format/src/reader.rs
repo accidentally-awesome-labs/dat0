@@ -27,6 +27,7 @@ impl Reader {
     ///
     /// # Errors
     /// - [`FormatError::UnsafeEntryPath`] — an entry name would escape the extraction root.
+    /// - [`FormatError::UnsafeTableName`] — a recipe table name cannot be a file name.
     /// - [`FormatError::UnsupportedVersion`] — manifest's `format_version` ≠ [`FORMAT_VERSION`].
     /// - [`FormatError::ChecksumMismatch`] — a data/recipe entry's sha256 doesn't match.
     /// - [`FormatError::Zip`] — malformed zip or missing entry.
@@ -54,6 +55,15 @@ impl Reader {
 
         // 2. Read the JSON sidecars.
         let recipe: Recipe = read_json(&mut zip, "recipe.json")?;
+        // Every table name becomes a file name the moment the package is
+        // unpacked, replayed or re-written, so refuse one that cannot be.
+        for t in &recipe.tables {
+            if !crate::is_safe_table_name(&t.name) || t.data != crate::data_entry(&t.name) {
+                return Err(FormatError::UnsafeTableName {
+                    name: t.name.clone(),
+                });
+            }
+        }
         let sources: Sources = read_json(&mut zip, "sources.json")?;
         let views: Views = read_json(&mut zip, "views.json")?;
         let queries: Queries = read_json(&mut zip, "queries.json")?;

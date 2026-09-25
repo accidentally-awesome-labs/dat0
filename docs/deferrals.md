@@ -102,6 +102,7 @@ that's modifying it; merge conflicts are signals worth investigating.
 | PD-026 | The grid cannot scroll past row ~1,290,555: the canvas is rows × 26 px, uncapped, and WebKit clamps layout at ~33.5M px | open | high |
 | PD-027 | The first window owns the event bus: commands raised in any window act on window 1, and closing window 1 silences menus, palette, chords and second-launch forwarding | open | medium |
 | PD-028 | A file drop aborted the app when `session.json` could not be written (`.expect` under `panic = "abort"`) | closed | medium |
+| PD-029 | Package replay trusted the recipe: its SQL ran with the engine's full access, and table names were used as file names unchecked | closed | high |
 
 > **Missing originating docs (noted 2026-09-25).** D-030 and D-032–D-036 cite
 > `docs/plans/2026-08-08-dat0-production-v1-plan.md`, and the migration log cites
@@ -2377,6 +2378,38 @@ that's modifying it; merge conflicts are signals worth investigating.
 - **Closed by:** commit `3d7f87a` ("fix(ui): show banners raised after the
   first frame, in their own window"), branch
   `claude/project-review-next-steps-a2t52o`
+- **Last touched:** 2026-09-25
+
+### PD-029 — Package replay trusted the recipe
+
+- **Status:** closed — 2026-09-25
+- **Severity:** high
+- **Affected files:** `crates/dat0-format/src/{replay,reader,writer}.rs`,
+  `crates/dat0-core/src/cli.rs` (`replay_async`), `crates/dat0-engine`
+- **Symptom:** a `.dat0` package's recipe is data the person replaying it did
+  not write, and replay treated it as their own: each derived table's SQL ran
+  as-is with every capability the engine has, and recipe table names were
+  joined into file paths without a check.
+- **Discovered:** project review, 2026-09-25.
+- **Fix:** the format spec now states the rules (`docs/dat0-format-v1.md` §4
+  and §8), and dat0 enforces them.
+  - The reader refuses a package whose table names are not single path
+    components, or whose `data` entries are not `data/<name>.parquet`; the
+    writer will not produce one.
+  - Replay loads the replacement sources, then confines its throwaway engine
+    to its scratch directory for the rest of the run
+    (`QueryEngine::confine_to`: no file, network or extension access outside
+    it, configuration locked), and runs a derivation only if DuckDB's parser
+    reads it as exactly one query (`QueryEngine::check_single_query`). The
+    replayed package is staged inside the same directory
+    (`Writer::write_using`).
+  - Tests: `dat0-engine/tests/confine.rs`, the refusal cases in
+    `dat0-format/tests/replay.rs` and `corruption.rs`.
+- **Still to decide:** a saved query that arrives in a package (views are
+  typed transform steps, but saved queries are SQL text) runs with full access
+  when the user runs it in a workspace, as the user's own SQL does. Whether a
+  query from someone else should say so before it runs is a product decision,
+  recorded here rather than made silently.
 - **Last touched:** 2026-09-25
 
 ## How to add an entry

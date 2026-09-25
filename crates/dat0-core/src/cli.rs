@@ -451,6 +451,9 @@ pub async fn replay_async(
         .with_context(|| format!("open package {}", package.display()))?;
 
     // Scratch engine — throwaway, closed + dropped before we return (P7a T6 lesson).
+    // It is also the only directory the recipe's own SQL may touch: replay
+    // confines the engine to it once the new sources are loaded, because that
+    // SQL came with the package, not from whoever is running this.
     let scratch_dir = tempfile::tempdir().context("create replay scratch dir")?;
     let engine = DuckDBEngine::new(
         scratch_dir.path().join("replay.duckdb"),
@@ -461,9 +464,14 @@ pub async fn replay_async(
     .context("create replay engine")?;
     engine.init().await.context("init replay engine")?;
 
-    let new_contents = dat0_format::replay::ReplayEngine::replay(&parsed, &new_sources, &engine)
-        .await
-        .context("replay recipe")?;
+    let new_contents = dat0_format::replay::ReplayEngine::replay(
+        &parsed,
+        &new_sources,
+        &engine,
+        scratch_dir.path(),
+    )
+    .await
+    .context("replay recipe")?;
 
     // Determine output path.
     let out_path = match out {
@@ -479,7 +487,8 @@ pub async fn replay_async(
         }
     };
 
-    dat0_format::Writer::write(&new_contents, &engine, &out_path)
+    // Staged inside the scratch dir: the confined engine can write nowhere else.
+    dat0_format::Writer::write_using(&new_contents, &engine, &out_path, scratch_dir.path())
         .await
         .with_context(|| format!("write replayed package {}", out_path.display()))?;
 
