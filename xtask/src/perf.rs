@@ -205,6 +205,61 @@ pub fn parse_measurement(stdout: &str) -> Option<Measurement> {
         .find(|m| !m.scenario.is_empty())
 }
 
+/// Build what the chosen scenarios run, before running any of them.
+///
+/// `run_scenario` executes prebuilt binaries, and nothing used to build them:
+/// CI's advisory step deletes the release tree just before calling this, and
+/// the `perf-gate` job starts from a clean checkout, so both could only ever
+/// report a missing binary — the advisory step behind `continue-on-error`,
+/// where nobody saw it. Building here also means a local run cannot time a
+/// stale binary left over from another checkout; when nothing changed, cargo
+/// makes it a no-op.
+///
+/// Two invocations, not one. Building the example pulls in the crate's
+/// self-dev-dependency, which switches on `perf-harness`, `gallery` and
+/// `visual` for every target built alongside it — so one invocation would
+/// hand `cold_launch` a binary no user runs.
+fn build_binaries(root: &Path, scenarios: &[String]) -> Result<()> {
+    if scenarios.iter().any(|s| s == "cold_launch") {
+        cargo(
+            root,
+            &["build", "--release", "-p", "dat0-ui", "--bin", "dat0"],
+        )?;
+    }
+    if scenarios.iter().any(|s| s != "cold_launch") {
+        cargo(
+            root,
+            &[
+                "build",
+                "--release",
+                "-p",
+                "dat0-ui",
+                "--features",
+                "perf-harness",
+                "--example",
+                "perf_harness",
+            ],
+        )?;
+    }
+    Ok(())
+}
+
+/// Run cargo in the workspace root. Its progress goes to stderr, so stdout
+/// stays the JSON lines CI tees.
+fn cargo(root: &Path, args: &[&str]) -> Result<()> {
+    let status = Command::new("cargo")
+        .current_dir(root)
+        .args(args)
+        .status()
+        .with_context(|| format!("run cargo {}", args.join(" ")))?;
+    anyhow::ensure!(
+        status.success(),
+        "cargo {} failed: {status}",
+        args.join(" ")
+    );
+    Ok(())
+}
+
 /// Run one scenario, returning `(measurement, stderr)`.
 ///
 /// `None` means the harness declined to measure and said why on stderr — a
@@ -219,7 +274,7 @@ fn run_scenario(root: &Path, scenario: &str) -> Result<(Option<Measurement>, Str
         let bin = root.join("target/release/dat0");
         anyhow::ensure!(
             bin.exists(),
-            "cold_launch needs {} — build with `cargo build --release` in crates/dat0-ui",
+            "cold_launch needs {}, which `build_binaries` should have produced",
             bin.display()
         );
         let mut c = Command::new(bin);
@@ -229,8 +284,7 @@ fn run_scenario(root: &Path, scenario: &str) -> Result<(Option<Measurement>, Str
         let bin = root.join("target/release/examples/perf_harness");
         anyhow::ensure!(
             bin.exists(),
-            "missing {} — build with `cargo build --release --features perf-harness \
-             --example perf_harness` in crates/dat0-ui",
+            "missing {}, which `build_binaries` should have produced",
             bin.display()
         );
         let mut c = Command::new(bin);
@@ -292,6 +346,8 @@ pub fn run(opts: Options) -> Result<i32> {
             SCENARIOS.join(", ")
         );
     }
+
+    build_binaries(&root, &scenarios)?;
 
     let mut baselines = load_baselines(&root)?;
     let key = host_key();

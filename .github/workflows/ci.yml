@@ -455,6 +455,11 @@ jobs:
       # `target/{debug,release}` and never reuses `target/<triple>`. Dropping
       # that tree (unused from here on; MotherDuck tests already ran) frees
       # both prior DuckDB builds first.
+      #
+      # `cargo xtask perf` does that build itself. Until it did, nothing built
+      # the binaries it runs, and this step failed on "missing
+      # target/release/examples/perf_harness" every time, out of sight behind
+      # `continue-on-error`.
       - name: Reclaim disk before perf harness (macOS, push to main)
         if: runner.os == 'macOS' && github.event_name != 'pull_request'
         run: |
