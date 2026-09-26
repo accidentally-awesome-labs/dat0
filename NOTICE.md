@@ -460,7 +460,7 @@ Used by:
 - rustc-hash 1.1.0 — https://github.com/rust-lang-nursery/rustc-hash
 - rustix 0.38.44 — https://github.com/bytecodealliance/rustix
 - rustix 1.1.4 — https://github.com/bytecodealliance/rustix
-- rustls 0.23.39 — https://github.com/rustls/rustls
+- rustls 0.23.45 — https://github.com/rustls/rustls
 - scoped-tls 1.0.1 — https://github.com/alexcrichton/scoped-tls
 - scopeguard 1.2.0 — https://github.com/bluss/scopeguard
 - secret-service 5.2.0 — https://github.com/hwchen/secret-service-rs.git
@@ -873,7 +873,7 @@ Used by:
 ## ISC License (SPDX: ISC)
 
 Used by:
-- rustls-webpki 0.103.13 — https://github.com/rustls/webpki
+- rustls-webpki 0.103.15 — https://github.com/rustls/webpki
 
 ## MIT License (SPDX: MIT)
 
