@@ -18,6 +18,8 @@ expression: "rendered[0].1"
 <button class="d0-btn d0-mono" data-a11y-id="chart-axis-x" role="button" aria-label="X: region">X: region</button>
 <button class="d0-btn d0-mono" data-a11y-id="chart-axis-y" role="button" aria-label="Y: revenue">Y: revenue</button>
 <button class="d0-btn d0-mono" data-a11y-id="chart-save" role="button" aria-label="Save">Save</button>
+<button class="d0-btn d0-mono" data-a11y-id="chart-export-png" role="button" aria-label="Export Chart as PNG" disabled=true>PNG</button>
+<button class="d0-btn d0-mono" data-a11y-id="chart-export-svg" role="button" aria-label="Export Chart as SVG" disabled=true>SVG</button>
 </div>
 <div class="d0-chart-canvas" data-a11y-id="chart-body" data-chart-type="Bar" data-chart-x="region" data-chart-y="revenue" data-chart-title="revenue by region">
 <div class="d0-chart-error d0-mono" data-a11y-id="chart-error" role="alert" aria-label="Binder Error: Referenced column &#34;revenu&#34; not found in FROM clause">Binder Error: Referenced column &#34;revenu&#34; not found in FROM clause</div>

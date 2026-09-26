@@ -14,14 +14,12 @@
 //! pixels wide and the grid takes the space.** That is what most of this file
 //! is about.
 //!
-//! Deliberately dropped: `showing_charts_renders_its_title_and_export_buttons`
-//! asserted `chart.export.png` / `chart.export.svg` in the charts title bar.
-//! Chart export has no implementation anywhere in `dat0-ui` — the descriptors
-//! are still registered in `dat0_core::actions::view_actions`, but `router.rs`
-//! claims neither and the charts toolbar carries type, axes and Save only — so
-//! there is nothing to assert against. The title half of that test is kept
-//! below; the export half is reported as a Phase-5 gap rather than weakened
-//! into something that passes.
+//! `showing_charts_renders_its_title_and_export_buttons` asserted
+//! `chart.export.png` / `chart.export.svg` in the charts title bar. For a while
+//! the charts pane had no export button at all, and that half of the test was
+//! dropped rather than weakened into something that passed; the chart's
+//! toolbar carries PNG and SVG again (step 5.5b), and the test below asserts
+//! them.
 //!
 //! Hermeticity: every test pins `DAT0_CONFIG_DIR` at a fresh temp dir and seeds
 //! `first_run_done`, because the shell reads both — without it the first-run
@@ -342,6 +340,24 @@ fn showing_charts_opens_the_column_and_titles_its_pane() {
                 .contains(&charts_title()),
             "its header carries the Charts title"
         );
+        for (id, label) in [
+            ("chart-export-png", "chart.export.png.command"),
+            ("chart-export-svg", "chart.export.svg.command"),
+        ] {
+            let button = h
+                .by_a11y_id(id)
+                .unwrap_or_else(|| panic!("the pane offers {id}"));
+            assert_eq!(
+                h.attr(button, "aria-label"),
+                Some(dat0_i18n::t(label)),
+                "{id}"
+            );
+            assert_eq!(
+                h.attr(button, "disabled").as_deref(),
+                Some("true"),
+                "{id}: nothing is drawn to export"
+            );
+        }
         assert_eq!(
             expanded(h, "pane-head-inspector"),
             Some("false".to_string()),

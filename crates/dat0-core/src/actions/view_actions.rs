@@ -35,11 +35,10 @@ pub fn register(reg: &ActionRegistry) -> Result<(), RegisterError> {
             dat0_i18n::t("chart.visualize"),
             Navigation,
         ),
-        // Chart export lives in the pane header, which is mouse-only; these
-        // descriptors are its only keyboard path. They are deliberately not in
-        // the palette's HIDDEN list — they do real work whenever a chart has
-        // rendered and no-op otherwise, exactly like `view.copy` without a
-        // selection.
+        // Chart export is also a pair of buttons on the chart's toolbar; these
+        // descriptors put it in the palette. They are deliberately not in the
+        // palette's HIDDEN list — they do real work whenever a chart has
+        // rendered, and otherwise say there is nothing to export.
         (
             ids::CHART_EXPORT_PNG,
             dat0_i18n::t("chart.export.png.command"),

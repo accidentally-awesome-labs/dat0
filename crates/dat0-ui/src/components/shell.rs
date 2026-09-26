@@ -12,21 +12,17 @@ use dat0_core::sample_data::SampleKind;
 use crate::a11y::{AccessRole, format_swatch};
 use crate::components::ai::StreamView;
 use crate::components::banner::BannerHost;
-use crate::components::charts::{ChartLoad, ChartRequest, Charts};
+use crate::components::charts::Charts;
+use crate::components::charts::host::ChartHost;
 use crate::components::command_palette::CommandPalette;
 use crate::components::dock::{DragShield, Edge, SplitDrag, Splitter};
 use crate::components::empty_state::EmptyState;
 use crate::components::filter_popover::FilterPopover;
+use crate::components::grid::Grid;
 use crate::components::inspector::{Inspector, InspectorState};
 use crate::components::modals::ModalHost;
 use crate::components::pane::Pane;
 use crate::components::pipeline_bar::PipelineBar;
-
-/// Pixel size every chart export is rendered at. Fixed rather than taken from
-/// the pane: an export is a document, and a file whose resolution depended on
-/// how wide the user had dragged a pane would be irreproducible.
-const CHART_EXPORT_SIZE: (u32, u32) = (1600, 900);
-use crate::components::grid::Grid;
 use crate::components::sidebar::{self, Sidebar};
 use crate::components::sql_console::{ConsoleIntent, SqlConsole};
 use crate::keys::Cascade;
@@ -63,19 +59,6 @@ pub fn Shell() -> Element {
     // Surfaces the shell owns state for. Each is a signal rather than a field
     // on `Workspace` because nothing outside this subtree reads them.
     let inspector = InspectorState::use_new();
-    // `ChartSpec` has no `Default` — a chart with no source is not a chart —
-    // so the shell holds the empty-source spec the pane renders as its empty
-    // state until a table is bound.
-    let mut chart_spec = use_signal(|| dat0_core::charts::spec::ChartSpec {
-        chart_type: dat0_core::charts::spec::ChartType::Bar,
-        source: String::new(),
-        x: None,
-        y: None,
-        group: None,
-        color: None,
-        title: String::new(),
-    });
-    let chart_state = use_signal(ChartLoad::default);
     // Read once per window: the flag flips at most once per install, and
     // re-reading settings.toml on every render to learn that would be absurd.
     let first_run_done = use_signal(|| {
@@ -194,24 +177,8 @@ pub fn Shell() -> Element {
     // bring back what a reopened session holds.
     crate::session_sync::use_session_sync(ws, views, console_host.tabs);
 
-    // The chart's plot data. `use_resource` for the same reason the grid's
-    // source is one: building it runs a query. Holding the table (not just the
-    // rendered SVG) is what makes PNG export possible — plotters rasterises
-    // from the data, not from an SVG string.
-    let chart_data = use_resource(move || {
-        let spec = chart_spec();
-        async move {
-            if spec.source.is_empty() {
-                return None;
-            }
-            let engine = ws.session.read().ready().map(|s| s.lock().engine.clone())?;
-            let sql = dat0_core::charts::query::build_plot_sql(&spec).ok()?;
-            let qr = dat0_engine::QueryEngine::execute(engine.as_ref(), &sql)
-                .await
-                .ok()?;
-            Some(dat0_core::charts::data::PlotTable::from_query_result(&qr))
-        }
-    });
+    // The chart, bound to the active tab's table while its pane is open.
+    let charts = ChartHost::use_new(ws, views, theme);
 
     // The AI panel's controller, built once so the modal can be opened from a
     // command without rebuilding the provider draft each time.
@@ -245,23 +212,6 @@ pub fn Shell() -> Element {
     // everything that is window state and falls through to here for the rest,
     // so the grid's selection and the console's tabs stay private to the shell
     // instead of being hoisted into `Workspace` for one `match` to reach.
-    {
-        let mut chart_state = chart_state;
-        use_effect(move || {
-            let spec = chart_spec();
-            let render = match chart_data.read().clone().flatten() {
-                Some(data) => crate::components::charts::ChartRender::Svg(
-                    crate::components::charts::render_chart(&spec, &data, &theme.tokens()),
-                ),
-                None => crate::components::charts::ChartRender::Empty,
-            };
-            // Through the supersede counter, not a bare write: a slow chart
-            // must never overwrite a newer one.
-            let id = chart_state.write().begin();
-            chart_state.write().apply(id, render);
-        });
-    }
-
     // `try_consume_context`, not `use_context`: the slot belongs to `App`, and
     // a component mounted without one — the headless harness, a probe — is
     // simply a tree with no router attached, not a broken window.
@@ -279,8 +229,7 @@ pub fn Shell() -> Element {
                 views,
                 edits,
                 source,
-                chart_spec,
-                chart_data,
+                charts,
                 perf_hud,
                 id,
             )
@@ -683,12 +632,13 @@ pub fn Shell() -> Element {
                             // and the column disappears when both are shut.
                             Inspector { state: inspector }
                             Charts {
-                                spec: chart_spec(),
-                                state: chart_state,
-                                on_config: move |req: ChartRequest| {
-                                    chart_spec.set(req.spec);
-                                },
+                                spec: charts.spec.cloned(),
+                                columns: charts.columns.cloned(),
+                                source: charts.source(),
+                                state: charts.state,
+                                on_config: move |req| charts.configure(req),
                                 on_save: move |_| {},
+                                on_export: move |format| crate::components::charts::host::export(ws, charts, format),
                             }
                         }
                     }
@@ -1001,8 +951,7 @@ fn surface_command(
     views: crate::components::grid::views::Views,
     edits: crate::components::grid::edits::Edits,
     grid_source: crate::components::grid::views::Shown,
-    chart_spec: Signal<dat0_core::charts::spec::ChartSpec>,
-    chart_data: Resource<Option<dat0_core::charts::data::PlotTable>>,
+    charts: ChartHost,
     perf_hud: Signal<bool>,
     id: &str,
 ) -> bool {
@@ -1038,51 +987,12 @@ fn surface_command(
 
         // ── Charts ─────────────────────────────────────────────────────────
         ids::CHART_EXPORT_PNG | ids::CHART_EXPORT_SVG => {
-            // Exports from the DATA, not from the rendered SVG: plotters
-            // rasterises PNG itself, and re-parsing our own SVG to get back to
-            // the numbers would be a lossy round trip for no gain.
-            let Some(data) = chart_data.peek().clone().flatten() else {
-                ws.push_banner(dat0_core::error_ux::Banner::warning(dat0_i18n::t(
-                    "chart.export.nothing",
-                )));
-                return true;
-            };
-            if !crate::launch::has_desktop() {
-                return true;
-            }
-            let png = id == ids::CHART_EXPORT_PNG;
-            let spec = chart_spec.peek().clone();
-            let stem = if spec.title.is_empty() {
-                "chart".to_string()
+            let format = if id == ids::CHART_EXPORT_PNG {
+                crate::components::charts::ChartFormat::Png
             } else {
-                spec.title.clone()
+                crate::components::charts::ChartFormat::Svg
             };
-            spawn(async move {
-                let ext = if png { "png" } else { "svg" };
-                let Some(path) = crate::files::pick_save_path(&format!("{stem}.{ext}")).await
-                else {
-                    return;
-                };
-                let out = if png {
-                    dat0_core::charts::export::export_png(&spec, &data, CHART_EXPORT_SIZE, &path)
-                        .map_err(|e| e.to_string())
-                } else {
-                    dat0_core::charts::export::export_svg(&spec, &data, CHART_EXPORT_SIZE, &path)
-                        .map_err(|e| e.to_string())
-                };
-                match out {
-                    Ok(()) => {
-                        let mut b =
-                            dat0_core::error_ux::Banner::info(dat0_i18n::t("chart.export.done"));
-                        b.body = path.display().to_string();
-                        ws.push_banner(b);
-                    }
-                    Err(e) => ws.push_banner(dat0_core::error_ux::Banner::warning_with_body(
-                        dat0_i18n::t("chart.export.failed"),
-                        e,
-                    )),
-                }
-            });
+            crate::components::charts::host::export(ws, charts, format);
         }
 
         // ── Grid edit verbs ────────────────────────────────────────────────

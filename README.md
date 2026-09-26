@@ -23,8 +23,9 @@ PD-023 in [`docs/deferrals.md`](docs/deferrals.md)).
 | Works in the current build | Being reconnected |
 |---|---|
 | Opening CSV, TSV, JSON, Parquet and SQLite — file picker, drag-and-drop, command line — into a virtualized grid | MotherDuck |
-| The SQL console: running a query into the grid, history, saved queries, completion | Charts and the inspector |
+| The SQL console: running a query into the grid, history, saved queries, completion | Saved charts and the inspector |
 | Sort, filter, cell edits, undo, export and Live Refresh | AI assist |
+| Charts of the active tab, drawn from its filters and edits, exported as PNG or SVG | |
 | Workspaces — open, save, recent — and the demo workspace; a closed or crashed window's work comes back | Crash reporting |
 | Help → Check for Updates, against the signed release manifest (no release is published yet) | |
 | `.dat0` packages: open read-only, unpack, export and replay, in the app and with `dat0 inspect` / `unpack` / `replay` / `diff` / `export` | |

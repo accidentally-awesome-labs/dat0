@@ -24,10 +24,10 @@
 //!
 //! # Loading
 //!
-//! This component renders; it does not query. The plot query lives in the async
-//! layer (5.9) and reaches the pane through [`ChartLoad`], whose supersede
-//! counter is the port of the shell's `chart_load_id`: a slow chart may never
-//! overwrite a newer one.
+//! This component renders; it does not query. [`host`] binds the chart to the
+//! active tab's table, runs the plot query and reaches the pane through
+//! [`ChartLoad`], whose supersede counter is the port of the shell's
+//! `chart_load_id`: a slow chart may never overwrite a newer one.
 
 use dioxus::prelude::*;
 
@@ -40,6 +40,8 @@ use dat0_core::theme::tokens::ThemeTokens;
 use crate::a11y::AccessRole;
 use crate::components::pane::Pane;
 use crate::state::Workspace;
+
+pub mod host;
 
 /// The chart's logical size, in CSS pixels.
 ///
@@ -119,6 +121,13 @@ impl ChartLoad {
 pub struct ChartRequest {
     pub load_id: u64,
     pub spec: ChartSpec,
+}
+
+/// The file formats a chart exports to.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum ChartFormat {
+    Png,
+    Svg,
 }
 
 // ── Colour ───────────────────────────────────────────────────────────────────
@@ -264,6 +273,9 @@ pub struct ChartsProps {
     /// The user asked to save this chart under a name. The shell opens the
     /// name prompt; this component never owns a modal.
     pub on_save: EventHandler<()>,
+    /// The user asked to export the chart shown to a file.
+    #[props(default)]
+    pub on_export: EventHandler<ChartFormat>,
 }
 
 /// The charts pane.
@@ -289,6 +301,8 @@ pub fn Charts(props: ChartsProps) -> Element {
     // saved. Enforced as `disabled` rather than as a silent no-op, so the
     // affordance reads correctly.
     let can_save = props.source.is_some() && (spec.x.is_some() || spec.y.is_some());
+    // Only a chart on screen exports: the file is the chart the user sees.
+    let drawn = matches!(props.state.read().render(), ChartRender::Svg(_));
 
     rsx! {
         Pane {
@@ -306,17 +320,24 @@ pub fn Charts(props: ChartsProps) -> Element {
                     spec: spec.clone(),
                     columns: props.columns.clone(),
                     can_save,
+                    drawn,
                     state: props.state,
                     on_config: props.on_config,
                     on_save: props.on_save,
+                    on_export: props.on_export,
                 }
-                Body { spec: spec.clone(), state: props.state }
+                Body {
+                    spec: spec.clone(),
+                    bound: props.source.is_some(),
+                    state: props.state,
+                }
             }
         }
     }
 }
 
-/// The chart-type cycle, one cycle button per visible axis, and Save.
+/// The chart-type cycle, one cycle button per visible axis, Save, and export
+/// to PNG or SVG.
 ///
 /// Button-cycle rather than a `<select>`, carried over from GPUI: one click
 /// advances the value and immediately requests a re-plot, so the data flow is
@@ -326,9 +347,11 @@ fn Toolbar(
     spec: ChartSpec,
     columns: Vec<(String, String)>,
     can_save: bool,
+    drawn: bool,
     mut state: Signal<ChartLoad>,
     on_config: EventHandler<ChartRequest>,
     on_save: EventHandler<()>,
+    on_export: EventHandler<ChartFormat>,
 ) -> Element {
     let cur_type = spec.chart_type;
     let type_label = format!(
@@ -409,13 +432,30 @@ fn Toolbar(
                 onclick: move |_| on_save.call(()),
                 {dat0_i18n::t("chart.save")}
             }
+
+            for (format, slug, label, command) in [
+                (ChartFormat::Png, "png", "chart.export.png", "chart.export.png.command"),
+                (ChartFormat::Svg, "svg", "chart.export.svg", "chart.export.svg.command"),
+            ] {
+                button {
+                    key: "{slug}",
+                    class: "d0-btn d0-mono",
+                    "data-a11y-id": "chart-export-{slug}",
+                    role: AccessRole::Button.aria(),
+                    "aria-label": dat0_i18n::t(command),
+                    disabled: !drawn,
+                    onclick: move |_| on_export.call(format),
+                    {dat0_i18n::t(label)}
+                }
+            }
         }
     }
 }
 
-/// The chart itself, or the state that stands in for it.
+/// The chart itself, or the state that stands in for it. `bound`: a table is
+/// bound, so an empty chart is waiting for columns rather than for a table.
 #[component]
-fn Body(spec: ChartSpec, state: Signal<ChartLoad>) -> Element {
+fn Body(spec: ChartSpec, bound: bool, state: Signal<ChartLoad>) -> Element {
     let load = state.read();
     // The spec the pixels were drawn from, as data attributes. The GPUI build
     // emitted these as invisible AccessKit label nodes because a blitted
@@ -453,15 +493,18 @@ fn Body(spec: ChartSpec, state: Signal<ChartLoad>) -> Element {
                         "{msg}"
                     }
                 },
-                ChartRender::Empty => rsx! {
-                    div {
-                        class: "d0-chart-empty d0-mono",
-                        "data-a11y-id": "chart-empty",
-                        role: AccessRole::Label.aria(),
-                        "aria-label": dat0_i18n::t("chart.panel.empty"),
-                        {dat0_i18n::t("chart.panel.empty")}
+                ChartRender::Empty => {
+                    let why = dat0_i18n::t(if bound { "chart.panel.empty" } else { "chart.panel.no_source" });
+                    rsx! {
+                        div {
+                            class: "d0-chart-empty d0-mono",
+                            "data-a11y-id": "chart-empty",
+                            role: AccessRole::Label.aria(),
+                            "aria-label": "{why}",
+                            "{why}"
+                        }
                     }
-                },
+                }
             }
         }
     }

@@ -30,7 +30,11 @@ const MAX_LINES: &[(&str, usize)] = &[
     ("about.rs", 300),
     ("ai.rs", 900),
     ("banner.rs", 300),
-    ("charts.rs", 700),
+    // New with the charts' feed (step 5.5b): what binds the chart to the
+    // active tab, plots it and exports it, kept out of shell.rs as the
+    // console's host is.
+    ("charts/host.rs", 500),
+    ("charts/mod.rs", 700),
     ("command_palette.rs", 600),
     ("connections.rs", 600),
     ("crash_report.rs", 300),
