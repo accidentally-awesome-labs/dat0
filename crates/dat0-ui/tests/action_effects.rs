@@ -40,6 +40,17 @@ use serial_test::serial;
 
 use support::Harness;
 
+/// A config dir of the binary's own, empty as a fresh profile's is. Toggle
+/// Theme keeps its choice in the settings file (PD-023, step 5.9), and a test
+/// must not write the developer's.
+static CONFIG: std::sync::LazyLock<()> = std::sync::LazyLock::new(|| {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    // SAFETY: every test in this binary is `#[serial]`, so no other thread
+    // races this process-global write.
+    unsafe { std::env::set_var("DAT0_CONFIG_DIR", tmp.path()) };
+    std::mem::forget(tmp);
+});
+
 fn builtins() -> ActionRegistry {
     let reg = ActionRegistry::new();
     dat0_core::actions::builtin::register_all(&reg).expect("builtins register");
@@ -236,6 +247,7 @@ fn perform(id: &str) -> Result<(), String> {
 }
 
 fn perform_with(id: &str, setup: Option<Setup>) -> Result<(), String> {
+    std::sync::LazyLock::force(&CONFIG);
     let mut h = Harness::new(
         Host,
         HostProps {

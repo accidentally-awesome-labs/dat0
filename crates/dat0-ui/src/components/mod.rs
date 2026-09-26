@@ -54,7 +54,7 @@ pub fn App() -> Element {
     dioxus::desktop::use_asset_handler("dat0", crate::protocol::serve);
 
     let boot = use_context::<Boot>();
-    Theme::provide(None);
+    Theme::provide_saved();
     let opening = use_hook(|| boot.take_opening());
     let ws = crate::state::Workspace::provide_for(&opening);
     // The shell installs its own command handler here once it mounts. Provided
