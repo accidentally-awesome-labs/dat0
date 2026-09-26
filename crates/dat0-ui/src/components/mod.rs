@@ -105,7 +105,7 @@ pub fn App() -> Element {
                 return;
             }
             // Not a registry action: window management and external links.
-            menu_local(&id, &events);
+            menu_local(&id, &events, ws);
         });
     }
 
@@ -239,6 +239,7 @@ async fn handle(
     match ev {
         AppEvent::OpenWindow(opening) => open_window(boot, opening).await,
         AppEvent::ThemeChanged { id } => Theme::current().set(&id),
+        AppEvent::Raise => crate::launch::raise(),
         // Raised off the UI thread, by a file watcher. One of each: a burst of
         // saves is one change to act on.
         AppEvent::Banner(banner) => {
@@ -261,7 +262,7 @@ async fn handle(
 /// Menu items that are not registry actions: external links and recents. The
 /// package verbs and the update check have no arm yet; `menu::UNWIRED_LOCAL`
 /// builds them disabled.
-fn menu_local(id: &str, events: &AppEvents) {
+fn menu_local(id: &str, events: &AppEvents, ws: crate::state::Workspace) {
     use crate::menu::menu_ids;
     match id {
         // dat0.app is the project's domain; dat0.dev is not, and there is no
@@ -269,13 +270,7 @@ fn menu_local(id: &str, events: &AppEvents) {
         menu_ids::DOCS => open_url("https://dat0.app/docs"),
         menu_ids::GITHUB => open_url("https://github.com/accidentally-awesome-labs/dat0"),
         other if other.starts_with(menu_ids::RECENT_PREFIX) => {
-            let Some(ix) = other[menu_ids::RECENT_PREFIX.len()..].parse::<usize>().ok() else {
-                return;
-            };
-            let recents = dat0_core::globals::recents_snapshot();
-            if let Some(path) = recents.get(ix) {
-                events.send(AppEvent::OpenWindow(Opening::files(vec![path.clone()])));
-            }
+            crate::workspace_open::open_recent(ws, events, &other[menu_ids::RECENT_PREFIX.len()..]);
         }
         other => tracing::info!(menu_id = other, "menu item has no handler yet"),
     }

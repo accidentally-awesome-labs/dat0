@@ -265,27 +265,37 @@ pub struct Workspace {
 impl Workspace {
     /// Create and provide the workspace to the tree below.
     pub fn provide() -> Self {
-        Self::provide_with_id(uuid::Uuid::now_v7())
+        Self::provide_with(uuid::Uuid::now_v7(), "scratch".into())
     }
 
     /// The workspace of a window opened on `opening`. A recovered session
     /// keeps the id its directory is named for, so the directory counts as
     /// open for as long as this window is — and is neither offered for
     /// recovery again nor swept.
+    ///
+    /// A workspace window is named for its folder in the titlebar.
     pub fn provide_for(opening: &dat0_core::events::Opening) -> Self {
+        use dat0_core::events::Opening;
         let id = match opening {
-            dat0_core::events::Opening::Recover { dir } => dir
+            Opening::Recover { dir } => dir
                 .file_name()
                 .and_then(|n| n.to_str())
                 .and_then(|n| uuid::Uuid::parse_str(n).ok()),
-            dat0_core::events::Opening::Scratch { .. } => None,
+            Opening::Scratch { .. } | Opening::Workspace { .. } => None,
         };
-        Self::provide_with_id(id.unwrap_or_else(uuid::Uuid::now_v7))
+        let name = match opening {
+            Opening::Workspace { root, .. } => root
+                .file_name()
+                .map(|n| n.to_string_lossy().into_owned())
+                .unwrap_or_else(|| root.display().to_string()),
+            Opening::Scratch { .. } | Opening::Recover { .. } => "scratch".into(),
+        };
+        Self::provide_with(id.unwrap_or_else(uuid::Uuid::now_v7), name)
     }
 
-    fn provide_with_id(window_id: uuid::Uuid) -> Self {
+    fn provide_with(window_id: uuid::Uuid, name: String) -> Self {
         let ws = Self {
-            name: Signal::new("scratch".into()),
+            name: Signal::new(name),
             tabs: Signal::new(Vec::new()),
             active: Signal::new(None),
             read_only: Signal::new(false),

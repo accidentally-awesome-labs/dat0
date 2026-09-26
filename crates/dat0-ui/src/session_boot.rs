@@ -219,6 +219,19 @@ pub fn use_session_on(ws: Workspace, opening: Opening) {
     let window_id = ws.window_id;
     use_hook(move || dat0_core::globals::register_live_window(window_id));
     use_drop(move || dat0_core::globals::unregister_live_window(window_id));
+    // A workspace's window holds its folder from mount, so opening the folder
+    // again while this one boots brings this window forward rather than
+    // opening a second.
+    use_hook({
+        let opening = opening.clone();
+        move || {
+            if let (Opening::Workspace { root, .. }, Some(boot)) =
+                (&opening, try_consume_context::<crate::launch::Boot>())
+            {
+                boot.windows.holds(window_id, root.clone());
+            }
+        }
+    });
     use_future(move || {
         let opening = opening.clone();
         async move {
@@ -250,12 +263,57 @@ async fn build(ws: Workspace, opening: &Opening) -> SessionSlot {
             Session::new_with_id(state_root, budget, ws.window_id).await
         }
         Opening::Recover { dir } => Session::recover(dir.clone(), budget).await,
+        Opening::Workspace { root, networked } => Session::recover_workspace(root.clone(), budget)
+            .await
+            .map(|mut s| {
+                if *networked {
+                    claim_lock(ws, &mut s);
+                }
+                remember(root);
+                s
+            }),
     };
     match built {
         Ok(s) => SessionSlot::Ready(Arc::new(Mutex::new(s))),
         // `{e:#}` renders the whole anyhow chain — `Session::new`'s context
         // lines are the only diagnosis a user gets here.
         Err(e) => SessionSlot::Failed(format!("{e:#}")),
+    }
+}
+
+/// Record this window in a networked workspace's cross-machine lock, so a dat0
+/// on another machine opening it is warned. A lock that cannot be written — a
+/// read-only share — leaves the workspace open under its local lock alone, and
+/// says so.
+fn claim_lock(ws: Workspace, session: &mut Session) {
+    let Some(lock_json) = session.home.lock_json_path() else {
+        return;
+    };
+    match dat0_core::workspace::lock_manifest::claim(&lock_json, dat0_core::time::now_epoch_secs())
+    {
+        Ok(guard) => session.set_manifest_lock(guard),
+        Err(e) => {
+            tracing::warn!(error = %format!("{e:#}"), "lock.json claim failed; local lock only");
+            ws.push_banner(dat0_core::error_ux::Banner::warning(dat0_i18n::t(
+                "workspace.in_use.claim_failed.title",
+            )));
+        }
+    }
+}
+
+/// Put the workspace at the top of the recent list.
+fn remember(root: &std::path::Path) {
+    let Some(recents) = dat0_core::globals::recents() else {
+        return;
+    };
+    let Ok(mut recents) = recents.lock() else {
+        return;
+    };
+    let entry = dat0_core::recents::RecentEntry::Workspace {
+        path: root.to_path_buf(),
+    };
+    if let Err(e) = recents.push(entry) {
+        tracing::warn!(error = %format!("{e:#}"), "could not record the recent workspace");
     }
 }
 
@@ -351,8 +409,8 @@ pub fn retry(ws: Workspace) {
     // What the window was opened for. Its files were dropped with the
     // failure, so a scratch retry starts empty.
     let opening = match try_consume_context::<Opening>() {
-        Some(Opening::Recover { dir }) => Opening::Recover { dir },
-        _ => Opening::files(Vec::new()),
+        Some(Opening::Scratch { .. }) | None => Opening::files(Vec::new()),
+        Some(other) => other,
     };
     ws.session.set(Arc::new(SessionSlot::Booting));
     spawn(async move {

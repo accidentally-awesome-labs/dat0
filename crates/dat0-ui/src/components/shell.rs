@@ -497,11 +497,17 @@ pub fn Shell() -> Element {
                                     first_run_done: first_run_done(),
                                     booting: ws.session.read().is_booting(),
                                     on_open_sample: move |kind| open_sample(ws, kind),
-                                    on_open_recent: move |e: dat0_core::recents::RecentEntry| {
-                                        let p = e.path().to_path_buf();
-                                        spawn(async move {
-                                            crate::session_boot::open_paths(ws, vec![p]).await;
-                                        });
+                                    // Recent workspaces: a folder is opened as one,
+                                    // never handed to the file drop.
+                                    on_open_recent: {
+                                        let events = demo_events.clone();
+                                        move |e: dat0_core::recents::RecentEntry| {
+                                            crate::workspace_open::open(
+                                                ws,
+                                                &events,
+                                                e.path().to_path_buf(),
+                                            );
+                                        }
                                     },
                                     on_open_file: move |_| {
                                         spawn(async move {
@@ -746,9 +752,9 @@ pub fn open_sample(ws: Workspace, kind: SampleKind) {
     }
 }
 
-/// Unpack the bundled demo package into a fresh directory and open it.
+/// Unpack the bundled demo package into a fresh workspace folder and open it.
 ///
-/// A fresh directory per click, deliberately: the demo is meant to be edited,
+/// A fresh folder per click, deliberately: the demo is meant to be edited,
 /// and a shared destination would hand the next click somebody's leftovers.
 fn open_demo(ws: Workspace, events: dat0_core::events::AppEvents) {
     let base = dat0_core::globals::state_root()
@@ -765,11 +771,13 @@ fn open_demo(ws: Workspace, events: dat0_core::events::AppEvents) {
             ));
             return;
         }
-        let dest = base.join("demo").join(uuid::Uuid::now_v7().to_string());
+        // `…/demo/<id>/demo`: the folder names the window, so it reads "demo".
+        let dest = base
+            .join("demo")
+            .join(uuid::Uuid::now_v7().to_string())
+            .join("demo");
         match dat0_core::cli::unpack_async(&staging, &dest).await {
-            Ok(()) => events.send(dat0_core::events::AppEvent::OpenWindow(
-                dat0_core::events::Opening::files(vec![dest]),
-            )),
+            Ok(()) => crate::workspace_open::open(ws, &events, dest),
             Err(e) => ws.push_banner(dat0_core::error_ux::Banner::warning_with_body(
                 dat0_i18n::t("package.unpack.failed.title"),
                 format!("{e:#}"),

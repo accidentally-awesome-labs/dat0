@@ -74,9 +74,8 @@ pub fn main() -> anyhow::Result<()> {
     // first window shows whenever it arrives. Off the main thread, so a long
     // list of old sessions does not hold the first frame: a window opening
     // meanwhile counts as open before its directory exists, so neither step
-    // touches it. Recents are left out until a workspace can be opened again,
-    // so an interrupted Save Workspace is not offered for a Resume that
-    // cannot run yet.
+    // touches it. Recent workspaces are where an interrupted Save Workspace
+    // is found.
     {
         let scratch = state_dir.join("scratch");
         let scan = std::thread::Builder::new()
@@ -86,7 +85,8 @@ pub fn main() -> anyhow::Result<()> {
                 if swept > 0 {
                     tracing::info!(swept, "removed scratch sessions with nothing to recover");
                 }
-                let _ = dat0_core::recovery_scan::recovery_scan_emit(&scratch, &[]);
+                let recents = dat0_core::globals::recents_snapshot();
+                let _ = dat0_core::recovery_scan::recovery_scan_emit(&scratch, &recents);
             });
         // Worth a line in the log, not a failed launch: the next one scans.
         if let Err(e) = scan {
@@ -222,6 +222,8 @@ struct Windows {
     /// Each open window's own bus, in the order the windows opened.
     open: Vec<(uuid::Uuid, AppEvents)>,
     focused: Option<uuid::Uuid>,
+    /// The workspace folder each workspace window holds.
+    roots: Vec<(uuid::Uuid, PathBuf)>,
 }
 
 impl Windows {
@@ -251,9 +253,26 @@ impl WindowRegistry {
     pub fn closed(&self, window: uuid::Uuid) {
         let mut w = self.0.lock();
         w.open.retain(|(id, _)| *id != window);
+        w.roots.retain(|(id, _)| *id != window);
         if w.focused == Some(window) {
             w.focused = None;
         }
+    }
+
+    /// `window` holds the workspace in `root`.
+    pub fn holds(&self, window: uuid::Uuid, root: PathBuf) {
+        let mut w = self.0.lock();
+        w.roots.retain(|(id, _)| *id != window);
+        w.roots.push((window, root));
+    }
+
+    /// The open window holding the workspace in `root`, if any.
+    pub fn holding(&self, root: &std::path::Path) -> Option<uuid::Uuid> {
+        let w = self.0.lock();
+        w.roots
+            .iter()
+            .find(|(id, r)| r == root && w.bus(*id).is_some())
+            .map(|(id, _)| *id)
     }
 
     /// `window` was focused.
@@ -425,6 +444,18 @@ pub async fn open_window(
     Some(pending.window.id())
 }
 
+/// Bring this window to the front, unminimised. Nothing without a window
+/// system.
+pub fn raise() {
+    if !has_desktop() {
+        return;
+    }
+    let window = dioxus::desktop::window();
+    window.set_minimized(false);
+    window.set_visible(true);
+    window.set_focus();
+}
+
 /// The process bus, from anywhere in a window's tree. `None` where no [`Boot`]
 /// was provided, as in the headless harness.
 pub fn process_bus() -> Option<AppEvents> {
@@ -563,6 +594,21 @@ mod tests {
         reg.opened(a, AppEvents::channel().0);
         reg.broadcast(|| AppEvent::ThemeChanged { id: "dark".into() });
         assert!(matches!(b_rx.try_recv(), Ok(AppEvent::ThemeChanged { .. })));
+    }
+
+    #[test]
+    fn a_workspace_is_held_by_its_window_while_the_window_is_open() {
+        let reg = WindowRegistry::default();
+        let root = PathBuf::from("/work/sales");
+        let (a, a_bus, _a_rx) = window();
+        assert_eq!(reg.holding(&root), None);
+        reg.holds(a, root.clone());
+        assert_eq!(reg.holding(&root), None, "not until the window is open");
+        reg.opened(a, a_bus);
+        assert_eq!(reg.holding(&root), Some(a));
+        assert_eq!(reg.holding(std::path::Path::new("/work/other")), None);
+        reg.closed(a);
+        assert_eq!(reg.holding(&root), None, "and not after it closes");
     }
 
     #[test]

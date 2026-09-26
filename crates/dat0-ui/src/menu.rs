@@ -108,25 +108,47 @@ fn plain(id: &'static str, label_key: &str) -> MenuItem {
     MenuItem::with_id(id, dat0_i18n::t(label_key), enabled(id), None)
 }
 
-/// The recent-workspace items, newest first.
+/// The recent workspaces File → Open Recent lists, newest first, fixed when
+/// the first menu bar is built.
+///
+/// An item is resolved by its index ([`listed_recent`]), so every menu bar —
+/// each window has its own on Linux and Windows — must list, and resolve
+/// against, one list. Resolving against the live list would open whatever has
+/// moved into that place since, as soon as opening a workspace moves it to
+/// the front. A workspace opened meanwhile is listed from the next launch.
 ///
 /// `Package` recents are excluded: File → Open Recent is about workspaces, and
 /// packages have their own sidebar section.
+fn listed_recents() -> &'static [std::path::PathBuf] {
+    static LISTED: std::sync::OnceLock<Vec<std::path::PathBuf>> = std::sync::OnceLock::new();
+    LISTED.get_or_init(|| {
+        let Some(store) = dat0_core::globals::recents() else {
+            return Vec::new();
+        };
+        let Ok(guard) = store.lock() else {
+            return Vec::new();
+        };
+        guard
+            .list()
+            .iter()
+            .filter_map(|e| match e {
+                RecentEntry::Workspace { path } => Some(path.clone()),
+                RecentEntry::Package { .. } => None,
+            })
+            .take(OPEN_RECENT_CAP)
+            .collect()
+    })
+}
+
+/// The workspace behind Open Recent's `ix`-th item.
+pub fn listed_recent(ix: usize) -> Option<std::path::PathBuf> {
+    listed_recents().get(ix).cloned()
+}
+
+/// The recent-workspace items, newest first.
 fn open_recent_items() -> Vec<MenuItem> {
-    let Some(store) = dat0_core::globals::recents() else {
-        return Vec::new();
-    };
-    let Ok(guard) = store.lock() else {
-        return Vec::new();
-    };
-    guard
-        .list()
+    listed_recents()
         .iter()
-        .filter_map(|e| match e {
-            RecentEntry::Workspace { path } => Some(path.clone()),
-            RecentEntry::Package { .. } => None,
-        })
-        .take(OPEN_RECENT_CAP)
         .enumerate()
         .map(|(i, path)| {
             let label = path

@@ -33,10 +33,7 @@ use crate::state::{Modal, Workspace};
 /// a ratchet: `tests/action_effects.rs` fails if it grows, and an id leaves it
 /// in the same change as the test that shows its effect.
 pub const UNWIRED: &[&str] = &[
-    // Dialogs whose reply is discarded.
-    // Workspaces: a picked folder is refused as an unsupported file, and Save
-    // only logs the path it was given.
-    ids::WORKSPACE_OPEN,
+    // Save Workspace only logs the path it was given.
     ids::WORKSPACE_SAVE,
     // Flips a flag the shell never renders.
     ids::PERF_HUD_TOGGLE,
@@ -138,7 +135,7 @@ pub fn route(ws: Workspace, events: &AppEvents, surface: SurfaceSlot, id: &str) 
             let events = events.clone();
             spawn(async move {
                 if let Some(folder) = crate::files::pick_folder().await {
-                    events.send(AppEvent::OpenWindow(Opening::files(vec![folder])));
+                    crate::workspace_open::open(ws, &events, folder);
                 }
             });
         }
@@ -167,20 +164,26 @@ pub fn route(ws: Workspace, events: &AppEvents, surface: SurfaceSlot, id: &str) 
         // What windows that are gone left behind. Open brings a session back
         // in a window of its own, with its tabs, their views and its SQL. The
         // new window belongs to no workbench window, so it is asked for on the
-        // process bus, and still opens if this one closes first. Recents are
-        // left out until a workspace can be opened again: they are where an
-        // interrupted Save Workspace is found, and its Resume opens one.
+        // process bus, and still opens if this one closes first. Resume
+        // finishes a Save Workspace that was cut short, found among the recent
+        // workspaces, and opens the workspace.
         ids::RECOVERY_REVIEW => {
-            let events = crate::launch::process_bus().unwrap_or_else(|| events.clone());
+            use crate::components::modals::ModalOutcome;
+            let process = crate::launch::process_bus().unwrap_or_else(|| events.clone());
+            let events = events.clone();
             ws.modal.set(Some(Modal::Recovery {
                 scratch_root: dat0_core::globals::state_root()
                     .map(|p| p.join("scratch"))
                     .unwrap_or_default(),
-                recent_roots: Vec::new(),
-                reply: crate::components::modals::ModalReply::new(move |outcome| {
-                    if let crate::components::modals::ModalOutcome::RecoveryOpen(dir) = outcome {
-                        events.send(AppEvent::OpenWindow(Opening::Recover { dir }));
+                recent_roots: dat0_core::globals::recents_snapshot(),
+                reply: crate::components::modals::ModalReply::new(move |outcome| match outcome {
+                    ModalOutcome::RecoveryOpen(dir) => {
+                        process.send(AppEvent::OpenWindow(Opening::Recover { dir }))
                     }
+                    ModalOutcome::RecoveryResume(root) => {
+                        crate::workspace_open::resume(ws, &events, root)
+                    }
+                    _ => {}
                 }),
             }));
         }

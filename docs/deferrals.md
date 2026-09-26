@@ -96,7 +96,7 @@ that's modifying it; merge conflicts are signals worth investigating.
 | PD-020 | P4c T14 wired inline-editor `Enter` → commit + move-DOWN + focus-on-mount, but `Tab` → commit + move-RIGHT could NOT be wired: gpui-component `Input` (rev `0f0ab35`) consumes Tab internally for focus tab-stops and surfaces no `InputEvent::PressTab` variant (`InputEvent` is `{ Change, PressEnter, Focus, Blur }`). **Closed by Phase 6 of the GPUI→Dioxus migration (2026-08-10):** the limitation was the toolkit's, and a plain `<input>` surfaces Tab like any other key, so `dat0-ui`'s cell editor commits and steps one column right on Tab, one left on Shift-Tab, clamped at the row's ends. | closed | low |
 | PD-021 | P4c (T11 review): `error_ux::push` enqueues success/error banners into the global `PENDING` queue, but NOTHING drains it in the runtime render tree — only `#[cfg(test)]` code calls `drain_pending`. So export completion/failure feedback (`window.rs::run_export`) AND the pre-existing P4b paste-reject banner (`grid/edit_ops.rs`) are invisible to the user at runtime. **Closed by P6a T1:** `WorkspaceShell::render` now calls `error_ux::banner::merge_pending` into a per-window `banners` field and renders a host strip atop the shell. | closed | medium |
 | PD-022 | P6a (T12 review): the Inspector profile is refreshed on forward data/schema mutations (cell edit, paste, cut, delete, rename, reorder, transform-apply via `route_change`), but NOT on `undo`/`redo` or SQL-console grid-bind — those rebind via `apply_view_change`, which has no inspector hook. So undoing an edit (or rebinding a grid from the SQL console) leaves the inspector profile stale until the next forward mutation. Single well-scoped fix: hook `apply_view_change` (or an `on_rebind_complete` seam) to invalidate/re-profile the inspected table. Not a regression — the inspector did not refresh at all before P6a. | closed | low |
-| PD-023 | The Dioxus shell is not wired to `dat0-core`: 22 of 40 registered actions only logged, opened an empty dialog, or discarded the reply (3 still do; the SQL console runs, the grid sorts, filters, edits, saves and exports, Live Refresh reads a file again, and a closed or crashed window's work comes back, since 2026-09-26). Packages, workspaces, MotherDuck, AI key entry and updates are unreachable. "Logic green, screen dead" at app scale, recorded nowhere until 2026-09-25 | open | high |
+| PD-023 | The Dioxus shell is not wired to `dat0-core`: 22 of 40 registered actions only logged, opened an empty dialog, or discarded the reply (2 still do; the SQL console runs, the grid sorts, filters, edits, saves and exports, Live Refresh reads a file again, a closed or crashed window's work comes back, and workspaces open, since 2026-09-26). Packages, Save Workspace, MotherDuck, AI key entry and updates are unreachable. "Logic green, screen dead" at app scale, recorded nowhere until 2026-09-25 | open | high |
 | PD-024 | Banners raised after a window's first frame were never shown — the shell drained the queue once per mount; a refused drop surfaced later, twice, in another window | closed | high |
 | PD-025 | The recovery panel listed the running window's own session as an orphan, and its Discard deleted it | closed | high |
 | PD-026 | The grid cannot scroll past row ~1,290,555: the canvas is rows × 26 px, uncapped, and WebKit clamps layout at ~33.5M px | closed | high |
@@ -2345,12 +2345,30 @@ that's modifying it; merge conflicts are signals worth investigating.
     per-process file lock does not. Discarded modal replies 1 → 0.
     `tests/session_sync.rs` records a window, opens a second one on what it
     left, and opens it from the panel.
-  - Still open in recovery: Resume on an interrupted Save Workspace waits for
-    Open Workspace, so the panel and the banner leave recents out until then.
-    A graceful close keeps a window's directory as a crash does, and the next
-    launch removes it or offers it; the design's "Promote to Workspace?"
-    prompt on close comes with Save Workspace. A table's origin other than a
-    tab's file is not kept (PD-031).
+  - Still open in recovery: a graceful close keeps a window's directory as a
+    crash does, and the next launch removes it or offers it; the design's
+    "Promote to Workspace?" prompt on close comes with Save Workspace. A
+    table's origin other than a tab's file is not kept (PD-031).
+  - 2026-09-26, Open Workspace (`workspace_open.rs`, step 5.4b). Open
+    Workspace, File → Open Recent, the hero's recent list, the demo and the
+    recovery panel's Resume posted the folder as a file to open, and the drop
+    path refused it. A
+    folder holding a finished `.dat0/` now opens in a window of its own,
+    named for the folder, under the workspace's lock, with the tabs, views
+    and SQL it was left with. A folder without one, or with a Save Workspace
+    cut short, says so. A workspace a window of this process has open brings
+    that window forward. On a sync drive, one held by a dat0 on another
+    machine asks first, and the window that opens it records itself in the
+    workspace's cross-machine lock. The demo unpacks into a workspace and
+    opens it. Resume writes the manifest an interrupted save did not and
+    opens the workspace; with no database moved, it says there is nothing to
+    resume. Opened workspaces are remembered as recent. `UNWIRED` 3 → 2.
+    `tests/workspace_open.rs` makes workspaces with dat0-core and opens each
+    kind.
+  - Still open for workspaces: Save Workspace (step 5.4c). Open Recent lists
+    the recent workspaces as they were at launch, since its items are
+    resolved by position; a workspace opened since is listed from the next
+    launch.
 - **Discovered:** project review, 2026-09-25 — seven read-only audits plus a
   Linux release build driven under Xvfb.
 - **Fix:** port each surface's orchestration from `95627c8` onto the

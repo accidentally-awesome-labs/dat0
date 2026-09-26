@@ -46,13 +46,14 @@ struct Recorded {
 /// Restore the landed session into this window, then keep it up to date. A
 /// hook: call it once, from the shell's body, after `views` and the console.
 pub fn use_session_sync(ws: Workspace, views: Views, console: Signal<Tabs>) {
-    // Only a session opened again has anything to bring back. A new one's
-    // tabs are the files this window opens into it, which arrive as tabs of
-    // their own; restoring them too would show each twice.
+    // Only a session opened again — recovered, or a workspace — has anything
+    // to bring back. A new one's tabs are the files this window opens into
+    // it, which arrive as tabs of their own; restoring them too would show
+    // each twice.
     let reopened = use_hook(|| {
         matches!(
             try_consume_context::<Opening>(),
-            Some(Opening::Recover { .. })
+            Some(Opening::Recover { .. } | Opening::Workspace { .. })
         )
     });
     // Recording waits until the session has been read in: the first record
