@@ -16,20 +16,21 @@ Open any data file or database, edit and transform with full lineage, share the 
 ## Status
 
 **Pre-release.** No binary has been published yet. The engine, the `.dat0`
-package format and the command line are complete and tested; the desktop UI is
-being reconnected to them after its move from GPUI to Dioxus (tracked as
-PD-023 in [`docs/deferrals.md`](docs/deferrals.md)).
+package format and the command line are complete and tested, and the desktop
+UI, rebuilt on Dioxus, is connected to them again (PD-023 in
+[`docs/deferrals.md`](docs/deferrals.md)). What it still lacks is listed
+beside what works, each gap with its entry in that file.
 
-| Works in the current build | Being reconnected |
+| Works in the current build | Known gaps |
 |---|---|
-| Opening CSV, TSV, JSON, Parquet and SQLite — file picker, drag-and-drop, command line — into a virtualized grid, and the import wizard for a CSV whose delimiter or encoding needs asking | |
+| Opening CSV, TSV, JSON, Parquet and SQLite — file picker, drag-and-drop, command line — into a virtualized grid, and the import wizard for a CSV whose delimiter or encoding needs asking | A data tab cannot be closed (PD-038). A package or workspace named at launch also leaves an empty window (PD-039) |
 | MotherDuck, with your token: the account's databases listed and their tables opened | |
-| The SQL console: running a query into the grid, history, saved queries, completion | |
+| The SQL console: running a query into the grid, history, saved queries, completion | PRAGMA and EXPLAIN run but show no rows (PD-033) |
 | AI assist, with your own key: SQL written from a question, and a statement explained, from the schema alone | |
-| Sort, filter, cell edits, undo, export and Live Refresh | |
+| Sort, filter, cell edits, undo, export and Live Refresh | Sort and filter need a mouse, as do the data tabs and the lineage (PD-040). One edit takes at most 10,000 cells (PD-034). Live Refresh forgets the import wizard's dialect (PD-037) |
 | Charts of the active tab, drawn from its filters and edits, saved, and exported as PNG or SVG | |
 | The inspector: a profile of the active tab's table, its columns' small charts, and its lineage | |
-| Workspaces — open, save, recent — and the demo workspace; a closed or crashed window's work comes back | |
+| Workspaces — open, save, recent — and the demo workspace; a closed or crashed window's work comes back | File → Open Recent lists what was recent at launch (PD-036). Closing a scratch window does not offer to save it (PD-035) |
 | Help → Check for Updates, against the signed release manifest (no release is published yet) | |
 | Crash reports, opt-in: offered at the launch after a crash, and Help → Report a Bug | |
 | `.dat0` packages: open read-only, unpack, export and replay, in the app and with `dat0 inspect` / `unpack` / `replay` / `diff` / `export` | |

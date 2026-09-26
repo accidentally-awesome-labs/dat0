@@ -96,7 +96,7 @@ that's modifying it; merge conflicts are signals worth investigating.
 | PD-020 | P4c T14 wired inline-editor `Enter` → commit + move-DOWN + focus-on-mount, but `Tab` → commit + move-RIGHT could NOT be wired: gpui-component `Input` (rev `0f0ab35`) consumes Tab internally for focus tab-stops and surfaces no `InputEvent::PressTab` variant (`InputEvent` is `{ Change, PressEnter, Focus, Blur }`). **Closed by Phase 6 of the GPUI→Dioxus migration (2026-08-10):** the limitation was the toolkit's, and a plain `<input>` surfaces Tab like any other key, so `dat0-ui`'s cell editor commits and steps one column right on Tab, one left on Shift-Tab, clamped at the row's ends. | closed | low |
 | PD-021 | P4c (T11 review): `error_ux::push` enqueues success/error banners into the global `PENDING` queue, but NOTHING drains it in the runtime render tree — only `#[cfg(test)]` code calls `drain_pending`. So export completion/failure feedback (`window.rs::run_export`) AND the pre-existing P4b paste-reject banner (`grid/edit_ops.rs`) are invisible to the user at runtime. **Closed by P6a T1:** `WorkspaceShell::render` now calls `error_ux::banner::merge_pending` into a per-window `banners` field and renders a host strip atop the shell. | closed | medium |
 | PD-022 | P6a (T12 review): the Inspector profile is refreshed on forward data/schema mutations (cell edit, paste, cut, delete, rename, reorder, transform-apply via `route_change`), but NOT on `undo`/`redo` or SQL-console grid-bind — those rebind via `apply_view_change`, which has no inspector hook. So undoing an edit (or rebinding a grid from the SQL console) leaves the inspector profile stale until the next forward mutation. Single well-scoped fix: hook `apply_view_change` (or an `on_rebind_complete` seam) to invalidate/re-profile the inspected table. Not a regression — the inspector did not refresh at all before P6a. | closed | low |
-| PD-023 | The Dioxus shell is not wired to `dat0-core`: 22 of 40 registered actions only logged, opened an empty dialog, or discarded the reply (none does now; the SQL console runs, the grid sorts, filters, edits, saves and exports, Live Refresh reads a file again, a closed or crashed window's work comes back, workspaces open and save, packages open read-only, unpack into a workspace, export and replay, the perf HUD shows frames, memory and pages, SQLite files attach, Help → Check for Updates answers, the chart draws the active tab and saves, the inspector profiles it, AI takes a key and writes and explains SQL in the console, MotherDuck connects, a crashed run's report is offered at the next launch, ⌘K opens the palette, the status bar's egress and the footer's window count are measured, a theme chosen is kept across launches, the status bar and title bar say what the window is doing, a CSV the sniff cannot settle opens in the import wizard, a workspace folder dropped or named on the command line opens as the workspace, what the chrome says has left the machine is measured, crash and bug reports included, a command waits for an open dialog rather than replacing it, the title bar moves the window on macOS and the Linux menus quit, close, minimize, zoom and go full screen, and the hints, labels and theme say what is so, since 2026-09-26). "Logic green, screen dead" at app scale, recorded nowhere until 2026-09-25 | open | high |
+| PD-023 | The Dioxus shell is not wired to `dat0-core`: 22 of 40 registered actions only logged, opened an empty dialog, or discarded the reply (none does now; the SQL console runs, the grid sorts, filters, edits, saves and exports, Live Refresh reads a file again, a closed or crashed window's work comes back, workspaces open and save, packages open read-only, unpack into a workspace, export and replay, the perf HUD shows frames, memory and pages, SQLite files attach, Help → Check for Updates answers, the chart draws the active tab and saves, the inspector profiles it, AI takes a key and writes and explains SQL in the console, MotherDuck connects, a crashed run's report is offered at the next launch, ⌘K opens the palette, the status bar's egress and the footer's window count are measured, a theme chosen is kept across launches, the status bar and title bar say what the window is doing, a CSV the sniff cannot settle opens in the import wizard, a workspace folder dropped or named on the command line opens as the workspace, what the chrome says has left the machine is measured, crash and bug reports included, a command waits for an open dialog rather than replacing it, the title bar moves the window on macOS and the Linux menus quit, close, minimize, zoom and go full screen, and the hints, labels and theme say what is so, since 2026-09-26). "Logic green, screen dead" at app scale, recorded nowhere until 2026-09-25 | closed | high |
 | PD-024 | Banners raised after a window's first frame were never shown — the shell drained the queue once per mount; a refused drop surfaced later, twice, in another window | closed | high |
 | PD-025 | The recovery panel listed the running window's own session as an orphan, and its Discard deleted it | closed | high |
 | PD-026 | The grid cannot scroll past row ~1,290,555: the canvas is rows × 26 px, uncapped, and WebKit clamps layout at ~33.5M px | closed | high |
@@ -106,6 +106,14 @@ that's modifying it; merge conflicts are signals worth investigating.
 | PD-030 | Opening a second file with the same stem (another folder's `data.csv`) replaced the first file's table, so the first tab showed the second file's rows | closed | high |
 | PD-031 | A table's origin lives only in the engine's memory: a session opened again from disk knows its tables but not where they came from, so a package made from it cannot replay its derived tables | open | medium |
 | PD-032 | Only the first surface to open in a window took the keyboard: a second command palette, cell edit, name prompt, filter popover or context menu opened unfocused, and what was typed went to the grid | closed | high |
+| PD-033 | The console runs PRAGMA and EXPLAIN but shows none of their rows: DuckDB will not define a view as them, and the grid reads views | open | low |
+| PD-034 | One grid edit or delete takes at most 10,000 cells or rows, and one copy at most 100,000 cells: each edited cell is a `CASE` branch every read walks | open | low |
+| PD-035 | Closing a scratch window does not offer to keep its work as a workspace; the next launch offers it for recovery instead | open | low |
+| PD-036 | File → Open Recent lists the workspaces recent at launch: one opened or saved since is listed from the next launch | open | low |
+| PD-037 | Live Refresh reads a file the import wizard read with automatic detection, since the dialect chosen is not kept with the table | open | medium |
+| PD-038 | A data tab cannot be closed: the tab strip only activates tabs, and no command closes one | open | medium |
+| PD-039 | A `.dat0` package or a workspace folder named at launch opens in a window of its own, beside an empty scratch window | open | low |
+| PD-040 | Parts of the shell cannot be reached by keyboard: the data tabs, a column's sort and filter, the inspector's lineage, and a dialog's first control | open | medium |
 
 > **Missing originating docs (noted 2026-09-25).** D-030 and D-032–D-036 cite
 > `docs/plans/2026-08-08-dat0-production-v1-plan.md`, and the migration log cites
@@ -2195,7 +2203,9 @@ that's modifying it; merge conflicts are signals worth investigating.
 
 ### PD-023 — The Dioxus shell is not wired to `dat0-core`
 
-- **Status:** open
+- **Status:** closed, 2026-09-26. No registered action is without an effect,
+  and each surface the GPUI build had is wired; what is still open is
+  recorded as PD-033 to PD-040, each on its own.
 - **Severity:** high — the failure mode this register reserves `high` for,
   at the scale of the whole application
 - **Target:** feature parity in the Dioxus shell, one surface at a time
@@ -2470,8 +2480,8 @@ that's modifying it; merge conflicts are signals worth investigating.
     attached database's, and a file that cannot be read is no longer left
     attached. `tests/sqlite_open.rs` opens a file, the Chinook sample and a
     table from the sidebar, opens a session again, with its file and
-    without it, and saves one as a workspace. Still open: detaching a file,
-    and the connections panel, which nothing opens yet.
+    without it, and saves one as a workspace. Detaching a file, and the
+    connections panel, which nothing opened, followed in step 5.6c.
   - 2026-09-26, updates (`update_flow.rs`, step 5.7). Help → Check for
     Updates was built disabled, and nothing checked at launch: the check,
     the prompt and the installer were here with nothing calling them. The
@@ -2976,6 +2986,154 @@ that's modifying it; merge conflicts are signals worth investigating.
   surfaces twice and asks the document where the keyboard is. Before the
   fix: the palette's first opening only, and none of the others.
 - **Discovered:** 2026-09-26, PD-023 step 5.8.
+- **Last touched:** 2026-09-26
+
+### PD-033 — The console shows no rows for PRAGMA and EXPLAIN
+
+- **Status:** open
+- **Severity:** low — the statements run; only what they return is not shown
+- **Affected files:** `crates/dat0-ui/src/components/sql_console/host.rs`
+- **Symptom:** a console run lands its rows in the grid by defining a view
+  over the statement, which the grid reads. DuckDB will neither define a
+  view as a PRAGMA or an EXPLAIN nor select from one, so both run and show
+  nothing. SHOW, DESCRIBE and SUMMARIZE do reach the grid.
+- **Fix:** for a statement DuckDB will not wrap, read its result once and
+  keep it as a table of the session's own for the grid to read.
+- **Discovered:** 2026-09-26, the SQL console (PD-023, step 5.2).
+- **Last touched:** 2026-09-26
+
+### PD-034 — Grid edits and copies are capped per step
+
+- **Status:** open
+- **Severity:** low — a larger edit is refused with a word, never cut short
+- **Affected files:** `crates/dat0-ui/src/components/grid/edits.rs`,
+  `crates/dat0-ui/src/clipboard.rs`
+- **Symptom:** one edit or delete takes at most 10,000 cells or rows, and one
+  copy at most 100,000 cells. Each edited cell is a `CASE` branch in the view
+  the grid reads, and every read walks them, so a larger overlay needs a
+  different form, not a larger cap. Where there is no system clipboard, as
+  on a headless host, a copy is kept in dat0's own process and pastes inside
+  dat0 only.
+- **Fix:** keep edits in a table beside the view, joined by row id, so an
+  edit's size costs its write once rather than every read.
+- **Discovered:** 2026-09-26, the grid's edits (PD-023, step 5.3b).
+- **Last touched:** 2026-09-26
+
+### PD-035 — Closing a scratch window does not offer to keep its work
+
+- **Status:** open
+- **Severity:** low — nothing is lost: the session stays on disk, and the
+  next launch offers it for recovery
+- **Affected files:** `crates/dat0-ui/src/components/mod.rs`,
+  `crates/dat0-ui/src/session_sync.rs`
+- **Symptom:** the design asks "Promote to Workspace?" when a scratch window
+  holding work closes. A graceful close keeps the window's session directory
+  as a crash does, and the next launch removes it, when a file on disk holds
+  all of it, or offers it in the recovery panel.
+- **Fix:** take the window's close request, and for a scratch window the Save
+  Workspace nudge would ask about (three view steps or a saved query), ask
+  Save Workspace, Close or Cancel before it closes.
+- **Discovered:** 2026-09-26, recovery (PD-023, step 5.7b).
+- **Last touched:** 2026-09-26
+
+### PD-036 — Open Recent lists the workspaces recent at launch
+
+- **Status:** open
+- **Severity:** low — the hero's recent list and the sidebar are current
+- **Affected files:** `crates/dat0-ui/src/menu.rs` (`listed_recents`)
+- **Symptom:** File → Open Recent's items are resolved by their position, so
+  every window's menu bar lists, and resolves against, the list read when
+  the first bar was built. A workspace opened or saved since is listed from
+  the next launch.
+- **Fix:** rebuild the submenu when the recent list changes, with ids that
+  name the list they came from, so a click on a stale item cannot open the
+  workspace that has since moved into its place.
+- **Discovered:** 2026-09-26, Open Workspace (PD-023, step 5.4b).
+- **Last touched:** 2026-09-26
+
+### PD-037 — Live Refresh forgets the import wizard's dialect
+
+- **Status:** open
+- **Severity:** medium — a refresh can read such a file as other columns,
+  and the view then lands on the bare table or the read fails
+- **Affected files:** `crates/dat0-ui/src/import_flow.rs`,
+  `crates/dat0-ui/src/components/grid/refresh.rs`
+- **Symptom:** the wizard reads a CSV the sniff could not settle with the
+  delimiter, quote, header and types it was told, then drops and renames
+  columns. None of that is kept with the table, so Live Refresh reads the
+  file again with automatic detection, which is what the wizard was for.
+- **Fix:** keep the wizard's reading options, drops and renames with the
+  table's origin, and have Live Refresh read through them; the origin itself
+  is kept only in memory (PD-031).
+- **Discovered:** 2026-09-26, the import wizard (PD-023, step 5.10).
+- **Last touched:** 2026-09-26
+
+### PD-038 — A data tab cannot be closed
+
+- **Status:** open
+- **Severity:** medium — tabs only accumulate; the way out is a new window
+- **Affected files:** `crates/dat0-ui/src/components/shell.rs` (`TabStrip`),
+  `crates/dat0-ui/src/state.rs`
+- **Symptom:** the tab strip activates a tab and has no close control, and
+  no command closes a data tab (`sql.close_tab` closes a query tab). The
+  GPUI build showed one tab per window, the active view's, and closed none.
+- **Fix:** a close control on each tab and a command for the active one,
+  which drop the tab and its view; the table stays in the session while
+  another tab or a saved query reads it.
+- **Discovered:** 2026-09-26, checking the new UAT checklist against the
+  code.
+- **Last touched:** 2026-09-26
+
+### PD-039 — A package or workspace named at launch opens beside an empty window
+
+- **Status:** open
+- **Severity:** low — an empty window to close
+- **Affected files:** `crates/dat0-ui/src/launch.rs` (`run_app`),
+  `crates/dat0-ui/src/session_boot.rs` (`open_paths`)
+- **Symptom:** the first window is a scratch window over the launch's paths,
+  and a second launch's paths open another the same way. A `.dat0` package
+  or a workspace folder among them opens in a window of its own (step
+  5.11b), so the scratch window opened for it stays empty beside it.
+- **Fix:** open the first window on a package itself (`Opening::Inspect`),
+  and close a launch's scratch window once every path it was opened for has
+  gone to a window of its own; a workspace needs its lock checks first,
+  which may ask the user, so it cannot simply be the first window's opening.
+- **Discovered:** 2026-09-26, checking the new UAT checklist against the
+  code.
+- **Last touched:** 2026-09-26
+
+### PD-040 — Parts of the shell cannot be reached by keyboard
+
+- **Status:** open
+- **Severity:** medium — a keyboard user can open files, run SQL and answer
+  every dialog, but not sort or filter a column, switch tabs from the strip
+  or follow the lineage
+- **Affected files:** `crates/dat0-ui/src/components/shell.rs` (`TabStrip`),
+  `crates/dat0-ui/src/components/grid/header.rs`,
+  `crates/dat0-ui/src/components/inspector/mod.rs` (`ChainRow`),
+  `crates/dat0-ui/src/components/modals.rs` (`CAPTURE_JS`),
+  `crates/dat0-ui/src/components/sidebar.rs`
+- **Symptom:**
+  - The tab strip's one Tab stop is the ⌘K launcher. Every tab is
+    `tabindex="-1"`, and nothing moves between them by arrow, though
+    `tests/tab_strip_nav.rs` says arrows do; it checks only the tabindex.
+    The sidebar's FILES rows are the keyboard's way to a tab.
+  - A column's sort and funnel zones are spans with no tabindex, and neither
+    the palette nor the grid's context menu sorts or filters.
+  - The inspector's lineage rows are divs with a click handler and no
+    tabindex.
+  - Only the name prompt marks a control to take focus when it opens. In
+    every other dialog focus stays on the page behind it, which is inert,
+    until the first Tab.
+  - The sidebar's rows and section headings are buttons with no tabindex,
+    so in a webview each is a Tab stop, where `docs/a11y.md` and
+    `tests/catalog_nav.rs` describe the tree as one stop with roving rows.
+- **Fix:** a roving tabindex on the tab strip, the active tab the stop and
+  arrows moving; the header zones and lineage rows as buttons; each dialog
+  marking the control that takes focus, or the dialog itself taking it; the
+  sidebar's rows `tabindex="-1"`, as the tree's own key handling expects.
+- **Discovered:** 2026-09-26, checking the new UAT checklist against the
+  code.
 - **Last touched:** 2026-09-26
 
 ## How to add an entry
