@@ -51,7 +51,11 @@ jobs:
     steps:
       - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@1.97.0
-        with: { targets: aarch64-apple-darwin,x86_64-apple-darwin }
+        # Block style: in a `{ … }` mapping the comma ends the entry, so only
+        # aarch64 was installed and the x86_64 half of the universal build
+        # failed (release run #1).
+        with:
+          targets: aarch64-apple-darwin,x86_64-apple-darwin
       - run: brew install create-dmg
       - name: Crash-report DSN and version
         env: { DSN: "${{ secrets.GLITCHTIP_DSN_PUBLIC }}" }

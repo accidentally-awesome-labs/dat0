@@ -78,9 +78,13 @@ pub fn tar_app() -> Result<u64> {
     Ok(len)
 }
 
+/// The two halves of the universal binary. `release.yml`'s macOS job must
+/// install both targets; `xtask/tests/release_workflow.rs` holds it to that.
+pub const TRIPLES: [&str; 2] = ["aarch64-apple-darwin", "x86_64-apple-darwin"];
+
 pub fn bundle(version: &str, git_sha: &str) -> Result<PathBuf> {
     // 1. Build both arches.
-    for triple in ["aarch64-apple-darwin", "x86_64-apple-darwin"] {
+    for triple in TRIPLES {
         run(Command::new("cargo").args([
             "build",
             "-p",
