@@ -174,6 +174,12 @@ fn Host(props: HostProps) -> Element {
                 "phase={phase} queue=[{queue.join(\",\")}] tabs=[{tabs.join(\",\")}] active={active} engine_ok={engine_ok}"
             }
             div { "data-a11y-id": "banners", "{banners.join(\";\")}" }
+            // The failure banner's Retry, as the router performs it.
+            button {
+                "data-a11y-id": "retry",
+                onclick: move |_| session_boot::retry(ws),
+                "retry"
+            }
             for (i, paths) in props.gestures.iter().cloned().enumerate() {
                 button {
                     key: "{i}",
@@ -589,6 +595,60 @@ fn a_failed_session_raises_a_retry_banner_and_does_not_loop() {
         "a retry loop would show as a growing pile of identical banners: {:?}",
         window_banners(&h)
     );
+}
+
+#[test]
+#[serial]
+fn a_retry_takes_down_the_failure_it_answers() {
+    // The failure banner cannot be dismissed. It stayed up after a retry
+    // opened the session, offering a Retry that did nothing, and a retry
+    // that failed again put a second beside it (step 5.11c).
+    let _rt = runtime();
+    let _guard = _rt.0.enter();
+    let window_id = uuid::Uuid::now_v7();
+    poison_scratch_for(window_id);
+    let mut h = Harness::new(
+        Host,
+        HostProps {
+            window_id,
+            cli_paths: Vec::new(),
+            gestures: Vec::new(),
+        },
+    );
+    let failed = format!("{}|", dat0_i18n::t("session.failed"));
+    let failures = |h: &Harness| {
+        window_banners(h)
+            .iter()
+            .filter(|b| b.starts_with(&failed))
+            .count()
+    };
+    assert!(
+        pump(&mut h, |h| failures(h) == 1),
+        "the boot fails; last readback: {}",
+        readback(&h)
+    );
+
+    // Still poisoned: the retry fails too, and says so once.
+    h.click("retry");
+    assert!(
+        pump(&mut h, |h| readback(h).contains("phase=failed:")
+            && failures(h) == 1),
+        "{:?}",
+        window_banners(&h)
+    );
+    for _ in 0..8 {
+        h.settle();
+        std::thread::sleep(Duration::from_millis(25));
+    }
+    assert_eq!(failures(&h), 1, "{:?}", window_banners(&h));
+
+    // The file in the way is gone: the retry opens the session, and the
+    // failure it answered is taken down.
+    std::fs::remove_file(state_root().join("scratch").join(window_id.to_string()))
+        .expect("unpoison");
+    h.click("retry");
+    await_phase(&mut h, "ready");
+    assert_eq!(failures(&h), 0, "{:?}", window_banners(&h));
 }
 
 #[test]

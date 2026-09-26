@@ -39,6 +39,21 @@ pub fn is_wired(id: &str) -> bool {
     !UNWIRED.contains(&id)
 }
 
+/// Commands that act outside the window's content, and so run while a dialog
+/// is up in it: a new window, the theme every window shares, and Settings,
+/// which is a window of its own.
+const OVER_A_DIALOG: &[&str] = &[ids::WINDOW_NEW, ids::THEME_TOGGLE, ids::SETTINGS_OPEN];
+
+/// Whether `id` runs in a window with a dialog up.
+///
+/// A dialog owns its window while it is up. A command that would open another
+/// over it, or change what lies under it, is not run, and the window is raised
+/// so the dialog is seen (step 5.11c): ⌘E used to put Export in place of an
+/// open dialog, and the dialog it replaced was never answered.
+pub fn runs_over_a_dialog(id: &str) -> bool {
+    OVER_A_DIALOG.contains(&id)
+}
+
 /// A shell-installed handler for the actions whose state the shell owns.
 ///
 /// Most commands are window state and this module performs them directly. The
@@ -79,6 +94,11 @@ pub type SurfaceSlot = Signal<Option<Surface>>;
 /// exists to make impossible to ship silently.
 pub fn route(ws: Workspace, events: &AppEvents, surface: SurfaceSlot, id: &str) -> bool {
     let mut ws = ws;
+    if ws.modal.peek().is_some() && !runs_over_a_dialog(id) {
+        tracing::debug!(action = %id, "a dialog is up; the command is not run");
+        crate::launch::raise();
+        return true;
+    }
     match id {
         // ── Window and shell ───────────────────────────────────────────────
         ids::WINDOW_NEW => events.send(AppEvent::OpenWindow(Opening::files(Vec::new()))),
@@ -177,13 +197,24 @@ pub fn route(ws: Workspace, events: &AppEvents, surface: SurfaceSlot, id: &str) 
         // workspaces, and opens the workspace.
         ids::RECOVERY_REVIEW => {
             use crate::components::modals::ModalOutcome;
+            let scratch_root = dat0_core::globals::state_root()
+                .map(|p| p.join("scratch"))
+                .unwrap_or_default();
+            let recent_roots = dat0_core::globals::recents_snapshot();
+            // Nothing left behind: say so. The panel draws nothing for an
+            // empty list, and the dialog around it stayed up, empty (step
+            // 5.11c).
+            if crate::components::recovery::collect_rows(&scratch_root, &recent_roots).is_empty() {
+                ws.push_banner(dat0_core::error_ux::Banner::info(dat0_i18n::t(
+                    "recovery.nothing",
+                )));
+                return true;
+            }
             let process = crate::launch::process_bus().unwrap_or_else(|| events.clone());
             let events = events.clone();
             ws.modal.set(Some(Modal::Recovery {
-                scratch_root: dat0_core::globals::state_root()
-                    .map(|p| p.join("scratch"))
-                    .unwrap_or_default(),
-                recent_roots: dat0_core::globals::recents_snapshot(),
+                scratch_root,
+                recent_roots,
                 reply: crate::components::modals::ModalReply::new(move |outcome| match outcome {
                     ModalOutcome::RecoveryOpen(dir) => {
                         process.send(AppEvent::OpenWindow(Opening::Recover { dir }))

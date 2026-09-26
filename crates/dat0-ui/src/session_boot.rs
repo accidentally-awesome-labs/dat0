@@ -454,10 +454,23 @@ pub fn retry(ws: Workspace) {
         Some(other) => other,
     };
     ws.session.set(Arc::new(SessionSlot::Booting));
+    clear_failure(ws);
     spawn(async move {
         let slot = build(ws, &opening).await;
         land(ws, slot).await;
     });
+}
+
+/// Take down the failure banner a retry answers, as the retry starts: the
+/// retry's own outcome replaces it. It cannot be dismissed, and it stayed up
+/// after a retry opened the session, offering a Retry that did nothing; a
+/// retry that failed again put a second beside it (step 5.11c).
+fn clear_failure(ws: Workspace) {
+    let mut banners = ws.banners;
+    let retry = dat0_core::actions::builtin::ids::SESSION_RETRY;
+    banners
+        .write()
+        .retain(|b| b.primary.as_ref().is_none_or(|a| a.action_id != retry));
 }
 
 #[cfg(test)]

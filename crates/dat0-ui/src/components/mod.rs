@@ -266,6 +266,14 @@ async fn handle(
 /// package verbs and the update check.
 fn menu_local(id: &str, events: &AppEvents, ws: crate::state::Workspace) {
     use crate::menu::menu_ids;
+    // As a command waits for a dialog (`router::runs_over_a_dialog`), so do
+    // these: each opens a picker, a dialog or a workspace in this window.
+    // The two links open the browser, and run.
+    if ws.modal.peek().is_some() && !matches!(id, menu_ids::DOCS | menu_ids::GITHUB) {
+        tracing::debug!(menu_id = id, "a dialog is up; the item is not run");
+        crate::launch::raise();
+        return;
+    }
     match id {
         // dat0.app is the project's domain; dat0.dev is not, and there is no
         // Discord yet — the site links the repository instead.

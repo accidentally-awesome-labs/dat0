@@ -7,6 +7,8 @@
 
 mod support;
 
+use std::sync::LazyLock;
+
 use dioxus::prelude::*;
 use serial_test::serial;
 
@@ -19,6 +21,20 @@ use dat0_ui::state::Workspace;
 use dat0_ui::theme::Theme;
 
 use support::Harness;
+
+/// A config dir of the test's own, with the first run behind it. A fresh
+/// profile's tour opens itself over the shell, and a command does not run
+/// over a dialog (step 5.11c); nor should a test read the machine's settings.
+static CONFIG: LazyLock<()> = LazyLock::new(|| {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    // SAFETY: the binary's one test is `#[serial]`, and sets this before it
+    // mounts anything that reads it.
+    unsafe { std::env::set_var("DAT0_CONFIG_DIR", tmp.path()) };
+    let store =
+        dat0_core::settings::store::SettingsStore::with_path(tmp.path().join("settings.toml"));
+    dat0_core::settings::set_first_run_done(&store, true).expect("seed first_run_done");
+    std::mem::forget(tmp);
+});
 
 fn builtins() -> ActionRegistry {
     let reg = ActionRegistry::new();
@@ -56,6 +72,7 @@ fn line(h: &Harness, id: &str) -> String {
 #[test]
 #[serial]
 fn the_hud_toggles_on_with_its_four_lines_and_off_again() {
+    LazyLock::force(&CONFIG);
     let mut h = Harness::new(Host, ());
     h.settle();
     assert!(h.by_a11y_id("perf-hud").is_none(), "closed until asked for");

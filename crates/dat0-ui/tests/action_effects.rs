@@ -40,14 +40,18 @@ use serial_test::serial;
 
 use support::Harness;
 
-/// A config dir of the binary's own, empty as a fresh profile's is. Toggle
+/// A config dir of the binary's own, with the first run behind it. Toggle
 /// Theme keeps its choice in the settings file (PD-023, step 5.9), and a test
-/// must not write the developer's.
+/// must not write the developer's. The first run's tour opens itself over a
+/// fresh profile, and a command does not run over a dialog (step 5.11c).
 static CONFIG: std::sync::LazyLock<()> = std::sync::LazyLock::new(|| {
     let tmp = tempfile::tempdir().expect("tempdir");
     // SAFETY: every test in this binary is `#[serial]`, so no other thread
     // races this process-global write.
     unsafe { std::env::set_var("DAT0_CONFIG_DIR", tmp.path()) };
+    let store =
+        dat0_core::settings::store::SettingsStore::with_path(tmp.path().join("settings.toml"));
+    dat0_core::settings::set_first_run_done(&store, true).expect("seed first_run_done");
     std::mem::forget(tmp);
 });
 
@@ -66,9 +70,6 @@ enum Setup {
     FailedSession,
     /// An import in flight: Cancel Import does nothing otherwise.
     ActiveImport,
-    /// No dialog up. A fresh profile is a first run, and the first-run tour
-    /// opens itself on mount, so Take a Tour would find it already open.
-    NoModal,
 }
 
 /// Commands whose effect needs something in place first. Everything else is
@@ -83,8 +84,6 @@ const SETUP: &[(&str, Setup)] = &[
     ),
     (ids::SESSION_RETRY, Setup::FailedSession),
     (ids::IMPORT_CANCEL, Setup::ActiveImport),
-    (ids::ONBOARDING_TAKE_TOUR, Setup::NoModal),
-    (ids::REPORT_BUG, Setup::NoModal),
 ];
 
 /// Offered commands whose effect needs something the headless harness does
@@ -210,10 +209,6 @@ fn Host(props: HostProps) -> Element {
                     dat0_core::import_progress::ImportProgress::new(10),
                 );
             }
-            Some(Setup::NoModal) => {
-                let mut modal = ws.modal;
-                modal.set(None);
-            }
             None => {}
         }
     };
@@ -304,6 +299,98 @@ fn every_command_the_palette_offers_changes_something() {
          router::UNWIRED so no surface offers them:\n  {}",
         failures.join("\n  ")
     );
+}
+
+/// The open dialog's accessible name, if one is up.
+fn dialog(h: &Harness) -> Option<String> {
+    h.by_a11y_id(dat0_ui::components::modals::DIALOG_ID)
+        .and_then(|k| h.attr(k, "aria-label"))
+}
+
+/// A shell with the tour up, and `id` ready to route over it.
+fn over_the_tour(id: &str) -> Harness {
+    std::sync::LazyLock::force(&CONFIG);
+    let mut h = Harness::new(
+        Host,
+        HostProps {
+            setup: Some(Setup::Route(&[ids::ONBOARDING_TAKE_TOUR])),
+            id: id.to_string(),
+        },
+    );
+    h.settle();
+    h.click("setup");
+    h.settle();
+    h
+}
+
+#[test]
+#[serial]
+fn a_command_does_not_run_over_a_dialog() {
+    // ⌘E put Export in place of an open dialog, and the dialog it replaced
+    // was never answered (step 5.11c). Report a Bug stands in for it: with
+    // no tab, Export opens nothing to put there.
+    let mut h = over_the_tour(ids::REPORT_BUG);
+    let tour = dialog(&h).expect("the tour is up");
+    h.click("go");
+    h.settle();
+    assert_eq!(dialog(&h), Some(tour), "the tour keeps its place");
+    assert!(
+        h.text_of(h.by_a11y_id("refused").expect("readout"))
+            .is_empty(),
+        "claimed, not refused"
+    );
+}
+
+#[test]
+#[serial]
+fn the_theme_changes_over_a_dialog() {
+    // What is not the window's content still runs: the theme, a new window
+    // and Settings.
+    let mut h = over_the_tour(ids::THEME_TOGGLE);
+    let tour = dialog(&h).expect("the tour is up");
+    let theme = |h: &Harness| h.text_of(h.by_a11y_id("theme").expect("readout"));
+    let before = theme(&h);
+    h.click("go");
+    h.settle();
+    assert_ne!(theme(&h), before, "the theme changed");
+    assert_eq!(dialog(&h), Some(tour), "under the tour");
+}
+
+/// Route `id` on a fresh shell, with no tab and nothing left behind.
+fn on_a_bare_shell(id: &str) -> Harness {
+    std::sync::LazyLock::force(&CONFIG);
+    let mut h = Harness::new(
+        Host,
+        HostProps {
+            setup: None,
+            id: id.to_string(),
+        },
+    );
+    h.settle();
+    assert_eq!(dialog(&h), None, "nothing up before");
+    h.click("go");
+    h.settle();
+    h
+}
+
+#[test]
+#[serial]
+fn export_with_nothing_to_export_says_so() {
+    // The dialog opened, and its Export closed it having written nothing,
+    // saying nothing (step 5.11c).
+    let h = on_a_bare_shell(ids::VIEW_EXPORT);
+    assert_eq!(dialog(&h), None, "no dialog that can write nothing");
+    assert!(h.text().contains(&dat0_i18n::t("export.nothing")));
+}
+
+#[test]
+#[serial]
+fn reviewing_nothing_to_recover_says_so() {
+    // The panel drew nothing for an empty list, and the dialog around it
+    // stayed up, empty (step 5.11c).
+    let h = on_a_bare_shell(ids::RECOVERY_REVIEW);
+    assert_eq!(dialog(&h), None, "no empty dialog");
+    assert!(h.text().contains(&dat0_i18n::t("recovery.nothing")));
 }
 
 #[test]

@@ -24,6 +24,12 @@ use crate::state::{Modal, Workspace};
 /// Open the dialog for what the grid shows. It starts pointed at the folder
 /// the tab's file came from, when it came from one.
 pub fn open(ws: Workspace, views: Views, shown: Shown) {
+    // No tab, nothing to write: the dialog opened, and Export closed it
+    // having written nothing, saying nothing (step 5.11c).
+    if ws.active_tab().is_none() {
+        nothing_to_export(ws);
+        return;
+    }
     let beside = ws
         .active_tab()
         .and_then(|t| t.path)
@@ -54,9 +60,18 @@ fn dialog(ws: Workspace, views: Views, shown: Shown, destination: Option<PathBuf
     }));
 }
 
+/// Say there is nothing to export: the grid shows no table.
+fn nothing_to_export(ws: Workspace) {
+    ws.push_banner(Banner::warning_with_body(
+        t("export.nothing"),
+        t("export.nothing.body"),
+    ));
+}
+
 /// Write `req`'s scope of the grid's table to `req.path`.
 fn write(ws: Workspace, views: Views, shown: Shown, req: ExportRequest) {
     let Some((table, Ok(src))) = shown.peek().clone().flatten() else {
+        nothing_to_export(ws);
         return;
     };
     let Some(engine) = engine(&ws) else {
