@@ -99,7 +99,7 @@ that's modifying it; merge conflicts are signals worth investigating.
 | PD-023 | The Dioxus shell is not wired to `dat0-core`: 22 of 40 registered actions only logged, opened an empty dialog, or discarded the reply (5 still do; the SQL console runs, and the grid sorts, filters, edits and saves, since 2026-09-26). Export, packages, workspaces, MotherDuck, AI key entry, updates, recovery and live refresh are unreachable. "Logic green, screen dead" at app scale, recorded nowhere until 2026-09-25 | open | high |
 | PD-024 | Banners raised after a window's first frame were never shown — the shell drained the queue once per mount; a refused drop surfaced later, twice, in another window | closed | high |
 | PD-025 | The recovery panel listed the running window's own session as an orphan, and its Discard deleted it | closed | high |
-| PD-026 | The grid cannot scroll past row ~1,290,555: the canvas is rows × 26 px, uncapped, and WebKit clamps layout at ~33.5M px | open | high |
+| PD-026 | The grid cannot scroll past row ~1,290,555: the canvas is rows × 26 px, uncapped, and WebKit clamps layout at ~33.5M px | closed | high |
 | PD-027 | The first window owns the event bus: commands raised in any window act on window 1, and closing window 1 silences menus, palette, chords and second-launch forwarding | closed | medium |
 | PD-028 | A file drop aborted the app when `session.json` could not be written (`.expect` under `panic = "abort"`) | closed | medium |
 | PD-029 | Package replay trusted the recipe: its SQL ran with the engine's full access, and table names were used as file names unchecked | closed | high |
@@ -2385,7 +2385,7 @@ that's modifying it; merge conflicts are signals worth investigating.
 
 ### PD-026 — The grid cannot scroll past row ~1,290,555
 
-- **Status:** open
+- **Status:** closed — 2026-09-26
 - **Severity:** high (pillar 1 — millions of rows is the product's claim)
 - **Affected files:** `crates/dat0-ui/src/components/grid/mod.rs`
   (`total_h = total_rows * ROW_H`; each row placed at `top: r * ROW_H`)
@@ -2404,7 +2404,27 @@ that's modifying it; merge conflicts are signals worth investigating.
   1:1 below the cap, so small tables are unchanged); scroll the active cell
   into view on keyboard moves; add a windowed check that the last row of a
   table larger than the cap is reachable.
-- **Last touched:** 2026-09-25
+- **Resolution (2026-09-26):** as proposed, in `components/grid/scroll.rs`.
+  The canvas stops at 30M px, a tenth under the clamp, so tables up to
+  1,153,846 rows still scroll one to one; past that the scroll position maps
+  to rows in proportion, and each row is drawn shifted by the same amount the
+  mapping moved it (`Scale`), as is the cell editor. A keyboard move scrolls
+  the cursor into view (`reveal`). `examples/grid_probe.rs` lays out 2,000,000
+  rows in a real window and runs with the other probes: the canvas is laid out
+  at 30M px, the bottom shows `row-1999999`, and Ctrl/Cmd+Down shows it too.
+  With the cap removed it fails exactly as reported — a 33,554,430 px canvas
+  whose bottom is `row-1290558`.
+  - Found on the way: the viewport's size came only from scroll events, so a
+    window taller than 600 px left rows below 600 px unrendered until a
+    scroll, and a size read before the stylesheet applied is the whole
+    canvas's — a render of a million rows. The viewport now takes its size
+    from a resize observer, and one render lays out at most 400 rows and 100
+    columns whatever size it is told.
+  - Still open: past the cap a wheel notch moves the rows by more than its
+    pixels (×1.7 at 2M rows, ×8.7 at 10M). The `scroll_*` perf scenarios
+    mount the grid with no columns, so they time rows without cells; that is
+    step 7's to fix, with the budgets it would move.
+- **Last touched:** 2026-09-26
 
 ### PD-027 — The first window owns the event bus
 

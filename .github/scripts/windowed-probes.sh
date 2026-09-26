@@ -7,7 +7,7 @@
 # editor, a second window. The headless suite cannot, which is how screens that
 # rendered could still do nothing (PD-023).
 #
-#   .github/scripts/windowed-probes.sh [probe ...]    default: all six
+#   .github/scripts/windowed-probes.sh [probe ...]    default: all seven
 #
 # Needs a display. CI runs it under `xvfb-run`; on a desktop it uses yours.
 # Expects the probes already built:
@@ -21,7 +21,7 @@ fi
 
 probes=("$@")
 if [ ${#probes[@]} -eq 0 ]; then
-  probes=(shell_probe window_probe modal_trap_probe settings_window_probe console_probe visual_probe)
+  probes=(shell_probe window_probe modal_trap_probe settings_window_probe console_probe visual_probe grid_probe)
 fi
 
 root=$(git rev-parse --show-toplevel)

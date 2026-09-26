@@ -58,6 +58,10 @@ pub struct CellEditorProps {
     #[props(default = ColumnType::String)]
     pub column_type: ColumnType,
     pub on_done: EventHandler<EditOutcome>,
+    /// How far the grid draws its rows above `row × ROW_H`: nonzero once a
+    /// table outgrows the canvas (`grid::scroll`).
+    #[props(default)]
+    pub shift: f64,
 }
 
 #[component]
@@ -71,7 +75,7 @@ pub fn CellEditor(props: CellEditorProps) -> Element {
         .get(props.cell.col)
         .copied()
         .unwrap_or(COL_W_DEFAULT);
-    let top = props.cell.row as f64 * ROW_H;
+    let top = props.cell.row as f64 * ROW_H - props.shift;
     let style = format!("left: {left}px; top: {top}px; width: {width}px;");
 
     let on_done = props.on_done;
