@@ -338,6 +338,15 @@ pub async fn open_paths(ws: Workspace, paths: Vec<PathBuf>) {
     for package in packages {
         crate::package_open::open_here(ws, package);
     }
+    // A folder is a workspace, opened in a window of its own as Open
+    // Workspace… opens one, and a folder that holds none says so. It was
+    // read as a file with no extension, and refused as a type dat0 cannot
+    // read (PD-023, step 5.11b).
+    let (folders, paths): (Vec<PathBuf>, Vec<PathBuf>) =
+        paths.into_iter().partition(|p| p.is_dir());
+    for folder in folders {
+        crate::workspace_open::open_here(ws, folder);
+    }
     if paths.is_empty() {
         return;
     }

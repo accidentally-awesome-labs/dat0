@@ -524,3 +524,45 @@ fn a_recent_workspace_on_the_hero_opens_as_a_workspace() {
         banners(&h)
     );
 }
+
+/// A folder named on the command line, or dropped on a window, is read as a
+/// workspace. It was read as a file with no extension and refused as a type
+/// dat0 cannot read (PD-023, step 5.11b).
+#[test]
+#[serial]
+fn a_workspace_folder_named_or_dropped_opens_as_the_workspace() {
+    let rt = runtime();
+    let _guard = rt.enter();
+    let root = workspace(&rt, "named");
+    let plain = STATE_ROOT.join("named-plain");
+    std::fs::create_dir_all(&plain).unwrap();
+    let (boot, mut rx) = boot();
+    let mut h = mount(Opening::files(vec![root.clone(), plain]), None, boot);
+
+    let mut windows = Vec::new();
+    for _ in 0..4800 {
+        h.settle();
+        windows.extend(asked(&mut rx));
+        if !windows.is_empty() && banners(&h).contains(&t("workspace.open.not_a_workspace")) {
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(25));
+    }
+    assert_eq!(
+        windows,
+        [Opening::Workspace {
+            root,
+            networked: false
+        }],
+        "the workspace opens in a window of its own"
+    );
+    let said = banners(&h);
+    assert!(
+        said.contains(&t("workspace.open.not_a_workspace")),
+        "a folder that holds none says so: {said:?}"
+    );
+    assert!(
+        !said.contains(&t("drop.unsupported")),
+        "neither is refused as a file type: {said:?}"
+    );
+}

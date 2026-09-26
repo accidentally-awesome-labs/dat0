@@ -99,6 +99,15 @@ pub fn open(ws: Workspace, events: &AppEvents, folder: PathBuf) {
     }
 }
 
+/// [`open`], from where no bus is to hand: a folder dropped on the window,
+/// or named on the command line.
+pub fn open_here(ws: Workspace, folder: PathBuf) {
+    match try_consume_context::<AppEvents>() {
+        Some(events) => open(ws, &events, folder),
+        None => tracing::warn!(folder = %folder.display(), "open workspace: no event bus"),
+    }
+}
+
 /// File → Open Recent: the `ix`-th recent workspace, as the menu listed it.
 pub fn open_recent(ws: Workspace, events: &AppEvents, ix: &str) {
     if let Some(root) = ix.parse().ok().and_then(crate::menu::listed_recent) {

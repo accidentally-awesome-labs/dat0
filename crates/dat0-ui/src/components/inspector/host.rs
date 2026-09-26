@@ -149,7 +149,8 @@ impl InspectorHost {
                 .iter()
                 .map(|c| ChartNode {
                     name: c.name.clone(),
-                    source_table: unquote(&c.spec.source),
+                    source_table: crate::components::charts::source_table(&c.spec.source)
+                        .unwrap_or_default(),
                 })
                 .collect();
             let graph = LineageGraph::build(&tables, &sql_parents, &nodes);
@@ -245,26 +246,5 @@ pub fn open(ws: Workspace, charts: ChartHost, (kind, name): (NodeKind, String)) 
             ws.show_tab(name, path);
         }
         NodeKind::File => {}
-    }
-}
-
-/// A quoted identifier as the name it quotes; anything else as it is.
-fn unquote(source: &str) -> String {
-    source
-        .strip_prefix('"')
-        .and_then(|s| s.strip_suffix('"'))
-        .map(|s| s.replace("\"\"", "\""))
-        .unwrap_or_else(|| source.to_string())
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn a_quoted_name_reads_as_the_name_it_quotes() {
-        assert_eq!(unquote("\"sales\""), "sales");
-        assert_eq!(unquote(&quote_ident("a\"b")), "a\"b");
-        assert_eq!(unquote("plain"), "plain");
     }
 }

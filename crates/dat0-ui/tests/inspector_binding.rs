@@ -97,6 +97,34 @@ fn Host(props: HostProps) -> Element {
                 },
             }
         }
+        // A chart as a package stores it: its source schema-qualified, the
+        // form `ChartSpec` documents and the demo package carries.
+        button {
+            "data-a11y-id": "store-chart",
+            onclick: move |_| {
+                let slot = ws.session.peek().ready().cloned().expect("session ready");
+                let mut session = slot.lock();
+                let mut charts = session.charts().to_vec();
+                dat0_core::session::charts::upsert_chart(
+                    &mut charts,
+                    dat0_core::session::charts::SavedChart {
+                        id: uuid::Uuid::now_v7(),
+                        name: "Stored".into(),
+                        spec: dat0_engine::chart_spec::ChartSpec {
+                            chart_type: dat0_engine::chart_spec::ChartType::Bar,
+                            source: "\"main\".\"sales\"".into(),
+                            x: Some("region".into()),
+                            y: Some("amt".into()),
+                            group: None,
+                            color: None,
+                            title: String::new(),
+                        },
+                        saved_at: 0,
+                    },
+                );
+                session.set_charts(charts).expect("store the chart");
+            },
+        }
         Shell {}
     }
 }
@@ -345,5 +373,31 @@ fn a_saved_chart_is_in_its_tables_lineage_and_comes_back_from_it() {
         "the saved chart, as it was saved: {:?} / {:?}",
         text(&h, "chart-axis-x"),
         text(&h, "pane-head-charts")
+    );
+}
+
+/// A package's chart names its table schema and all, `"main"."sales"`, as the
+/// demo's does. The lineage read only `"sales"`, so such a chart was neither
+/// listed nor shown again (PD-023, step 5.11b).
+#[test]
+#[serial]
+fn a_chart_a_package_stored_is_in_its_tables_lineage_and_comes_back() {
+    let rt = runtime();
+    let _guard = rt.enter();
+    let (mut h, _) = window("stored", &[("sales.csv", sales(40))]);
+    h.click("store-chart");
+    perform(&mut h, ids::INSPECTOR_TOGGLE);
+    assert!(
+        pump(&mut h, |h| has(h, "lineage-1-Stored")),
+        "listed under its table: {:?}",
+        lineage(&h)
+    );
+
+    h.click("lineage-1-Stored");
+    assert!(
+        pump(&mut h, |h| text(h, "chart-axis-x").contains("region")),
+        "shown again: {:?} / {:?}",
+        text(&h, "pane-head-charts"),
+        text(&h, "banner-host")
     );
 }

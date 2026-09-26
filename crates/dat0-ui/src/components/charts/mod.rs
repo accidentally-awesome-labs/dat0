@@ -252,6 +252,51 @@ fn source_label(source: &str) -> String {
     source.replace('"', "")
 }
 
+/// The table a chart's stored source names: `"t"`, as this build saves it,
+/// or `"main"."t"`, as `ChartSpec` documents and the GPUI build and the demo
+/// package store it; a bare name reads as itself. None for any other shape,
+/// which names no table here. The name is only compared with the window's
+/// tables, never put into a query.
+pub(crate) fn source_table(source: &str) -> Option<String> {
+    if !source.starts_with('"') {
+        return Some(source.to_string());
+    }
+    match quoted_parts(source)?.as_slice() {
+        [table] => Some(table.clone()),
+        [schema, table] if schema == "main" => Some(table.clone()),
+        _ => None,
+    }
+}
+
+/// `"a"."b"` as `["a", "b"]`, a doubled quote read as one; None unless the
+/// whole of `s` is quoted names joined by dots.
+fn quoted_parts(s: &str) -> Option<Vec<String>> {
+    let mut parts = Vec::new();
+    let mut chars = s.chars().peekable();
+    loop {
+        if chars.next()? != '"' {
+            return None;
+        }
+        let mut name = String::new();
+        loop {
+            match chars.next()? {
+                '"' if chars.peek() == Some(&'"') => {
+                    chars.next();
+                    name.push('"');
+                }
+                '"' => break,
+                c => name.push(c),
+            }
+        }
+        parts.push(name);
+        match chars.next() {
+            None => return Some(parts),
+            Some('.') => {}
+            Some(_) => return None,
+        }
+    }
+}
+
 // ── Component ────────────────────────────────────────────────────────────────
 
 #[derive(Clone, PartialEq, Props)]
@@ -520,6 +565,29 @@ fn Body(spec: ChartSpec, bound: bool, state: Signal<ChartLoad>) -> Element {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_source_names_its_table_quoted_or_qualified() {
+        assert_eq!(source_table("\"sales\"").as_deref(), Some("sales"));
+        assert_eq!(
+            source_table(&dat0_engine::quote_ident("a\"b")).as_deref(),
+            Some("a\"b")
+        );
+        // As `ChartSpec` documents it, and the demo package stores it.
+        assert_eq!(
+            source_table("\"main\".\"revenue_by_genre\"").as_deref(),
+            Some("revenue_by_genre")
+        );
+        assert_eq!(source_table("plain").as_deref(), Some("plain"));
+    }
+
+    #[test]
+    fn a_source_that_names_no_table_here_is_none() {
+        assert_eq!(source_table("\"other\".\"t\""), None, "another schema");
+        assert_eq!(source_table("\"a\".\"b\".\"c\""), None);
+        assert_eq!(source_table("\"unclosed"), None);
+        assert_eq!(source_table("\"t\" trailing"), None);
+    }
 
     fn spec(t: ChartType) -> ChartSpec {
         ChartSpec {

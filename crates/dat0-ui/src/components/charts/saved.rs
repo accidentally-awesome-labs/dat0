@@ -10,7 +10,7 @@ use dioxus::prelude::*;
 use dat0_core::charts::spec::ChartSpec;
 use dat0_core::error_ux::Banner;
 use dat0_core::session::charts::{SavedChart, default_chart_name, upsert_chart};
-use dat0_engine::{QueryEngine, TableOrigin, quote_ident};
+use dat0_engine::{QueryEngine, TableOrigin};
 use dat0_i18n::t;
 
 use super::host::ChartHost;
@@ -100,7 +100,11 @@ pub fn reopen(ws: Workspace, host: ChartHost, name: String) {
         return;
     };
     spawn(async move {
-        let quotes = |table: &str| quote_ident(table) == saved.spec.source;
+        // The table the chart names, however it was written: `"t"` as this
+        // build saves it, or `"main"."t"` as the GPUI build, and so the demo
+        // package, stored it.
+        let wanted = super::source_table(&saved.spec.source);
+        let quotes = |table: &str| wanted.as_deref() == Some(table);
         let open = ws.tabs.peek().iter().find(|t| quotes(&t.table)).cloned();
         let (table, path) = match open {
             Some(tab) => (Some(tab.table), tab.path),

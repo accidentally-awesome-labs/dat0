@@ -22,7 +22,7 @@ PD-023 in [`docs/deferrals.md`](docs/deferrals.md)).
 
 | Works in the current build | Being reconnected |
 |---|---|
-| Opening CSV, TSV, JSON, Parquet and SQLite — file picker, drag-and-drop, command line — into a virtualized grid, and the import wizard for a CSV whose delimiter or encoding needs asking | A workspace folder dropped onto a window or named on the command line (File → Open Workspace… opens one) |
+| Opening CSV, TSV, JSON, Parquet and SQLite — file picker, drag-and-drop, command line — into a virtualized grid, and the import wizard for a CSV whose delimiter or encoding needs asking | |
 | MotherDuck, with your token: the account's databases listed and their tables opened | |
 | The SQL console: running a query into the grid, history, saved queries, completion | |
 | AI assist, with your own key: SQL written from a question, and a statement explained, from the schema alone | |
