@@ -23,8 +23,9 @@ PD-023 in [`docs/deferrals.md`](docs/deferrals.md)).
 | Works in the current build | Being reconnected |
 |---|---|
 | Opening CSV, TSV, JSON, Parquet and SQLite — file picker, drag-and-drop, command line — into a virtualized grid | MotherDuck |
-| The SQL console: running a query into the grid, history, saved queries, completion | AI assist |
-| Sort, filter, cell edits, undo, export and Live Refresh | Crash reporting |
+| The SQL console: running a query into the grid, history, saved queries, completion | Crash reporting |
+| AI assist, with your own key: SQL written from a question, and a statement explained, from the schema alone | |
+| Sort, filter, cell edits, undo, export and Live Refresh | |
 | Charts of the active tab, drawn from its filters and edits, saved, and exported as PNG or SVG | |
 | The inspector: a profile of the active tab's table, its columns' small charts, and its lineage | |
 | Workspaces — open, save, recent — and the demo workspace; a closed or crashed window's work comes back | |

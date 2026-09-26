@@ -22,6 +22,7 @@
   "ai.model": "Model",
   "ai.model.prompt": "Model name (e.g. gpt-4o)",
   "ai.model.set_button": "Save model",
+  "ai.not_ready": "AI needs a provider, a key and a model: set them in the AI panel",
   "ai.privacy.body": "Schema names and your prompt are sent to the selected provider. No row data is sent unless 'Include sample rows' is on.",
   "ai.privacy.title": "AI requests leave your machine",
   "ai.provider": "Provider",

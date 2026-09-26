@@ -10,7 +10,6 @@ use dioxus::prelude::*;
 use dat0_core::sample_data::SampleKind;
 
 use crate::a11y::{AccessRole, format_swatch};
-use crate::components::ai::StreamView;
 use crate::components::banner::BannerHost;
 use crate::components::charts::Charts;
 use crate::components::charts::host::ChartHost;
@@ -203,7 +202,7 @@ pub fn Shell() -> Element {
     // a component mounted without one — the headless harness, a probe — is
     // simply a tree with no router attached, not a broken window.
     let mut surface_slot = try_consume_context::<crate::router::SurfaceSlot>();
-    let surface_host = console_host.clone();
+    let (surface_host, surface_ai) = (console_host.clone(), ai.clone());
     use_hook(move || {
         let Some(mut slot) = surface_slot.take() else {
             return;
@@ -211,7 +210,7 @@ pub fn Shell() -> Element {
         slot.set(Some(crate::router::Surface::new(move |id| {
             surface_command(
                 ws,
-                ai.clone(),
+                surface_ai.clone(),
                 surface_host.clone(),
                 views,
                 edits,
@@ -336,7 +335,7 @@ pub fn Shell() -> Element {
                         connections: rows.connections.clone(),
                         packages: rows.packages.clone(),
                         session_line: session_line(&ws),
-                        ai_line: "ai none".to_string(),
+                        ai_line: ai_line(&ai),
                         egress_line: egress_line(&ws.status.read()),
                         on_open: move |(section, i): (&'static str, usize)| {
                             match section {
@@ -592,12 +591,17 @@ pub fn Shell() -> Element {
                                     active: console.read().active(),
                                     schema: console_host.schema.clone(),
                                     running: console_host.running(),
-                                    stream: StreamView::default(),
+                                    stream: ai.state.stream.read().clone(),
                                     error: console_host.error.cloned(),
+                                    ai_ready: ai.ready(),
                                     carets: Some(console_host.carets),
                                     on_intent: {
-                                        let host = console_host.clone();
-                                        move |i| crate::components::sql_console::host::perform(&host, i)
+                                        let (host, ai) = (console_host.clone(), ai.clone());
+                                        move |i| {
+                                            if let Some(i) = crate::ai_flow::console(ws, &ai, &host, i) {
+                                                crate::components::sql_console::host::perform(&host, i);
+                                            }
+                                        }
                                     },
                                     on_select_tab: move |i| console.write().select(i),
                                 }
@@ -823,6 +827,14 @@ fn focused(
     let columns = views.columns(&shown, &src.visible_column_names());
     let col = selection.read().active().col;
     columns.get(col).map(|c| c.source.clone())
+}
+
+/// The status line's AI: the provider in use once AI is ready.
+fn ai_line(ai: &crate::components::ai::AiController) -> String {
+    match ai.state.draft.read().provider {
+        Some(p) if ai.ready() => format!("ai {}", p.id()),
+        _ => "ai none".to_string(),
+    }
 }
 
 fn session_line(ws: &Workspace) -> String {

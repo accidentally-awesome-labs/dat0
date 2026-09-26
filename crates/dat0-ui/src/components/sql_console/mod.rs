@@ -99,6 +99,13 @@ pub enum ConsoleIntent {
         tab: String,
         sql: String,
     },
+    /// Ask AI for a statement: the host asks what for, and streams the answer
+    /// into the preview strip.
+    AskAi,
+    /// Ask AI to explain the showing statement.
+    Explain {
+        sql: String,
+    },
     /// Stop the streaming NL→SQL or Explain answer.
     StopStream,
     /// Take the generated SQL into a new tab.
@@ -129,6 +136,10 @@ pub struct SqlConsoleProps {
     /// The failed-run strip. `None` means no strip.
     #[props(default)]
     pub error: Option<String>,
+    /// AI is on, with a provider, a key and a model: NL→SQL and Explain are
+    /// offered.
+    #[props(default)]
+    pub ai_ready: bool,
     pub on_intent: EventHandler<ConsoleIntent>,
     pub on_select_tab: EventHandler<usize>,
     /// Where each tab's caret was last reported, so a run takes the statement
@@ -148,6 +159,7 @@ impl PartialEq for SqlConsoleProps {
             && self.running == other.running
             && self.stream == other.stream
             && self.error == other.error
+            && self.ai_ready == other.ai_ready
             && self.carets == other.carets
             && std::sync::Arc::ptr_eq(&self.schema, &other.schema)
     }
@@ -200,6 +212,8 @@ pub fn SqlConsole(props: SqlConsoleProps) -> Element {
     let running = props.running;
     let stream = props.stream.clone();
     let strip = strip_phase(&stream);
+    // AI is offered while it is ready and no answer is still arriving.
+    let ai_open = props.ai_ready && !matches!(strip, Some((_, true)));
     let error = props.error.clone();
     let focus = focus_target(&stream, error.as_deref());
     let tab_count = tabs.len();
@@ -462,6 +476,23 @@ pub fn SqlConsole(props: SqlConsoleProps) -> Element {
                         }
                     },
                 }
+                // Offered while AI is ready and no answer is still arriving:
+                // one stream at a time, as the strip shows one.
+                Tool {
+                    id: "console-nl2sql",
+                    label: dat0_i18n::t("sql.nl2sql.chip"),
+                    disabled: !ai_open,
+                    on_act: move |_| on_intent.call(ConsoleIntent::AskAi),
+                }
+                Tool {
+                    id: "console-explain",
+                    label: dat0_i18n::t("sql.explain.button"),
+                    disabled: !ai_open || sql.trim().is_empty(),
+                    on_act: {
+                        let sql = sql.clone();
+                        move |_| on_intent.call(ConsoleIntent::Explain { sql: sql.clone() })
+                    },
+                }
             }
 
             if let Some((kind, streaming)) = strip {
@@ -558,6 +589,7 @@ fn Tool(
     id: &'static str,
     label: String,
     #[props(default = false)] takes_focus: bool,
+    #[props(default = false)] disabled: bool,
     on_act: EventHandler<()>,
 ) -> Element {
     rsx! {
@@ -567,6 +599,7 @@ fn Tool(
             role: AccessRole::Button.aria(),
             "aria-label": "{label}",
             tabindex: "0",
+            disabled,
             onmounted: move |e: Event<MountedData>| {
                 if takes_focus {
                     spawn(async move {

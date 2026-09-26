@@ -19,6 +19,8 @@ expression: "rendered[0].1"
 <button class="d0-btn" data-a11y-id="console-save-query" role="button" aria-label="Save Query…" tabindex="0">Save Query…</button>
 <button class="d0-btn" data-a11y-id="console-load-query" role="button" aria-label="Saved Queries…" tabindex="0">Saved Queries…</button>
 <button class="d0-btn" data-a11y-id="console-save-as-table" role="button" aria-label="Save as Table…" tabindex="0">Save as Table…</button>
+<button class="d0-btn" data-a11y-id="console-nl2sql" role="button" aria-label="NL→SQL" tabindex="0" disabled=true>NL→SQL</button>
+<button class="d0-btn" data-a11y-id="console-explain" role="button" aria-label="Explain" tabindex="0" disabled=true>Explain</button>
 </div>
 <div class="d0-editor" id="cm-tab-1" data-a11y-id="sql-editor-tab-1" role="textbox" aria-label="SQL editor" aria-multiline="true" tabindex="0">
 </div>

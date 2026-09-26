@@ -58,6 +58,8 @@ fn note(i: &ConsoleIntent) -> String {
         ConsoleIntent::SaveQuery { sql, .. } => format!("save:{sql}"),
         ConsoleIntent::LoadQuery => "load".into(),
         ConsoleIntent::SaveAsTable { sql, .. } => format!("as-table:{sql}"),
+        ConsoleIntent::AskAi => "ask-ai".into(),
+        ConsoleIntent::Explain { sql } => format!("explain:{sql}"),
         ConsoleIntent::StopStream => "stop".into(),
         ConsoleIntent::InsertGenerated { sql } => format!("insert:{sql}"),
         ConsoleIntent::DiscardStream => "discard".into(),
