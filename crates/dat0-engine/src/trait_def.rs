@@ -183,6 +183,15 @@ pub trait QueryEngine: Send + Sync {
     async fn attach(&self, dsn: &str, alias: &str, opts: AttachOpts) -> Result<()>;
     async fn detach(&self, alias: &str) -> Result<()>;
 
+    /// The tables and views of the database attached as `alias`, by name,
+    /// sorted. [`get_tables`](Self::get_tables) lists this engine's own
+    /// database alone: an attached database's tables are not the session's,
+    /// and a bare name does not reach them.
+    async fn attached_tables(&self, alias: &str) -> Result<Vec<String>> {
+        let _ = alias;
+        Ok(Vec::new())
+    }
+
     /// Ensure `table` carries the `__dat0_rowid` surrogate (idempotent). Injected
     /// at import; back-filled lazily for pre-P4b tables. See design §5.
     ///

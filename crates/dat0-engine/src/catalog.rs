@@ -97,20 +97,20 @@ pub(crate) fn get_tables(
     // PD-014 context: T13 calls create_or_replace_view on every chain mutation;
     // without this filter every active tab would inject a phantom sidebar entry.
     //
-    // database_name (D-012): we also select `database_name` so attached catalogs
-    // (e.g. an ATTACHed SQLite db) are described against the RIGHT database.
-    // `describe_table(conn, name, Some("main"))` builds `DESCRIBE "main"."items"`,
-    // which binds against the DEFAULT database and errors for an attached table
-    // ("Table with name items does not exist! Did you mean \"sq.items\"?"). We
-    // therefore qualify DESCRIBE with all three parts: `"db"."schema"."table"`.
-    // This is correct for local tables too — the engine's own db carries a real
-    // `database_name` and the 3-part name resolves identically. `system`/`temp`
-    // are excluded so we never surface DuckDB's internal catalogs.
+    // This engine's own database only (`current_database()`). An attached
+    // database's tables (a SQLite file, MotherDuck) are listed by
+    // `list_attached_tables` instead: they are not the session's, a bare name
+    // does not reach them, and listed here beside a local table of the same
+    // name they read as two tables called one thing. A session reaches an
+    // attached table through a view of its own, which is listed here.
+    //
+    // DESCRIBE is qualified with all three parts, `"db"."schema"."table"`
+    // (D-012), which resolves the engine's own tables as a bare name would.
     let mut stmt = conn.prepare(
         "SELECT database_name, schema_name AS table_schema, table_name
          FROM duckdb_tables()
          WHERE schema_name NOT IN ('information_schema', 'pg_catalog')
-           AND database_name NOT IN ('system', 'temp')
+           AND database_name = current_database()
            AND NOT internal
            AND NOT temporary
            AND table_name NOT LIKE '__dat0_meta%'
@@ -118,7 +118,7 @@ pub(crate) fn get_tables(
          SELECT database_name, schema_name AS table_schema, view_name AS table_name
          FROM duckdb_views()
          WHERE schema_name NOT IN ('information_schema', 'pg_catalog')
-           AND database_name NOT IN ('system', 'temp')
+           AND database_name = current_database()
            AND NOT internal
            AND NOT temporary
            AND view_name NOT LIKE '__dat0_meta%'",
@@ -142,7 +142,15 @@ pub(crate) fn get_tables(
             quote_ident(&schema),
             quote_ident(&name)
         );
-        let cols = describe_qualified(conn, &qualified)?;
+        // A view over a database no longer attached cannot be described. It
+        // is left out, rather than failing the call and hiding every table.
+        let cols = match describe_qualified(conn, &qualified) {
+            Ok(cols) => cols,
+            Err(e) => {
+                tracing::warn!(table = %name, error = %e, "get_tables: cannot describe, left out");
+                continue;
+            }
+        };
         let origin = origins
             .get(&name)
             .cloned()

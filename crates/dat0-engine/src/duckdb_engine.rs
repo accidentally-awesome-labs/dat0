@@ -965,21 +965,23 @@ impl crate::QueryEngine for DuckDBEngine {
         let names = tokio::task::spawn_blocking(move || -> Result<Vec<String>> {
             let conn = conn.lock().map_err(|_| EngineError::EnginePoisoned)?;
             conn.execute_batch(&sql)?;
-            // Best-effort: the ATTACH already succeeded; an enumeration hiccup must
-            // not undo it. Swallow + warn (matches the md arm) so origins may be
-            // incomplete rather than failing a good attach.
-            let names = match crate::catalog::list_attached_tables(&conn, &alias_owned) {
-                Ok(rows) => rows.into_iter().map(|(_schema, table)| table).collect(),
+            // ATTACH opens a SQLite file lazily, so one that cannot be read
+            // attaches all the same, and from then on every catalog query
+            // fails on it: `duckdb_tables()` scans every database, so this
+            // engine's own `get_tables` fails too. Reading the attached
+            // catalog is what finds out; when it fails, the attachment is
+            // undone and the attach fails.
+            match crate::catalog::list_attached_tables(&conn, &alias_owned) {
+                Ok(rows) => Ok(rows.into_iter().map(|(_schema, table)| table).collect()),
                 Err(e) => {
-                    tracing::warn!(
-                        alias = %alias_owned,
-                        error = %e,
-                        "attach: attached-table enumeration failed; origins may be incomplete"
-                    );
-                    Vec::new()
+                    if let Err(undo) =
+                        conn.execute_batch(&crate::attach::build_detach_sql(&alias_owned))
+                    {
+                        tracing::warn!(alias = %alias_owned, error = %undo, "attach: could not undo");
+                    }
+                    Err(e)
                 }
-            };
-            Ok(names)
+            }
         })
         .await
         .map_err(|e| EngineError::TaskJoin(e.to_string()))??;
@@ -1018,6 +1020,24 @@ impl crate::QueryEngine for DuckDBEngine {
             |_, o| !matches!(o, crate::types::TableOrigin::Attached { alias: a, .. } if a == alias),
         );
         Ok(())
+    }
+
+    async fn attached_tables(&self, alias: &str) -> Result<Vec<String>> {
+        self.assert_open()?;
+        let conn = self.conn.clone();
+        let alias = alias.to_owned();
+        tokio::task::spawn_blocking(move || -> Result<Vec<String>> {
+            let conn = conn.lock().map_err(|_| EngineError::EnginePoisoned)?;
+            let mut names: Vec<String> = crate::catalog::list_attached_tables(&conn, &alias)?
+                .into_iter()
+                .map(|(_, name)| name)
+                .collect();
+            names.sort();
+            names.dedup();
+            Ok(names)
+        })
+        .await
+        .map_err(|e| EngineError::TaskJoin(e.to_string()))?
     }
 
     #[instrument(skip(self), fields(table = table))]
