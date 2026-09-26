@@ -1,6 +1,6 @@
 [package]
 name = "dat0-ui"
-version = "0.1.0"
+version.workspace = true
 edition = "2024"
 license = "Apache-2.0"
 repository = "https://github.com/accidentally-awesome-labs/dat0"

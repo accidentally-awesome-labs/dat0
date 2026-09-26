@@ -44,9 +44,9 @@ pub enum PackageCmd {
     Diff { a: PathBuf, b: PathBuf, json: bool },
     /// `dat0 --version` / `dat0 -V`.
     ///
-    /// RL3: `release.yml`'s Linux smoke test runs
-    /// `./squashfs-root/AppRun --version` inside a bare `ubuntu:24.04`
-    /// container. Before this variant existed, [`parse`] returned `None` for
+    /// RL3: the AppImage smoke test (`scripts/appimage-smoke.sh`, in
+    /// `release.yml`'s Linux job) runs `./squashfs-root/AppRun --version` in
+    /// a fresh container before it starts a display. Before this variant existed, [`parse`] returned `None` for
     /// `--version` and `main` fell through to a full GPUI launch — which has
     /// no display, no GPU and no window server in that container, so the
     /// "smoke test" either hung or failed for a reason unrelated to the
@@ -237,8 +237,8 @@ fn cli_command() -> Command {
 /// `0` success, `1` logical failure (e.g. a non-empty diff, T5), `2` error.
 pub fn run(cmd: PackageCmd) -> i32 {
     // `--version` / `--help` short-circuit before ANY runtime, engine or GPUI
-    // work: `release.yml`'s Linux smoke test runs these inside a bare
-    // `ubuntu:24.04` container with no display and no tokio need.
+    // work: the AppImage smoke test runs `--version` in a fresh container
+    // before it starts a display.
     if let PackageCmd::Version = cmd {
         // `git_sha` is `BuildInfo::current().git_sha`, i.e. `env!("DAT0_GIT_SHA")`
         // (about/build_info.rs:12) — the same identity the About box shows, so a
@@ -719,7 +719,7 @@ mod tests {
 
     #[test]
     fn version_flag_parses() {
-        // Both spellings, because release.yml's Docker smoke uses the long one
+        // Both spellings, because the AppImage smoke test uses the long one
         // and humans reach for the short one.
         assert_eq!(
             parse(&argv(&["dat0", "--version"])),

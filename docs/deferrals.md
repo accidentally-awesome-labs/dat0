@@ -114,6 +114,7 @@ that's modifying it; merge conflicts are signals worth investigating.
 | PD-038 | A data tab cannot be closed: the tab strip only activates tabs, and no command closes one | open | medium |
 | PD-039 | A `.dat0` package or a workspace folder named at launch opens in a window of its own, beside an empty scratch window | open | low |
 | PD-040 | Parts of the shell cannot be reached by keyboard: the data tabs, a column's sort and filter, the inspector's lineage, and a dialog's first control | open | medium |
+| PD-041 | The release pipeline, never run, would have shipped a Linux AppImage that opened a blank window on most hosts and would not start on Ubuntu 22.04 or Debian 12, with no check that a tag carried the production update key | closed | high |
 
 > **Missing originating docs (noted 2026-09-25).** D-030 and D-032–D-036 cite
 > `docs/plans/2026-08-08-dat0-production-v1-plan.md`, and the migration log cites
@@ -3134,6 +3135,71 @@ that's modifying it; merge conflicts are signals worth investigating.
   sidebar's rows `tabindex="-1"`, as the tree's own key handling expects.
 - **Discovered:** 2026-09-26, checking the new UAT checklist against the
   code.
+- **Last touched:** 2026-09-26
+
+### PD-041 — The release pipeline would have shipped builds that do not work
+
+- **Status:** closed — 2026-09-26
+- **Severity:** high — the Linux download would have opened a blank window
+  on most hosts, and a tag carrying the test update key would have shipped
+  builds that never see an update
+- **Affected files:** `.github/workflows/release.yml`, `xtask/src/linux.rs`,
+  `xtask/src/sign.rs`, `xtask/src/macos.rs`, `crates/dat0-ui/src/launch.rs`,
+  `crates/dat0-ui/Cargo.toml`, `docs/about-template.hbs`
+- **Symptom:** `release.yml` had never run. Built and run under Docker, its
+  Linux half showed:
+  - The AppImage carried WebKitGTK, and WebKitGTK starts its page and
+    network processes from a path compiled into the library: the host's
+    own. The two speak one protocol only when they come from one build. The
+    AppImage built on Ubuntu 24.04 (WebKit 2.52.6) opened a blank window on
+    Ubuntu 25.10 (2.52.3), its helpers dying on the first message.
+  - Built on `ubuntu-latest`, the binary needed glibc 2.38
+    (`__isoc23_strtol`), so it would not start on Ubuntu 22.04 or Debian 12.
+  - Its one check, `--version` in a container, passes on a blank window.
+  - linuxdeploy and appimagetool were downloaded from moving `continuous`
+    builds, unchecked, into the job that holds the GPG key.
+
+  And by reading it:
+  - No step gave the builds the crash-report DSN, so release binaries would
+    carry the stub, and reports users opt in to would go nowhere.
+  - Nothing stopped a tag while the updater trusted the test key, and
+    `version_consistency.rs`, the only check that a tag names the workspace
+    version, runs in no job a tag starts. `dat0-ui` set its own version, so
+    its About box would keep saying 0.1.0.
+  - NOTICE named each licence but carried no licence text, and neither
+    bundle carried NOTICE, dat0's LICENSE or the fonts' OFL.
+  - The Info.plist claims `.dat0`, but nothing handled macOS's
+    open-documents event: a double-clicked package launched an empty window.
+  - A dry run needed every signing secret, so packaging could not be
+    exercised at all.
+- **Fix:**
+  - The AppImage carries the binary, libxdo and libxdo's two X extensions,
+    and takes WebKitGTK, GTK and GLib from the host; a library the binary
+    starts to link stops the bundle until someone decides which side it is
+    on (`xtask::linux::HOST_LIBRARIES`).
+  - The AppImage is built on Ubuntu 22.04. `scripts/appimage-smoke.sh`
+    starts it on Ubuntu 22.04, Debian 12 and 24.04, each given WebKitGTK
+    and nothing else, and fails unless WebKit's helpers stay up and the
+    screenshot is not blank. Run under Docker, it passed for the new
+    AppImage on 24.04 and 25.10 and failed as described for the old one.
+  - appimagetool and the AppImage runtime are pinned by release and
+    SHA-256; linuxdeploy is gone.
+  - `cargo xtask release-check` runs first on every run: a tag stops when
+    it does not name the workspace version, a shipped crate sets its own,
+    the updater trusts a test key, the DSN is missing or the stub, the NYC
+    taxi sample's hash is a placeholder, or a signing secret is missing; a
+    dry run lists the same as warnings. `dat0-ui` takes the workspace
+    version.
+  - Both builds receive `GLITCHTIP_DSN_PUBLIC` when it is set.
+  - NOTICE carries each licence's text, and both bundles carry NOTICE,
+    LICENSE and the font and icon licences.
+  - `launch::open_documents` hands the event's files to the first window
+    when a double-click launches dat0, and to a window of their own
+    otherwise.
+  - A dry run without secrets builds, checks and uploads both platforms,
+    signing nothing; a tag always signs. The keychain no longer locks
+    during notarization, and signing starts after the build.
+- **Discovered:** 2026-09-26, step 7 of the 2026-09-25 review.
 - **Last touched:** 2026-09-26
 
 ## How to add an entry

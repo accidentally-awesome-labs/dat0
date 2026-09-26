@@ -14,6 +14,8 @@ image = { version = "0.25", default-features = false, features = ["png"] }
 # one JSON line each scenario prints.
 serde = { workspace = true }
 serde_json = { workspace = true }
+# The release gate reads the workspace's manifests and `.cargo/config.toml`.
+toml = { workspace = true }
 
 [dev-dependencies]
 tempfile = { workspace = true }

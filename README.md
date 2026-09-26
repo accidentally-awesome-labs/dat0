@@ -52,7 +52,11 @@ from the first beta:
 | macOS (arm64 + x86_64) | `dat0-<version>-universal.dmg` — mount, drag to Applications |
 | Linux x86_64 | `dat0-<version>-x86_64.AppImage` — `chmod +x`, then run |
 
-Linux aarch64 is planned but not yet built by the release pipeline.
+The AppImage runs on Ubuntu 22.04, Debian 12 and newer (glibc 2.35 or later)
+and uses the system's WebKitGTK 4.1, as the macOS build uses the system's
+WebKit: install `libwebkit2gtk-4.1-0` (Debian, Ubuntu) or `webkit2gtk4.1`
+(Fedora) if it is not there. Linux aarch64 is planned but not yet built by the
+release pipeline.
 
 Until then, build from source: `cargo build --release` (requires the pinned Rust
 toolchain and the system libraries listed in [CONTRIBUTING.md](CONTRIBUTING.md)).
@@ -110,7 +114,7 @@ Dioxus in August 2026 (see
 - **Engine:** DuckDB native via the `duckdb` crate
 - **Wire format:** Apache Arrow (record batches, in-process)
 - **Async:** tokio
-- **Targets:** macOS arm64 + x86_64; Linux x86_64 + aarch64
+- **Targets:** macOS arm64 + x86_64; Linux x86_64 (aarch64 planned)
 
 ## What dat0 deliberately is not
 

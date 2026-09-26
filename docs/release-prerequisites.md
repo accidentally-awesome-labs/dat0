@@ -6,6 +6,9 @@
 >
 > Nothing in `release.yml` can produce a usable release until this checklist is
 > complete. Work top to bottom; each step ends in a verification you can run.
+> `cargo xtask release-check` lists what is still missing (`xtask/src/release.rs`),
+> and every run of `release.yml` starts with it: a tag stops on any finding,
+> and a dry run lists them as warnings.
 >
 > See also: `docs/release-runbook.md` (cutting a release),
 > `docs/security-runbook.md` (rotation, renewal, storage policy).
@@ -209,45 +212,55 @@ instance. Three secrets are needed before `crash-e2e.yml` stops self-skipping:
 
 | Secret | Where to find it |
 |---|---|
-| `DAT0_GLITCHTIP_DSN_PUBLIC` | GlitchTip → project → Settings → Client Keys (the full `https://…@host/N` URL) |
+| `GLITCHTIP_DSN_PUBLIC` | GlitchTip → project → Settings → Client Keys (the full `https://…@host/N` URL). `release.yml` and `crash-e2e.yml` compile it in as `DAT0_GLITCHTIP_DSN_PUBLIC`. |
 | `GLITCHTIP_API_TOKEN` | GlitchTip → account settings → API Tokens (read access to the dat0 project) |
 | `GLITCHTIP_PROJECT_SLUG` | the slug in the project URL, e.g. `dat0` |
 
 Development and CI builds use the stub `https://stub@glitchtip.invalid/1` from
 `.cargo/config.toml`, so nothing is emitted until a release build is compiled
-with the real DSN.
+with the real DSN. The release gate stops a tag built without it: the reports
+users opt in to would go nowhere.
 
 ---
 
 ## After the checklist
 
 ```bash
+cargo xtask release-check                                  # what is still missing
 cargo test -p dat0-core --test update_key_is_production -- --ignored  # step 1
 cargo test -p dat0-core --test update_manifest_roundtrip  # wire contract (no secrets needed)
 gh workflow run release.yml && gh run watch              # steps 2 + 3 end to end
 ```
 
-The `workflow_dispatch` dry run exercises `macos` and `linux` and skips
-`publish` (gated on `github.ref_type == 'tag'`), so it proves the signing and
-notarization chain but not manifest signing. That gap is covered locally by
-`crates/dat0-core/tests/update_manifest_roundtrip.rs`.
+The `workflow_dispatch` dry run exercises `gate`, `macos` and `linux` and
+skips `publish` (gated on `github.ref_type == 'tag'`), so it proves the
+signing and notarization chain but not manifest signing. That gap is covered
+locally by `crates/dat0-core/tests/update_manifest_roundtrip.rs`.
 
-### What the dry run must confirm on the two RL4 fixes
+It needs none of the secrets (step 7 of the 2026-09-25 review): each
+platform builds, is checked and uploads its artefacts, and signs only what the
+secrets allow. The macOS job then makes a disk image of the app
+signed ad hoc (`cargo xtask dmg-macos`), and the Linux job an unsigned
+AppImage. A tag always signs, so a tag without the secrets fails at signing
+rather than shipping unsigned.
 
-Both were real defects and both are fixed in code; the dry run is where the
-fixes get their first execution.
+### What the dry run must confirm
 
-- **AppImage dependency bundling.** `xtask/src/linux.rs` now runs a
-  `linuxdeploy --appdir … --executable … --desktop-file … --icon-file …` pass
-  before `appimagetool`, and hard-fails if that pass leaves `AppDir/AppRun`
-  absent or `AppDir/usr/lib` empty. Previously the AppDir held the bare binary
-  and no AppRun at all. The `Verify on clean Ubuntu` step installs only the
-  AppImage excludelist's host baseline (`libfontconfig1`, `libx11-6`, `libgl1`,
-  glib, …) into the container — every dat0-specific library (`libssl`,
-  `libpango`, `libxkbcommon`, `libsecret`, DuckDB's own) must come out of the
-  AppDir. **Confirm at the dry run:** that step passes, and that the exact
-  baseline package list resolves on `ubuntu:24.04` (noble renamed glib to
-  `libglib2.0-0t64`). A missing package name fails loudly and precisely.
+- **The AppImage starts and draws its page on clean systems.** It is built on
+  Ubuntu 22.04, the oldest glibc dat0 supports: one built on `ubuntu-latest`
+  needed glibc 2.38, which Ubuntu 22.04 and Debian 12 lack. It carries the
+  binary, libxdo and libxdo's two X extensions, and takes WebKitGTK, GTK and
+  GLib from the host (`xtask::linux::HOST_LIBRARIES` says why: an AppImage
+  that carried WebKit opened a blank window on any host whose WebKit differed
+  from the build machine's). `scripts/appimage-smoke.sh` starts it on Ubuntu
+  22.04, Debian 12 and Ubuntu 24.04, each given `libwebkit2gtk-4.1-0` and
+  nothing else dat0 needs, and fails unless it prints its version, WebKit's
+  helper processes stay up and the screenshot is not a blank window.
+  **Confirm at the dry run:** that step passes; the screenshots are in the
+  `appimage-smoke` artefact.
+- **The tools are the pinned ones.** appimagetool 1.9.1 and the AppImage
+  runtime 20251108 are checked against their SHA-256 before the job that
+  holds the GPG key runs them; linuxdeploy is no longer used.
 - **macOS update payload is signed.** `sign::sign_and_notarize` now staples the
   ticket to `dat0.app` and rebuilds `dat0.app.tar.gz` from the signed, stapled
   bundle (`macos::tar_app`, which deletes the stale archive and asserts its

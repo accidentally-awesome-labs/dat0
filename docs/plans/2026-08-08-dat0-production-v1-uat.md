@@ -1223,8 +1223,8 @@ Numbering, as of 2026-09-26:
 
 - **`D-` (deferrals):** D-038 is the highest in use (D-016, D-017 and D-035
   were never assigned). **New deferrals start at D-039.**
-- **`PD-` (plan defects):** PD-040 is the highest in use. **New plan defects
-  start at PD-041.**
+- **`PD-` (plan defects):** PD-041 is the highest in use. **New plan defects
+  start at PD-042.**
 
 Check the file before you write: either counter may have moved. Follow its "How to add an entry": the next id, a row in the
 at-a-glance table, a full entry.

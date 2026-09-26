@@ -2,47 +2,126 @@ name: Release
 on:
   push:
     tags: ['v*']
-  workflow_dispatch: {}   # dry run: builds + verifies, skips publish
+  # A dry run: builds, bundles and smoke-tests both platforms, signs what the
+  # secrets allow, publishes nothing, and says what a tag would still stop on.
+  workflow_dispatch: {}
 
+# The build jobs only read the repository; `publish` writes the release.
 permissions:
-  contents: write
+  contents: read
 
 jobs:
+  gate:
+    # What a release must carry before anything is built for it:
+    # xtask/src/release.rs. A tag stops here on any finding; a dry run lists
+    # them as warnings and goes on.
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@1.97.0
+      - name: What a release must carry
+        env:
+          DAT0_GLITCHTIP_DSN_PUBLIC: ${{ secrets.GLITCHTIP_DSN_PUBLIC }}
+          # Whether each secret is set, never its value.
+          HAVE_APPLE_DEV_ID_CERT_P12: ${{ secrets.APPLE_DEV_ID_CERT_P12 != '' }}
+          HAVE_CERT_PASSWORD: ${{ secrets.CERT_PASSWORD != '' }}
+          HAVE_KEYCHAIN_PASSWORD: ${{ secrets.KEYCHAIN_PASSWORD != '' }}
+          HAVE_AC_API_KEY_P8: ${{ secrets.AC_API_KEY_P8 != '' }}
+          HAVE_AC_KEY_ID: ${{ secrets.AC_KEY_ID != '' }}
+          HAVE_AC_ISSUER_ID: ${{ secrets.AC_ISSUER_ID != '' }}
+          HAVE_DAT0_SIGN_IDENTITY: ${{ secrets.DAT0_SIGN_IDENTITY != '' }}
+          HAVE_GPG_PRIVATE_KEY: ${{ secrets.GPG_PRIVATE_KEY != '' }}
+          HAVE_MINISIGN_SECRET_KEY: ${{ secrets.MINISIGN_SECRET_KEY != '' }}
+        run: |
+          if [ "$GITHUB_REF_TYPE" = tag ]; then
+            cargo xtask release-check --tag "$GITHUB_REF_NAME"
+          else
+            cargo xtask release-check
+          fi
+
   macos:
+    needs: gate
     runs-on: macos-14
-    timeout-minutes: 60
+    timeout-minutes: 90
+    env:
+      # A tag always signs, so a tag without the secrets fails at signing
+      # rather than shipping unsigned. A dry run signs when they are set.
+      SIGN: ${{ github.ref_type == 'tag' || secrets.APPLE_DEV_ID_CERT_P12 != '' }}
     steps:
       - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@1.97.0
         with: { targets: aarch64-apple-darwin,x86_64-apple-darwin }
       - run: brew install create-dmg
+      - name: Crash-report DSN and version
+        env: { DSN: "${{ secrets.GLITCHTIP_DSN_PUBLIC }}" }
+        run: |
+          # Set only when there is one: an empty value would override
+          # .cargo/config.toml's stub and compile an empty DSN into the binary.
+          if [ -n "$DSN" ]; then echo "DAT0_GLITCHTIP_DSN_PUBLIC=$DSN" >> "$GITHUB_ENV"; fi
+          # The workspace's; on a tag the gate has checked that the tag names it.
+          echo "VERSION=$(cargo metadata --no-deps --format-version 1 \
+            | jq -r '.packages[] | select(.name == "dat0-ui") | .version')" >> "$GITHUB_ENV"
+      - name: Bundle
+        run: |
+          cargo xtask gen-icon
+          cargo xtask bundle-macos --version "$VERSION" --git-sha "$(git rev-parse --short HEAD)"
+      - name: The bundle runs, holds both architectures and names its version
+        run: |
+          app=target/macos/dat0.app
+          printed=$("$app/Contents/MacOS/dat0" --version)
+          echo "$printed"
+          case "$printed" in
+            "dat0 $VERSION "*) ;;
+            *) echo "::error::--version printed '$printed', not dat0 $VERSION"; exit 1 ;;
+          esac
+          archs=$(lipo -archs "$app/Contents/MacOS/dat0")
+          case " $archs " in
+            *" x86_64 "*" arm64 "*|*" arm64 "*" x86_64 "*) ;;
+            *) echo "::error::the binary holds '$archs', not both architectures"; exit 1 ;;
+          esac
+          plutil -lint "$app/Contents/Info.plist"
+      # Signing comes after the build, so the keychain is unlocked only for as
+      # long as signing takes.
       - name: Import Developer ID cert
+        if: env.SIGN == 'true'
         env:
           CERT_P12: ${{ secrets.APPLE_DEV_ID_CERT_P12 }}
           CERT_PASSWORD: ${{ secrets.CERT_PASSWORD }}
           KEYCHAIN_PASSWORD: ${{ secrets.KEYCHAIN_PASSWORD }}
         run: |
-          echo "$CERT_P12" | base64 --decode > /tmp/cert.p12
+          echo "$CERT_P12" | base64 --decode > "$RUNNER_TEMP/cert.p12"
           security create-keychain -p "$KEYCHAIN_PASSWORD" build.keychain
+          # A new keychain locks after five idle minutes, and notarization
+          # can take longer; codesign then fails on a locked keychain.
+          security set-keychain-settings -lut 21600 build.keychain
           security default-keychain -s build.keychain
           security unlock-keychain -p "$KEYCHAIN_PASSWORD" build.keychain
-          security import /tmp/cert.p12 -k build.keychain -P "$CERT_PASSWORD" -T /usr/bin/codesign
+          security import "$RUNNER_TEMP/cert.p12" -k build.keychain -P "$CERT_PASSWORD" -T /usr/bin/codesign
           security set-key-partition-list -S apple-tool:,apple: -s -k "$KEYCHAIN_PASSWORD" build.keychain
+          rm -f "$RUNNER_TEMP/cert.p12"
       - name: Notary API key file
+        if: env.SIGN == 'true'
         env: { AC_API_KEY_P8: "${{ secrets.AC_API_KEY_P8 }}" }
-        run: echo "$AC_API_KEY_P8" | base64 --decode > /tmp/ac_api_key.p8
-      - name: Bundle + sign + notarize
+        run: echo "$AC_API_KEY_P8" | base64 --decode > "$RUNNER_TEMP/ac_api_key.p8"
+      - name: Sign + notarize
+        if: env.SIGN == 'true'
         env:
-          VERSION: ${{ github.ref_type == 'tag' && github.ref_name || '0.0.0-dev' }}
           AC_KEY_ID: ${{ secrets.AC_KEY_ID }}
           AC_ISSUER_ID: ${{ secrets.AC_ISSUER_ID }}
-          AC_API_KEY_PATH: /tmp/ac_api_key.p8
+          AC_API_KEY_PATH: ${{ runner.temp }}/ac_api_key.p8
+          DAT0_SIGN_IDENTITY: ${{ secrets.DAT0_SIGN_IDENTITY }}
         run: |
-          SHA=$(git rev-parse --short HEAD)
-          cargo xtask gen-icon
-          cargo xtask bundle-macos --version "${VERSION#v}" --git-sha "$SHA"
-          cargo xtask sign-macos --identity "${{ secrets.DAT0_SIGN_IDENTITY }}"
+          cargo xtask sign-macos --identity "$DAT0_SIGN_IDENTITY"
           cargo xtask verify --macos
+      - name: Unsigned disk image (dry run)
+        if: env.SIGN != 'true'
+        run: cargo xtask dmg-macos
+      - name: Remove the keychain and key
+        if: always() && env.SIGN == 'true'
+        run: |
+          security delete-keychain build.keychain || true
+          rm -f "$RUNNER_TEMP/ac_api_key.p8"
       # Artifact filenames stay unversioned: the publish job below and
       # xtask::sign::verify both address them by fixed path. The version is
       # applied when the assets are staged for the GitHub Release.
@@ -52,42 +131,55 @@ jobs:
         with: { name: dat0-app-tarball, path: target/macos/dat0.app.tar.gz }
 
   linux:
-    runs-on: ubuntu-latest
-    timeout-minutes: 60
+    needs: gate
+    # The oldest glibc dat0 supports. A binary runs on the glibc it was built
+    # against and newer: one built on ubuntu-latest (24.04) needed glibc 2.38,
+    # which Ubuntu 22.04 and Debian 12 do not have.
+    runs-on: ubuntu-22.04
+    timeout-minutes: 90
+    env:
+      # As for macOS: a tag always signs; a dry run signs when the key is set.
+      SIGN: ${{ github.ref_type == 'tag' || secrets.GPG_PRIVATE_KEY != '' }}
     steps:
       - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@1.97.0
       - name: Tools
         run: |
           sudo apt-get update
-          # libfuse2 + fuse run the AppImage; desktop-file-utils is
-          # appimagetool's desktop-file-validate. The rest are the webview +
-          # keychain BUILD dependencies ci.yml's "Linux deps" step declares
-          # mandatory — xtask/src/linux.rs runs `cargo build -p dat0-ui
-          # --release` here, and without them the release build dies at link
-          # time on webkit2gtk/libsecret/pango/xkbcommon/fontconfig/openssl.
+          # The webview and keychain BUILD dependencies ci.yml's "Linux deps"
+          # step declares. appimagetool needs `file` and runs
+          # desktop-file-validate; imagemagick is the smoke test's.
           sudo apt-get install -y \
-            libfuse2 fuse desktop-file-utils \
+            file desktop-file-utils imagemagick \
             libsecret-1-dev libpango1.0-dev libxkbcommon-dev libxkbcommon-x11-dev \
             libfontconfig1-dev libssl-dev \
             libwebkit2gtk-4.1-dev libsoup-3.0-dev libxdo-dev
-          # Into $RUNNER_TEMP, not /usr/local/bin: that directory is not
-          # writable by the runner user, so the original un-sudo'd
-          # `wget -O /usr/local/bin/appimagetool` failed with EACCES. The
-          # basename must stay `appimagetool` — xtask/src/linux.rs invokes it
-          # by bare name.
-          wget -q https://github.com/AppImage/AppImageKit/releases/download/continuous/appimagetool-x86_64.AppImage \
-            -O "$RUNNER_TEMP/appimagetool"
-          chmod +x "$RUNNER_TEMP/appimagetool"
-          # linuxdeploy bundles the binary's non-excluded shared objects into
-          # the AppDir and writes AppRun. Same install shape and same
-          # bare-basename requirement as appimagetool above — xtask/src/linux.rs
-          # invokes it as `linuxdeploy`.
-          wget -q https://github.com/linuxdeploy/linuxdeploy/releases/download/continuous/linuxdeploy-x86_64.AppImage \
-            -O "$RUNNER_TEMP/linuxdeploy"
-          chmod +x "$RUNNER_TEMP/linuxdeploy"
+          # appimagetool and the AppImage runtime it embeds, pinned by release
+          # and hash: this job holds the GPG key, so it runs nothing it has
+          # not checked. Into $RUNNER_TEMP, since /usr/local/bin is not
+          # writable by the runner user. The basename must stay `appimagetool`:
+          # xtask/src/linux.rs invokes it by bare name.
+          cd "$RUNNER_TEMP"
+          curl -fsSL -o appimagetool \
+            https://github.com/AppImage/appimagetool/releases/download/1.9.1/appimagetool-x86_64.AppImage
+          curl -fsSL -o runtime-x86_64 \
+            https://github.com/AppImage/type2-runtime/releases/download/20251108/runtime-x86_64
+          sha256sum -c - <<'EOF'
+          ed4ce84f0d9caff66f50bcca6ff6f35aae54ce8135408b3fa33abfc3cb384eb0  appimagetool
+          2fca8b443c92510f1483a883f60061ad09b46b978b2631c807cd873a47ec260d  runtime-x86_64
+          EOF
+          chmod +x appimagetool
           echo "$RUNNER_TEMP" >> "$GITHUB_PATH"
+          echo "DAT0_APPIMAGE_RUNTIME=$RUNNER_TEMP/runtime-x86_64" >> "$GITHUB_ENV"
+      - name: Crash-report DSN and version
+        env: { DSN: "${{ secrets.GLITCHTIP_DSN_PUBLIC }}" }
+        run: |
+          # As for macOS: set only when there is one.
+          if [ -n "$DSN" ]; then echo "DAT0_GLITCHTIP_DSN_PUBLIC=$DSN" >> "$GITHUB_ENV"; fi
+          echo "VERSION=$(cargo metadata --no-deps --format-version 1 \
+            | jq -r '.packages[] | select(.name == "dat0-ui") | .version')" >> "$GITHUB_ENV"
       - name: Import GPG key
+        if: env.SIGN == 'true'
         env:
           GPG_PRIVATE_KEY: ${{ secrets.GPG_PRIVATE_KEY }}
         run: |
@@ -98,56 +190,43 @@ jobs:
           echo "allow-loopback-pinentry" >> ~/.gnupg/gpg-agent.conf
           gpgconf --reload gpg-agent || true
           echo "$GPG_PRIVATE_KEY" | gpg --batch --import
-      - name: Bundle + sign
+      - name: Bundle
         env:
-          VERSION: ${{ github.ref_type == 'tag' && github.ref_name || '0.0.0-dev' }}
-          # THE fix for the P10a passphrase trap: step-scoped `env:` does not
-          # propagate, so declaring GPG_PASSPHRASE on the import step above (as
-          # this workflow used to) left the signing step with nothing. xtask
-          # reads DAT0_GPG_PASSPHRASE and, when it is empty or unset, omits
-          # `--pinentry-mode loopback --passphrase-fd 0` entirely — the
-          # passphraseless CI subkey that docs/security-runbook.md recommends
-          # would FAIL if those flags were always passed.
+          # Declared on the step that signs: a step's `env:` does not reach
+          # the next step (the P10a passphrase trap). xtask omits the loopback
+          # flags when it is empty, as the passphraseless CI subkey
+          # docs/security-runbook.md recommends needs.
           DAT0_GPG_PASSPHRASE: ${{ secrets.GPG_PASSPHRASE }}
-          # Both linuxdeploy and appimagetool ARE AppImages. Extracting instead
-          # of FUSE-mounting them is the standard CI posture — it survives a
-          # runner image without a usable /dev/fuse, which is otherwise an
-          # opaque "failed to set up mount namespace" at bundle time.
+          # appimagetool is itself an AppImage. Extracting it instead of
+          # FUSE-mounting it survives a runner without a usable /dev/fuse.
           APPIMAGE_EXTRACT_AND_RUN: 1
         run: |
           cargo xtask gen-icon
-          cargo xtask bundle-linux --version "${VERSION#v}"
-      - name: Verify on clean Ubuntu
-        run: |
-          docker run --rm -v "$PWD/target/linux:/art" ubuntu:24.04 bash -euc '
-            # The AppImage excludelist deliberately does NOT bundle the core
-            # desktop libraries; the format declares them the responsibility of
-            # the host system. A genuinely bare container therefore cannot run
-            # ANY AppImage, and testing in one would prove nothing about dat0.
-            # Installing exactly that baseline and nothing else keeps the gate
-            # sharp: every dat0-specific dependency (libssl, libpango,
-            # libxkbcommon, libsecret, and DuckDB own deps) must come from the
-            # AppDir that linuxdeploy populated, or this step fails.
-            apt-get update -qq
-            apt-get install -y -qq --no-install-recommends \
-              ca-certificates zlib1g libstdc++6 \
-              libfontconfig1 libfreetype6 libglib2.0-0t64 \
-              libx11-6 libxext6 libxcb1 libxau6 libxdmcp6 \
-              libgl1 libegl1 \
-              libwebkit2gtk-4.1-0 libsoup-3.0-0
-            cd /art
-            ./dat0.AppImage --appimage-extract >/dev/null
-            ./squashfs-root/AppRun --version
-          '
-          cargo xtask verify --linux
+          if [ "$SIGN" = true ]; then
+            cargo xtask bundle-linux --version "$VERSION"
+          else
+            cargo xtask bundle-linux --version "$VERSION" --unsigned
+          fi
+      - name: Starts and draws its page on clean systems
+        # Each system gets WebKitGTK 4.1 and nothing else dat0 needs; see the
+        # script for what it checks.
+        run: scripts/appimage-smoke.sh target/linux/dat0.AppImage "$VERSION" ubuntu:22.04 debian:12 ubuntu:24.04
+      - name: Verify the signature
+        if: env.SIGN == 'true'
+        run: cargo xtask verify --linux
       - uses: actions/upload-artifact@v7
         with: { name: dat0-appimage, path: 'target/linux/dat0.AppImage*' }
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with: { name: appimage-smoke, path: target/linux/smoke/, if-no-files-found: ignore }
 
   publish:
-    needs: [macos, linux]
+    needs: [gate, macos, linux]
     if: github.ref_type == 'tag'
     runs-on: ubuntu-latest
     timeout-minutes: 60
+    permissions:
+      contents: write
     steps:
       - uses: actions/checkout@v7
       - uses: actions/download-artifact@v8

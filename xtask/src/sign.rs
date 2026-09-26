@@ -61,19 +61,10 @@ pub fn sign_and_notarize(identity: &str) -> Result<PathBuf> {
     // 1. Sign the .app under the hardened runtime.
     run(Command::new("codesign").args(codesign_args(identity, app)))?;
 
-    // 2. Stage a clean source folder, then build the DMG from it (create-dmg
-    //    installed in CI via brew). `ditto`, not `cp`: it preserves the code
-    //    signature applied in step 1 along with symlinks and extended
-    //    attributes — so the copy inside the DMG has the same cdhash as
-    //    `target/macos/dat0.app`, which is what makes step 5 possible. The
-    //    original stays in place because `verify` codesign-checks it there.
-    let src_dir = PathBuf::from(DMG_STAGING_DIR);
-    let _ = std::fs::remove_dir_all(&src_dir);
-    std::fs::create_dir_all(&src_dir).context("create dmg staging dir")?;
-    run(Command::new("ditto").arg(app).arg(src_dir.join("dat0.app")))?;
-
-    let _ = std::fs::remove_file(&dmg);
-    run(Command::new("create-dmg").args(create_dmg_args(DMG_PATH, DMG_STAGING_DIR)))?;
+    // 2. Stage a clean source folder and build the DMG from it; see
+    //    [`make_dmg`]. The copy inside the DMG has the same cdhash as
+    //    `target/macos/dat0.app`, which is what makes step 5 possible.
+    make_dmg()?;
 
     // 3. Sign the DMG too.
     run(Command::new("codesign").args(codesign_args(identity, DMG_PATH)))?;
@@ -107,6 +98,42 @@ pub fn sign_and_notarize(identity: &str) -> Result<PathBuf> {
     //    replacement is a checked fact.
     crate::macos::tar_app().context("re-tar the signed bundle as the update payload")?;
 
+    Ok(dmg)
+}
+
+/// Stage the bundle alone in a clean folder and build [`DMG_PATH`] from it
+/// (create-dmg, installed in CI via brew). `ditto`, not `cp`: it preserves the
+/// bundle's code signature along with symlinks and extended attributes. The
+/// original stays in place because `verify` codesign-checks it there.
+fn make_dmg() -> Result<PathBuf> {
+    let src_dir = PathBuf::from(DMG_STAGING_DIR);
+    let _ = std::fs::remove_dir_all(&src_dir);
+    std::fs::create_dir_all(&src_dir).context("create dmg staging dir")?;
+    run(Command::new("ditto")
+        .arg(crate::macos::APP_PATH)
+        .arg(src_dir.join("dat0.app")))?;
+
+    let dmg = PathBuf::from(DMG_PATH);
+    let _ = std::fs::remove_file(&dmg);
+    run(Command::new("create-dmg").args(create_dmg_args(DMG_PATH, DMG_STAGING_DIR)))?;
+    Ok(dmg)
+}
+
+/// A dry run's disk image, built without a Developer ID. The bundle is signed
+/// ad hoc (`--sign -`), which needs no identity and seals it, so a tester can
+/// open it through System Settings → Privacy & Security; it is not notarized,
+/// so Gatekeeper refuses a plain double-click. The update payload is tarred
+/// again from the sealed bundle, so the two artefacts hold the same app.
+pub fn unsigned_dmg() -> Result<PathBuf> {
+    run(Command::new("codesign").args([
+        "--force",
+        "--deep",
+        "--sign",
+        "-",
+        crate::macos::APP_PATH,
+    ]))?;
+    let dmg = make_dmg()?;
+    crate::macos::tar_app().context("re-tar the sealed bundle as the update payload")?;
     Ok(dmg)
 }
 
