@@ -881,8 +881,18 @@ fn TitleBar() -> Element {
     let ws = Workspace::use_current();
     let live = *ws.live.read();
     let read_only = *ws.read_only.read();
+    // When the bar was last pressed, to tell a double-click (step 5.11d).
+    let pressed = use_hook(|| std::rc::Rc::new(std::cell::Cell::new(None)));
     rsx! {
-        div { class: "d0-titlebar", "data-a11y-id": "titlebar", role: "banner",
+        div {
+            class: "d0-titlebar",
+            "data-a11y-id": "titlebar",
+            role: "banner",
+            onmousedown: move |e: MouseEvent| {
+                if e.trigger_button() == Some(dioxus::html::input_data::MouseButton::Primary) {
+                    crate::launch::title_bar_press(&pressed);
+                }
+            },
             // Reserves the macOS traffic lights, which `launch::window_builder`
             // insets to (12, 18).
             div { class: "d0-traffic-spacer" }

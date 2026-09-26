@@ -152,24 +152,18 @@ fn every_action_id_is_bound_or_explicitly_unbound() {
     );
 }
 
-/// The macOS-only rows are exactly the window-management chords, and every
-/// other row has a chord on both platforms. Guards the `other: None` doc claim
-/// from drifting into "someone forgot to fill this in".
+/// The one macOS-only row is Minimize, and every other row has a chord on
+/// both platforms. Guards the `other: None` doc claim from drifting into
+/// "someone forgot to fill this in". Quit and Close Window were macOS-only
+/// too, while the menu bar off macOS had no items for them (step 5.11d).
 #[test]
-fn only_the_window_management_chords_are_macos_only() {
+fn only_minimize_is_macos_only() {
     let macos_only: Vec<&str> = DEFAULT_KEYMAP
         .iter()
         .filter(|b: &&Binding| b.other.is_none())
         .filter_map(|b| b.action)
         .collect();
-    assert_eq!(
-        macos_only,
-        vec![
-            "dat0_menu::Quit",
-            "dat0_menu::CloseWindow",
-            "dat0_menu::Minimize",
-        ]
-    );
+    assert_eq!(macos_only, vec!["dat0_menu::Minimize"]);
 }
 
 /// (2) No two rows share a chord within a context. A duplicate is a binding
@@ -203,11 +197,12 @@ fn no_duplicate_chord_within_a_context() {
     }
     assert_eq!(
         DEFAULT_KEYMAP.len(),
-        18,
+        19,
         "the SH4 migration moved 16 bindings verbatim, the GPUI→Dioxus \
-         migration added ⌘B for the catalog sidebar (S1), and PD-023 step \
-         5.8b added ⌘K for the palette, the chord the chrome shows, beside \
-         ⌘⇧P; changing the count is a behaviour change and wants its own \
+         migration added ⌘B for the catalog sidebar (S1), PD-023 step 5.8b \
+         added ⌘K for the palette, the chord the chrome shows, beside ⌘⇧P, \
+         and step 5.11d added Full Screen, whose menu item is dat0's own off \
+         macOS; changing the count is a behaviour change and wants its own \
          review"
     );
 }

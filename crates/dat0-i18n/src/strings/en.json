@@ -285,6 +285,7 @@
   "menu.set_null": "Set NULL",
   "menu.view": "View",
   "menu.view.command_palette": "Command Palette…",
+  "menu.view.fullscreen": "Toggle Full Screen",
   "menu.view.settings": "Settings…",
   "menu.window": "Window",
   "menu.window.minimize": "Minimize",

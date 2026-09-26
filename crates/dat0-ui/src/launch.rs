@@ -470,6 +470,62 @@ pub fn raise() {
     window.set_focus();
 }
 
+/// Two presses on the title bar this close together are a double-click:
+/// AppKit's default interval.
+const DOUBLE_PRESS: std::time::Duration = std::time::Duration::from_millis(500);
+
+/// Whether a press at `now` is the second of a double-click after one at
+/// `last`.
+pub fn is_double_press(last: Option<std::time::Instant>, now: std::time::Instant) -> bool {
+    last.is_some_and(|t| now.saturating_duration_since(t) < DOUBLE_PRESS)
+}
+
+/// A press on the title bar dat0 draws: it drags the window, and a second
+/// within the double-click interval zooms it, as a title bar does.
+///
+/// On macOS that bar is the window's only one. It was marked
+/// `-webkit-app-region: drag`, which is Chromium's; WKWebView, covering the
+/// titlebar, took every press, and the window could not be moved (step
+/// 5.11d). The drag takes the mouse until it is released, so the second press
+/// of a double-click is told from its time rather than from a `dblclick`.
+pub fn title_bar_press(last: &std::cell::Cell<Option<std::time::Instant>>) {
+    let now = std::time::Instant::now();
+    let double = is_double_press(last.get(), now);
+    last.set((!double).then_some(now));
+    if !has_desktop() {
+        return;
+    }
+    let window = dioxus::desktop::window();
+    if double {
+        window.toggle_maximized();
+    } else {
+        window.drag();
+    }
+}
+
+/// Perform one of the menu bar's window-management items
+/// ([`crate::menu::WINDOW_ITEMS`]).
+///
+/// AppKit performs them on macOS. Elsewhere muda builds none of them, and the
+/// menu bar has items of dat0's own (`menu::window_item`), which come here.
+/// Quit ends the process, as AppKit's does: no window is closed first, and
+/// each has kept its session as it went (step 5.7b).
+pub fn manage_window(id: &str) {
+    use crate::menu::menu_ids;
+    if !has_desktop() {
+        return;
+    }
+    let window = dioxus::desktop::window();
+    match id {
+        menu_ids::QUIT => std::process::exit(0),
+        menu_ids::CLOSE_WINDOW => window.close(),
+        menu_ids::MINIMIZE => window.set_minimized(true),
+        menu_ids::ZOOM => window.toggle_maximized(),
+        menu_ids::FULLSCREEN => window.set_fullscreen(window.fullscreen().is_none()),
+        _ => {}
+    }
+}
+
 /// The process bus, from anywhere in a window's tree. `None` where no [`Boot`]
 /// was provided, as in the headless harness.
 pub fn process_bus() -> Option<AppEvents> {
@@ -492,6 +548,20 @@ pub fn has_desktop() -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_second_press_soon_after_the_first_is_a_double_click() {
+        let t = std::time::Instant::now();
+        assert!(!is_double_press(None, t), "a first press drags");
+        assert!(is_double_press(
+            Some(t),
+            t + std::time::Duration::from_millis(200)
+        ));
+        assert!(
+            !is_double_press(Some(t), t + std::time::Duration::from_millis(900)),
+            "a press long after the last one drags again"
+        );
+    }
 
     #[test]
     fn the_window_background_comes_from_the_default_theme() {
