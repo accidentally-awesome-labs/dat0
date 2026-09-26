@@ -491,6 +491,10 @@ fn a_querys_rows_chart_and_saving_that_chart_asks_for_a_table_first() {
 fn with_no_table_open_the_chart_asks_for_one() {
     let rt = runtime();
     let _guard = rt.enter();
+    // The config with the first run done, which `window` sees to for the
+    // other tests. In a process of its own, as nextest runs it, the tour
+    // was up instead, and a command waits for a dialog to close (5.11c).
+    LazyLock::force(&STATE_ROOT);
     let mut h = Harness::new(
         Host,
         HostProps {
