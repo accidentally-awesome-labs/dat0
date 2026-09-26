@@ -44,6 +44,10 @@ static STATE_ROOT: LazyLock<PathBuf> = LazyLock::new(|| {
     )
     .expect("seed first_run_done");
     dat0_core::globals::install_state_root(root.clone());
+    // Tests run side by side in processes of their own, and a system
+    // clipboard is shared by all of them: on macOS one test's copy was read
+    // back by another waiting for its own.
+    dat0_ui::clipboard::keep_in_process();
     std::mem::forget(tmp);
     root
 });

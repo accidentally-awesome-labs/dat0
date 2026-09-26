@@ -45,6 +45,15 @@ fn handle() -> Option<&'static Mutex<Clipboard>> {
         .as_ref()
 }
 
+/// Keep copies inside this process, as if there were no system clipboard.
+///
+/// For tests. Each runs in a process of its own, side by side, and a system
+/// clipboard is one per machine: a test waiting for its own copy read back
+/// another test's instead. Must be called before the first copy or read.
+pub fn keep_in_process() {
+    let _ = CLIPBOARD.set(None);
+}
+
 /// Put text on the clipboard. Returns whether it landed.
 pub fn set_text(text: &str) -> bool {
     let Some(cb) = handle() else {
