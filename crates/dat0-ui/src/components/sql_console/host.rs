@@ -411,6 +411,7 @@ fn prompt_save_query(host: &ConsoleHost, sql: String) {
                     let mut saved = Banner::info(dat0_i18n::t("sql.query_saved"));
                     saved.body = name;
                     ws.push_banner(saved);
+                    crate::workspace_save::suggest(ws, &session);
                 }
                 Err(e) => ws.push_banner(Banner::warning_with_body(
                     dat0_i18n::t("sql.query_not_saved"),

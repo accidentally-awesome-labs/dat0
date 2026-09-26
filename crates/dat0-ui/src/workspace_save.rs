@@ -16,13 +16,16 @@
 //! so. Anything the wait missed cannot open the file twice: the engine
 //! refuses a file an engine of this process still has, by any name.
 
+use std::cell::Cell;
 use std::path::{Path, PathBuf};
+use std::rc::Rc;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use dioxus::prelude::*;
 use parking_lot::Mutex;
 
+use dat0_core::actions::builtin::ids;
 use dat0_core::error_ux::Banner;
 use dat0_core::session::Session;
 use dat0_core::session::slot::SessionSlot;
@@ -31,6 +34,29 @@ use dat0_engine::{EngineStatus, QueryEngine as _};
 use dat0_i18n::t;
 
 use crate::state::Workspace;
+
+/// Whether this window has suggested saving itself as a workspace. Provided
+/// with the window's session ([`crate::session_boot::use_session_on`]).
+#[derive(Clone, Default)]
+pub struct Suggested(Rc<Cell<bool>>);
+
+/// Suggest saving the window as a workspace, once, when its scratch session
+/// holds work worth keeping: three steps in its views, or a saved query. A
+/// read-only window has nothing of its own to keep. The GPUI build's nudge.
+pub fn suggest(ws: Workspace, session: &Session) {
+    let Some(Suggested(done)) = try_consume_context::<Suggested>() else {
+        return;
+    };
+    let worth = session.transform_count() >= 3 || !session.saved_queries().is_empty();
+    if done.get() || *ws.read_only.peek() || session.is_workspace() || !worth {
+        return;
+    }
+    done.set(true);
+    ws.push_banner(
+        Banner::info(t("workspace.prompt.title"))
+            .with_primary(t("workspace.prompt.save"), ids::WORKSPACE_SAVE),
+    );
+}
 
 /// How long a save waits for the window's tasks to let go of its engine. A
 /// page of rows or a completion list takes milliseconds; a console query still

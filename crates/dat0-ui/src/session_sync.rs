@@ -98,6 +98,7 @@ pub fn use_session_sync(ws: Workspace, views: Views, console: Signal<Tabs>) {
             tokio::time::sleep(RECORD_DEBOUNCE).await;
             if generation.get() == epoch {
                 write(&session, written.borrow().as_ref(), &now);
+                crate::workspace_save::suggest(ws, &session.lock());
                 *written.borrow_mut() = Some(now);
             }
         });

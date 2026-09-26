@@ -339,6 +339,10 @@ fn a_saved_query_can_be_loaded_and_deleted() {
         "banners: {:?}",
         banners(&h)
     );
+    assert!(
+        banners(&h).contains(&t("workspace.prompt.title")),
+        "a saved query is work worth keeping, so the window suggests saving it"
+    );
 
     perform(&mut h, ids::SQL_LOAD_QUERY);
     assert!(text(&h, "saved-row-0").contains("lucky"));

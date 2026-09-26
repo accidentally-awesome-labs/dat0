@@ -2386,11 +2386,13 @@ that's modifying it; merge conflicts are signals worth investigating.
     2 → 1. `tests/workspace_save.rs` saves a window and opens the workspace
     again, and saves into a workspace, twice, from a read-only window, while
     the engine is held, and into a plain file, which fails part-way.
-  - Still open for workspaces: the GPUI build's nudge, which offered Save
-    Workspace once a scratch window held three view steps or a saved query,
-    is not shown. Open Recent lists the recent workspaces as they were at
-    launch, since its items are resolved by position; a workspace opened or
-    saved since is listed from the next launch.
+  - 2026-09-26, the Save Workspace nudge (`workspace_save::suggest`). A
+    scratch window holding three view steps or a saved query suggests, once,
+    saving itself as a workspace, with Save Workspace on the banner, as the
+    GPUI build did; a read-only window or a workspace does not.
+  - Still open for workspaces: Open Recent lists the recent workspaces as
+    they were at launch, since its items are resolved by position; a
+    workspace opened or saved since is listed from the next launch.
 - **Discovered:** project review, 2026-09-25 — seven read-only audits plus a
   Linux release build driven under Xvfb.
 - **Fix:** port each surface's orchestration from `95627c8` onto the

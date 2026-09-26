@@ -209,6 +209,7 @@ pub fn use_session(ws: Workspace, cli_paths: Vec<PathBuf>) {
 pub fn use_session_on(ws: Workspace, opening: Opening) {
     let mut ws = ws;
     let opening = use_context_provider(|| opening);
+    use_context_provider(crate::workspace_save::Suggested::default);
     // Hangs off the same hook so a window cannot get a session without also
     // getting its layout: they are one lifecycle, not two.
     use_layout_persistence(ws);

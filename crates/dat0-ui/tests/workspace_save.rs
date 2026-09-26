@@ -113,6 +113,19 @@ fn Host(props: HostProps) -> Element {
             },
         }
         button {
+            "data-a11y-id": "keep-query",
+            onclick: move |_| {
+                let slot = ws.session.peek().ready().cloned().expect("session ready");
+                let kept = dat0_core::session::queries::SavedQuery {
+                    id: uuid::Uuid::now_v7(),
+                    name: "kept".into(),
+                    sql: "SELECT 1".into(),
+                    saved_at: 0,
+                };
+                slot.lock().set_saved_queries(vec![kept]).expect("save a query");
+            },
+        }
+        button {
             "data-a11y-id": "read-only",
             onclick: move |_| {
                 let mut read_only = ws.read_only;
@@ -419,6 +432,45 @@ fn every_tab_keeps_its_view_through_a_save_and_a_reopen() {
         pump(&mut again, |h| column(h, 0) == ["1", "2", "3"]),
         "and the second tab's view came back too: {:?}",
         column(&again, 0)
+    );
+}
+
+/// Work worth keeping in a scratch window — a saved query, or three steps in
+/// its views — has it suggest saving itself as a workspace, once.
+#[test]
+#[serial]
+fn a_window_with_work_worth_keeping_suggests_saving_it_once() {
+    let rt = runtime();
+    let _guard = rt.enter();
+    let (csv, target) = folders("suggested");
+    let mut h = window(&csv, &target, None, &[]);
+    let prompt = t("workspace.prompt.title");
+    let settle = |h: &mut Harness| {
+        std::thread::sleep(Duration::from_millis(400));
+        h.settle();
+    };
+
+    h.click("col-sort-1");
+    assert!(pump(&mut h, |h| column(h, 0) == ["c", "b", "a"]));
+    settle(&mut h);
+    assert!(
+        !banners(&h).contains(&prompt),
+        "one step is not worth it yet"
+    );
+
+    h.click("keep-query");
+    h.click("col-sort-1");
+    assert!(
+        pump(&mut h, |h| banners(h).contains(&prompt)),
+        "a saved query is: {:?}",
+        banners(&h)
+    );
+    h.click("col-sort-1");
+    settle(&mut h);
+    assert_eq!(
+        banners(&h).matches(prompt.as_str()).count(),
+        1,
+        "and it is suggested once"
     );
 }
 
