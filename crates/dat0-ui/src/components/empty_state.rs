@@ -91,6 +91,7 @@ pub const HERO_COPY_KEYS: &[&str] = &[
     "hero.lead",
     "hero.drop",
     "hero.privacy",
+    "hero.privacy_sent",
     "hero.demo.heading",
     "hero.demo.cta",
     "hero.samples.heading",
@@ -110,6 +111,12 @@ pub struct EmptyStateProps {
     /// the "no waiting" it cannot deliver for another few hundred milliseconds.
     #[props(default = false)]
     pub booting: bool,
+    /// The bytes dat0 has sent off this machine, and whether that figure is a
+    /// floor (`Status::egress`, `Status::egress_floor`), for the privacy line.
+    #[props(default)]
+    pub sent: u64,
+    #[props(default)]
+    pub sent_floor: bool,
     pub on_open_sample: EventHandler<SampleKind>,
     pub on_open_recent: EventHandler<RecentEntry>,
     pub on_open_file: EventHandler<()>,
@@ -163,7 +170,7 @@ pub fn EmptyState(props: EmptyStateProps) -> Element {
             }
 
             div { class: "d0-hero-cols",
-                {drop_zone(props.booting)}
+                {drop_zone(props.booting, props.sent, props.sent_floor)}
                 div { class: "d0-hero-right",
                     if props.recents.is_empty() {
                         {sample_column(props.on_open_sample, props.on_open_file)}
@@ -203,11 +210,15 @@ fn headline() -> Element {
 
 /// The drop affordance plus the privacy line.
 ///
-/// `hero.privacy` is green — the same green the status bar's `egress 0 B` uses,
-/// because it is the same claim. While booting the drop copy is replaced by a
-/// placeholder, but the privacy line stays: it is true in every state, and it is
-/// the claim a user watching a spinner most wants held.
-fn drop_zone(booting: bool) -> Element {
+/// The privacy line is the status bar's egress figure in words, and green only
+/// when that is: nothing sent, and no channel open that dat0 cannot meter. It
+/// was a constant, "0 bytes", green after the launch's update check had sent
+/// its request (step 5.11a). While booting the drop copy is replaced by a
+/// placeholder, but the privacy line stays: it is the claim a user watching a
+/// spinner most wants stated.
+fn drop_zone(booting: bool, sent: u64, sent_floor: bool) -> Element {
+    let quiet = crate::chrome::nothing_sent(sent, sent_floor);
+    let privacy = crate::chrome::hero_privacy(sent, sent_floor);
     rsx! {
         div { class: "d0-hero-drop", "data-a11y-id": "hero-drop",
             if booting {
@@ -223,7 +234,11 @@ fn drop_zone(booting: bool) -> Element {
             } else {
                 p { class: "d0-body", {dat0_i18n::t("hero.drop")} }
             }
-            span { class: "d0-mono is-ok", {dat0_i18n::t("hero.privacy")} }
+            span {
+                class: if quiet { "d0-mono is-ok" } else { "d0-mono" },
+                "data-a11y-id": "hero-privacy",
+                "{privacy}"
+            }
         }
     }
 }

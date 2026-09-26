@@ -58,6 +58,8 @@ fn note(i: &ConsoleIntent) -> String {
         ConsoleIntent::SaveQuery { sql, .. } => format!("save:{sql}"),
         ConsoleIntent::LoadQuery => "load".into(),
         ConsoleIntent::SaveAsTable { sql, .. } => format!("as-table:{sql}"),
+        ConsoleIntent::AskAi => "ask-ai".into(),
+        ConsoleIntent::Explain { sql } => format!("explain:{sql}"),
         ConsoleIntent::StopStream => "stop".into(),
         ConsoleIntent::InsertGenerated { sql } => format!("insert:{sql}"),
         ConsoleIntent::DiscardStream => "discard".into(),
@@ -201,6 +203,19 @@ fn t(key: &str) -> String {
 /// second tab is open, or a strip that stops responding once the toolbar has
 /// been used, passes every test below and is still broken.
 #[test]
+fn run_shows_this_platform_s_chord() {
+    // `⌘⏎` everywhere, Linux included (step 5.11e).
+    let h = console(1);
+    let run = h.text_of(h.by_a11y_id("console-run").expect("Run is shown"));
+    let chord = dat0_ui::chrome::run_chord();
+    assert!(!chord.is_empty());
+    assert!(run.ends_with(&chord), "{run:?} does not end with {chord:?}");
+    if !cfg!(target_os = "macos") {
+        assert!(!run.contains('⌘'), "{run:?}");
+    }
+}
+
+#[test]
 fn the_console_is_drivable_from_the_keyboard_end_to_end() {
     let mut h = console(2);
     assert_eq!(titles(&h), "Query 1,Query 2");
@@ -231,7 +246,6 @@ fn every_console_command_is_a_tab_stop() {
     let seen = tab_labels(&mut h, 30);
     for key in [
         "sql.run",
-        "sql.run_in_pane",
         "sql.new_tab",
         "sql.history",
         "sql.save_query",
@@ -251,16 +265,6 @@ fn running_asks_for_the_main_grid() {
     let mut h = console(1);
     h.click_label(&t("sql.run"));
     assert_eq!(log(&h), "run:grid:", "an empty tab still asks for a run");
-}
-
-#[test]
-fn running_in_the_pane_asks_for_the_pane_instead() {
-    // The two Run controls differ only in where the rows land; a copy-paste
-    // that left both on `MainGrid` would look right and quietly ignore the
-    // results pane.
-    let mut h = console(2);
-    h.click_label(&t("sql.run_in_pane"));
-    assert_eq!(log(&h), "run:pane:");
 }
 
 #[test]
@@ -343,7 +347,6 @@ fn no_console_command_exists_while_the_pane_is_shut() {
     );
     for key in [
         "sql.run",
-        "sql.run_in_pane",
         "sql.new_tab",
         "sql.history",
         "sql.save_query",

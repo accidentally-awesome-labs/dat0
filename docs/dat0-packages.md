@@ -49,16 +49,19 @@ dat0 or Rust.
 
 All package actions live under the **File** menu.
 
-- **File → Export .dat0 Package** — write the current workspace to a `.dat0`
-  file you choose. Exporting from a **live session** captures the full
-  recipe, including derived tables and their lineage (see the known limitation
-  below).
+- **File → Export as .dat0 Package** — write the window's tables, tabs, saved
+  queries and charts to a `.dat0` file you choose. A package already there is
+  replaced only once the new one is written whole. Exporting from a **live
+  session** captures the full recipe, including derived tables and their
+  lineage (see the known limitation below).
 - **File → Open .dat0 Package** — open a package **read-only** to inspect it (see
   below).
 - **File → Unpack .dat0 Package** — materialize a package into a fresh workspace
-  directory you can edit.
-- **File → Replay .dat0 Package** — rebuild a package's derived tables against a
-  fresh source file (see *Replay* below).
+  in a folder you choose, and open it to edit. A folder that is a workspace
+  already is refused.
+- **File → Replay .dat0 Package** — rebuild a package's derived tables against
+  fresh source files: it asks for a file in place of each of the package's
+  sources, then where to write the new package (see *Replay* below).
 
 ### Read-only Inspect mode
 
@@ -82,7 +85,8 @@ dat0 export <workspace-dir> -o out.dat0
 ```
 
 Opens the workspace directory, materializes every table to Parquet, and writes
-the package to `out.dat0`.
+the package to `out.dat0`. A package already at `out.dat0` is replaced only once
+the new one is written whole.
 
 ### `dat0 inspect` — print a package's recipe
 
@@ -102,7 +106,9 @@ dat0 unpack <pkg.dat0> <dir>
 ```
 
 Materializes the package into a fresh `.dat0/` workspace under `<dir>`, ready to
-open in the app (or to re-export).
+open in the app (or to re-export). `<dir>` is made if it does not exist. One
+that is a workspace already is refused, and an unpack that fails leaves `<dir>`
+as it was.
 
 ### `dat0 replay` — rebuild against fresh sources
 

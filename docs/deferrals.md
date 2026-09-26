@@ -67,9 +67,12 @@ that's modifying it; merge conflicts are signals worth investigating.
 | D-027 | In-app Inspect polish (read-only badge, scratch GC, multi-source GUI replay, Unpack button) | open | P8 | — |
 | D-028 | Privileged `/Applications` auto-update (SMJobBless/SMAppService helper for authenticated install) | open | P10a-2 | v1.x |
 | D-029 | Settings panel persist-on-render → change-gate (per-frame fsync); + P10b cleanup (orphan `SettingsView`/dead `render` trait, 2 hardcoded input placeholders, orphan `settings.update.auto_check` key) + correct the "i18n-check fails on missing keys" claim (it is warn-only) | closed | P10b | P10c |
+| D-030 | Mid-stream Arrow errors are invisible on uncounted paths | open | EN3 | blocked upstream |
 | D-031 | Display-type letter-spacing (v4's −0.03em/−0.035em tracking) unavailable on gpui 0.2.2 — no `Styled` setter and no `TextStyle` field | closed | UI1 | closed by the GPUI→Dioxus migration |
 | D-032 | Promote `perf-gate` from label-triggered to every-PR (needs dedicated macOS hardware) | open | MX3 | — |
-| D-036 | Two `block_on(Session::…)` sites remain on the GPUI main thread — `workspace_ops::spawn_workspace_window` and `package_ops::open_package_at` | open | EN4 | — |
+| D-033 | MotherDuck traffic is unmetered by the egress counter | open | SH1 | blocked upstream |
+| D-034 | Sidebar footer reports no tab count | closed | SH2 | closed by the GPUI→Dioxus migration (the Dioxus footer counts tabs) |
+| D-036 | Two `block_on(Session::…)` sites remain on the GPUI main thread — `workspace_ops::spawn_workspace_window` and `package_ops::open_package_at` | closed | EN4 | moot — both sites were deleted with `dat0-app`; the flows they served are PD-023 |
 | D-037 | `docs/a11y.md` (and 8 more docs) still describe the GPUI build — dead crate `dat0-app`, dead test `theme_contrast_gate`, dead feature `a11y-capture`, dead paths `src/window/render.rs` | closed | GPUI→Dioxus migration | closed by the doc-accuracy pass after PR #82 |
 | D-038 | `Coverage (report only)` exhausted the runner's disk — fixed by dropping debug info from the instrumented build (21 GB vs 64 GB) | closed | GPUI→Dioxus migration | first green run 2026-08-13, 84.7% |
 
@@ -77,11 +80,11 @@ that's modifying it; merge conflicts are signals worth investigating.
 
 | ID     | Title                                                              | Status | Severity |
 |--------|--------------------------------------------------------------------|--------|----------|
-| PD-001 | tracing EnvFilter directive `dat0=debug` doesn't match dat0 crates | open   | low      |
+| PD-001 | tracing EnvFilter directive `dat0=debug` doesn't match dat0 crates | cancelled | low   |
 | PD-002 | Settings store atomic-write missing `fsync` before rename          | closed | low      |
 | PD-003 | cargo-about NOTICE output not deterministic across host platforms  | closed | low      |
 | PD-004 | Linux Secret Service backend not reachable from CI keychain tests  | open   | low      |
-| PD-011 | P3b plan §3.7 ambiguity rule references sniff outputs that don't exist: no candidate-delimiter scores, no encoding column, no per-column confidence in `sniff_csv` | open | low |
+| PD-011 | P3b plan §3.7 ambiguity rule references sniff outputs that don't exist: no candidate-delimiter scores, no encoding column, no per-column confidence in `sniff_csv` | closed | low |
 | PD-012 | `NYC_TAXI_SHA256 = "FILL_AT_T8"` — release asset not yet uploaded, so the fetch path always fails the checksum check at runtime | open | low |
 | PD-013 | P4a T0 plan-snippet drifts: `dat0-fixtures` assumed to be a lib crate; `dat0-engine` assumed to have a `benches/` dir + criterion dev-dep; plan snippet pinned `criterion = "0.5"` instead of using workspace inheritance | closed | low |
 | PD-014 | P4a design §3 used `#[serde(untagged)]` on `FilterValue` + `Scalar`, causing Str/Date/Timestamp collisions and FilterValue::None/Scalar::Null collision; reworked to tagged wire shapes | closed | low |
@@ -89,10 +92,36 @@ that's modifying it; merge conflicts are signals worth investigating.
 | PD-016 | P4a UI-click → ViewChange wirings unowned by plan T13: funnel-click → open popover, popover `Outcome::Apply` → `vm.apply`, sort-zone-click → `vm.set_sort`. T7/T9/T10b/T12 implementers each commented "T13 wires" but plan T13 Steps 1-4 cover only keybind undo/redo + supersede-cancel test. Closed by P4b T0: `on_sort_zone_click`/`on_funnel_click`/`route_outcome` → `spawn_view_change`; `click_wiring.rs` (7 tests). | closed | medium |
 | PD-017 | P4b T3 plan premise wrong: it assumed `register_file` "finalizes a CTAS import", but `register_file` emits `CREATE OR REPLACE VIEW … AS SELECT * FROM read_csv/json/parquet(…)` — a VIEW, which cannot be `ALTER TABLE`-d, so the eager `__dat0_rowid` surrogate only lands via `create_table` (base tables). The app imports files exclusively via `register_file` (`file_drop.rs:133`), so imported grids are VIEWs with no `__dat0_rowid`, and the P4b edit/delete overlay (`WHERE __dat0_rowid NOT IN …`, `CASE WHEN __dat0_rowid = …`) references a non-existent column → edit/delete fail on real imports. T3 engine work is correct + complete; resolution is app-side (materialize imports to base tables, or back-fill via `ensure_rowid` on first bind). **Closed via Path A:** new `QueryEngine::register_file_as_table` materializes imports into rowid-bearing base tables (reusing all P3b sniffing); `file_drop.rs` now calls it. | closed | high |
 | PD-018 | Pre-existing (P3a-era) grid-render gap surfaced during P4b T7: `GridTableDelegate::render_td` (`grid/mod.rs`) renders the em-dash placeholder for EVERY cell — it never calls `render_cell` or `page_for`, and `page_for` (the only method that populates the page LRU from DuckDB) has ZERO production callers (no `load_more`/visible-range/prefetch). So in the running app the grid shows `—` and the cache is empty. P4b's cache-only reads (`cell_display`/`row_key`/`column_arrow_type`) resolve nothing on screen, so copy reads empty strings and paste/cut/edit skip every cell. P4b edit/select/clipboard LOGIC is correct + fully test-green (engine round-trips), but the headline T14 manual Excel/Sheets UAT is BLOCKED until the paged-render cache is wired (render_td → real values via the page LRU + prefetch visible page on bind). Out of every P4b plan task's scope. **Closed (Path A):** `render_td` now does a synchronous LRU lookup → real `render_cell` value; the LRU is populated off-thread by `WorkspaceShell::prefetch_visible_rows` (page-0 prefetch on grid bind + the gpui-component `TableDelegate::visible_rows_changed` scroll hook), notifying the main thread via the `MainThreadDispatcher`. Also wired the right-click context menu (`ContextMenuExt`), a per-cell focus ring, and the forward-incompat recover banner. | closed | high |
-| PD-019 | P4c T13 wired header single-click → select-column but could NOT wire row-gutter click → select-row: the gpui-component `TableDelegate` trait (rev `0f0ab35`) has no `render_row_header`/gutter seam, and `TableState::render_table_row` owns the row layout internally. Two alternatives were rejected: (a) subscribing to `TableEvent::SelectRow` makes every row-body click select a whole row, clobbering the single-cell click selection wired in T5; (b) a fake first column holding row numbers corrupts the `col_ix` passed to `render_td` and breaks column addressing. `WorkspaceShell::select_row_at` IS implemented + reachable programmatically; the click wiring is unwired. | open | low |
+| PD-019 | P4c T13 wired header single-click → select-column but could NOT wire row-gutter click → select-row: the gpui-component `TableDelegate` trait (rev `0f0ab35`) has no `render_row_header`/gutter seam, and `TableState::render_table_row` owns the row layout internally. Two alternatives were rejected: (a) subscribing to `TableEvent::SelectRow` makes every row-body click select a whole row, clobbering the single-cell click selection wired in T5; (b) a fake first column holding row numbers corrupts the `col_ix` passed to `render_td` and breaks column addressing. `WorkspaceShell::select_row_at` IS implemented + reachable programmatically; the click wiring is unwired. | closed — superseded by PD-023 | low |
 | PD-020 | P4c T14 wired inline-editor `Enter` → commit + move-DOWN + focus-on-mount, but `Tab` → commit + move-RIGHT could NOT be wired: gpui-component `Input` (rev `0f0ab35`) consumes Tab internally for focus tab-stops and surfaces no `InputEvent::PressTab` variant (`InputEvent` is `{ Change, PressEnter, Focus, Blur }`). **Closed by Phase 6 of the GPUI→Dioxus migration (2026-08-10):** the limitation was the toolkit's, and a plain `<input>` surfaces Tab like any other key, so `dat0-ui`'s cell editor commits and steps one column right on Tab, one left on Shift-Tab, clamped at the row's ends. | closed | low |
 | PD-021 | P4c (T11 review): `error_ux::push` enqueues success/error banners into the global `PENDING` queue, but NOTHING drains it in the runtime render tree — only `#[cfg(test)]` code calls `drain_pending`. So export completion/failure feedback (`window.rs::run_export`) AND the pre-existing P4b paste-reject banner (`grid/edit_ops.rs`) are invisible to the user at runtime. **Closed by P6a T1:** `WorkspaceShell::render` now calls `error_ux::banner::merge_pending` into a per-window `banners` field and renders a host strip atop the shell. | closed | medium |
 | PD-022 | P6a (T12 review): the Inspector profile is refreshed on forward data/schema mutations (cell edit, paste, cut, delete, rename, reorder, transform-apply via `route_change`), but NOT on `undo`/`redo` or SQL-console grid-bind — those rebind via `apply_view_change`, which has no inspector hook. So undoing an edit (or rebinding a grid from the SQL console) leaves the inspector profile stale until the next forward mutation. Single well-scoped fix: hook `apply_view_change` (or an `on_rebind_complete` seam) to invalidate/re-profile the inspected table. Not a regression — the inspector did not refresh at all before P6a. | closed | low |
+| PD-023 | The Dioxus shell is not wired to `dat0-core`: 22 of 40 registered actions only logged, opened an empty dialog, or discarded the reply (none does now; the SQL console runs, the grid sorts, filters, edits, saves and exports, Live Refresh reads a file again, a closed or crashed window's work comes back, workspaces open and save, packages open read-only, unpack into a workspace, export and replay, the perf HUD shows frames, memory and pages, SQLite files attach, Help → Check for Updates answers, the chart draws the active tab and saves, the inspector profiles it, AI takes a key and writes and explains SQL in the console, MotherDuck connects, a crashed run's report is offered at the next launch, ⌘K opens the palette, the status bar's egress and the footer's window count are measured, a theme chosen is kept across launches, the status bar and title bar say what the window is doing, a CSV the sniff cannot settle opens in the import wizard, a workspace folder dropped or named on the command line opens as the workspace, what the chrome says has left the machine is measured, crash and bug reports included, a command waits for an open dialog rather than replacing it, the title bar moves the window on macOS and the Linux menus quit, close, minimize, zoom and go full screen, and the hints, labels and theme say what is so, since 2026-09-26). "Logic green, screen dead" at app scale, recorded nowhere until 2026-09-25 | closed | high |
+| PD-024 | Banners raised after a window's first frame were never shown — the shell drained the queue once per mount; a refused drop surfaced later, twice, in another window | closed | high |
+| PD-025 | The recovery panel listed the running window's own session as an orphan, and its Discard deleted it | closed | high |
+| PD-026 | The grid cannot scroll past row ~1,290,555: the canvas is rows × 26 px, uncapped, and WebKit clamps layout at ~33.5M px | closed | high |
+| PD-027 | The first window owns the event bus: commands raised in any window act on window 1, and closing window 1 silences menus, palette, chords and second-launch forwarding | closed | medium |
+| PD-028 | A file drop aborted the app when `session.json` could not be written (`.expect` under `panic = "abort"`) | closed | medium |
+| PD-029 | Package replay trusted the recipe: its SQL ran with the engine's full access, and table names were used as file names unchecked | closed | high |
+| PD-030 | Opening a second file with the same stem (another folder's `data.csv`) replaced the first file's table, so the first tab showed the second file's rows | closed | high |
+| PD-031 | A table's origin lives only in the engine's memory: a session opened again from disk knows its tables but not where they came from, so a package made from it cannot replay its derived tables | open | medium |
+| PD-032 | Only the first surface to open in a window took the keyboard: a second command palette, cell edit, name prompt, filter popover or context menu opened unfocused, and what was typed went to the grid | closed | high |
+| PD-033 | The console runs PRAGMA and EXPLAIN but shows none of their rows: DuckDB will not define a view as them, and the grid reads views | open | low |
+| PD-034 | One grid edit or delete takes at most 10,000 cells or rows, and one copy at most 100,000 cells: each edited cell is a `CASE` branch every read walks | open | low |
+| PD-035 | Closing a scratch window does not offer to keep its work as a workspace; the next launch offers it for recovery instead | open | low |
+| PD-036 | File → Open Recent lists the workspaces recent at launch: one opened or saved since is listed from the next launch | open | low |
+| PD-037 | Live Refresh reads a file the import wizard read with automatic detection, since the dialect chosen is not kept with the table | open | medium |
+| PD-038 | A data tab cannot be closed: the tab strip only activates tabs, and no command closes one | open | medium |
+| PD-039 | A `.dat0` package or a workspace folder named at launch opens in a window of its own, beside an empty scratch window | open | low |
+| PD-040 | Parts of the shell cannot be reached by keyboard: the data tabs, a column's sort and filter, the inspector's lineage, and a dialog's first control | open | medium |
+| PD-041 | The release pipeline, never run, would have shipped a Linux AppImage that opened a blank window on most hosts and would not start on Ubuntu 22.04 or Debian 12, with no check that a tag carried the production update key | closed | high |
+
+> **Missing originating docs (noted 2026-09-25).** D-030 and D-032–D-036 cite
+> `docs/plans/2026-08-08-dat0-production-v1-plan.md`, and the migration log cites
+> "the plan" for the GPUI→Dioxus port. Neither file was ever committed; their slice
+> ids (EN, SH, MX, MT, UI, AX, RL, QA) survive only in these entries, code comments
+> and `docs/plans/2026-08-08-dat0-production-v1-uat.md`. Commit them if they still
+> exist, so these links resolve.
 
 ## At-a-glance — Closed plan defects
 
@@ -704,7 +733,10 @@ that's modifying it; merge conflicts are signals worth investigating.
 - **Follow-ups opened by P7c:** D-022 (live-view import mode), D-023
   (cross-table refresh cascade), D-024 (auto-refresh toggle + multi-table
   watching).
-- **Last touched:** 2026-06-12.
+- **Regressed (noted 2026-09-25):** the Dioxus shell never starts a
+  `SourceWatcher`, and the live-refresh confirm opens with 0/0 counts and a
+  no-op reply (`crates/dat0-ui/src/router.rs`). Tracked as PD-023.
+- **Last touched:** 2026-09-25
 - **What it is (historical):** A `notify`-crate file-watcher on each `Tab.source_path` (the
   original source file for imported tables) that re-imports the table when the
   source file changes: re-runs CTAS (same sniffing path as the original import),
@@ -899,10 +931,11 @@ that's modifying it; merge conflicts are signals worth investigating.
   - **No "read-only" badge** in the Inspect window chrome — the window refuses
     edits, but nothing in the title/header visibly signals that it's a read-only
     package view (the user discovers it only when an edit is refused).
-  - **Inspect scratch dir not GC'd on close** — the Inspect window materializes
-    the package under `<state>/inspect/<uuid>/` and keeps it for the window's
-    lifetime, but the directory is **not** pruned when the window closes
-    (candidate: prune on launch like the orphan-scratch scan does for sessions).
+  - ~~**Inspect scratch dir not GC'd on close**~~ — resolved 2026-09-26
+    (PD-023, step 5.4d): what a closed Inspect window extracted under
+    `<state>/inspect/<window id>/` is removed at the next launch
+    (`recovery_scan::sweep_inspect`), as the orphan-scratch sweep does for
+    sessions.
   - **GUI Replay binds the first source only** — the in-app Replay flow binds the
     picked file to the package's **first** source; multi-source replay stays on
     the `dat0 replay --source logical=path` CLI (which accepts repeated
@@ -915,7 +948,7 @@ that's modifying it; merge conflicts are signals worth investigating.
   block the verb. Each is small and independent.
 - **Originating doc:** P8 T9; `crates/dat0-app/src/package/inspect.rs`.
 - **User-facing doc:** `docs/dat0-packages.md` § "In the app".
-- **Last touched:** 2026-06-13.
+- **Last touched:** 2026-09-26.
 
 ---
 
@@ -1134,8 +1167,9 @@ that's modifying it; merge conflicts are signals worth investigating.
 - **What it is:** `crate::telemetry::egress::total_sent()` counts
   application-layer request bytes dat0 itself puts on the wire, and the status
   bar renders that number under the marketing page's `0 bytes left this
-  machine` claim. Four of the five outbound seams are fully counted. The fifth
-  is not: `connections::connect::run_connect` hands a token to DuckDB's
+  machine` claim. Every other outbound seam is fully counted (crash and bug
+  reports, which Sentry's own client sends, only since 2026-09-26: PD-023,
+  step 5.11a). This one is not: `connections::connect::run_connect` hands a token to DuckDB's
   MotherDuck extension via `ATTACH 'md:'`, and from that point the extension
   owns its own socket to the service. Every query dat0 routes at an `md:`
   database leaves this machine over a connection dat0 never sees and cannot
@@ -1162,7 +1196,7 @@ that's modifying it; merge conflicts are signals worth investigating.
 
 ### D-034 — Sidebar footer reports no tab count
 
-- **Status:** open
+- **Status:** closed — 2026-09-25
 - **Severity:** low
 - **Deferred from:** SH2 (production v1)
 - **What it is:** the plan specified the footer's first row as "window/tab
@@ -1186,11 +1220,15 @@ that's modifying it; merge conflicts are signals worth investigating.
   `render_catalog_body`, or drop the idea and record that windows+workspaces is
   the intended census.
 - **Originating doc:** SH2, `docs/plans/2026-08-08-dat0-production-v1-plan.md`
-- **Last touched:** 2026-08-08
+- **Closed by:** the GPUI→Dioxus migration. The Dioxus sidebar footer renders
+  `session · N window · M tabs`, reading the tab count from the window's own
+  state. Two of its values are still placeholders — the window count is
+  hardcoded to 1 and the AI row to `ai none` — and those belong to PD-023.
+- **Last touched:** 2026-09-25
 
 ### D-036 — Two `block_on(Session::…)` sites remain on the GPUI main thread
 
-- **Status:** open
+- **Status:** closed — moot (2026-09-25)
 - **Severity:** low
 - **Deferred from:** EN4 (production v1)
 - **What it is:** EN4 removed the two `block_on(Session::new(...))` calls the
@@ -1219,7 +1257,13 @@ that's modifying it; merge conflicts are signals worth investigating.
   give `SessionSlot::Booting` an optional guard slot, and route both callers
   through `spawn_session_boot`'s dispatcher hop.
 - **Originating doc:** EN4, `docs/plans/2026-08-08-dat0-production-v1-plan.md`
-- **Last touched:** 2026-08-08
+- **Closed by:** the GPUI→Dioxus migration deleted both call sites with
+  `dat0-app`, and `dat0-ui` has no UI-thread `block_on`: Dioxus `spawn` plus
+  `SessionSlot` replaced the pattern. The two flows they served — opening a
+  workspace folder and opening a `.dat0` package — are not wired in the Dioxus
+  shell (PD-023); when they are rebuilt, they must boot the session
+  asynchronously, the way `session_boot::use_session` does.
+- **Last touched:** 2026-09-25
 
 ### D-037 — Nine docs still describe the GPUI build
 
@@ -1317,7 +1361,7 @@ that's modifying it; merge conflicts are signals worth investigating.
 
 ### PD-001 — tracing EnvFilter directive `dat0=debug` doesn't match dat0 crates
 
-- **Status:** open
+- **Status:** cancelled — 2026-09-25 (the premise is wrong)
 - **Severity:** low
 - **Affected files:** `crates/dat0-app/src/boot.rs:init_logging`
 - **Symptom:** `EnvFilter::new("info,dat0=debug")` matches by *module path*.
@@ -1332,7 +1376,13 @@ that's modifying it; merge conflicts are signals worth investigating.
 - **Suggested fix:** Replace with explicit per-crate directives —
   `info,dat0_app=debug,dat0_engine=debug,dat0_format=debug,dat0_i18n=debug,dat0_keychain=debug`
   — or use a shared helper that enumerates dat0 crate prefixes.
-- **Last touched:** 2026-04-28
+- **Closed by:** review, 2026-09-25. `EnvFilter` target directives match by
+  *prefix*, not by exact module path: tracing-subscriber 0.3.23 tests
+  `meta.target().starts_with(&target[..])` (`src/filter/env/directive.rs:246`).
+  `dat0=debug` therefore matches `dat0_core::…`, `dat0_ui::…` and every other
+  `dat0_*` crate, which is the intent. The directive now lives in
+  `crates/dat0-core/src/boot.rs` and `settings/schema.rs`; nothing to change.
+- **Last touched:** 2026-09-25
 
 ### PD-002 — Settings store atomic-write missing `fsync` before rename
 
@@ -1654,7 +1704,7 @@ that's modifying it; merge conflicts are signals worth investigating.
 
 ### PD-011 — P3b plan §3.7 ambiguity rule references sniff outputs that don't exist
 
-- **Status:** open
+- **Status:** closed — 2026-09-25
 - **Severity:** low (the import wizard still ships; only the trigger heuristic
   changes shape)
 - **Affected files:** `docs/plans/2026-05-25-dat0-p3b-plan.md` T9 task description
@@ -1702,7 +1752,16 @@ that's modifying it; merge conflicts are signals worth investigating.
   references at the bottom of each).
 - **Target phase:** P3b T9 (no separate target phase — this defect is
   surfaced by T0 and consumed by T9 before T9 begins implementation).
-- **Last touched:** 2026-05-25
+- **Closed by:** P3b T9 (`8303b50`, follow-up `e1fc14e`), which implemented
+  the dual-sniff + UTF-8 substitute this entry specifies
+  (`crates/dat0-core/src/import_wizard.rs`). The P3b retro records it closed and
+  kept this row open only because spec §3.7's wording still names the
+  non-existent outputs; that dated spec is a historical record, and this entry
+  is where the substitute rule is written down. Per-column confidence remains
+  deliberately unimplemented. **Separately, and open:** the import wizard is
+  unreachable in the Dioxus shell — an ambiguous drop is only logged — which is
+  PD-023.
+- **Last touched:** 2026-09-25
 
 ---
 
@@ -1896,7 +1955,10 @@ that's modifying it; merge conflicts are signals worth investigating.
 - **Next phase:** P4b T0 must wire: (1) `grid/mod.rs` funnel-zone click → `filter_popover_entity.rs` mount + present via `WorkspaceShell`; (2) `filter_popover_entity.rs` `Outcome::Apply` → `vm.apply` + `spawn_view_change`; (3) `grid/mod.rs` sort-zone click (plain + shift) → `vm.set_sort` + `spawn_view_change`; (4) a click-path integration test covering the full UI-click → ViewChange → rebind loop.
 - **Discovered:** T13 implementation review (2026-05-29). Documented by the controller after the T13 implementer correctly noted plan §T13 Steps 1-4 don't cover these wirings.
 - **Originating doc:** `docs/plans/2026-05-27-dat0-p4a-plan.md` §T13.
-- **Last touched:** 2026-05-31 (closed by P4b T0 — see `click_wiring.rs`)
+- **Regressed (noted 2026-09-25):** the Dioxus grid's sort and funnel zones
+  render with no click handler and `FilterPopover` is never mounted — the same
+  unowned wiring, lost again in the port. Tracked as PD-023.
+- **Last touched:** 2026-09-25
 
 ---
 
@@ -1967,7 +2029,7 @@ that's modifying it; merge conflicts are signals worth investigating.
 
 ### PD-019 — Row-gutter click → select-row unwired (no `render_row_header` seam in gpui-component)
 
-- **Status:** open
+- **Status:** closed — superseded by PD-023 (2026-09-25)
 - **Severity:** low (column-select fully wired; select-row reachable programmatically + via keyboard)
 - **Affected files:** `crates/dat0-app/src/window.rs` (`WorkspaceShell::select_row_at`)
 - **Symptom:** P4c T13 wired header single-click → `select_column_at` (column-select) but could NOT
@@ -1995,7 +2057,12 @@ that's modifying it; merge conflicts are signals worth investigating.
     Fragile (must track row height + scroll offset), but requires no upstream change.
 - **Discovered:** P4c T13 implementation review (2026-06-01).
 - **Originating doc:** `docs/plans/2026-05-31-dat0-p4c-plan.md` T13.
-- **Last touched:** 2026-06-01.
+- **Closed by:** the gpui-component seam this was blocked on no longer exists:
+  the grid is a Dioxus component, where a row gutter is ordinary markup. But the
+  Dioxus grid has no row gutter at all, and `SelectionModel::select_row` /
+  `select_column` have no `dat0-ui` caller, so header-click → select-column has
+  regressed too. Both are part of PD-023's grid work.
+- **Last touched:** 2026-09-25
 
 ---
 
@@ -2089,7 +2156,9 @@ that's modifying it; merge conflicts are signals worth investigating.
   (`render_banner` per banner, kind-accented left border) is mounted as the first
   child of the shell root, before the tab strip. Test
   `merge_pending_moves_global_into_live_vec` in `error_ux/banner.rs`.
-- **Last touched:** 2026-06-06.
+- **Regressed, then closed again as PD-024 (2026-09-25):** the Dioxus shell's
+  drain ran once per window mount, so banners raised later were not shown.
+- **Last touched:** 2026-09-25
 
 ### PD-022 — Inspector profile not refreshed on undo/redo or SQL-console grid-bind
 
@@ -2132,6 +2201,1006 @@ that's modifying it; merge conflicts are signals worth investigating.
 - **Last touched:** 2026-06-06.
 
 ---
+
+### PD-023 — The Dioxus shell is not wired to `dat0-core`
+
+- **Status:** closed, 2026-09-26. No registered action is without an effect,
+  and each surface the GPUI build had is wired; what is still open is
+  recorded as PD-033 to PD-040, each on its own.
+- **Severity:** high — the failure mode this register reserves `high` for,
+  at the scale of the whole application
+- **Target:** feature parity in the Dioxus shell, one surface at a time
+- **Affected files:** `crates/dat0-ui/src/components/shell.rs`
+  (`surface_command`; `console_intent` until it moved to
+  `components/sql_console/host.rs`), `crates/dat0-ui/src/router.rs`,
+  `crates/dat0-ui/src/components/mod.rs` (`menu_local`),
+  `crates/dat0-ui/src/session_boot.rs`
+- **Symptom:** the GPUI→Dioxus port rebuilt the components and the shell
+  chrome, but not the orchestration that connected them to the core — about
+  4,600 lines in `crates/dat0-app/src/window/{sql,charts,catalog_inspector,
+  data_io,workspace_ops,package_ops,live_refresh,connections,ai}.rs` at
+  `95627c8`. Of the 40 registered actions, 22 only log, open a dialog with an
+  empty list, or open one whose reply is `ModalReply::new(|_| {})`. Verified
+  in code; items marked **[R]** were also reproduced on a Linux release build
+  driven under Xvfb.
+  - **SQL console:** Run and Cancel only clear the error **[R]**; history and
+    saved queries open empty; the save prompts discard their answer;
+    completion knows functions but not tables or columns.
+  - **Grid:** the sort and funnel zones have no handler and `FilterPopover` is
+    never mounted; the pipeline bar gets an empty stack; `on_edit` /
+    `on_action` are not passed, so validated cell edits are discarded;
+    copy, paste, fill, delete, undo and redo only `debug!`; dragging a header
+    moves the column's width, not the column.
+  - **Opening things:** `.dat0` packages, workspace folders and the hero's
+    "Open demo.dat0" all reach `handle_drop` and are refused as unsupported
+    **[R]**; recents are never recorded; an ambiguous CSV that needs the
+    import wizard is only logged. SQLite files are refused on drop by design
+    (attaching one is a connection, not an import) — yet the hero's Chinook
+    sample, the tour and the README all offer SQLite as something to drop.
+    That predates the port: the GPUI build routed the Chinook sample through
+    the same `handle_drop` (`95627c8:…/window/data_io.rs`), so the sample card
+    has never opened. The fix is to attach a dropped SQLite file, not to change
+    the copy.
+  - **Everything behind a modal or a menu:** export, save chart, the
+    inspector (never targeted), MotherDuck (`connections.open` is not a
+    registered action), AI key entry (the entry outbox has no reader), the
+    update check, the crash prompt on relaunch, recovery Open/Resume, live
+    refresh, the perf HUD, and theme persistence (`Theme::provide(None)`;
+    `ThemeChanged` is never handled). Open/Export/Unpack/Replay Package,
+    Toggle Sidebar, Toggle Inspector and Check for Updates log
+    "menu item has no handler yet" **[R]**.
+  - **Chrome:** the status bar's `mem` / `rows` / `fps` / `egress` are never
+    written, so `egress 0 B` is a constant, not a measurement; the footer
+    hardcodes `1 window` and `ai none`; ⌘K is shown and bound to nothing.
+- **Why every gate stayed green:** `tests/action_routing.rs` asserts that an
+  id is *claimed*, and a stub that logs claims it; the banner tests read the
+  global queue rather than the screen (PD-024); the visual suite renders state
+  that fixtures inject and production never produces.
+- **Tracking:** `dat0_ui::router::UNWIRED` lists the commands that do nothing
+  yet (22 when it was introduced). The palette hides them and the menu bar and
+  grid context menu disable them; `tests/action_effects.rs` (which replaced
+  `action_routing.rs`) requires an observable effect from every command still
+  offered, and lets `UNWIRED` only shrink. Each surface ported under this entry
+  removes its ids from that list in the same change.
+- **Progress:**
+  - 2026-09-26, event routing (PD-027, closed). The settings window's
+    `ThemeChanged` now reaches every window. Keeping a theme across launches
+    is still open.
+  - 2026-09-26, SQL console. A query's rows land in the main grid, as a tab
+    named for its query tab; a statement that returns nothing says it ran; a
+    failure shows DuckDB's message in the console; Cancel interrupts the run.
+    Every run is recorded, and History reopens one in a new tab. Saved queries
+    save, load and delete. Save as Table keeps the statement as a table and
+    opens it. Completion now knows the window's tables and columns, read when
+    a query tab initialises. Six ids left `UNWIRED` (22 → 16), and
+    `tests/console_run.rs` drives each against a real session. "Run in
+    results pane" is gone until the console has a pane.
+  - Still open in the console: PRAGMA and EXPLAIN run, but their rows are not
+    shown — DuckDB will neither define a view as them nor select from them,
+    and the grid reads views. SHOW, DESCRIBE and SUMMARIZE do reach the grid.
+    Query tabs were not saved with the session (`Session::set_sql_tabs` had no
+    caller), so what was typed did not survive a restart; they are recorded
+    as they change since step 5.7b.
+  - Found on the way and fixed with it: a grid handed a new source — another
+    tab, or a query run again in place — kept checking the old source's
+    cache, so the new table showed placeholders until a scroll
+    (`tests/shell_grid_binding.rs`).
+  - 2026-09-26, the grid's view (`components/grid/views.rs`). The sort zone
+    cycles a column through ascending, descending and off (Shift adds it to
+    the sort); the funnel opens the filter popover, fed the column's most
+    common values; the pipeline bar shows the stack and jumps or removes a
+    step; Undo and Redo move through it; dragging a header moves the column,
+    not just its width. Each tab keeps its own view across tab switches. Two
+    ids left `UNWIRED` (16 → 14), and `tests/grid_views.rs` drives each
+    gesture against a real session.
+  - Found on the way: a funnel's Clear called `ViewModel::clear`, which
+    dropped the whole stack — every sort, every other filter, every pending
+    cell edit — rather than that column's filter. It now removes only its own
+    filter (`ViewModel::clear_filter`, `tests/click_wiring.rs`).
+  - 2026-09-26, the grid's edits (`components/grid/edits.rs`). A typed cell,
+    copy, cut, paste, fill down, set NULL, set a value, delete rows and
+    delete (hide) columns each become one step on the tab's view — laid over
+    the table, never written into it, so Undo takes them back. They answer
+    the context menu, the palette, and the GPUI grid's keys: Cmd/Ctrl+C, X,
+    V and D, and Delete or Backspace for NULL. A selection reaching past the
+    rows in memory has their pages read first, rather than skipping them.
+    Eight ids left `UNWIRED` (14 → 6), and `tests/grid_edits.rs` drives each
+    verb against a real session. Widths now follow their column, not its
+    place, through a hide, a drag or an Undo (`views::use_fit`).
+  - Found on the way: every column type but five integers and floats and
+    text painted its type's name — `(Date32)`, `(Boolean)` — in every cell,
+    so a copy or a fill down carried the name as the value. `render_cell`
+    now paints the value, and fill down copies the typed value rather than
+    its six-place display (`grid/renderers.rs`).
+  - 2026-09-26, Save View as Table (`grid::edits`), from the palette and the
+    pipeline bar. The view becomes a table as it is shown — its rows, in its
+    order, hidden columns left out and renamed ones under their new names —
+    and opens in a tab, with the view's steps as its lineage. `UNWIRED`
+    6 → 5. The GPUI build compiled the view's SQL alone, which would have
+    carried hidden columns, and the view's row id as a stray
+    `__dat0_rowid__src` column, into the new table.
+  - 2026-09-26, Export… (`grid::export`). Browse runs the folder picker and
+    Export writes the file: the current view as shown (its rows, its order,
+    its columns under their names, no row id) or the whole table, as CSV,
+    JSON or Parquet, streamed by DuckDB's `COPY … TO`. The dialog starts in
+    the folder the tab's file came from. `UNWIRED` 5 → 4, discarded modal
+    replies 3 → 2. An existing file of the same name is overwritten without
+    asking, as the GPUI build did.
+  - 2026-09-26, Live Refresh (`grid::refresh`). It opened its dialog with
+    zero edits and zero deletes whatever the view held, threw the answer away,
+    and nothing watched the file. Now a watcher on the active tab's file puts
+    up a banner when it changes, whose button refreshes; Refresh re-imports
+    the file under the same table and replays the view's sorts, filters and
+    column changes onto the new rows. Edits and deleted rows are keyed by row
+    ids a re-import makes anew, so when the view has any the dialog says how
+    many would go and asks first; a sort or filter on a column the file lost
+    lands the view on the bare table, and says so. The window bus now
+    delivers `AppEvent::Banner`, which it used to drop. `UNWIRED` 4 → 3,
+    discarded modal replies 2 → 1.
+  - Still open in the grid: one edit or delete takes at most 10,000 cells or
+    rows, and one copy at most 100,000 cells. Each edited cell is a `CASE`
+    branch that every read of the view walks, so a larger overlay needs a
+    different engine form, not a larger cap. The clipboard falls back to
+    dat0's own process where there is no system clipboard, so a copy there
+    pastes inside dat0 only.
+  - 2026-09-26, recovery (`session_sync.rs`, step 5.7b). A window records its
+    tabs, each tab's view — sorts, filters, edits, column changes — and its
+    query tabs in its session as they change. It used to record a file's tab
+    when it opened and nothing after, and the console's SQL never. The
+    recovery panel's Open, whose answer was thrown away, opens the session in
+    a window of its own with its tabs, their views and its SQL, and records
+    each tab's file again, so Live Refresh reads it into the same table. At
+    launch, scratch directories holding nothing to recover — every tab a file
+    still on disk, shown as it is, nothing typed, run or saved — are removed,
+    and the rest are counted in one banner whose Review opens the panel. The
+    boot scan ran nowhere, and every window ever opened left its directory
+    behind. A session open in one window is not opened in another: the engine
+    refuses a second engine on a database this process holds, which DuckDB's
+    per-process file lock does not. Discarded modal replies 1 → 0.
+    `tests/session_sync.rs` records a window, opens a second one on what it
+    left, and opens it from the panel.
+  - Still open in recovery: a graceful close keeps a window's directory as a
+    crash does, and the next launch removes it or offers it; the design's
+    "Promote to Workspace?" prompt on close is still to come. A table's
+    origin other than a tab's file is not kept (PD-031).
+  - 2026-09-26, Open Workspace (`workspace_open.rs`, step 5.4b). Open
+    Workspace, File → Open Recent, the hero's recent list, the demo and the
+    recovery panel's Resume posted the folder as a file to open, and the drop
+    path refused it. A
+    folder holding a finished `.dat0/` now opens in a window of its own,
+    named for the folder, under the workspace's lock, with the tabs, views
+    and SQL it was left with. A folder without one, or with a Save Workspace
+    cut short, says so. A workspace a window of this process has open brings
+    that window forward. On a sync drive, one held by a dat0 on another
+    machine asks first, and the window that opens it records itself in the
+    workspace's cross-machine lock. The demo unpacks into a workspace and
+    opens it. Resume writes the manifest an interrupted save did not and
+    opens the workspace; with no database moved, it says there is nothing to
+    resume. Opened workspaces are remembered as recent. `UNWIRED` 3 → 2.
+    `tests/workspace_open.rs` makes workspaces with dat0-core and opens each
+    kind.
+  - 2026-09-26, Save Workspace (`workspace_save.rs`, step 5.4c). It asked for
+    a file name and logged it. It now asks for a folder, which the picker can
+    make, and moves the window's session into the folder's `.dat0/`: the
+    database, with its log written into it first, then the session file, then
+    the manifest. The window goes on as the workspace: named for the folder,
+    under its lock, remembered as recent, and brought forward when the folder
+    is opened again. Its grids are built again on the new engine with their
+    views, and each table keeps where it came from. A console run's rows were
+    a view in the old engine only, so their tabs close; the SQL stays. The
+    move renames the file the engine has open, so everything holding the
+    engine lets go first; a query still running after five seconds leaves the
+    session as it was, and the save says so. A folder that is a workspace
+    already, a window that is one and a read-only window are refused; a move
+    that fails part-way reopens what is on disk, its tables' origins with it.
+    The engine now knows a database file by its identity on disk as well as
+    its name, and keeps it claimed until its connection closes, which a
+    query's worker can hold after the engine is gone: a second engine on the
+    moved file is refused rather than shown an empty database. `UNWIRED`
+    2 → 1. `tests/workspace_save.rs` saves a window and opens the workspace
+    again, and saves into a workspace, twice, from a read-only window, while
+    the engine is held, and into a plain file, which fails part-way.
+  - 2026-09-26, the Save Workspace nudge (`workspace_save::suggest`). A
+    scratch window holding three view steps or a saved query suggests, once,
+    saving itself as a workspace, with Save Workspace on the banner, as the
+    GPUI build did; a read-only window or a workspace does not.
+  - Still open for workspaces: Open Recent lists the recent workspaces as
+    they were at launch, since its items are resolved by position; a
+    workspace opened or saved since is listed from the next launch.
+  - 2026-09-26, Open Package (`package_open.rs`, step 5.4d). File → Open
+    Package was disabled, the sidebar's Packages rows and the hero's recent
+    packages opened the package as a data file, and a dropped package was
+    refused as an unknown file type. Each now opens it in a window of its
+    own, read-only (`Opening::Inspect`), named for the file: its tables read
+    from its Parquet, its tabs with their views, its saved queries and
+    charts. Its tables were TEMP views, which the catalog does not list, so
+    an inspected package showed no tables and brought back no tabs; they are
+    views in the window's own throwaway database now. The hero lists recent
+    packages beside recent workspaces. What a closed window extracted is
+    removed at the next launch (`recovery_scan::sweep_inspect`).
+    `tests/package_open.rs` seals a package with dat0-core and opens it each
+    way.
+  - 2026-09-26, Unpack Package (`package_unpack.rs`, step 5.4d). File →
+    Unpack Package was disabled. It now asks for a package and a folder,
+    which the picker can make, unpacks the package into the folder's
+    `.dat0/` and opens the workspace, editable. Unpacking extracted the
+    package's Parquet into the folder's own `data/`, over any file there
+    named for one of its tables; it extracts inside `.dat0/` now, for
+    `dat0 unpack` too. A folder that is a workspace already is refused: by
+    the app before it reads the package, and by
+    `package::contents_to_workspace`, which did not check, so `dat0 unpack`
+    wrote into it. An unpack that fails removes the `.dat0/` it began.
+    `tests/package_open.rs` unpacks a package and opens it, over a
+    workspace, and one that fails part-way; `tests/package_roundtrip.rs`
+    checks the refusal and the cleanup in core.
+  - 2026-09-26, Export Package (`package_export.rs`, step 5.4d). File →
+    Export as .dat0 Package was disabled. It now asks where to write the
+    package and seals the window's tables into it, with its tabs' views, its
+    saved queries and charts, from the running session, so the tables made
+    in it keep their lineage. The session is copied under a brief lock
+    (`package::Portable`, shared with `session_to_contents`); the engine
+    work holds none. The writer wrote in place, so a write that failed
+    part-way truncated the package it was replacing; it now writes beside it
+    and renames the package into place once whole, for `dat0 export` too.
+    `tests/package_open.rs` exports a workspace over an older file and reads
+    the package back; dat0-format's `tests/writer.rs` checks that a failed
+    write leaves the package already there.
+  - 2026-09-26, Replay Package (`package_replay.rs`, step 5.4d). File →
+    Replay .dat0 Package was disabled. It now asks for a package, then for
+    the file to read in place of each of its sources, then where to write
+    the new package, and rebuilds the package's tables on the new data. The
+    GPUI build asked for one file and bound it to the first source, which
+    replay refuses for a package of several. The files are bound by name
+    (`cli::replay_with`), not through `dat0 replay`'s `name=path` text.
+    Opening, unpacking, exporting and replaying run off the window's thread
+    (`background::run`). `tests/package_open.rs` replays a package on a
+    fresh file and on one without the source's columns.
+  - 2026-09-26, the perf HUD (`perf_hud.rs`, step 5.8). Toggle Performance
+    HUD flipped a flag the shell never rendered, the last id in
+    `router::UNWIRED`, which is empty now. The HUD shows the frame rate,
+    frame-time p50/p95/p99, the resident set and the grid's pages out of its
+    cap, bottom-right over the shell, out of the tab order. A frame is a
+    paint the webview makes after the page changed; the HUD's own text is
+    left out, so an idle window reads an em-dash, never 0. Checked in the
+    release build under Xvfb: an em-dash idle, 70 fps and p50 9 ms while a
+    200,000-row CSV scrolled, and an em-dash again once it stopped.
+    `tests/perf_hud.rs` toggles it on and off in a real shell. Checking it by
+    hand found PD-032.
+  - 2026-09-26, SQLite (`sqlite_open.rs`, `connections::sqlite`, step 5.4e).
+    A SQLite file dropped, opened, passed on the command line or chosen as
+    the Chinook sample was refused as a file type dat0 did not know, and
+    nothing attached one. It is now known by its header, not its name, and
+    attached to the window's session read-only under an alias made of its
+    name. Its first table opens in a tab, a view of the session's own over
+    the attached table, and all of its tables are listed under CONNECTIONS,
+    where a table's row opens it and the database's row folds them. The
+    session records the file. A session that lands, opened again or moved by
+    Save Workspace onto an engine of its own, attaches its files again
+    before its tabs come back; a file that is gone is reported, and the
+    other tabs come back. The engine lists its own tables apart from an
+    attached database's, and a file that cannot be read is no longer left
+    attached. `tests/sqlite_open.rs` opens a file, the Chinook sample and a
+    table from the sidebar, opens a session again, with its file and
+    without it, and saves one as a workspace. Detaching a file, and the
+    connections panel, which nothing opened, followed in step 5.6c.
+  - 2026-09-26, updates (`update_flow.rs`, step 5.7). Help → Check for
+    Updates was built disabled, and nothing checked at launch: the check,
+    the prompt and the installer were here with nothing calling them. The
+    check now runs off the window's thread against the release manifest,
+    verified with the key dat0 carries, and the prompt shows its answer:
+    every answer when the user asked, and at launch, when the settings allow
+    it, only a found update. A dialog already up keeps its place, and the
+    answer is a banner. Install replaces dat0 where it can and opens the
+    Releases page where it cannot. `menu::UNWIRED_LOCAL` is empty now.
+    Checked in the release build under Xvfb: the menu item opens the prompt
+    with the check's answer, here a failed connection, since the sandbox's
+    proxy is not a trusted issuer. `tests/update_flow.rs` answers the check
+    without the network, each way.
+  - 2026-09-26, charts (`components/charts/host.rs`, step 5.5b). The charts
+    pane had nothing feeding it: its source was never set, so it showed its
+    empty state whatever was open, its axis pickers had no columns, and a
+    plot query that failed was dropped without a word. While the pane is
+    open, the chart is now bound to the active tab's table, as the type its
+    columns suggest, and offers that table's columns on its axes (not the
+    row id an editable table carries). Each table keeps its chart for when
+    its tab comes back. The chart is drawn from what the tab's grid reads,
+    so a filter or an edit shows in it, which the GPUI build's did not. A
+    chart that cannot be drawn says why in its place. PNG and SVG export,
+    now also buttons on the chart's toolbar, write the chart in the colours
+    on screen rather than plotters' own, and off the window's thread.
+    `tests/chart_binding.rs` drives the real shell: Visualize, the axis
+    picks, a tab switch and back, an edit and its undo.
+  - 2026-09-26, saved charts and the inspector (`components/charts/saved.rs`,
+    `components/inspector/host.rs`, steps 5.5c and 5.5d). The pane's Save was
+    wired to `|_| {}`; it now asks for a name, suggesting one from the chart's
+    type and axes, and keeps the chart in the session beside the saved
+    queries. A chart of a query's rows is refused with a word, since those
+    rows are a TEMP view that goes with the window. The inspector had nothing
+    feeding it either: nothing set its target, so it said "No table selected"
+    whatever was open. While its pane is open it now profiles the active
+    tab's table off the window's thread, with the small charts its columns
+    carry, and builds the table's lineage from the session's tables, the
+    tables their SQL reads and the saved charts. A saved chart's lineage row
+    shows it again over its table's tab; the chart's table is found among the
+    window's by name, and what the chart stored is never put into a query.
+    Whole table mode keeps its profile until the table's rows are read again;
+    Current view profiles what the grid reads, again whenever that changes.
+    Found on the way: the overview counted the row id an editable table
+    carries as a column ("3 cols" for two), and a pinned test recorded it;
+    toggling back to Whole table showed the Current view profile, kept under
+    the same key. `docs/catalog-inspector.md` described the GPUI sidebar and
+    is rewritten for this one. `tests/inspector_binding.rs` drives the real
+    shell: the profile and its small charts, both modes over a deleted row, a
+    tab switch, a Live Refresh, and a saved chart shown again from lineage.
+  - 2026-09-26, AI key entry (`ai_flow.rs`, step 5.6a). The AI panel's Save
+    key and Save model wrote their request to an outbox (`AiState::entry`)
+    that nothing read, so no key could be typed and AI could never become
+    ready. The request now opens a prompt, which takes a key out of sight and
+    hands the answer back to the panel; the panel returns to the modal slot
+    the prompt took. The shell built the panel's dependencies on every render,
+    opening the keychain each frame and warning each frame when it would not
+    open; they are built once per window now, and when the keychain will not
+    open, a key saved is said to last only until dat0 quits. A test provides
+    its own through context, so none touches the OS keychain or the network.
+    `tests/ai_entry.rs` types a key, a model, a cancelled key, and a key with
+    no keychain.
+  - 2026-09-26, NL→SQL and Explain (`ai_flow::console`, step 5.6b). The
+    console drew a strip for an AI answer and the controller could stream
+    one, and nothing started either: the console had no button for them, and
+    the shell handed it an empty stream. The console's toolbar now offers
+    NL→SQL and Explain while AI is ready and no answer is still arriving.
+    NL→SQL asks what the statement is for and streams one, written from the
+    window's tables by name and type, never a row; Insert takes it, out of
+    its code fence, into a tab of its own, and Discard throws it away.
+    Explain streams an explanation of the tab's statement. Stop keeps what
+    came, to take or throw away. The status line names the provider once AI
+    is ready, where it always read "ai none". `tests/ai_console.rs` drives
+    the real shell with a scripted AI: a statement asked for, taken and run;
+    one explained; an answer stopped; and AI off.
+  - 2026-09-26, MotherDuck and detach (`connections_flow.rs`, step 5.6c).
+    The connections panel was finished and nothing opened it: Settings'
+    MotherDuck → Manage posted `connections.open`, which nothing handled,
+    and the async half of the panel's intents had no host. It opens now from
+    Manage and from View → Connections…. Connect asks for a token out of
+    sight when none is kept, connects, and lists the account's databases in
+    the panel and under CONNECTIONS, where a table opens as a SQLite file's
+    does; Test reports; Disconnect and Forget take MotherDuck out of the
+    session, softly, as the panel's design says; a session that lands with
+    MotherDuck recorded connects again while a token is kept. A SQLite file
+    can be detached: its tables' tabs close with it and the session forgets
+    it. The connect goes through a seam (`Connector`), so
+    `tests/connections_flow.rs` stands a database of the session's own in
+    for the account, with an in-memory token store: a typed token, a
+    rejected one and its test, a disconnect and a forget, a reconnect at
+    landing, and a detach.
+  - 2026-09-26, the crash report (`crash_flow.rs`, step 5.7d). The report
+    panel, its privacy contract and its relaunch gate were built and nothing
+    called them: a crashed run's staged report was never offered, and nothing
+    opened a bug report. The first window of the next launch now offers the
+    report a crashed run left, once, when the user opted in to crash reports;
+    when they did not, the report is deleted unsent and nothing is asked, as
+    the gate says. A dialog already up keeps its place, and the report waits
+    for a later launch. Help → Report a Bug… opens the panel with nothing
+    staged. `tests/crash_flow.rs` stages a crash where the panic hook would
+    and mounts the real shell as the next launch's first window.
+  - 2026-09-26, honest chrome (`chrome.rs`, step 5.8b). Three things the
+    chrome stated were constants. The status bar's egress figure was a field
+    nothing wrote, so it read `egress 0 B` whatever dat0 had sent; it now
+    reads `telemetry::egress`, redrawn when bytes leave rather than polled,
+    with the `+` the AI panel already showed once MotherDuck's own
+    connection makes the figure a floor. The sidebar's footer said `1 window`
+    however many were open; it counts the process's windows as they open and
+    close, and says `1 tab` where it said `1 tabs`. ⌘K, shown in the tab
+    strip's launcher and the status bar, was bound to nothing; it opens the
+    palette now, beside ⌘⇧P, and both hints read the keymap, so they say
+    `Ctrl+K` off macOS. `tests/chrome.rs` records bytes and opens a second
+    window over a real shell, and `tests/command_palette_nav.rs` presses the
+    chord the chrome shows.
+  - 2026-09-26, the theme (`theme.rs`, step 5.9). `App` provided its theme
+    with no settings, so every window opened in the default whatever had
+    been chosen, and the palette's Toggle Theme repainted only the window it was
+    chosen in and kept nothing. A window now opens in the theme last
+    chosen, and the toggle keeps its choice in the settings file and tells
+    every window, as the Settings window's own control already did.
+    `tests/theme_persist.rs` chooses a theme and launches again, and
+    toggles in one of two windows.
+  - 2026-09-26, the status bar and the title bar
+    (`components/status_bar.rs`, step 5.8c). The status bar said `engine
+    duckdb · native` whatever the engine was doing, its memory and rows
+    segments were fields nothing wrote, so they never showed, and nothing
+    reported the selection or a query; the title bar's pill said `local`
+    with MotherDuck connected, because `Workspace::live` was never written.
+    The engine now says starting, native, motherduck or failed, from the
+    session and the connection; memory is the resident set, sampled every
+    two seconds; rows are the rows in view and the table's size, as the
+    grid scrolls; the selection's size and the last query's time show
+    beside them; and the pill says `live` while MotherDuck is connected. The
+    frame rate left the bar, which only ever hid it: the perf HUD measures
+    it. `tests/status_bar.rs` runs a query into the grid and selects cells
+    over a real session, and `tests/connections_flow.rs` connects MotherDuck
+    and disconnects it.
+  - 2026-09-26, the import wizard (`import_flow.rs`, step 5.10). A CSV whose
+    delimiter two sniffs disagree on, or whose first 8 KB is not UTF-8, came
+    back from the drop as `OpenWizard`, and the window logged it and let it
+    go: the file never opened, and nothing said why. The wizard was built,
+    with its validation, and nothing opened it, in this build or the GPUI
+    one. Such a file now opens in the wizard, seeded with what DuckDB reads
+    under the sniff's delimiter; its columns follow the dialect as it is
+    edited; and Import reads the file as it is told, into a table of the
+    session's own in a tab, with the columns left out dropped and the rest
+    renamed. A file that is not UTF-8 is told so in the wizard, rather than
+    nowhere (D-010). A dialog already up keeps its place, and a banner says
+    to open the file again. `tests/import_wizard_flow.rs` opens a Latin-1
+    file as a drop would, and reads a semicolon file without its header,
+    one column renamed and one left out.
+  - Still open in the wizard: Live Refresh reads such a file again with
+    automatic detection, since the dialect chosen is not kept with the
+    table.
+  - 2026-09-26, what the checklist's walk through the code found in the
+    open paths (step 5.11b). A workspace folder dropped on a window or named
+    on the command line reached the file import, which read it as a file
+    with no extension and refused it as a type dat0 cannot read; it opens now
+    as Open Workspace… opens one, and a folder that holds none says so. A
+    saved chart whose source is schema-qualified, `"main"."t"` (the form
+    `ChartSpec` documents, and the demo package's chart), was matched only as
+    `"t"`, so it was neither listed in its table's lineage nor shown again;
+    both read either form now, and a source naming another schema names no
+    table here. `tests/workspace_open.rs` names a workspace and a plain
+    folder as the command line does, and `tests/inspector_binding.rs` stores
+    a chart as a package does and shows it again from its lineage.
+  - 2026-09-26, what dat0 says has left the machine (step 5.11a). The hero's
+    privacy line was a constant, "0 bytes left this machine", and it and
+    both egress figures were green whatever they said, after the launch's
+    update check had sent its request. All three are the measured figure
+    now, green only while nothing has left and no channel dat0 cannot meter
+    is open. A crash or bug report went through Sentry's own connection,
+    which the egress figure never counted; it is counted now, and the egress
+    gate (`tests/egress_seams.rs`) knows a Sentry capture sends. Report a Bug
+    with crash reports off closed on a report that went nowhere, saying
+    nothing: it says reports are off and where to turn them on, and offers
+    no Send. The opt-in is read when Send is pressed rather than at launch,
+    so an opt-out made mid-session stops the next report, an opt-in made
+    mid-session lets it go, and a banner says which. `tests/chrome.rs`
+    records bytes over a real shell; `tests/crash_flow.rs` sends a report to
+    a transport of its own, and turns reports off with one up.
+  - 2026-09-26, dialogs (step 5.11c). A command routed while a dialog was up
+    in its window ran: ⌘E put Export in place of the open dialog, whose
+    reply was never answered, and the native menu's items did the same. A
+    command now does not run over a dialog, and the window is raised so the
+    dialog is seen; a new window, the theme and Settings, which are not the
+    window's content, still run, as do the Help menu's links. Export with
+    no tab opened a dialog whose Export wrote nothing and said nothing; it
+    says there is nothing to export. Review previous sessions with nothing
+    to recover opened an empty dialog; it says there is nothing to recover.
+    The session failure banner, which cannot be dismissed, stayed up after a
+    retry opened the session, and a retry that failed again put a second
+    beside it; a retry now takes it down as it starts.
+    `tests/action_effects.rs` routes Report a Bug and the theme over the
+    tour, and Export and Review on a bare shell; `tests/session_boot_slot.rs` retries a
+    failed session, and then one that opens. The menu's own path is not
+    exercised headless.
+  - 2026-09-26, the window's own chrome (step 5.11d). On macOS the title bar
+    dat0 draws is the window's only one, and it was marked
+    `-webkit-app-region: drag`, which only Chromium reads: WKWebView took
+    every press, and the window could not be moved. A press on it now drags
+    the window, and a double-click zooms it. Off macOS, muda's GTK backend
+    builds none of AppKit's window items, so the Linux menu bar had no Quit,
+    Close Window, Minimize, Zoom or Full Screen; they are items of dat0's
+    own there, with Ctrl+Q, Ctrl+W and F11 from the keymap. Neither can be
+    exercised headless: unit tests cover the double-click's timing and the
+    items' labels and chords.
+  - 2026-09-26, what the chrome says (step 5.11e). The console's Run chip and
+    its pane said `⌘⏎` on every platform; they read the keymap now, as the
+    palette does, so they say `Ctrl+⏎` off macOS. Save View as Table and Save
+    Query as Table both read "Save as Table…", so the palette listed two rows
+    no one could tell apart; each is named for what it saves, and no two
+    rows the palette offers may read the same. A window opened with the
+    default theme's ground before its stylesheet applied, so a dark window
+    opened white; it opens with the ground of the theme it opens in. The
+    Settings window is not a workbench window, so a theme chosen from the
+    palette never reached it, and it kept the theme it opened in; it follows
+    now, and its Theme section says which. `tests/theme_persist.rs` toggles
+    the theme beside a Settings window, `tests/action_effects.rs` reads every
+    palette row, and `tests/sql_console_nav.rs` reads the Run chip.
+- **Discovered:** project review, 2026-09-25 — seven read-only audits plus a
+  Linux release build driven under Xvfb.
+- **Fix:** port each surface's orchestration from `95627c8` onto the
+  `dat0-core` APIs that already exist, one surface per change, each with a
+  test that asserts the effect — rows in the grid, a file on disk, a DOM
+  change — rather than the routing. Order: event routing (PD-027) → SQL run →
+  grid ↔ `ViewModel` (and PD-026) → opening packages, workspaces and SQLite →
+  export, charts and the inspector → MotherDuck and AI → lifecycle (updates,
+  crash prompt, recovery, scratch cleanup) → honest chrome.
+- **Originating doc:** `docs/internal/2026-08-09-gpui-to-dioxus-migration-log.md`
+  (Phases 5–6: "router::route claiming all 40 ids")
+- **Last touched:** 2026-09-26
+
+### PD-024 — Banners raised after a window's first frame were never shown
+
+- **Status:** closed — 2026-09-25
+- **Severity:** high (logic green, screen dead: every error after startup was
+  invisible)
+- **Affected files:** `crates/dat0-ui/src/components/shell.rs`,
+  `crates/dat0-ui/src/state.rs`, `crates/dat0-ui/src/session_boot.rs`,
+  `crates/dat0-core/src/error_ux/banner.rs`, `crates/dat0-core/src/file_drop.rs`
+- **Symptom:** the shell drained `error_ux`'s process-global queue in a
+  `use_effect` whose only signal access was `banners.write()`. A write does
+  not subscribe, so the effect ran once per window mount. Every banner raised
+  after the first frame — a refused drop, a register failure, the
+  session-failure banner whose Retry is the only way out, chart-export
+  results, sample-download failures — stayed in the queue until another
+  window mounted and showed it there. Reproduced on a Linux release build:
+  opening `chinook.sqlite` after boot showed nothing, and the refusal appeared
+  later in the next window to open — twice, because `handle_drop` and the
+  shell each raised a banner for the same outcome. PD-021's shape, again.
+- **Fix:** `error_ux::push` bumps a `tokio::sync::watch` generation and
+  `error_ux::subscribe()` exposes it; each window drains the queue in a
+  `use_future` woken on every push. Banners raised with a window in hand go
+  straight to that window (`Workspace::banners` / `Workspace::push_banner`),
+  so they cannot surface in another one. `handle_drop` no longer raises a
+  banner for an outcome it returns, and dismissing a stale index no longer
+  panics.
+- **Tests:** `crates/dat0-ui/tests/banner_drain.rs` mounts the real `Shell`
+  and requires a banner pushed after the first frame to reach the screen;
+  `session_boot_slot.rs` asserts the window's own list — one banner each —
+  for the session failure and a refused drop; `dat0-core`'s `file_drop` and
+  `error_ux::banner` unit tests pin the no-duplicate and wake-up contracts.
+- **Closed by:** commit `3d7f87a` ("fix(ui): show banners raised after the
+  first frame, in their own window"), branch
+  `claude/project-review-next-steps-a2t52o`
+- **Last touched:** 2026-09-25
+
+### PD-025 — The recovery panel offered the running window's own session for Discard
+
+- **Status:** closed — 2026-09-25
+- **Severity:** high (data loss)
+- **Affected files:** `crates/dat0-ui/src/components/recovery.rs`,
+  `crates/dat0-core/src/globals.rs`, `crates/dat0-ui/src/session_boot.rs`
+- **Symptom:** `recovery::collect_rows` listed every `scratch/*` directory
+  holding a `session.json`. Every running window keeps one there, so the
+  palette's "Review recovery" listed the current session as an orphan, and
+  its Discard ran `remove_dir_all` on the live session's DuckDB directory.
+  `dat0_core::session::scan_orphans(state_root, live)` already knew how to
+  exclude live windows; the panel did not use it.
+- **Fix:** a process-wide set of live window ids in `dat0_core::globals`
+  (`register_live_window`, `unregister_live_window`, `is_live_scratch_dir`),
+  registered by `session_boot::use_session` on mount — before the directory
+  exists — and removed when the window closes. `collect_rows` skips live
+  directories and `discard` refuses them.
+- **Tests:** `crates/dat0-ui/tests/recovery_panel.rs`
+  (`an_open_window_is_not_offered_for_recovery`,
+  `discarding_an_open_windows_directory_is_refused`); `dat0-core`'s `globals`
+  unit tests.
+- **Closed by:** commit `05580ca` ("fix(ui): never offer an open window's
+  session for recovery or discard"), branch
+  `claude/project-review-next-steps-a2t52o`
+- **Last touched:** 2026-09-25
+
+### PD-026 — The grid cannot scroll past row ~1,290,555
+
+- **Status:** closed — 2026-09-26
+- **Severity:** high (pillar 1 — millions of rows is the product's claim)
+- **Affected files:** `crates/dat0-ui/src/components/grid/mod.rs`
+  (`total_h = total_rows * ROW_H`; each row placed at `top: r * ROW_H`)
+- **Symptom:** the virtualized grid sizes its scroll canvas to the whole
+  table — rows × 26 px, uncapped. WebKit clamps layout lengths at about
+  33.5M px (its fixed-point `LayoutUnit`), so every row past
+  33,554,431 / 26 ≈ 1,290,555 is unreachable. Reproduced on WebKitGTK (WKWebView
+  shares the engine): a 3,000,000-row CSV, End → the viewport stops at rows
+  1,290,534–1,290,554, leaving 57% of the table out of reach. Ctrl+End moves
+  the active cell to the last row, but nothing scrolls it into view.
+- **Why the gates missed it:** `grid_virtualization.rs` runs headless, with no
+  layout engine; the `scroll_10m` perf scenario scrolls 600 frames — about the
+  first 1,850 rows.
+- **Fix:** scaled scrolling — cap the canvas at a safe height and, once the
+  extent exceeds it, map scroll position to row index proportionally (keeping
+  1:1 below the cap, so small tables are unchanged); scroll the active cell
+  into view on keyboard moves; add a windowed check that the last row of a
+  table larger than the cap is reachable.
+- **Resolution (2026-09-26):** as proposed, in `components/grid/scroll.rs`.
+  The canvas stops at 30M px, a tenth under the clamp, so tables up to
+  1,153,846 rows still scroll one to one; past that the scroll position maps
+  to rows in proportion, and each row is drawn shifted by the same amount the
+  mapping moved it (`Scale`), as is the cell editor. A keyboard move scrolls
+  the cursor into view (`reveal`). `examples/grid_probe.rs` lays out 2,000,000
+  rows in a real window and runs with the other probes: the canvas is laid out
+  at 30M px, the bottom shows `row-1999999`, and Ctrl/Cmd+Down shows it too.
+  With the cap removed it fails exactly as reported — a 33,554,430 px canvas
+  whose bottom is `row-1290558`.
+  - Found on the way: the viewport's size came only from scroll events, so a
+    window taller than 600 px left rows below 600 px unrendered until a
+    scroll, and a size read before the stylesheet applied is the whole
+    canvas's — a render of a million rows. The viewport now takes its size
+    from a resize observer, and one render lays out at most 400 rows and 100
+    columns whatever size it is told.
+  - Still open: past the cap a wheel notch moves the rows by more than its
+    pixels (×1.7 at 2M rows, ×8.7 at 10M). The `scroll_*` perf scenarios
+    mount the grid with no columns, so they time rows without cells; that is
+    step 7's to fix, with the budgets it would move.
+- **Last touched:** 2026-09-26
+
+### PD-027 — The first window owns the event bus
+
+- **Status:** closed — 2026-09-26
+- **Severity:** medium
+- **Affected files:** `crates/dat0-ui/src/components/mod.rs` (`App`,
+  `use_window_bus`), `crates/dat0-ui/src/launch.rs` (`WindowRegistry`,
+  `ProcessBusLease`), `crates/dat0-ui/src/router.rs` (`settings.open`)
+- **Symptom:** exactly one window — the first to mount — takes the process's
+  `AppEventRx` and routes every event with its own `Workspace` and surface.
+  Menus, chords, palette rows and banner buttons all post
+  `AppEvent::RunAction { window: None }`, so a command raised in window 2 acts
+  on window 1. When window 1 closes, its VirtualDom takes the receiver with
+  it, and every later `RunAction` and second-launch `OpenWindow` is dropped at
+  debug level. Every window also registers a `muda` handler, and a menu event
+  reaches all of them, so one click can fire once per open window. Verified
+  in code; the runtime effects are inferred from `dioxus-desktop` 0.7.10 and
+  not yet reproduced.
+- **Fix:** every window has a bus of its own. `components::use_window_bus`
+  provides it as the `AppEvents` context that chords, palette rows, banner
+  buttons and the window's menu handler post on, and drains it with that
+  window's `Workspace` and surface, so a command acts where it was raised.
+  - What belongs to no workbench window — a second launch's paths, the
+    settings window's controls — stays on the process bus. One window drains
+    it at a time through a `launch::ProcessBusLease`; when the holder closes,
+    the lease goes back and a waiting window takes it over.
+  - The holder opens windows itself and passes every other event on through
+    `launch::WindowRegistry`: to the window the event names, or else to the
+    workbench window focused last (before any focus event, the newest).
+  - The same target gates the menu handler: every window still receives every
+    click, and only the target acts. Focus is recorded from tao's `Focused`
+    events, not asked for when the click lands, because an open GTK menu holds
+    a keyboard grab.
+  - The settings window's theme choice was posted as `ThemeChanged` and never
+    handled. It now reaches every workbench window.
+- **Tests:** `crates/dat0-ui/tests/window_routing.rs` mounts two windows over
+  one `Boot`. A chord acts in its own window, and a command from no window
+  reaches the one focused last. After the first window closes, the second
+  still gets both. A theme change reaches both windows. The registry and the
+  lease have unit tests in `launch.rs`. No test drives a native menu click:
+  the handler's gate is `WindowRegistry::target`, which those unit tests
+  cover.
+- **Closed by:** PR #95, branch `claude/project-review-next-steps-a2t52o`
+  (the commit that records this closure)
+- **Last touched:** 2026-09-26
+
+### PD-028 — A file drop aborted the app when `session.json` could not be written
+
+- **Status:** closed — 2026-09-25
+- **Severity:** medium
+- **Affected files:** `crates/dat0-core/src/file_drop.rs`
+- **Symptom:** after registering a dropped file, `handle_one` called
+  `Session::add_tab(…).expect("session::add_tab: persist tab state")`.
+  `add_tab` records the tab in memory and then writes `session.json`; on a full
+  disk or a read-only state directory the write fails, and the release
+  profile's `panic = "abort"` took the whole app down on a file drop.
+- **Fix:** the file stays open — it is registered and in memory — and a
+  warning banner says the session could not be saved and will not be
+  recovered after a crash (`session.persist_failed`).
+- **Closed by:** commit `3d7f87a` ("fix(ui): show banners raised after the
+  first frame, in their own window"), branch
+  `claude/project-review-next-steps-a2t52o`
+- **Last touched:** 2026-09-25
+
+### PD-029 — Package replay trusted the recipe
+
+- **Status:** closed — 2026-09-25
+- **Severity:** high
+- **Affected files:** `crates/dat0-format/src/{replay,reader,writer}.rs`,
+  `crates/dat0-core/src/cli.rs` (`replay_async`), `crates/dat0-engine`
+- **Symptom:** a `.dat0` package's recipe is data the person replaying it did
+  not write, and replay treated it as their own: each derived table's SQL ran
+  as-is with every capability the engine has, and recipe table names were
+  joined into file paths without a check.
+- **Discovered:** project review, 2026-09-25.
+- **Fix:** the format spec now states the rules (`docs/dat0-format-v1.md` §4
+  and §8), and dat0 enforces them.
+  - The reader refuses a package whose table names are not single path
+    components, or whose `data` entries are not `data/<name>.parquet`; the
+    writer will not produce one.
+  - Replay loads the replacement sources, then confines its throwaway engine
+    to its scratch directory for the rest of the run
+    (`QueryEngine::confine_to`: no file, network or extension access outside
+    it, configuration locked), and runs a derivation only if DuckDB's parser
+    reads it as exactly one query (`QueryEngine::check_single_query`). The
+    replayed package is staged inside the same directory
+    (`Writer::write_using`).
+  - Tests: `dat0-engine/tests/confine.rs`, the refusal cases in
+    `dat0-format/tests/replay.rs` and `corruption.rs`.
+- **Still to decide:** a saved query that arrives in a package (views are
+  typed transform steps, but saved queries are SQL text) runs with full access
+  when the user runs it in a workspace, as the user's own SQL does. Whether a
+  query from someone else should say so before it runs is a product decision,
+  recorded here rather than made silently.
+- **Last touched:** 2026-09-25
+
+### PD-030 — A second file of the same stem replaced the first one's table
+
+- **Status:** closed — 2026-09-26
+- **Severity:** high (silent data mix-up)
+- **Affected files:** `crates/dat0-engine/src/duckdb_engine.rs`
+  (`register_file_as_table`), `crates/dat0-engine/src/register/mod.rs`
+- **Symptom:** a file's table was named for the file's stem, and imported
+  with `CREATE OR REPLACE TABLE`. Opening `b/data.csv` after `a/data.csv`
+  replaced table `data`: the first tab, still titled and pathed for
+  `a/data.csv`, showed `b`'s rows, and `a`'s table was gone. A table of that
+  name made another way — Save as Table, a package — was replaced the same
+  way. Found while wiring Live Refresh (step 5.7), whose re-import relies on
+  the name.
+- **Fix:** `register::table_name_for` picks the name under the engine's
+  lock: the stem when it is free or already holds this same file (so reading
+  a file again, as Live Refresh does, replaces its own table), else the first
+  free `stem_2`, `stem_3`, …. `tests/register_names.rs` covers both files, a
+  re-read, and a table made by SQL.
+- **Last touched:** 2026-09-26
+
+### PD-031 — A table's origin lives only in the engine's memory
+
+- **Status:** open
+- **Severity:** medium — lineage is lost quietly, and a package made from a
+  reopened session is wrong rather than refused
+- **Affected files:** `crates/dat0-engine/src/duckdb_engine.rs`
+  (`table_origins`), `crates/dat0-core/src/package/mod.rs` (`classify`)
+- **Symptom:** where each table came from — a file, a SQL statement, a
+  view's steps — is held in `DuckDBEngine::table_origins`, in memory, and
+  written nowhere. An engine opened on an existing database (a recovered
+  session, a workspace, an unpacked package) knows its tables but not their
+  origins: `get_tables` reports the engine's "unknown", `Derived(Sql(""))`.
+  Since step 5.7b a reopened window records each tab's file again
+  (`DuckDBEngine::restore_origin`), which is what Live Refresh and the
+  same-name rule (PD-030) need; since step 5.4c Save Workspace hands every
+  origin to the engine it opens on the moved file. Nothing restores the rest
+  when a database is opened from disk: a table made by SQL or saved from a
+  view loses its derivation, and one with no tab loses its file, so
+  `package::classify` exports them as plain base tables and a package made
+  from a reopened session cannot replay them. The GPUI build had the same
+  gap.
+- **Fix:** keep origins in the database beside the tables — a
+  `__dat0_meta_origins` table written with each origin change and read at
+  `init` — so they travel with the file, whichever home it is in.
+- **Discovered:** 2026-09-26, wiring recovery (PD-023, step 5.7b).
+- **Last touched:** 2026-09-26
+
+### PD-032 — Only the first surface to open in a window took the keyboard
+
+- **Status:** closed — 2026-09-26
+- **Severity:** high — the command palette, the product's keyboard entry
+  point, took typing once per window
+- **Affected files:** `crates/dat0-ui/src/components/command_palette.rs`,
+  `name_prompt.rs`, `filter_popover.rs`, `grid/cell_editor.rs`,
+  `grid/context_menu.rs`
+- **Symptom:** each of these took the keyboard with the `autofocus`
+  attribute, which a document honours once. The first to open in a window
+  got focus; every later one, the same palette included, opened unfocused.
+  A second palette ignored what was typed and Enter ran nothing, a second
+  cell edit took no typing, and the context menu's arrow keys never reached
+  it. The headless tests asserted the attribute, which is present either
+  way. Found checking the perf HUD in the release build under Xvfb, with the
+  palette opened twice.
+- **Fix:** each takes the keyboard from its own `onmounted`, as the SQL
+  console's controls already did (the console documents the same trap). The
+  name prompt's field is focused by the modal host instead, once it has
+  recorded where to hand the keyboard back (`modals::CAPTURE_JS`): focused
+  from its own mount it got there first, and a dismissed prompt handed the
+  keyboard to nowhere, which `modal_trap_probe` caught.
+  `examples/focus_probe.rs`, a new windowed probe in CI, opens all six
+  surfaces twice and asks the document where the keyboard is. Before the
+  fix: the palette's first opening only, and none of the others.
+- **Discovered:** 2026-09-26, PD-023 step 5.8.
+- **Last touched:** 2026-09-26
+
+### PD-033 — The console shows no rows for PRAGMA and EXPLAIN
+
+- **Status:** open
+- **Severity:** low — the statements run; only what they return is not shown
+- **Affected files:** `crates/dat0-ui/src/components/sql_console/host.rs`
+- **Symptom:** a console run lands its rows in the grid by defining a view
+  over the statement, which the grid reads. DuckDB will neither define a
+  view as a PRAGMA or an EXPLAIN nor select from one, so both run and show
+  nothing. SHOW, DESCRIBE and SUMMARIZE do reach the grid.
+- **Fix:** for a statement DuckDB will not wrap, read its result once and
+  keep it as a table of the session's own for the grid to read.
+- **Discovered:** 2026-09-26, the SQL console (PD-023, step 5.2).
+- **Last touched:** 2026-09-26
+
+### PD-034 — Grid edits and copies are capped per step
+
+- **Status:** open
+- **Severity:** low — a larger edit is refused with a word, never cut short
+- **Affected files:** `crates/dat0-ui/src/components/grid/edits.rs`,
+  `crates/dat0-ui/src/clipboard.rs`
+- **Symptom:** one edit or delete takes at most 10,000 cells or rows, and one
+  copy at most 100,000 cells. Each edited cell is a `CASE` branch in the view
+  the grid reads, and every read walks them, so a larger overlay needs a
+  different form, not a larger cap. Where there is no system clipboard, as
+  on a headless host, a copy is kept in dat0's own process and pastes inside
+  dat0 only.
+- **Fix:** keep edits in a table beside the view, joined by row id, so an
+  edit's size costs its write once rather than every read.
+- **Discovered:** 2026-09-26, the grid's edits (PD-023, step 5.3b).
+- **Last touched:** 2026-09-26
+
+### PD-035 — Closing a scratch window does not offer to keep its work
+
+- **Status:** open
+- **Severity:** low — nothing is lost: the session stays on disk, and the
+  next launch offers it for recovery
+- **Affected files:** `crates/dat0-ui/src/components/mod.rs`,
+  `crates/dat0-ui/src/session_sync.rs`
+- **Symptom:** the design asks "Promote to Workspace?" when a scratch window
+  holding work closes. A graceful close keeps the window's session directory
+  as a crash does, and the next launch removes it, when a file on disk holds
+  all of it, or offers it in the recovery panel.
+- **Fix:** take the window's close request, and for a scratch window the Save
+  Workspace nudge would ask about (three view steps or a saved query), ask
+  Save Workspace, Close or Cancel before it closes.
+- **Discovered:** 2026-09-26, recovery (PD-023, step 5.7b).
+- **Last touched:** 2026-09-26
+
+### PD-036 — Open Recent lists the workspaces recent at launch
+
+- **Status:** open
+- **Severity:** low — the hero's recent list and the sidebar are current
+- **Affected files:** `crates/dat0-ui/src/menu.rs` (`listed_recents`)
+- **Symptom:** File → Open Recent's items are resolved by their position, so
+  every window's menu bar lists, and resolves against, the list read when
+  the first bar was built. A workspace opened or saved since is listed from
+  the next launch.
+- **Fix:** rebuild the submenu when the recent list changes, with ids that
+  name the list they came from, so a click on a stale item cannot open the
+  workspace that has since moved into its place.
+- **Discovered:** 2026-09-26, Open Workspace (PD-023, step 5.4b).
+- **Last touched:** 2026-09-26
+
+### PD-037 — Live Refresh forgets the import wizard's dialect
+
+- **Status:** open
+- **Severity:** medium — a refresh can read such a file as other columns,
+  and the view then lands on the bare table or the read fails
+- **Affected files:** `crates/dat0-ui/src/import_flow.rs`,
+  `crates/dat0-ui/src/components/grid/refresh.rs`
+- **Symptom:** the wizard reads a CSV the sniff could not settle with the
+  delimiter, quote, header and types it was told, then drops and renames
+  columns. None of that is kept with the table, so Live Refresh reads the
+  file again with automatic detection, which is what the wizard was for.
+- **Fix:** keep the wizard's reading options, drops and renames with the
+  table's origin, and have Live Refresh read through them; the origin itself
+  is kept only in memory (PD-031).
+- **Discovered:** 2026-09-26, the import wizard (PD-023, step 5.10).
+- **Last touched:** 2026-09-26
+
+### PD-038 — A data tab cannot be closed
+
+- **Status:** open
+- **Severity:** medium — tabs only accumulate; the way out is a new window
+- **Affected files:** `crates/dat0-ui/src/components/shell.rs` (`TabStrip`),
+  `crates/dat0-ui/src/state.rs`
+- **Symptom:** the tab strip activates a tab and has no close control, and
+  no command closes a data tab (`sql.close_tab` closes a query tab). The
+  GPUI build showed one tab per window, the active view's, and closed none.
+- **Fix:** a close control on each tab and a command for the active one,
+  which drop the tab and its view; the table stays in the session while
+  another tab or a saved query reads it.
+- **Discovered:** 2026-09-26, checking the new UAT checklist against the
+  code.
+- **Last touched:** 2026-09-26
+
+### PD-039 — A package or workspace named at launch opens beside an empty window
+
+- **Status:** open
+- **Severity:** low — an empty window to close
+- **Affected files:** `crates/dat0-ui/src/launch.rs` (`run_app`),
+  `crates/dat0-ui/src/session_boot.rs` (`open_paths`)
+- **Symptom:** the first window is a scratch window over the launch's paths,
+  and a second launch's paths open another the same way. A `.dat0` package
+  or a workspace folder among them opens in a window of its own (step
+  5.11b), so the scratch window opened for it stays empty beside it.
+- **Fix:** open the first window on a package itself (`Opening::Inspect`),
+  and close a launch's scratch window once every path it was opened for has
+  gone to a window of its own; a workspace needs its lock checks first,
+  which may ask the user, so it cannot simply be the first window's opening.
+- **Discovered:** 2026-09-26, checking the new UAT checklist against the
+  code.
+- **Last touched:** 2026-09-26
+
+### PD-040 — Parts of the shell cannot be reached by keyboard
+
+- **Status:** open
+- **Severity:** medium — a keyboard user can open files, run SQL and answer
+  every dialog, but not sort or filter a column, switch tabs from the strip
+  or follow the lineage
+- **Affected files:** `crates/dat0-ui/src/components/shell.rs` (`TabStrip`),
+  `crates/dat0-ui/src/components/grid/header.rs`,
+  `crates/dat0-ui/src/components/inspector/mod.rs` (`ChainRow`),
+  `crates/dat0-ui/src/components/modals.rs` (`CAPTURE_JS`),
+  `crates/dat0-ui/src/components/sidebar.rs`
+- **Symptom:**
+  - The tab strip's one Tab stop is the ⌘K launcher. Every tab is
+    `tabindex="-1"`, and nothing moves between them by arrow, though
+    `tests/tab_strip_nav.rs` says arrows do; it checks only the tabindex.
+    The sidebar's FILES rows are the keyboard's way to a tab.
+  - A column's sort and funnel zones are spans with no tabindex, and neither
+    the palette nor the grid's context menu sorts or filters.
+  - The inspector's lineage rows are divs with a click handler and no
+    tabindex.
+  - Only the name prompt marks a control to take focus when it opens. In
+    every other dialog focus stays on the page behind it, which is inert,
+    until the first Tab.
+  - The sidebar's rows and section headings are buttons with no tabindex,
+    so in a webview each is a Tab stop, where `docs/a11y.md` and
+    `tests/catalog_nav.rs` describe the tree as one stop with roving rows.
+- **Fix:** a roving tabindex on the tab strip, the active tab the stop and
+  arrows moving; the header zones and lineage rows as buttons; each dialog
+  marking the control that takes focus, or the dialog itself taking it; the
+  sidebar's rows `tabindex="-1"`, as the tree's own key handling expects.
+- **Discovered:** 2026-09-26, checking the new UAT checklist against the
+  code.
+- **Last touched:** 2026-09-26
+
+### PD-041 — The release pipeline would have shipped builds that do not work
+
+- **Status:** closed — 2026-09-26
+- **Severity:** high — the Linux download would have opened a blank window
+  on most hosts, and a tag carrying the test update key would have shipped
+  builds that never see an update
+- **Affected files:** `.github/workflows/release.yml`, `xtask/src/linux.rs`,
+  `xtask/src/sign.rs`, `xtask/src/macos.rs`, `crates/dat0-ui/src/launch.rs`,
+  `crates/dat0-ui/Cargo.toml`, `docs/about-template.hbs`
+- **Symptom:** `release.yml` had never run. Built and run under Docker, its
+  Linux half showed:
+  - The AppImage carried WebKitGTK, and WebKitGTK starts its page and
+    network processes from a path compiled into the library: the host's
+    own. The two speak one protocol only when they come from one build. The
+    AppImage built on Ubuntu 24.04 (WebKit 2.52.6) opened a blank window on
+    Ubuntu 25.10 (2.52.3), its helpers dying on the first message.
+  - Built on `ubuntu-latest`, the binary needed glibc 2.38
+    (`__isoc23_strtol`), so it would not start on Ubuntu 22.04 or Debian 12.
+  - Its one check, `--version` in a container, passes on a blank window.
+  - linuxdeploy and appimagetool were downloaded from moving `continuous`
+    builds, unchecked, into the job that holds the GPG key.
+
+  And by reading it:
+  - No step gave the builds the crash-report DSN, so release binaries would
+    carry the stub, and reports users opt in to would go nowhere.
+  - Nothing stopped a tag while the updater trusted the test key, and
+    `version_consistency.rs`, the only check that a tag names the workspace
+    version, runs in no job a tag starts. `dat0-ui` set its own version, so
+    its About box would keep saying 0.1.0.
+  - NOTICE named each licence but carried no licence text, and neither
+    bundle carried NOTICE, dat0's LICENSE or the fonts' OFL.
+  - The Info.plist claims `.dat0`, but nothing handled macOS's
+    open-documents event: a double-clicked package launched an empty window.
+  - A dry run needed every signing secret, so packaging could not be
+    exercised at all.
+- **Fix:**
+  - The AppImage carries the binary, libxdo and libxdo's two X extensions,
+    and takes WebKitGTK, GTK and GLib from the host; a library the binary
+    starts to link stops the bundle until someone decides which side it is
+    on (`xtask::linux::HOST_LIBRARIES`).
+  - The AppImage is built on Ubuntu 22.04. `scripts/appimage-smoke.sh`
+    starts it on Ubuntu 22.04, Debian 12 and 24.04, each given WebKitGTK
+    and nothing else, and fails unless WebKit's helpers stay up and the
+    screenshot is not blank. Run under Docker, it passed for the new
+    AppImage on 24.04 and 25.10 and failed as described for the old one.
+  - appimagetool and the AppImage runtime are pinned by release and
+    SHA-256; linuxdeploy is gone.
+  - `cargo xtask release-check` runs first on every run: a tag stops when
+    it does not name the workspace version, a shipped crate sets its own,
+    the updater trusts a test key, the DSN is missing or the stub, the NYC
+    taxi sample's hash is a placeholder, or a signing secret is missing; a
+    dry run lists the same as warnings. `dat0-ui` takes the workspace
+    version.
+  - Both builds receive `GLITCHTIP_DSN_PUBLIC` when it is set.
+  - NOTICE carries each licence's text, and both bundles carry NOTICE,
+    LICENSE and the font and icon licences.
+  - `launch::open_documents` hands the event's files to the first window
+    when a double-click launches dat0, and to a window of their own
+    otherwise.
+  - A dry run without secrets builds, checks and uploads both platforms,
+    signing nothing; a tag always signs. The keychain no longer locks
+    during notarization, and signing starts after the build.
+- **Discovered:** 2026-09-26, step 7 of the 2026-09-25 review.
+- **Last touched:** 2026-09-26
 
 ## How to add an entry
 

@@ -18,9 +18,11 @@ expression: "rendered[0].1"
 <button class="d0-btn d0-mono" data-a11y-id="chart-axis-x" role="button" aria-label="X: —">X: —</button>
 <button class="d0-btn d0-mono" data-a11y-id="chart-axis-y" role="button" aria-label="Y: —">Y: —</button>
 <button class="d0-btn d0-mono" data-a11y-id="chart-save" role="button" aria-label="Save" disabled=true>Save</button>
+<button class="d0-btn d0-mono" data-a11y-id="chart-export-png" role="button" aria-label="Export Chart as PNG" disabled=true>PNG</button>
+<button class="d0-btn d0-mono" data-a11y-id="chart-export-svg" role="button" aria-label="Export Chart as SVG" disabled=true>SVG</button>
 </div>
 <div class="d0-chart-canvas" data-a11y-id="chart-body" data-chart-type="Bar" data-chart-x="" data-chart-y="" data-chart-title="">
-<div class="d0-chart-empty d0-mono" data-a11y-id="chart-empty" role="note" aria-label="Select columns to render a chart">Select columns to render a chart</div>
+<div class="d0-chart-empty d0-mono" data-a11y-id="chart-empty" role="note" aria-label="Open a table to chart it">Open a table to chart it</div>
 </div>
 </div>
 </div>

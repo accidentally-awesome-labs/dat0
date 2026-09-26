@@ -26,17 +26,38 @@ impl Theme {
     /// the design's build target is the light rendering. A persisted id still
     /// wins, so anyone who chose dark keeps dark.
     pub fn provide(settings: Option<&SettingsStore>) -> Self {
-        let id = settings
-            .and_then(|s| s.get_string("theme.id"))
-            .unwrap_or_else(|| DEFAULT_ID.to_string());
+        // Read once, when the window mounts: re-reading the file on every
+        // render would learn nothing the choice below does not already say.
         Self(use_context_provider(|| {
+            let id = settings
+                .and_then(|s| s.get_string("theme.id"))
+                .unwrap_or_else(|| DEFAULT_ID.to_string());
             Signal::new(builtin_or_default(&id))
         }))
+    }
+
+    /// [`provide`](Self::provide), from the settings file every launch
+    /// reads, so a window opens in the theme last chosen (PD-023, step 5.9).
+    /// `App` provided no settings, so a theme chosen was gone at the next
+    /// launch.
+    pub fn provide_saved() -> Self {
+        Self::provide(settings_store().as_ref())
     }
 
     /// The context-provided theme.
     pub fn use_current() -> Self {
         Self(use_context())
+    }
+
+    /// The context-provided theme, from outside a component body.
+    ///
+    /// [`use_current`](Self::use_current) is a hook. Called from an event
+    /// handler or a task it appends a hook slot to the running scope, and the
+    /// next out-of-render hook of another type at that index panics — which
+    /// the release profile turns into an abort. The action router runs in the
+    /// bus task, so it reads the theme this way.
+    pub fn current() -> Self {
+        Self(consume_context())
     }
 
     /// Switch themes. One signal write; the `<style>` element re-renders.
@@ -47,6 +68,65 @@ impl Theme {
     pub fn tokens(&self) -> ThemeTokens {
         (self.0)()
     }
+}
+
+/// Choose a theme for every window, and keep it for the next launch (PD-023,
+/// step 5.9).
+///
+/// This window repaints at once. The others are told over the process bus,
+/// as the settings window's own control tells them, and `theme.id` is written
+/// where [`Theme::provide_saved`] reads it. The palette's Toggle Theme
+/// repainted only the window it was chosen in, and kept nothing.
+pub fn choose(id: &str) {
+    Theme::current().set(id);
+    match settings_store().map(|store| store.set("theme.id", id)) {
+        Some(Ok(())) => {}
+        Some(Err(e)) => tracing::warn!(error = %e, "the theme chosen could not be kept"),
+        None => tracing::debug!("no config directory: the theme chosen is not kept"),
+    }
+    if let Some(bus) = crate::launch::process_bus() {
+        bus.send(dat0_core::events::AppEvent::ThemeChanged { id: id.to_string() });
+    }
+    CHOSEN.send_replace(Some(id.to_string()));
+}
+
+/// The theme last chosen in this process, for the window the bus does not
+/// reach: the Settings window is not a workbench window, and it kept the
+/// theme it opened in whatever was chosen after (step 5.11e).
+static CHOSEN: std::sync::LazyLock<tokio::sync::watch::Sender<Option<String>>> =
+    std::sync::LazyLock::new(|| tokio::sync::watch::channel(None).0);
+
+/// Repaint this window in each theme chosen elsewhere, from now on: the
+/// Settings window's. Nothing where no theme is provided, as in a headless
+/// mount of the panel alone.
+pub fn use_follow_chosen() {
+    let theme = try_use_context::<Signal<ThemeTokens>>();
+    use_future(move || async move {
+        let Some(mut tokens) = theme else {
+            return;
+        };
+        let mut chosen = CHOSEN.subscribe();
+        while chosen.changed().await.is_ok() {
+            let id = chosen.borrow_and_update().clone();
+            if let Some(id) = id {
+                tokens.set(builtin_or_default(&id));
+            }
+        }
+    });
+}
+
+/// The theme the settings file keeps, or the default: what a window opens in.
+pub fn saved_id() -> String {
+    settings_store()
+        .and_then(|store| store.get_string("theme.id"))
+        .unwrap_or_else(|| DEFAULT_ID.to_string())
+}
+
+/// The settings file the theme is kept in, where there is a config directory.
+fn settings_store() -> Option<SettingsStore> {
+    dat0_core::platform::config_dir()
+        .ok()
+        .map(|dir| SettingsStore::with_path(dir.join("settings.toml")))
 }
 
 /// The two `<style>` elements every window carries: the static rules, and the

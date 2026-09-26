@@ -59,10 +59,11 @@ pub struct Binding {
     pub macos: &'static str,
     /// The chord on every other platform.
     ///
-    /// `None` marks a binding that exists only on macOS — the window-management
-    /// chords (⌘Q / ⌘W / ⌘M) have no non-macOS counterpart today because GPUI's
-    /// Linux backend supplies them, so binding them ourselves there would only
-    /// shadow the platform's own handling.
+    /// `None` marks a binding that exists only on macOS: ⌘M, Minimize, which
+    /// has no convention elsewhere. Quit, Close Window and Full Screen are
+    /// AppKit's own items on macOS; elsewhere muda's GTK backend builds none of
+    /// them, so the menu bar has items of dat0's own there, and these rows are
+    /// their chords (PD-023, step 5.11d).
     pub other: Option<&'static str>,
     /// The gpui action path, e.g. `"dat0_menu::SqlRun"`. Cross-checked against
     /// the real `actions!` declarations by `tests/keymap.rs`.
@@ -151,13 +152,13 @@ pub const DEFAULT_KEYMAP: &[Binding] = &[
     },
     // Quit / Close Window / Minimize had no handlers since their menus were
     // added — permanently grayed, ⌘Q included (the key equivalent hangs off the
-    // menu item, so a disabled item swallows it). macOS-only: see
+    // menu item, so a disabled item swallows it). Minimize is macOS-only: see
     // `Binding::other`.
     Binding {
         scope: Scope::Global,
         context: None,
         macos: "cmd-q",
-        other: None,
+        other: Some("ctrl-q"),
         action: Some("dat0_menu::Quit"),
         action_id: None,
     },
@@ -165,7 +166,7 @@ pub const DEFAULT_KEYMAP: &[Binding] = &[
         scope: Scope::Global,
         context: None,
         macos: "cmd-w",
-        other: None,
+        other: Some("ctrl-w"),
         action: Some("dat0_menu::CloseWindow"),
         action_id: None,
     },
@@ -177,11 +178,34 @@ pub const DEFAULT_KEYMAP: &[Binding] = &[
         action: Some("dat0_menu::Minimize"),
         action_id: None,
     },
+    // Full Screen: AppKit's ⌃⌘F on macOS, F11 elsewhere, where the menu item is
+    // dat0's own (step 5.11d).
+    Binding {
+        scope: Scope::Global,
+        context: None,
+        macos: "ctrl-cmd-f",
+        other: Some("f11"),
+        action: Some("dat0_menu::ToggleFullScreen"),
+        action_id: None,
+    },
     // ── Scope::Palette — was `command_palette::register_command_palette_keys` ──
     //
     // `OpenCommandPalette` is declared unconditionally in `menu_macos.rs`, so
     // this binds on Linux too even though the Linux menu module does not exist:
     // the handler resolves and the keystroke fires without a visible menu item.
+    //
+    // ⌘K is the chord the chrome shows, in the tab strip's launcher and the
+    // status bar, and the design's (PD-023, step 5.8b); it was bound to
+    // nothing. ⌘⇧P, the GPUI build's, still opens the palette. This row comes
+    // first because `chord_for_gpui_action` gives the chrome its hint.
+    Binding {
+        scope: Scope::Palette,
+        context: None,
+        macos: "cmd-k",
+        other: Some("ctrl-k"),
+        action: Some("dat0_menu::OpenCommandPalette"),
+        action_id: None,
+    },
     Binding {
         scope: Scope::Palette,
         context: None,

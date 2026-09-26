@@ -15,7 +15,7 @@ use crate::error::EngineError;
 /// Spawn a blocking worker that pulls batches from DuckDB and pushes them
 /// onto a bounded channel; return a stream that polls the channel.
 pub(crate) fn spawn_streaming(
-    conn: Arc<Mutex<duckdb::Connection>>,
+    conn: Arc<Mutex<crate::duckdb_engine::Conn>>,
     sql: String,
 ) -> Result<crate::types::ArrowRecordBatchStream> {
     // capacity 1: producer waits when consumer hasn't pulled the previous batch.

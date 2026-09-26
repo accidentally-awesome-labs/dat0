@@ -16,20 +16,12 @@
 use dioxus::prelude::*;
 
 use dat0_core::actions::registry::ActionRegistry;
-use dat0_core::events::AppEvents;
 use dat0_ui::launch::Boot;
 
 fn main() {
-    let (events, rx) = AppEvents::channel();
     let registry = ActionRegistry::new();
     dat0_core::actions::builtin::register_all(&registry).expect("built-ins register");
-
-    let boot = Boot {
-        events,
-        rx: std::sync::Arc::new(parking_lot::Mutex::new(Some(rx))),
-        registry,
-        cli_paths: std::sync::Arc::new(parking_lot::Mutex::new(Vec::new())),
-    };
+    let boot = Boot::new(registry, Vec::new());
 
     dioxus::LaunchBuilder::desktop()
         .with_cfg(dat0_ui::launch::config())
@@ -45,6 +37,9 @@ const settle = () => new Promise((r) => setTimeout(r, 4));
 for (let i = 0; i < 500; i++) {
   if (document.querySelector('[data-a11y-id="statusbar"]')) {
     dioxus.send(true);
+    // Held open until Rust has read it: a finished script's unread messages
+    // are dropped with its query slot (`EvalError::Finished`).
+    await dioxus.recv();
     break;
   }
   await settle();
@@ -59,7 +54,9 @@ fn Probe() -> Element {
         let boot = boot.clone();
         spawn(async move {
             let mut first = document::eval(WAIT_FOR_SHELL);
-            if first.recv::<bool>().await.is_err() {
+            let mounted = first.recv::<bool>().await;
+            let _ = first.send(true);
+            if mounted.is_err() {
                 fail("the workbench window never mounted a shell");
             }
 

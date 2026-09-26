@@ -105,7 +105,8 @@ pub struct Cascade {
     pub sql_console_focused: bool,
 }
 
-/// The gpui action name the ⌘⇧P keymap row carries.
+/// The gpui action name the palette's keymap rows carry: ⌘K, the chord the
+/// chrome shows, and ⌘⇧P.
 ///
 /// Named here rather than spelled at the match site for the same reason the
 /// chord is not: `dat0_core::keymap` is the one table, and a second literal is
@@ -149,11 +150,11 @@ impl Cascade {
 
     /// Does this row open the command palette?
     ///
-    /// The ⌘⇧P row carries no `action_id` — the palette cannot list "open the
-    /// palette" among its own commands — so the shell cannot reach it through
-    /// [`resolve`] and matches on the gpui action name instead.
+    /// The palette's rows carry no `action_id` — the palette cannot list "open
+    /// the palette" among its own commands — so the shell cannot reach them
+    /// through [`resolve`] and matches on the gpui action name instead.
     ///
-    /// The chord is GLOBAL, so it fires while a dialog owns the screen too.
+    /// The chords are GLOBAL, so they fire while a dialog owns the screen too.
     /// Answering that here rather than at the call site keeps the rule beside
     /// the state it is about: [`Cascade`] is what knows a modal is up, and a
     /// palette mounted on top of a dialog is a second overlay nobody trapped.
@@ -224,6 +225,33 @@ pub fn grid_key(key: &Key, mods: Modifiers) -> Option<GridKey> {
 
 pub use dat0_core::grid::keymap::Key as GridKey;
 
+/// The grid verb a keystroke asks for while the grid has focus: Cmd/Ctrl+C,
+/// X and V copy, cut and paste, Cmd/Ctrl+D fills down, and Delete or
+/// Backspace sets the selection to NULL — the GPUI grid's bindings.
+///
+/// The grid takes these itself rather than leaving them to the Edit menu.
+/// The menu's Copy, Cut and Paste are the platform's text commands, for the
+/// SQL editor and the dialogs' fields, and they know nothing of cells.
+pub fn grid_verb(key: &Key, mods: Modifiers) -> Option<&'static str> {
+    use dat0_core::actions::builtin::ids;
+
+    let secondary = if cfg!(target_os = "macos") {
+        mods.meta()
+    } else {
+        mods.ctrl()
+    };
+    let secondary_only = secondary && !mods.shift() && !mods.alt();
+    let bare = mods.is_empty();
+    Some(match key {
+        Key::Character(c) if secondary_only && c.eq_ignore_ascii_case("c") => ids::VIEW_COPY,
+        Key::Character(c) if secondary_only && c.eq_ignore_ascii_case("x") => ids::VIEW_CUT,
+        Key::Character(c) if secondary_only && c.eq_ignore_ascii_case("v") => ids::VIEW_PASTE,
+        Key::Character(c) if secondary_only && c.eq_ignore_ascii_case("d") => ids::VIEW_FILL_DOWN,
+        Key::Delete | Key::Backspace if bare => ids::VIEW_SET_NULL,
+        _ => return None,
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -264,6 +292,24 @@ mod tests {
             grid_key(&Key::ArrowDown, jump() | Modifiers::SHIFT),
             Some(GridKey::JumpBottom)
         );
+    }
+
+    #[test]
+    fn the_grid_verbs_take_the_spreadsheet_chords_and_nothing_else() {
+        use dat0_core::actions::builtin::ids;
+        let ch = |c: &str| Key::Character(c.into());
+        assert_eq!(grid_verb(&ch("c"), jump()), Some(ids::VIEW_COPY));
+        assert_eq!(grid_verb(&ch("x"), jump()), Some(ids::VIEW_CUT));
+        assert_eq!(grid_verb(&ch("v"), jump()), Some(ids::VIEW_PASTE));
+        assert_eq!(grid_verb(&ch("d"), jump()), Some(ids::VIEW_FILL_DOWN));
+        assert_eq!(grid_verb(&Key::Delete, NONE), Some(ids::VIEW_SET_NULL));
+        assert_eq!(grid_verb(&Key::Backspace, NONE), Some(ids::VIEW_SET_NULL));
+
+        // A bare letter is typing, Shift makes it another chord, and a
+        // modified Delete is not a clear.
+        assert_eq!(grid_verb(&ch("c"), NONE), None);
+        assert_eq!(grid_verb(&ch("c"), jump() | Modifiers::SHIFT), None);
+        assert_eq!(grid_verb(&Key::Delete, jump()), None);
     }
 
     #[test]

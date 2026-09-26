@@ -25,13 +25,37 @@ use uuid::Uuid;
 use crate::error_ux::Banner;
 use crate::update::manifest::UpdateManifest;
 
+/// What a new window opens on.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Opening {
+    /// A fresh scratch session, with these files opened into it.
+    Scratch { paths: Vec<PathBuf> },
+    /// The scratch session a closed or crashed window left in `dir`, with its
+    /// tabs, their views and its SQL.
+    Recover { dir: PathBuf },
+    /// The workspace in the folder `root`, whose `.dat0/` holds its database
+    /// and session. `networked`: the folder is on a sync drive, so the window
+    /// records itself in the workspace's cross-machine lock as well.
+    Workspace { root: PathBuf, networked: bool },
+    /// The `.dat0` package at `package`, read-only: its tables, its tabs with
+    /// their views, its saved queries and charts, as it was sealed.
+    Inspect { package: PathBuf },
+}
+
+impl Opening {
+    /// A fresh scratch window over `paths`.
+    pub fn files(paths: Vec<PathBuf>) -> Self {
+        Self::Scratch { paths }
+    }
+}
+
 /// A signal from anywhere in the process to the UI.
 #[derive(Debug, Clone)]
 pub enum AppEvent {
-    /// Open a new window, optionally opening these paths in it. Sent by the
-    /// UDS single-instance handler when a second launch is coalesced into the
-    /// running process, and by the `window.new` action.
-    OpenWindow { paths: Vec<PathBuf> },
+    /// Open a new window on `Opening`. Sent by the UDS single-instance handler
+    /// when a second launch is coalesced into the running process, by the
+    /// `window.new` action, and by the recovery panel.
+    OpenWindow(Opening),
     /// Open paths in an existing window.
     OpenPaths { window: Uuid, paths: Vec<PathBuf> },
     /// `settings.toml` changed on disk (the settings watcher).
@@ -51,6 +75,9 @@ pub enum AppEvent {
     },
     /// Surface a banner.
     Banner(Banner),
+    /// Bring this window to the front: something asked for what it already
+    /// has open.
+    Raise,
 }
 
 /// The send half of the bus. Cheap to clone; hand one to every producer.

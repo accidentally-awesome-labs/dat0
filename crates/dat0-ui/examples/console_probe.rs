@@ -38,13 +38,9 @@
 //!
 //! Exits 0 on PASS, 1 on FAIL.
 
-use std::sync::Arc;
-
 use dioxus::prelude::*;
-use parking_lot::Mutex;
 
 use dat0_core::actions::registry::ActionRegistry;
-use dat0_core::events::AppEvents;
 use dat0_core::query::completion::{SchemaSnapshot, TableEntry, new_shared_snapshot};
 use dat0_ui::components::ai::{StreamKind, StreamPhase, StreamView};
 use dat0_ui::components::sql_console::{ConsoleIntent, SqlConsole, Tab};
@@ -93,7 +89,7 @@ function run() {
     case "fns":
       return { ok: cm.completions(ID) !== null, list: cm.completions(ID) || [] };
     case "run":
-      return { ok: cm.key(ID, "Enter", { meta: true }) };
+      return { ok: cm.key(ID, "Enter", { MOD_KEY: true }) };
     case "final": {
       const content = document.querySelector(".cm-content");
       const gutter = document.querySelector(".cm-gutters");
@@ -139,14 +135,11 @@ function run() {
 }
 
 dioxus.send(run());
-// Hold the script open for a tick after the send.
-//
-// `DesktopEvaluator` is owned by its query slot, and the slot is dropped the
-// moment the script finishes — so a script that sends and immediately returns
-// races the reader and usually loses, surfacing as
-// `EvalError::Finished: eval has already ran`. A zero-delay timer defers
-// completion past the send without holding the queue meaningfully.
-await new Promise((r) => setTimeout(r, 0));
+// Held open until Rust has read the result. A query's slot, and anything
+// still unread in it, is dropped the moment its script finishes, so a script
+// that sends and returns races its reader and can lose (`EvalError::Finished`).
+// A zero-delay timer only narrowed the window; a slow CI runner still lost.
+await dioxus.recv();
 "#;
 
 #[derive(serde::Deserialize, Debug, Default)]
@@ -176,9 +169,21 @@ struct Step {
 
 /// Run one step. Each is its own eval, so the queue is never held.
 async fn step(name: &str) -> Step {
-    let script = STEP.replace("STEP_NAME", &format!("{name:?}"));
+    // The console binds `Mod-Enter`, which CodeMirror reads as ⌘ on macOS and
+    // Ctrl everywhere else; pressing ⌘ on Linux runs nothing.
+    let modifier = if cfg!(target_os = "macos") {
+        "meta"
+    } else {
+        "ctrl"
+    };
+    let script = STEP
+        .replace("STEP_NAME", &format!("{name:?}"))
+        .replace("MOD_KEY", modifier);
     let mut eval = document::eval(&script);
-    match eval.recv::<Step>().await {
+    let got = eval.recv::<Step>().await;
+    // Let the script finish, now that its result is read (see `STEP`).
+    let _ = eval.send(true);
+    match got {
         Ok(s) => s,
         Err(e) => {
             eprintln!("probe step {name} failed: {e}");
@@ -255,15 +260,9 @@ struct Report {
 }
 
 fn main() {
-    let (events, rx) = AppEvents::channel();
     let registry = ActionRegistry::new();
     dat0_core::actions::builtin::register_all(&registry).expect("built-ins register");
-    let boot = Boot {
-        events,
-        rx: Arc::new(Mutex::new(Some(rx))),
-        registry,
-        cli_paths: std::sync::Arc::new(parking_lot::Mutex::new(Vec::new())),
-    };
+    let boot = Boot::new(registry, Vec::new());
 
     dioxus::LaunchBuilder::desktop()
         .with_cfg(dat0_ui::launch::config())

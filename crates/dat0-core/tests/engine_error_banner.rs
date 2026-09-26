@@ -17,7 +17,7 @@ use dat0_engine::EngineError;
 
 /// One value of EVERY `EngineError` variant (`dat0-engine/src/error.rs`).
 ///
-/// Sixteen variants. `DuckDb`, `Arrow`, `Io` and `Migration` wrap foreign error
+/// Every variant. `DuckDb`, `Arrow`, `Io` and `Migration` wrap foreign error
 /// types, so they are built from real instances of those: a genuinely malformed
 /// SQL string for the DuckDB ones, a real `io::Error`, and a real
 /// `ArrowError`. This vector is what makes the no-`_`-arm match in
@@ -61,8 +61,10 @@ fn every_variant() -> Vec<EngineError> {
         EngineError::Interrupted,
         EngineError::TaskJoin("worker panicked".into()),
         EngineError::EngineClosed,
+        EngineError::AlreadyOpen(std::path::PathBuf::from("/data/w.duckdb")),
         EngineError::EnginePoisoned,
         EngineError::EngineFailed("result stream ended early".into()),
+        EngineError::NotASingleQuery("it is 2 statements".into()),
     ]
 }
 

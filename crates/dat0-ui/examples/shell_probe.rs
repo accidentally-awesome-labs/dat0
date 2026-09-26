@@ -20,7 +20,6 @@
 use dioxus::prelude::*;
 
 use dat0_core::actions::registry::ActionRegistry;
-use dat0_core::events::AppEvents;
 use dat0_ui::launch::Boot;
 
 /// Read back what the browser actually laid out.
@@ -111,6 +110,11 @@ try {
   clearTimeout(guard);
   dioxus.send({ error: String(e && e.message ? e.message : e) });
 }
+// Held open until Rust has read the result. A query's slot, and anything
+// still unread in it, is dropped the moment its script finishes, so a script
+// that sends and returns races its reader and can lose (`EvalError::Finished`).
+// A zero-delay timer only narrowed the window; a slow CI runner still lost.
+await dioxus.recv();
 "#;
 
 #[derive(serde::Deserialize, Debug, Default)]
@@ -154,16 +158,9 @@ struct Report {
 }
 
 fn main() {
-    let (events, rx) = AppEvents::channel();
     let registry = ActionRegistry::new();
     dat0_core::actions::builtin::register_all(&registry).expect("built-ins register");
-
-    let boot = Boot {
-        events,
-        rx: std::sync::Arc::new(parking_lot::Mutex::new(Some(rx))),
-        registry,
-        cli_paths: std::sync::Arc::new(parking_lot::Mutex::new(Vec::new())),
-    };
+    let boot = Boot::new(registry, Vec::new());
 
     dioxus::LaunchBuilder::desktop()
         .with_cfg(dat0_ui::launch::config())
@@ -181,7 +178,10 @@ fn Probe() -> Element {
         spawn(async move {
             eprintln!("probe: waiting for the shell…");
             let mut eval = document::eval(PROBE);
-            let r: Report = match eval.recv().await {
+            let got = eval.recv().await;
+            // Let the script finish, now that its report is read.
+            let _ = eval.send(true);
+            let r: Report = match got {
                 Ok(v) => v,
                 Err(e) => {
                     eprintln!("probe channel failed: {e}");

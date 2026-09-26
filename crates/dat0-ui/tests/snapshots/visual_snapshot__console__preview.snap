@@ -11,16 +11,17 @@ expression: "rendered[0].1"
 </div>
 <button class="d0-chip" data-a11y-id="console-run" role="button" aria-label="Run" tabindex="0">
 <span style="color: var(--d0-ok)">Run</span>
-<span class="d0-key">⌘⏎</span>
+<span class="d0-key" data-chord="run">CHORD</span>
 </button>
 </div>
 <div class="d0-console-toolbar" data-a11y-id="console-toolbar">
-<button class="d0-btn" data-a11y-id="console-run-pane" role="button" aria-label="Run in results pane" tabindex="0">Run in results pane</button>
 <button class="d0-btn" data-a11y-id="console-new-tab" role="button" aria-label="New query tab" tabindex="0">New query tab</button>
 <button class="d0-btn" data-a11y-id="console-history" role="button" aria-label="History" tabindex="0">History</button>
 <button class="d0-btn" data-a11y-id="console-save-query" role="button" aria-label="Save Query…" tabindex="0">Save Query…</button>
 <button class="d0-btn" data-a11y-id="console-load-query" role="button" aria-label="Saved Queries…" tabindex="0">Saved Queries…</button>
-<button class="d0-btn" data-a11y-id="console-save-as-table" role="button" aria-label="Save as Table…" tabindex="0">Save as Table…</button>
+<button class="d0-btn" data-a11y-id="console-save-as-table" role="button" aria-label="Save Query as Table…" tabindex="0">Save Query as Table…</button>
+<button class="d0-btn" data-a11y-id="console-nl2sql" role="button" aria-label="NL→SQL" tabindex="0" disabled=true>NL→SQL</button>
+<button class="d0-btn" data-a11y-id="console-explain" role="button" aria-label="Explain" tabindex="0" disabled=true>Explain</button>
 </div>
 <div class="d0-console-strip" data-a11y-id="console-stream" data-kind="nl2sql" data-phase="streaming" role="note">
 <pre class="d0-mono" data-a11y-id="console-stream-text">SELECT region, SUM(revenue)

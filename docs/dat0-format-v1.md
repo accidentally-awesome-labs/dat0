@@ -127,6 +127,13 @@ A `base` table **MUST** carry `source_ref` and **MUST NOT** carry `derivation`.
 A `derived` table **MUST** carry `derivation` and **MUST NOT** carry
 `source_ref`.
 
+A table's `name` is also a file name — its data is `data/<name>.parquet`, and
+readers build paths from it when they unpack or replay — so it **MUST** be a
+single path component: not empty, not `.` or `..`, and free of `/`, `\`, NUL
+and other control characters. `data` **MUST** be exactly
+`"data/<name>.parquet"`. A reader **MUST** refuse a package that breaks either
+rule, and a writer **MUST NOT** produce one.
+
 ### §4.1 `derivation`
 
 `derivation` is a tagged object (`kind` discriminator):
@@ -213,6 +220,19 @@ If the replacement satisfies the rule, replay proceeds. Otherwise the reader
 **MUST** refuse the replay and surface a **schema diff** identifying the missing
 or type-incompatible columns. (The fingerprint to check against is the source's
 `schema_fingerprint`, §5.)
+
+**Running the recipe.** A derivation's SQL (§4.1) travels with the package; the
+person replaying it did not write it. A reader that replays **MUST** therefore:
+
+- run each `sql` derivation only if it is exactly one query — a SELECT, a set
+  operation, VALUES or a FROM-first query — and refuse the replay otherwise;
+- run every derivation without access to files, the network or extensions
+  beyond the replay's own working directory. The replacement sources are loaded
+  before that restriction takes effect, so a derivation reads them as tables,
+  which is all it needs.
+
+dat0 does both with DuckDB's own parser and configuration
+(`QueryEngine::check_single_query` and `QueryEngine::confine_to`).
 
 ---
 

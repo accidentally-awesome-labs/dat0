@@ -19,7 +19,9 @@
 //! (so no Preferences and no About) and its Window menu is ordered for
 //! Windows. It is a starting point for a demo, not a shipped menu bar.
 
-use dioxus::desktop::muda::{AboutMetadata, Menu, MenuItem, PredefinedMenuItem, Submenu};
+use dioxus::desktop::muda::{
+    AboutMetadata, IsMenuItem, Menu, MenuItem, PredefinedMenuItem, Submenu,
+};
 
 use dat0_core::actions::builtin::ids;
 use dat0_core::keymap::chord_for;
@@ -31,15 +33,42 @@ pub mod menu_ids {
     pub const ABOUT: &str = "menu.about";
     pub const CHECK_UPDATES: &str = "menu.check_updates";
     pub const DOCS: &str = "menu.docs";
-    pub const DISCORD: &str = "menu.discord";
+    pub const GITHUB: &str = "menu.github";
     pub const OPEN_PACKAGE: &str = "menu.open_package";
     pub const EXPORT_PACKAGE: &str = "menu.export_package";
     pub const UNPACK_PACKAGE: &str = "menu.unpack_package";
     pub const REPLAY_PACKAGE: &str = "menu.replay_package";
-    pub const TOGGLE_SIDEBAR: &str = "menu.toggle_sidebar";
-    pub const TOGGLE_INSPECTOR: &str = "menu.toggle_inspector";
+    pub const CONNECTIONS: &str = "menu.connections";
+    /// Window management. AppKit builds these on macOS; elsewhere muda's GTK
+    /// backend builds none of them, so dat0 does (step 5.11d).
+    pub const QUIT: &str = "menu.quit";
+    pub const CLOSE_WINDOW: &str = "menu.close_window";
+    pub const MINIMIZE: &str = "menu.minimize";
+    pub const ZOOM: &str = "menu.zoom";
+    pub const FULLSCREEN: &str = "menu.fullscreen";
     /// `recents.open.0` … `recents.open.9`.
     pub const RECENT_PREFIX: &str = "recents.open.";
+}
+
+/// The window-management ids: [`menu_ids::QUIT`] and its four neighbours.
+pub const WINDOW_ITEMS: [&str; 5] = [
+    menu_ids::QUIT,
+    menu_ids::CLOSE_WINDOW,
+    menu_ids::MINIMIZE,
+    menu_ids::ZOOM,
+    menu_ids::FULLSCREEN,
+];
+
+/// Menu-local ids with no handler yet (PD-023): none now. One added here is
+/// built disabled, like the [`crate::router::UNWIRED`] actions, so the menu
+/// bar offers nothing that does nothing.
+pub const UNWIRED_LOCAL: &[&str] = &[];
+
+/// Whether the menu bar builds the item for `id` enabled.
+///
+/// Public so `tests/menu_reachability.rs` checks the same rule `build` uses.
+pub fn enabled(id: &str) -> bool {
+    crate::router::is_wired(id) && !UNWIRED_LOCAL.contains(&id)
 }
 
 /// File → Open Recent is capped at ten.
@@ -54,7 +83,12 @@ const OPEN_RECENT_CAP: usize = 10;
 /// The keymap stays the single source of truth for chords: the palette's hint
 /// and the menu's accelerator are the same row, so they cannot disagree.
 fn accelerator(action_id: &str) -> Option<String> {
-    let chord = chord_for(action_id)?;
+    muda_accelerator(chord_for(action_id)?)
+}
+
+/// A keymap chord (`"ctrl-q"`) as `muda` spells an accelerator
+/// (`"Control+Q"`).
+fn muda_accelerator(chord: &str) -> Option<String> {
     let mut parts: Vec<String> = Vec::new();
     for p in chord.split('-') {
         parts.push(match p {
@@ -79,33 +113,106 @@ fn accelerator(action_id: &str) -> Option<String> {
 /// An item whose id is an action id and whose accelerator comes from the keymap.
 fn item(action_id: &'static str, label_key: &str) -> MenuItem {
     let accel = accelerator(action_id).and_then(|a| a.parse().ok());
-    MenuItem::with_id(action_id, dat0_i18n::t(label_key), true, accel)
+    MenuItem::with_id(
+        action_id,
+        dat0_i18n::t(label_key),
+        enabled(action_id),
+        accel,
+    )
 }
 
 /// An item with no chord (window management, external links).
 fn plain(id: &'static str, label_key: &str) -> MenuItem {
-    MenuItem::with_id(id, dat0_i18n::t(label_key), true, None)
+    MenuItem::with_id(id, dat0_i18n::t(label_key), enabled(id), None)
 }
 
-/// The recent-workspace items, newest first.
+/// The item for one of [`WINDOW_ITEMS`].
+///
+/// On macOS, AppKit's own. Elsewhere, one of dat0's, performed by
+/// `launch::manage_window`, with its chord from the keymap: muda's GTK
+/// backend builds none of the five, so the Linux menu bar had no Quit,
+/// Close Window, Minimize, Zoom or Full Screen (step 5.11d).
+fn window_item(id: &'static str) -> Box<dyn IsMenuItem> {
+    #[cfg(target_os = "macos")]
+    {
+        let t = |key: &str| Some(dat0_i18n::t(key));
+        Box::new(match id {
+            menu_ids::QUIT => PredefinedMenuItem::quit(None),
+            menu_ids::CLOSE_WINDOW => {
+                PredefinedMenuItem::close_window(t("menu.file.close").as_deref())
+            }
+            menu_ids::MINIMIZE => {
+                PredefinedMenuItem::minimize(t("menu.window.minimize").as_deref())
+            }
+            menu_ids::ZOOM => PredefinedMenuItem::maximize(t("menu.window.zoom").as_deref()),
+            _ => PredefinedMenuItem::fullscreen(None),
+        })
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        let (label, action) = window_item_parts(id);
+        let accel = action
+            .and_then(dat0_core::keymap::chord_for_gpui_action)
+            .and_then(muda_accelerator)
+            .and_then(|a| a.parse().ok());
+        Box::new(MenuItem::with_id(id, dat0_i18n::t(label), true, accel))
+    }
+}
+
+/// The label key and the keymap row of an item of dat0's own for one of
+/// [`WINDOW_ITEMS`].
+#[cfg_attr(target_os = "macos", allow(dead_code))]
+fn window_item_parts(id: &str) -> (&'static str, Option<&'static str>) {
+    match id {
+        menu_ids::QUIT => ("menu.file.quit", Some("dat0_menu::Quit")),
+        menu_ids::CLOSE_WINDOW => ("menu.file.close", Some("dat0_menu::CloseWindow")),
+        menu_ids::MINIMIZE => ("menu.window.minimize", None),
+        menu_ids::ZOOM => ("menu.window.zoom", None),
+        _ => ("menu.view.fullscreen", Some("dat0_menu::ToggleFullScreen")),
+    }
+}
+
+/// The recent workspaces File → Open Recent lists, newest first, fixed when
+/// the first menu bar is built.
+///
+/// An item is resolved by its index ([`listed_recent`]), so every menu bar —
+/// each window has its own on Linux and Windows — must list, and resolve
+/// against, one list. Resolving against the live list would open whatever has
+/// moved into that place since, as soon as opening a workspace moves it to
+/// the front. A workspace opened meanwhile is listed from the next launch.
 ///
 /// `Package` recents are excluded: File → Open Recent is about workspaces, and
 /// packages have their own sidebar section.
+fn listed_recents() -> &'static [std::path::PathBuf] {
+    static LISTED: std::sync::OnceLock<Vec<std::path::PathBuf>> = std::sync::OnceLock::new();
+    LISTED.get_or_init(|| {
+        let Some(store) = dat0_core::globals::recents() else {
+            return Vec::new();
+        };
+        let Ok(guard) = store.lock() else {
+            return Vec::new();
+        };
+        guard
+            .list()
+            .iter()
+            .filter_map(|e| match e {
+                RecentEntry::Workspace { path } => Some(path.clone()),
+                RecentEntry::Package { .. } => None,
+            })
+            .take(OPEN_RECENT_CAP)
+            .collect()
+    })
+}
+
+/// The workspace behind Open Recent's `ix`-th item.
+pub fn listed_recent(ix: usize) -> Option<std::path::PathBuf> {
+    listed_recents().get(ix).cloned()
+}
+
+/// The recent-workspace items, newest first.
 fn open_recent_items() -> Vec<MenuItem> {
-    let Some(store) = dat0_core::globals::recents() else {
-        return Vec::new();
-    };
-    let Ok(guard) = store.lock() else {
-        return Vec::new();
-    };
-    guard
-        .list()
+    listed_recents()
         .iter()
-        .filter_map(|e| match e {
-            RecentEntry::Workspace { path } => Some(path.clone()),
-            RecentEntry::Package { .. } => None,
-        })
-        .take(OPEN_RECENT_CAP)
         .enumerate()
         .map(|(i, path)| {
             let label = path
@@ -143,7 +250,7 @@ pub fn build() -> Menu {
         &PredefinedMenuItem::hide_others(None),
         &PredefinedMenuItem::show_all(None),
         &PredefinedMenuItem::separator(),
-        &PredefinedMenuItem::quit(None),
+        &*window_item(menu_ids::QUIT),
     ]);
 
     // ── File ─────────────────────────────────────────────────────────────────
@@ -173,7 +280,7 @@ pub fn build() -> Menu {
         &PredefinedMenuItem::separator(),
         &item(ids::VIEW_EXPORT, "menu.file.export"),
         &PredefinedMenuItem::separator(),
-        &PredefinedMenuItem::close_window(Some(&dat0_i18n::t("menu.file.close"))),
+        &*window_item(menu_ids::CLOSE_WINDOW),
     ]);
 
     // ── Edit ─────────────────────────────────────────────────────────────────
@@ -193,8 +300,8 @@ pub fn build() -> Menu {
     // ── View ─────────────────────────────────────────────────────────────────
     let view = Submenu::new(dat0_i18n::t("menu.view"), true);
     let _ = view.append_items(&[
-        &plain(menu_ids::TOGGLE_SIDEBAR, "catalog.toggle"),
-        &plain(menu_ids::TOGGLE_INSPECTOR, "inspector.toggle"),
+        &item(ids::SIDEBAR_TOGGLE, "catalog.toggle"),
+        &item(ids::INSPECTOR_TOGGLE, "inspector.toggle"),
         &item(ids::CHART_VISUALIZE, "chart.visualize"),
         &PredefinedMenuItem::separator(),
         &item(ids::CONSOLE_TOGGLE, "sql.console_toggle"),
@@ -202,25 +309,27 @@ pub fn build() -> Menu {
         &item(ids::SQL_CANCEL, "sql.cancel"),
         &PredefinedMenuItem::separator(),
         &item(ids::AI_PANEL_OPEN, "menu.ai_panel"),
+        &plain(menu_ids::CONNECTIONS, "menu.connections"),
         &PredefinedMenuItem::separator(),
-        &PredefinedMenuItem::fullscreen(None),
+        &*window_item(menu_ids::FULLSCREEN),
     ]);
 
     // ── Window ───────────────────────────────────────────────────────────────
     let window = Submenu::new(dat0_i18n::t("menu.window"), true);
     let _ = window.append_items(&[
-        &PredefinedMenuItem::minimize(Some(&dat0_i18n::t("menu.window.minimize"))),
-        &PredefinedMenuItem::maximize(Some(&dat0_i18n::t("menu.window.zoom"))),
+        &*window_item(menu_ids::MINIMIZE),
+        &*window_item(menu_ids::ZOOM),
     ]);
 
     // ── Help ─────────────────────────────────────────────────────────────────
     let help = Submenu::new(dat0_i18n::t("menu.help"), true);
     let _ = help.append_items(&[
         &item(ids::ONBOARDING_TAKE_TOUR, "menu.help.take_tour"),
+        &item(ids::REPORT_BUG, "menu.help.report_bug"),
         &plain(menu_ids::CHECK_UPDATES, "menu.help.check_updates"),
         &PredefinedMenuItem::separator(),
         &plain(menu_ids::DOCS, "menu.help.docs"),
-        &plain(menu_ids::DISCORD, "menu.help.discord"),
+        &plain(menu_ids::GITHUB, "menu.help.github"),
     ]);
 
     let _ = menu.append_items(&[&app, &file, &edit, &view, &window, &help]);
@@ -266,20 +375,35 @@ pub fn emitted_ids() -> Vec<String> {
         ids::SQL_CANCEL,
         ids::AI_PANEL_OPEN,
         ids::ONBOARDING_TAKE_TOUR,
+        ids::REPORT_BUG,
+        ids::SIDEBAR_TOGGLE,
+        ids::INSPECTOR_TOGGLE,
         menu_ids::OPEN_PACKAGE,
         menu_ids::EXPORT_PACKAGE,
         menu_ids::UNPACK_PACKAGE,
         menu_ids::REPLAY_PACKAGE,
-        menu_ids::TOGGLE_SIDEBAR,
-        menu_ids::TOGGLE_INSPECTOR,
+        menu_ids::CONNECTIONS,
         menu_ids::CHECK_UPDATES,
         menu_ids::DOCS,
-        menu_ids::DISCORD,
+        menu_ids::GITHUB,
     ]
     .into_iter()
     .map(str::to_string)
     .collect();
     ids.extend((0..OPEN_RECENT_CAP).map(|i| format!("{}{i}", menu_ids::RECENT_PREFIX)));
+    // AppKit's own on macOS, and so emitted by no item of dat0's there.
+    if cfg!(not(target_os = "macos")) {
+        ids.extend(
+            [
+                menu_ids::QUIT,
+                menu_ids::CLOSE_WINDOW,
+                menu_ids::MINIMIZE,
+                menu_ids::ZOOM,
+                menu_ids::FULLSCREEN,
+            ]
+            .map(str::to_string),
+        );
+    }
     ids
 }
 
@@ -289,17 +413,17 @@ pub fn local_ids() -> Vec<String> {
         menu_ids::ABOUT,
         menu_ids::CHECK_UPDATES,
         menu_ids::DOCS,
-        menu_ids::DISCORD,
+        menu_ids::GITHUB,
         menu_ids::OPEN_PACKAGE,
         menu_ids::EXPORT_PACKAGE,
         menu_ids::UNPACK_PACKAGE,
         menu_ids::REPLAY_PACKAGE,
-        menu_ids::TOGGLE_SIDEBAR,
-        menu_ids::TOGGLE_INSPECTOR,
+        menu_ids::CONNECTIONS,
     ]
     .into_iter()
     .map(str::to_string)
     .collect();
+    v.extend(WINDOW_ITEMS.map(str::to_string));
     v.extend((0..OPEN_RECENT_CAP).map(|i| format!("{}{i}", menu_ids::RECENT_PREFIX)));
     v
 }
@@ -329,6 +453,7 @@ pub fn label_keys() -> Vec<&'static str> {
         "menu.file.replay_package",
         "menu.file.export",
         "menu.file.close",
+        "menu.file.quit",
         // Edit
         "menu.edit",
         "menu.edit.undo",
@@ -346,6 +471,8 @@ pub fn label_keys() -> Vec<&'static str> {
         "sql.run",
         "sql.cancel",
         "menu.ai_panel",
+        "menu.connections",
+        "menu.view.fullscreen",
         // Window
         "menu.window",
         "menu.window.minimize",
@@ -353,9 +480,10 @@ pub fn label_keys() -> Vec<&'static str> {
         // Help
         "menu.help",
         "menu.help.take_tour",
+        "menu.help.report_bug",
         "menu.help.check_updates",
         "menu.help.docs",
-        "menu.help.discord",
+        "menu.help.github",
     ]
 }
 
@@ -387,6 +515,45 @@ mod tests {
                     "{id} produced an unparseable accelerator {a:?}"
                 );
             }
+        }
+    }
+
+    /// Off macOS the five window items are dat0's own (step 5.11d): each has a
+    /// label, and Quit, Close Window and Full Screen their chords, which
+    /// muda reads.
+    #[cfg(not(target_os = "macos"))]
+    #[test]
+    fn the_window_items_have_labels_and_their_chords() {
+        let chord = |id: &str| {
+            window_item_parts(id)
+                .1
+                .and_then(dat0_core::keymap::chord_for_gpui_action)
+                .and_then(muda_accelerator)
+        };
+        assert_eq!(chord(menu_ids::QUIT).as_deref(), Some("Control+Q"));
+        assert_eq!(chord(menu_ids::CLOSE_WINDOW).as_deref(), Some("Control+W"));
+        assert_eq!(chord(menu_ids::FULLSCREEN).as_deref(), Some("F11"));
+        assert_eq!(chord(menu_ids::MINIMIZE), None);
+        assert_eq!(chord(menu_ids::ZOOM), None);
+        for id in WINDOW_ITEMS {
+            let label = window_item_parts(id).0;
+            assert_ne!(dat0_i18n::t(label), label, "{id}");
+            if let Some(a) = chord(id) {
+                assert!(
+                    a.parse::<dioxus::desktop::muda::accelerator::Accelerator>()
+                        .is_ok(),
+                    "{id}: {a:?}"
+                );
+            }
+        }
+        let labels: std::collections::BTreeSet<_> =
+            WINDOW_ITEMS.map(|id| window_item_parts(id).0).into();
+        assert_eq!(labels.len(), 5, "one label each");
+        // And the reachability checks see them: `emitted_ids` is what they
+        // trust, and it lists what this platform's bar can emit.
+        let emitted = emitted_ids();
+        for id in WINDOW_ITEMS {
+            assert!(emitted.iter().any(|e| e == id), "{id} is not listed");
         }
     }
 

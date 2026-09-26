@@ -30,7 +30,14 @@ const MAX_LINES: &[(&str, usize)] = &[
     ("about.rs", 300),
     ("ai.rs", 900),
     ("banner.rs", 300),
-    ("charts.rs", 700),
+    // New with the charts' feed (step 5.5b): what binds the chart to the
+    // active tab, plots it and exports it, kept out of shell.rs as the
+    // console's host is.
+    ("charts/host.rs", 500),
+    ("charts/mod.rs", 700),
+    // Saving a chart and showing a saved one (step 5.5c), kept out of the
+    // feed, which binds and draws.
+    ("charts/saved.rs", 200),
     ("command_palette.rs", 600),
     ("connections.rs", 600),
     ("crash_report.rs", 300),
@@ -40,17 +47,31 @@ const MAX_LINES: &[(&str, usize)] = &[
     ("filter_popover.rs", 600),
     ("grid/cell_editor.rs", 300),
     ("grid/context_menu.rs", 300),
+    ("grid/edits.rs", 600),
+    ("grid/export.rs", 200),
     ("grid/header.rs", 300),
     ("grid/mod.rs", 700),
+    ("grid/refresh.rs", 300),
+    ("grid/scroll.rs", 500),
+    // 400 -> 500: each tab's re-read count (step 5.5d), which the
+    // inspector's profile is kept by and which belongs beside the rebinds
+    // that bump it.
+    ("grid/views.rs", 500),
     ("import_progress.rs", 400),
     ("import_wizard.rs", 900),
-    ("inspector.rs", 900),
+    // New with the inspector's feed (step 5.5d), as the charts' is.
+    ("inspector/host.rs", 400),
+    ("inspector/mod.rs", 900),
     ("live_refresh.rs", 200),
-    ("mod.rs", 300),
+    // 300 -> 400: the status bar's module line (step 5.8c). The file was at
+    // its ceiling, and one more name in the module list is not the file
+    // doing more.
+    ("mod.rs", 400),
     ("modals.rs", 900),
     ("name_prompt.rs", 300),
     ("onboarding.rs", 300),
     ("pane.rs", 200),
+    ("perf_hud.rs", 400),
     ("pipeline_bar.rs", 300),
     ("query_library.rs", 300),
     ("recovery.rs", 500),
@@ -64,8 +85,16 @@ const MAX_LINES: &[(&str, usize)] = &[
     ("shell.rs", 1200),
     ("sidebar.rs", 600),
     ("sql_console/editor.rs", 400),
+    // New with the console's run (step 5.2): what a console intent does, kept
+    // out of shell.rs, which was 45 lines from its ceiling, and the SQL-text
+    // rules it applies.
+    ("sql_console/host.rs", 600),
+    ("sql_console/sql_text.rs", 300),
     ("sql_console/mod.rs", 700),
     ("sql_console/tabs.rs", 400),
+    // New with the status bar's feed (step 5.8c): the bar and what each of
+    // its segments says, out of shell.rs.
+    ("status_bar.rs", 300),
     ("update_ui.rs", 400),
     ("workspace_in_use.rs", 300),
 ];
@@ -238,7 +267,19 @@ fn ratchet_report_covers_over_under_missing_and_untabled() {
 /// Measured, not estimated. Fails over AND stale-under, like `MAX_LINES` — a
 /// slice that removes fields must lower this in the same commit, which is what
 /// makes shrinking visible rather than silently forgotten.
-const MAX_WORKSPACE_FIELDS: usize = 13;
+///
+/// 13 → 14 for `banners` (PD-024). It was a signal private to the shell, which
+/// left code outside the shell — `session_boot::open_paths`, the session
+/// failure in `land` — with only the process-global queue to report through,
+/// and that queue is how a refusal in one window was shown in another. A
+/// window's banners are written by more than one module, so they are window
+/// state, not one surface's.
+///
+/// 14 → 15 for `attached` (step 5.4e): the databases attached to the session,
+/// written where a file is attached (`sqlite_open::open`) and where a session
+/// lands (`session_boot::land` re-attaches), and read by the sidebar. Written
+/// by more than one module, so window state, as `banners` is.
+const MAX_WORKSPACE_FIELDS: usize = 15;
 
 /// Slack on the field ratchet's under-arm.
 ///

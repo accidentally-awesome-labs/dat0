@@ -13,6 +13,12 @@
 //!
 //! The serialisation itself is `dat0_core::grid::clipboard`: TSV out, TSV in,
 //! and per-column coercion on paste.
+//!
+//! # No system clipboard
+//!
+//! Headless CI and some locked-down desktops have none. A copy then lands in
+//! [`SPARE`], inside this process, so copy and paste within dat0 still work;
+//! other apps cannot see it.
 
 use std::sync::{Mutex, OnceLock};
 
@@ -21,6 +27,9 @@ use arboard::Clipboard;
 /// The process-wide handle. `Mutex` because `arboard::Clipboard` is `!Sync`
 /// and copy can be reached from a menu, a keystroke and a context menu.
 static CLIPBOARD: OnceLock<Option<Mutex<Clipboard>>> = OnceLock::new();
+
+/// What was copied, when there is no system clipboard to hold it.
+static SPARE: Mutex<Option<String>> = Mutex::new(None);
 
 fn handle() -> Option<&'static Mutex<Clipboard>> {
     CLIPBOARD
@@ -36,9 +45,24 @@ fn handle() -> Option<&'static Mutex<Clipboard>> {
         .as_ref()
 }
 
+/// Keep copies inside this process, as if there were no system clipboard.
+///
+/// For tests. Each runs in a process of its own, side by side, and a system
+/// clipboard is one per machine: a test waiting for its own copy read back
+/// another test's instead. Must be called before the first copy or read.
+pub fn keep_in_process() {
+    let _ = CLIPBOARD.set(None);
+}
+
 /// Put text on the clipboard. Returns whether it landed.
 pub fn set_text(text: &str) -> bool {
-    let Some(cb) = handle() else { return false };
+    let Some(cb) = handle() else {
+        let Ok(mut spare) = SPARE.lock() else {
+            return false;
+        };
+        *spare = Some(text.to_string());
+        return true;
+    };
     let Ok(mut cb) = cb.lock() else { return false };
     match cb.set_text(text.to_string()) {
         Ok(()) => true,
@@ -52,7 +76,9 @@ pub fn set_text(text: &str) -> bool {
 /// Read text from the clipboard. `None` when it is empty, holds something that
 /// is not text, or there is no clipboard at all.
 pub fn text() -> Option<String> {
-    let cb = handle()?;
+    let Some(cb) = handle() else {
+        return SPARE.lock().ok()?.clone();
+    };
     let mut cb = cb.lock().ok()?;
     match cb.get_text() {
         Ok(t) => Some(t),
@@ -83,13 +109,15 @@ mod tests {
     use super::*;
 
     #[test]
-    fn a_missing_clipboard_degrades_to_a_no_op() {
-        // Whatever the environment, these must not panic: headless CI has no
-        // clipboard and a copy that aborts the process is worse than one that
-        // does nothing.
-        let _ = set_text("probe");
-        let _ = text();
-        let _ = paste_cells();
+    fn a_copy_can_be_pasted_back_with_or_without_a_system_clipboard() {
+        // Headless CI has no clipboard: the copy must neither panic nor
+        // vanish, since the grid's paste reads it back.
+        assert!(set_text("a\tb"));
+        assert_eq!(text().as_deref(), Some("a\tb"));
+        assert_eq!(
+            paste_cells(),
+            Some(vec![vec!["a".to_string(), "b".to_string()]])
+        );
     }
 
     #[test]

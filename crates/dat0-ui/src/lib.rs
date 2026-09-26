@@ -13,20 +13,35 @@
 //!   tests query by. Unlike the GPUI build, these ship in release.
 
 pub mod a11y;
+pub mod ai_flow;
+pub mod background;
+pub mod chrome;
 pub mod clipboard;
 pub mod components;
+pub mod connections_flow;
+pub mod crash_flow;
 pub mod files;
 #[cfg(feature = "gallery")]
 pub mod gallery;
+pub mod import_flow;
 pub mod keys;
 pub mod launch;
 pub mod menu;
+pub mod package_export;
+pub mod package_open;
+pub mod package_replay;
+pub mod package_unpack;
 #[cfg(feature = "perf-harness")]
 pub mod perf;
 pub mod protocol;
 pub mod router;
 pub mod session_boot;
+pub mod session_sync;
+pub mod sqlite_open;
 pub mod state;
 pub mod theme;
+pub mod update_flow;
 #[cfg(feature = "visual")]
 pub mod visual;
+pub mod workspace_open;
+pub mod workspace_save;

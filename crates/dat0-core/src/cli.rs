@@ -44,9 +44,9 @@ pub enum PackageCmd {
     Diff { a: PathBuf, b: PathBuf, json: bool },
     /// `dat0 --version` / `dat0 -V`.
     ///
-    /// RL3: `release.yml`'s Linux smoke test runs
-    /// `./squashfs-root/AppRun --version` inside a bare `ubuntu:24.04`
-    /// container. Before this variant existed, [`parse`] returned `None` for
+    /// RL3: the AppImage smoke test (`scripts/appimage-smoke.sh`, in
+    /// `release.yml`'s Linux job) runs `./squashfs-root/AppRun --version` in
+    /// a fresh container before it starts a display. Before this variant existed, [`parse`] returned `None` for
     /// `--version` and `main` fell through to a full GPUI launch — which has
     /// no display, no GPU and no window server in that container, so the
     /// "smoke test" either hung or failed for a reason unrelated to the
@@ -237,8 +237,8 @@ fn cli_command() -> Command {
 /// `0` success, `1` logical failure (e.g. a non-empty diff, T5), `2` error.
 pub fn run(cmd: PackageCmd) -> i32 {
     // `--version` / `--help` short-circuit before ANY runtime, engine or GPUI
-    // work: `release.yml`'s Linux smoke test runs these inside a bare
-    // `ubuntu:24.04` container with no display and no tokio need.
+    // work: the AppImage smoke test runs `--version` in a fresh container
+    // before it starts a display.
     if let PackageCmd::Version = cmd {
         // `git_sha` is `BuildInfo::current().git_sha`, i.e. `env!("DAT0_GIT_SHA")`
         // (about/build_info.rs:12) — the same identity the About box shows, so a
@@ -446,11 +446,24 @@ pub async fn replay_async(
         }
         new_sources.insert(logical.to_string(), PathBuf::from(path_str));
     }
+    replay_with(package, &new_sources, out).await
+}
 
+/// [`replay_async`] with the sources already bound: each of the package's
+/// sources is read from the file `new_sources` maps its name to. The app's
+/// Replay binds its files this way, so a source's name is never parsed.
+pub async fn replay_with(
+    package: &std::path::Path,
+    new_sources: &HashMap<String, PathBuf>,
+    out: Option<PathBuf>,
+) -> Result<PathBuf> {
     let parsed = dat0_format::Reader::open(package)
         .with_context(|| format!("open package {}", package.display()))?;
 
     // Scratch engine — throwaway, closed + dropped before we return (P7a T6 lesson).
+    // It is also the only directory the recipe's own SQL may touch: replay
+    // confines the engine to it once the new sources are loaded, because that
+    // SQL came with the package, not from whoever is running this.
     let scratch_dir = tempfile::tempdir().context("create replay scratch dir")?;
     let engine = DuckDBEngine::new(
         scratch_dir.path().join("replay.duckdb"),
@@ -461,9 +474,14 @@ pub async fn replay_async(
     .context("create replay engine")?;
     engine.init().await.context("init replay engine")?;
 
-    let new_contents = dat0_format::replay::ReplayEngine::replay(&parsed, &new_sources, &engine)
-        .await
-        .context("replay recipe")?;
+    let new_contents = dat0_format::replay::ReplayEngine::replay(
+        &parsed,
+        new_sources,
+        &engine,
+        scratch_dir.path(),
+    )
+    .await
+    .context("replay recipe")?;
 
     // Determine output path.
     let out_path = match out {
@@ -479,7 +497,8 @@ pub async fn replay_async(
         }
     };
 
-    dat0_format::Writer::write(&new_contents, &engine, &out_path)
+    // Staged inside the scratch dir: the confined engine can write nowhere else.
+    dat0_format::Writer::write_using(&new_contents, &engine, &out_path, scratch_dir.path())
         .await
         .with_context(|| format!("write replayed package {}", out_path.display()))?;
 
@@ -700,7 +719,7 @@ mod tests {
 
     #[test]
     fn version_flag_parses() {
-        // Both spellings, because release.yml's Docker smoke uses the long one
+        // Both spellings, because the AppImage smoke test uses the long one
         // and humans reach for the short one.
         assert_eq!(
             parse(&argv(&["dat0", "--version"])),

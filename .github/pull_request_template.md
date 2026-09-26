@@ -35,8 +35,8 @@ it silently.
       `cargo test -p dat0-ui --test theme_live_switch --test style_lint`
 - [ ] **Appearance defended** — the SSR scene catalogue covers any new surface
       or state, and its snapshots are reviewed rather than blind-accepted.
-      A geometry change re-runs the real-window probe on a machine with a
-      display; it is not a CI job (no display on hosted runners, see D-032).
+      The real-window probes run in CI on Linux (`windowed-probes`, under
+      Xvfb); a geometry change also re-runs `visual_probe` on macOS by hand.
       `cargo test -p dat0-ui --test visual_snapshot`
       `cargo run -p dat0-ui --features visual --example visual_probe`
 - [ ] **Grid perf**: the `GridDataSource` paging path is unchanged, or the

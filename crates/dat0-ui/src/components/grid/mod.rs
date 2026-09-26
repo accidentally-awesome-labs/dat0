@@ -32,10 +32,17 @@
 
 pub mod cell_editor;
 pub mod context_menu;
+pub mod edits;
+pub mod export;
 pub mod header;
+pub mod refresh;
+pub mod scroll;
+pub mod views;
 
+use std::rc::Rc;
 use std::sync::Arc;
 
+use dioxus::html::geometry::PixelsVector2D;
 use dioxus::prelude::*;
 
 use dat0_core::grid::data_source::GridDataSource;
@@ -43,92 +50,12 @@ use dat0_core::grid::renderers::CellAlignment;
 use dat0_core::grid::selection::{CellCoord, SelectionModel};
 use dat0_engine::transform::ProjectionColumn;
 
+pub use scroll::{Viewport, VisibleRange, offset_of, visible_range};
+
 /// Row height, and the grid header's height. The design's `26px`.
 pub const ROW_H: f64 = 26.0;
 /// Default column width, matching the GPUI grid's fixed `px(100.)`.
 pub const COL_W_DEFAULT: f64 = 100.0;
-/// Rows rendered above and below the viewport.
-const OVERSCAN_ROWS: usize = 4;
-/// Columns rendered left and right of the viewport.
-const OVERSCAN_COLS: usize = 2;
-
-/// Scroll position and viewport size, written by `onscroll` / `onresize`.
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub struct Viewport {
-    pub scroll_top: f64,
-    pub scroll_left: f64,
-    pub width: f64,
-    pub height: f64,
-}
-
-impl Default for Viewport {
-    fn default() -> Self {
-        // A plausible first window, so the first paint is not a single row that
-        // then reflows. Corrected by the first real scroll or resize event.
-        Self {
-            scroll_top: 0.0,
-            scroll_left: 0.0,
-            width: 900.0,
-            height: 600.0,
-        }
-    }
-}
-
-/// The half-open row range and column range to render.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct VisibleRange {
-    pub rows: std::ops::Range<usize>,
-    pub cols: std::ops::Range<usize>,
-}
-
-/// Compute the render window, including overscan.
-///
-/// Pure, and separately tested: this is the arithmetic that decides whether the
-/// grid shows the right data, and it is much easier to get wrong than to debug
-/// through a window.
-pub fn visible_range(vp: Viewport, total_rows: usize, widths: &[f64]) -> VisibleRange {
-    let first_row =
-        ((vp.scroll_top / ROW_H).floor().max(0.0) as usize).saturating_sub(OVERSCAN_ROWS);
-    let last_row = ((((vp.scroll_top + vp.height) / ROW_H).ceil().max(0.0) as usize)
-        + OVERSCAN_ROWS)
-        .min(total_rows);
-
-    // Columns can differ in width, so walk offsets rather than dividing.
-    let mut first_col = 0;
-    let mut x = 0.0;
-    for (i, w) in widths.iter().enumerate() {
-        if x + w > vp.scroll_left {
-            first_col = i;
-            break;
-        }
-        x += w;
-        first_col = i + 1;
-    }
-    let first_col = first_col.saturating_sub(OVERSCAN_COLS);
-
-    let mut last_col = first_col;
-    let mut x = offset_of(widths, first_col);
-    let right = vp.scroll_left + vp.width;
-    while last_col < widths.len() && x < right {
-        x += widths[last_col];
-        last_col += 1;
-    }
-    let last_col = (last_col + OVERSCAN_COLS).min(widths.len());
-
-    VisibleRange {
-        rows: first_row..last_row.max(first_row),
-        cols: first_col..last_col.max(first_col),
-    }
-}
-
-/// Left edge of column `ix`.
-///
-/// Folded from `0.0` rather than summed: `f64`'s `Sum` identity is `-0.0`, so
-/// the first column's offset would render as `left: -0px`.
-pub fn offset_of(widths: &[f64], ix: usize) -> f64 {
-    widths.iter().take(ix).fold(0.0, |acc, w| acc + w)
-}
-
 /// Everything the grid needs. Held by the shell, so a re-render of the grid
 /// does not re-read the engine.
 ///
@@ -159,6 +86,22 @@ pub struct GridProps {
     /// A context-menu pick: `(action id, the right-clicked cell)`.
     #[props(default)]
     pub on_action: EventHandler<(&'static str, CellCoord)>,
+    /// Each column's sort and filter state, for the header.
+    #[props(default)]
+    pub marks: Vec<views::Mark>,
+    /// A sort-zone click, with Shift: `(column, extend)`.
+    #[props(default)]
+    pub on_sort: EventHandler<(usize, bool)>,
+    /// A funnel click: `(column, client x, client y)`.
+    #[props(default)]
+    pub on_funnel: EventHandler<(usize, f64, f64)>,
+    /// A header dragged to a new place: `(from, to)`.
+    #[props(default)]
+    pub on_reorder: EventHandler<(usize, usize)>,
+    /// The rows in view and the table's size, `(first, last, total)`, first
+    /// and last 1-based, told when they change: the status bar's `rows`.
+    #[props(default)]
+    pub on_rows: EventHandler<(u64, u64, u64)>,
 }
 
 impl PartialEq for GridProps {
@@ -168,7 +111,18 @@ impl PartialEq for GridProps {
             && self.columns == other.columns
             && self.widths == other.widths
             && self.read_only == other.read_only
+            && self.marks == other.marks
     }
+}
+
+/// The rows in view, `(first, last, total)`, first and last 1-based; all
+/// zero for an empty table.
+fn shown_rows(rows: &std::ops::Range<usize>, total: usize) -> (u64, u64, u64) {
+    if total == 0 || rows.is_empty() {
+        return (0, 0, total as u64);
+    }
+    let last = rows.end.min(total);
+    (rows.start as u64 + 1, last as u64, total as u64)
 }
 
 /// The grid.
@@ -192,9 +146,42 @@ pub fn Grid(props: GridProps) -> Element {
     let mut widths_sig = props.widths;
     let widths = widths_sig();
     let total_w: f64 = widths.iter().sum();
-    let total_h = total_rows as f64 * ROW_H;
+    // Capped past ~1.15M rows, where the scroll position maps to rows in
+    // proportion: WebKit cannot lay out a taller canvas (PD-026).
+    let sc = scroll::Scale::of(total_rows, &viewport());
+    let total_h = sc.canvas_h;
 
-    let range = visible_range(viewport(), total_rows, &widths);
+    let range = visible_range(sc.rows_view(viewport()), total_rows, &widths);
+    let on_rows = props.on_rows;
+    let shown = shown_rows(&range.rows, total_rows);
+    use_effect(use_reactive!(|shown| on_rows.call(shown)));
+
+    // The scrolling element, once the renderer has one: `None` in the headless
+    // harness, which has no layout and nothing to scroll.
+    let mut viewport_el = use_signal(|| Option::<Rc<MountedData>>::None);
+    // Keep the cursor on screen after a keyboard move. The viewport signal is
+    // set at once, so the rows render where the cursor went; the element is
+    // scrolled to match. Without this, Ctrl+End moved the cursor to the last
+    // row and left the view where it was.
+    let mut reveal = move |at: CellCoord| {
+        let vp = viewport();
+        let widths = widths_sig.peek().clone();
+        let Some((left, top)) = scroll::reveal(vp, total_rows, &widths, at.row, at.col) else {
+            return;
+        };
+        viewport.set(Viewport {
+            scroll_left: left,
+            scroll_top: top,
+            ..vp
+        });
+        if let Some(el) = viewport_el() {
+            spawn(async move {
+                let _ = el
+                    .scroll(PixelsVector2D::new(left, top), ScrollBehavior::Instant)
+                    .await;
+            });
+        }
+    };
 
     // Page ahead for what is on screen. The residency probe is the same cheap
     // guard the GPUI path used: if both boundary pages are already cached the
@@ -214,7 +201,13 @@ pub fn Grid(props: GridProps) -> Element {
     {
         let source = props.source.clone();
         let (start, last) = (range.rows.start, range.rows.end.saturating_sub(1));
-        use_effect(move || {
+        // The source's identity is a dependency too. A mounted grid is handed
+        // a new source when the tab changes or a query reruns in place, and an
+        // effect that watched only the viewport went on checking the old
+        // source's cache: the new table sat on placeholders until a scroll.
+        let bound = Arc::as_ptr(&source) as usize;
+        use_effect(use_reactive!(|bound| {
+            let _ = bound;
             // Read inside the effect so a scroll re-runs it: `use_effect`
             // re-runs on the signals its body touches, and `start`/`last` are
             // plain values computed during render. Without this the grid
@@ -236,7 +229,7 @@ pub fn Grid(props: GridProps) -> Element {
                 let next = pages_loaded().wrapping_add(1);
                 pages_loaded.set(next);
             });
-        });
+        }));
     }
 
     let mut selection = props.selection;
@@ -280,12 +273,15 @@ pub fn Grid(props: GridProps) -> Element {
                 on_reorder_drop: move |to: usize| {
                     if let Some(from) = reordering.take() {
                         if from != to && from < n_cols && to < n_cols {
-                            let mut w = widths_sig.write();
-                            let moved = w.remove(from);
-                            w.insert(to, moved);
+                            // The owner moves the column; its width follows
+                            // the column, not the place (`views::use_fit`).
+                            props.on_reorder.call((from, to));
                         }
                     }
                 },
+                marks: props.marks.clone(),
+                on_sort: props.on_sort,
+                on_funnel: props.on_funnel,
             }
 
             // While a pointer gesture is live, a full-window shield takes every
@@ -327,6 +323,17 @@ pub fn Grid(props: GridProps) -> Element {
                         height: f64::from(d.client_height()),
                     });
                 },
+                onmounted: move |e| viewport_el.set(Some(e.data())),
+                // Its size as laid out, rather than `Viewport::default` until
+                // the first scroll: on first layout, when the stylesheet lands,
+                // and whenever the window or a pane beside it resizes.
+                onresize: move |e| {
+                    if let Ok(size) = e.data().get_content_box_size() {
+                        let mut vp = viewport.write();
+                        vp.width = size.width;
+                        vp.height = size.height;
+                    }
+                },
                 onmouseup: move |_| dragging.set(false),
                 onmouseleave: move |_| dragging.set(false),
                 // The grid's cursor grammar. Not part of the shell's chord
@@ -342,6 +349,14 @@ pub fn Grid(props: GridProps) -> Element {
                         e.prevent_default();
                         e.stop_propagation();
                         dat0_core::grid::keymap::apply_key(&mut selection.write(), k);
+                        reveal(selection.peek().active());
+                        return;
+                    }
+                    if let Some(id) = crate::keys::grid_verb(&e.key(), e.modifiers()) {
+                        e.prevent_default();
+                        e.stop_propagation();
+                        let at = selection.read().active();
+                        on_action.call((id, at));
                         return;
                     }
                     // Enter opens the editor on the active cell, the
@@ -378,7 +393,7 @@ pub fn Grid(props: GridProps) -> Element {
                             "data-a11y-id": "row-{r}",
                             role: "row",
                             "aria-rowindex": "{r + 1}",
-                            style: "top: {r as f64 * ROW_H}px; width: {total_w}px;",
+                            style: "top: {sc.top(r)}px; width: {total_w}px;",
 
                             for c in range.cols.clone() {
                                 {cell(
@@ -391,9 +406,23 @@ pub fn Grid(props: GridProps) -> Element {
                                     move |ev: MouseEvent, coord| {
                                         let m = ev.modifiers();
                                         let mut s = selection.write();
+                                        // A right-click inside the selection keeps it, so
+                                        // the context menu acts on all of it; outside, it
+                                        // selects the cell it landed on. On macOS a
+                                        // Ctrl-click is that right-click, so only Cmd adds.
+                                        let mac = cfg!(target_os = "macos");
+                                        let secondary = ev.trigger_button()
+                                            == Some(dioxus::html::input_data::MouseButton::Secondary)
+                                            || (mac && m.ctrl());
+                                        if secondary {
+                                            if !s.contains(coord.row, coord.col) {
+                                                s.click(coord);
+                                            }
+                                            return;
+                                        }
                                         if m.shift() {
                                             s.extend_to(coord);
-                                        } else if m.meta() || m.ctrl() {
+                                        } else if m.meta() || (!mac && m.ctrl()) {
                                             s.add_click(coord);
                                         } else {
                                             s.click(coord);
@@ -416,6 +445,7 @@ pub fn Grid(props: GridProps) -> Element {
                             initial,
                             column_type,
                             widths: widths.clone(),
+                            shift: sc.shift,
                             on_done: move |outcome| {
                                 editing.set(None);
                                 if let cell_editor::EditOutcome::Commit { value, move_by } = outcome {
@@ -519,103 +549,5 @@ fn cell(
             onmouseenter: move |_| enter(coord),
             if is_null { "NULL" } else { "{text}" }
         }
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    fn uniform(n: usize) -> Vec<f64> {
-        vec![COL_W_DEFAULT; n]
-    }
-
-    #[test]
-    fn the_window_is_tens_of_rows_not_a_million() {
-        let vp = Viewport {
-            scroll_top: 0.0,
-            scroll_left: 0.0,
-            width: 800.0,
-            height: 600.0,
-        };
-        let r = visible_range(vp, 1_000_000, &uniform(40));
-        // 600 / 26 = 23 visible, + 4 overscan below, + 0 above at the top.
-        assert!(r.rows.len() <= 40, "{:?}", r.rows);
-        assert_eq!(r.rows.start, 0);
-        // 800 / 100 = 8 visible, + 2 overscan.
-        assert!(r.cols.len() <= 12, "{:?}", r.cols);
-    }
-
-    #[test]
-    fn scrolling_moves_the_window_and_keeps_it_small() {
-        let vp = Viewport {
-            scroll_top: ROW_H * 900_000.0,
-            scroll_left: 0.0,
-            width: 800.0,
-            height: 600.0,
-        };
-        let r = visible_range(vp, 1_000_000, &uniform(40));
-        assert!(r.rows.contains(&900_000), "{:?}", r.rows);
-        assert!(!r.rows.contains(&0), "{:?}", r.rows);
-        assert!(r.rows.len() <= 40, "{:?}", r.rows);
-    }
-
-    #[test]
-    fn overscan_is_applied_on_both_sides_once_away_from_the_edge() {
-        let vp = Viewport {
-            scroll_top: ROW_H * 100.0,
-            scroll_left: 0.0,
-            width: 800.0,
-            height: 600.0,
-        };
-        let r = visible_range(vp, 1_000_000, &uniform(40));
-        assert_eq!(r.rows.start, 100 - OVERSCAN_ROWS);
-    }
-
-    #[test]
-    fn the_window_never_runs_past_the_data() {
-        // A viewport taller than the table must not ask for rows that do not
-        // exist — the row loop would index past the end of the source.
-        let vp = Viewport {
-            scroll_top: 0.0,
-            scroll_left: 0.0,
-            width: 800.0,
-            height: 6000.0,
-        };
-        let r = visible_range(vp, 3, &uniform(4));
-        assert_eq!(r.rows, 0..3);
-        assert_eq!(r.cols.end, 4);
-    }
-
-    #[test]
-    fn an_empty_table_yields_an_empty_window_rather_than_a_panic() {
-        let r = visible_range(Viewport::default(), 0, &[]);
-        assert!(r.rows.is_empty());
-        assert!(r.cols.is_empty());
-    }
-
-    #[test]
-    fn horizontal_scroll_walks_real_widths_not_an_average() {
-        // Columns are resizable, so dividing by a nominal width would show the
-        // wrong columns as soon as one is dragged.
-        let widths = vec![300.0, 50.0, 50.0, 50.0, 300.0];
-        let vp = Viewport {
-            scroll_top: 0.0,
-            scroll_left: 320.0,
-            width: 100.0,
-            height: 600.0,
-        };
-        let r = visible_range(vp, 10, &widths);
-        // 320px lands inside column 1 (300..350); minus 2 overscan → 0.
-        assert_eq!(r.cols.start, 0);
-        assert!(r.cols.contains(&1), "{:?}", r.cols);
-    }
-
-    #[test]
-    fn offsets_accumulate_real_widths() {
-        let w = vec![10.0, 20.0, 30.0];
-        assert_eq!(offset_of(&w, 0), 0.0);
-        assert_eq!(offset_of(&w, 1), 10.0);
-        assert_eq!(offset_of(&w, 3), 60.0);
     }
 }

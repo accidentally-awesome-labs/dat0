@@ -136,6 +136,7 @@ pub fn FilterPopover(props: FilterPopoverProps) -> Element {
     let can_apply = state.read().can_apply();
     let (x, y) = props.at;
     let on_outcome = props.on_outcome;
+    let clear_column = props.column.clone();
     let ops_for_change = ops.clone();
 
     // Built outside the markup because each arm is a different set of widgets and
@@ -238,7 +239,15 @@ pub fn FilterPopover(props: FilterPopoverProps) -> Element {
             role: AccessRole::Dialog.aria(),
             "aria-label": "{title}",
             tabindex: "0",
-            autofocus: true,
+            // Not `autofocus`: a document honours that once, so only the
+            // first surface to open took the keyboard. `set_focus` resolves
+            // to `null` on desktop, so its typed result is an error even when
+            // focus moved (see `sql_console::Tool`).
+            onmounted: move |e: Event<MountedData>| {
+                spawn(async move {
+                    let _ = e.set_focus(true).await;
+                });
+            },
             style: "left: {x}px; top: {y}px;",
             onkeydown: move |e| {
                 if e.key() == Key::Escape {
@@ -324,7 +333,10 @@ pub fn FilterPopover(props: FilterPopoverProps) -> Element {
                         // filter to retract; the caller needs that to choose
                         // between removing an op and doing nothing.
                         let pre_populated = state.read().clear_filter();
-                        on_outcome.call(Outcome::Clear { pre_populated });
+                        on_outcome.call(Outcome::Clear {
+                            column: clear_column.clone(),
+                            pre_populated,
+                        });
                     },
                     {dat0_i18n::t("filter.clear")}
                 }

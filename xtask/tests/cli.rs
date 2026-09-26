@@ -14,9 +14,11 @@ fn help_lists_all_subcommands() {
         "gen-icon",
         "bundle-macos",
         "sign-macos",
+        "dmg-macos",
         "bundle-linux",
         "verify",
         "gen-manifest",
+        "release-check",
         "perf",
     ] {
         assert!(text.contains(sub), "help missing subcommand: {sub}\n{text}");

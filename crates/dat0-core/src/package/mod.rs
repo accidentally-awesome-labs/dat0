@@ -91,7 +91,7 @@ fn make_source(
         .unwrap_or(name)
         .to_string();
     let content_hash = match std::fs::read(path) {
-        Ok(bytes) => format!("sha256:{:x}", Sha256::digest(&bytes)),
+        Ok(bytes) => format!("sha256:{}", hex::encode(Sha256::digest(&bytes))),
         Err(_) => String::new(),
     };
     PackageSource {
@@ -116,60 +116,79 @@ fn make_source(
 /// `SELECT *` parquet export), so this function only produces the metadata
 /// recipe + the portable session state.
 pub async fn session_to_contents(sess: &Session) -> Result<PackageContents> {
-    // Snapshot the portable session state (tabs → views, saved queries) up front
-    // so the engine-walking work can run without borrowing the Session — this is
-    // what lets the GUI export flow (P8 T9) release its session lock BEFORE the
-    // async engine I/O begins (no parking_lot guard held across `.await`).
-    let views = Views {
-        views: sess
-            .tabs()
-            .iter()
-            .map(|tab| PackageView {
-                table_name: tab.table_name.clone(),
-                transform_stack: tab.transform_stack.clone(),
-                undo_cursor: tab.undo_cursor,
-            })
-            .collect(),
-    };
-    let queries = Queries {
-        queries: sess
-            .saved_queries()
-            .iter()
-            .map(|q| PackageQuery {
-                id: q.id,
-                name: q.name.clone(),
-                sql: q.sql.clone(),
-                saved_at: q.saved_at,
-            })
-            .collect(),
-    };
-    let charts = Charts {
-        charts: sess
-            .charts()
-            .iter()
-            .map(|c| PackageChart {
-                id: c.id,
-                name: c.name.clone(),
-                spec: c.spec.clone(),
-                saved_at: c.saved_at,
-            })
-            .collect(),
-    };
-    contents_from_engine(sess.engine.as_ref(), sess.window_id, views, queries, charts).await
+    contents_from_engine(sess.engine.as_ref(), Portable::of(sess)).await
+}
+
+/// What a package carries of a [`Session`] besides its tables: the id, its
+/// tabs' views, its saved queries and charts. A copy, so a caller can take it
+/// under a brief lock and walk the engine holding none, as the app's export
+/// does: no lock is held across an `.await`.
+pub struct Portable {
+    pub workspace_id: uuid::Uuid,
+    pub views: Views,
+    pub queries: Queries,
+    pub charts: Charts,
+}
+
+impl Portable {
+    pub fn of(sess: &Session) -> Self {
+        let views = Views {
+            views: sess
+                .tabs()
+                .iter()
+                .map(|tab| PackageView {
+                    table_name: tab.table_name.clone(),
+                    transform_stack: tab.transform_stack.clone(),
+                    undo_cursor: tab.undo_cursor,
+                })
+                .collect(),
+        };
+        let queries = Queries {
+            queries: sess
+                .saved_queries()
+                .iter()
+                .map(|q| PackageQuery {
+                    id: q.id,
+                    name: q.name.clone(),
+                    sql: q.sql.clone(),
+                    saved_at: q.saved_at,
+                })
+                .collect(),
+        };
+        let charts = Charts {
+            charts: sess
+                .charts()
+                .iter()
+                .map(|c| PackageChart {
+                    id: c.id,
+                    name: c.name.clone(),
+                    spec: c.spec.clone(),
+                    saved_at: c.saved_at,
+                })
+                .collect(),
+        };
+        Self {
+            workspace_id: sess.window_id,
+            views,
+            queries,
+            charts,
+        }
+    }
 }
 
 /// EXPORT core, decoupled from a live [`Session`]: walk `engine`'s catalog into a
-/// recipe + sources, and assemble [`PackageContents`] with the caller-supplied
-/// portable `views` / `queries` and `workspace_id`. Lets the GUI export flow
-/// snapshot the session (drop its lock) and then run the async engine work
-/// without holding the lock across an `.await`.
+/// recipe + sources, and assemble [`PackageContents`] with what `portable`
+/// carries of the session.
 pub async fn contents_from_engine(
     engine: &dyn QueryEngine,
-    workspace_id: uuid::Uuid,
-    views: Views,
-    queries: Queries,
-    charts: Charts,
+    portable: Portable,
 ) -> Result<PackageContents> {
+    let Portable {
+        workspace_id,
+        views,
+        queries,
+        charts,
+    } = portable;
     let tables = engine
         .get_tables()
         .await
@@ -275,9 +294,15 @@ async fn classify(
 /// UNPACK: materialize a [`ParsedPackage`] into a fresh `.dat0/` workspace under
 /// `dir`, so [`Session::recover_workspace`] can open it.
 ///
+/// Only ever a fresh one: a `dir` that is a workspace already is refused, and
+/// its own `.dat0/` left as it was. An unpack that fails takes back the
+/// `.dat0/` it made, which would otherwise be taken for a broken workspace.
+///
 /// Steps:
-/// 1. Create `<dir>/.dat0/`.
-/// 2. Extract the package's `data/*.parquet` into `<dir>/data/`.
+/// 1. Create `<dir>/.dat0/`, refusing one that exists.
+/// 2. Extract the package's `data/*.parquet` into `<dir>/.dat0/unpack/data/`,
+///    inside the workspace rather than beside the user's own files, where a
+///    `data/<table>.parquet` of theirs would be written over.
 /// 3. Open a THROWAWAY engine on `<dir>/.dat0/workspace.duckdb` and materialize
 ///    every recipe table as a concrete `CREATE TABLE … AS SELECT … FROM
 ///    read_parquet(...)` (user-facing columns only — internal surrogates are
@@ -288,19 +313,46 @@ async fn classify(
 /// 6. **CRITICAL (P7a T6):** `close()` AND fully DROP the throwaway engine
 ///    before returning, or the moved-WAL data is invisible to the caller's
 ///    reopen (silent-empty-db).
+/// 7. Remove the extracted Parquet: every table is concrete now.
 pub async fn contents_to_workspace(parsed: &ParsedPackage, dir: &Path, budget: u64) -> Result<()> {
+    std::fs::create_dir_all(dir)
+        .with_context(|| format!("contents_to_workspace: mkdir {}", dir.display()))?;
     let dat0 = crate::workspace::Home::dat0_dir_for(dir);
-    std::fs::create_dir_all(&dat0)
-        .with_context(|| format!("contents_to_workspace: mkdir {}", dat0.display()))?;
+    match std::fs::create_dir(&dat0) {
+        Ok(()) => {}
+        Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {
+            anyhow::bail!("{} is a workspace already", dir.display())
+        }
+        Err(e) => {
+            return Err(e)
+                .with_context(|| format!("contents_to_workspace: mkdir {}", dat0.display()));
+        }
+    }
+    let made = fill_workspace(parsed, &dat0, budget).await;
+    if made.is_err()
+        && let Err(e) = std::fs::remove_dir_all(&dat0)
+    {
+        tracing::warn!(error = %e, "unpack: could not remove the workspace it began");
+    }
+    made
+}
 
-    // Extract parquet payloads into <dir>/data/.
+/// Steps 2–7 of [`contents_to_workspace`], into the `.dat0/` it made.
+async fn fill_workspace(parsed: &ParsedPackage, dat0: &Path, budget: u64) -> Result<()> {
+    let staging = dat0.join("unpack");
     parsed
-        .extract_data_to(dir)
+        .extract_data_to(&staging)
         .context("contents_to_workspace: extract data")?;
 
     // Materialize the tables in a scoped block so the engine is dropped (not
     // merely closed) before `recover_workspace` reopens the same DB file.
-    materialize_tables(parsed, dir, &dat0, budget).await?;
+    materialize_tables(parsed, &staging, dat0, budget).await?;
+    // A package with no tables extracted nothing.
+    if let Err(e) = std::fs::remove_dir_all(&staging)
+        && e.kind() != std::io::ErrorKind::NotFound
+    {
+        tracing::warn!(error = %e, "unpack: could not remove the extracted Parquet");
+    }
 
     // Workspace identity manifest.
     let manifest = crate::workspace::manifest::Manifest::new(crate::time::now_epoch_secs());
@@ -309,7 +361,7 @@ pub async fn contents_to_workspace(parsed: &ParsedPackage, dir: &Path, budget: u
 
     // Reconstruct session.json (current schema) from the package views, queries,
     // and charts.
-    write_session_json(parsed, &dat0).context("contents_to_workspace: write session.json")?;
+    write_session_json(parsed, dat0).context("contents_to_workspace: write session.json")?;
 
     Ok(())
 }
@@ -433,10 +485,10 @@ fn derivation_to_origin(derivation: &Derivation) -> DerivedOrigin {
     }
 }
 
-/// Build + write `<dat0>/session.json` (current schema) from the package's
-/// portable views (→ tabs), queries (→ saved queries), and charts (→ saved
-/// charts), matching the on-disk shape [`Session::persist`] writes.
-fn write_session_json(parsed: &ParsedPackage, dat0: &Path) -> Result<()> {
+/// What a package carries of a session: its views as tabs, its queries as
+/// saved queries, its charts as saved charts. Unpacking writes them to the
+/// workspace's `session.json`; inspecting opens a window on them.
+pub fn session_parts(parsed: &ParsedPackage) -> (Vec<Tab>, Vec<SavedQuery>, Vec<SavedChart>) {
     let tabs: Vec<Tab> = parsed
         .views
         .views
@@ -449,8 +501,6 @@ fn write_session_json(parsed: &ParsedPackage, dat0: &Path) -> Result<()> {
             extra: Default::default(),
         })
         .collect();
-
-    let active_tab = if tabs.is_empty() { None } else { Some(0) };
 
     let saved_queries: Vec<SavedQuery> = parsed
         .queries
@@ -478,6 +528,15 @@ fn write_session_json(parsed: &ParsedPackage, dat0: &Path) -> Result<()> {
         })
         .collect();
 
+    (tabs, saved_queries, charts)
+}
+
+/// Build + write `<dat0>/session.json` (current schema) from the package's
+/// portable views (→ tabs), queries (→ saved queries), and charts (→ saved
+/// charts), matching the on-disk shape [`Session::persist`] writes.
+fn write_session_json(parsed: &ParsedPackage, dat0: &Path) -> Result<()> {
+    let (tabs, saved_queries, charts) = session_parts(parsed);
+    let active_tab = if tabs.is_empty() { None } else { Some(0) };
     let state = SessionState {
         schema_version: SESSION_SCHEMA_VERSION,
         tabs,

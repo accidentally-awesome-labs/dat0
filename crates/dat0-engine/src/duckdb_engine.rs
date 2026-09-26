@@ -13,7 +13,7 @@ use crate::error::EngineError;
 use crate::types::{EngineStatus, MemoryBudget, QueryLane, QueryToken, TableOrigin};
 
 pub struct DuckDBEngine {
-    pub(crate) conn: Arc<Mutex<duckdb::Connection>>,
+    pub(crate) conn: Arc<Mutex<Conn>>,
     pub(crate) interrupt: Arc<duckdb::InterruptHandle>,
     pub(crate) budget: MemoryBudget,
     pub(crate) scratch_path: PathBuf,
@@ -49,15 +49,135 @@ pub struct DuckDBEngine {
     pub(crate) interrupts_fired: Arc<AtomicU64>,
 }
 
+/// The engine's connection and its claim on the database file.
+///
+/// The claim goes with the connection rather than the engine because a
+/// query's worker holds the connection too, and finishes its query when the
+/// task that asked has been dropped: the file is open until the connection
+/// closes, however long ago the engine went.
+pub(crate) struct Conn {
+    // Declared first, so it closes before the claim is released.
+    conn: duckdb::Connection,
+    _held: Held,
+}
+
+impl std::ops::Deref for Conn {
+    type Target = duckdb::Connection;
+
+    fn deref(&self) -> &duckdb::Connection {
+        &self.conn
+    }
+}
+
+impl std::ops::DerefMut for Conn {
+    fn deref_mut(&mut self) -> &mut duckdb::Connection {
+        &mut self.conn
+    }
+}
+
+/// The database files an engine in this process holds open.
+///
+/// DuckDB's file lock is per process, so it does not refuse a second engine
+/// this process opens on a file it already holds, and the two would each
+/// write the one file and its WAL. dat0 opens a database again in the normal
+/// course of things — a session recovered moments after its window closed,
+/// while a task may still hold the old engine — so the refusal lives here.
+///
+/// A file is known by its resolved path and, once it exists, by its identity
+/// on disk: Save Workspace moves a scratch database into a workspace, and an
+/// engine left holding it must not be joined by one opening the new name.
+static OPEN: std::sync::LazyLock<parking_lot::Mutex<std::collections::HashSet<FileKey>>> =
+    std::sync::LazyLock::new(Default::default);
+
+/// How [`OPEN`] knows a database file.
+#[derive(Clone, PartialEq, Eq, Hash)]
+enum FileKey {
+    /// Its path, with the directory resolved: the file may not exist yet.
+    Path(PathBuf),
+    /// Device and inode: the file under whatever name it has now.
+    #[cfg(unix)]
+    Inode(u64, u64),
+}
+
+impl FileKey {
+    fn path(path: &std::path::Path) -> Self {
+        Self::Path(match (path.parent(), path.file_name()) {
+            (Some(dir), Some(name)) if !dir.as_os_str().is_empty() => dir
+                .canonicalize()
+                .map(|d| d.join(name))
+                .unwrap_or_else(|_| path.to_path_buf()),
+            _ => std::path::absolute(path).unwrap_or_else(|_| path.to_path_buf()),
+        })
+    }
+
+    /// The file's identity, when it exists and the platform has one.
+    fn inode(path: &std::path::Path) -> Option<Self> {
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::MetadataExt as _;
+            let meta = std::fs::metadata(path).ok()?;
+            Some(Self::Inode(meta.dev(), meta.ino()))
+        }
+        #[cfg(not(unix))]
+        {
+            let _ = path;
+            None
+        }
+    }
+}
+
+/// One engine's claim on a database file in [`OPEN`].
+struct Held(Vec<FileKey>);
+
+impl Held {
+    /// Claim `path`, or say who has it. An in-memory database is nobody's.
+    fn claim(path: &std::path::Path) -> Result<Self> {
+        if path.as_os_str().is_empty() || path == std::path::Path::new(":memory:") {
+            return Ok(Self(Vec::new()));
+        }
+        let keys: Vec<FileKey> = std::iter::once(FileKey::path(path))
+            .chain(FileKey::inode(path))
+            .collect();
+        let mut open = OPEN.lock();
+        if keys.iter().any(|k| open.contains(k)) {
+            let FileKey::Path(named) = &keys[0] else {
+                unreachable!("the first key is the path")
+            };
+            return Err(EngineError::AlreadyOpen(named.clone()));
+        }
+        open.extend(keys.iter().cloned());
+        Ok(Self(keys))
+    }
+
+    /// Claim the file by its identity too, now that opening it has made it.
+    fn claim_created(&mut self, path: &std::path::Path) {
+        if let Some(key) = FileKey::inode(path).filter(|k| !self.0.contains(k)) {
+            OPEN.lock().insert(key.clone());
+            self.0.push(key);
+        }
+    }
+}
+
+impl Drop for Held {
+    fn drop(&mut self) {
+        let mut open = OPEN.lock();
+        for key in self.0.drain(..) {
+            open.remove(&key);
+        }
+    }
+}
+
 impl DuckDBEngine {
     /// Construct an engine bound to `scratch_path` (a DuckDB file). Status begins
     /// `Initializing`; call `init()` to transition to `Ready`.
     pub fn new(scratch_path: PathBuf, budget: MemoryBudget) -> Result<Self> {
+        let mut held = Held::claim(&scratch_path)?;
         let conn = duckdb::Connection::open(&scratch_path)?;
+        held.claim_created(&scratch_path);
         // duckdb-rs 1.4.x: `interrupt_handle()` returns `Arc<InterruptHandle>` directly.
         let interrupt = conn.interrupt_handle();
         Ok(Self {
-            conn: Arc::new(Mutex::new(conn)),
+            conn: Arc::new(Mutex::new(Conn { conn, _held: held })),
             interrupt,
             budget,
             scratch_path,
@@ -337,7 +457,9 @@ impl crate::QueryEngine for DuckDBEngine {
     ) -> Result<crate::types::TableInfo> {
         self.assert_open()?;
         let conn = self.conn.clone();
-        let table_name = crate::register::derive_table_name(path);
+        // What each table was read from, for `table_name_for`: a table of the
+        // file's name that came from somewhere else keeps its name and its data.
+        let origins = self.table_origins.read().clone();
 
         // PD-017 Path A1: build the SAME `CREATE OR REPLACE VIEW … AS SELECT *
         // FROM read_*(…)` SQL that `register_file` uses — reusing 100% of the
@@ -350,16 +472,18 @@ impl crate::QueryEngine for DuckDBEngine {
         //
         // NOTE: `dispatch_register_sql` emits `CREATE OR REPLACE VIEW` for the
         // transient, so we rewrite the leading statement to target `tmp_view`.
-        let tmp_view = format!("__dat0_import_tmp_{table_name}");
-        let view_sql = crate::register::dispatch_register_sql(path, &opts, &tmp_view)?;
         let path = path.to_path_buf();
 
-        let columns = tokio::task::spawn_blocking({
+        let (table_name, columns) = tokio::task::spawn_blocking({
             let conn = conn.clone();
-            let table_name = table_name.clone();
-            let tmp_view = tmp_view.clone();
-            move || -> Result<Vec<crate::types::ColumnInfo>> {
+            let path = path.clone();
+            move || -> Result<(String, Vec<crate::types::ColumnInfo>)> {
                 let conn = conn.lock().map_err(|_| EngineError::EnginePoisoned)?;
+                // Named under the lock, so no other import can take the name
+                // between the check and the table.
+                let table_name = crate::register::table_name_for(&conn, &path, &origins)?;
+                let tmp_view = format!("__dat0_import_tmp_{table_name}");
+                let view_sql = crate::register::dispatch_register_sql(&path, &opts, &tmp_view)?;
                 let qt = quote_ident(&table_name);
                 let qv = quote_ident(&tmp_view);
                 // Materialize the import atomically:
@@ -406,7 +530,8 @@ impl crate::QueryEngine for DuckDBEngine {
                 // outside the materialization txn is fine since it only fires on
                 // a committed base table.
                 ensure_rowid_blocking(&conn, &table_name)?;
-                crate::catalog::describe_table(&conn, &table_name, None)
+                let columns = crate::catalog::describe_table(&conn, &table_name, None)?;
+                Ok((table_name, columns))
             }
         })
         .await
@@ -840,21 +965,23 @@ impl crate::QueryEngine for DuckDBEngine {
         let names = tokio::task::spawn_blocking(move || -> Result<Vec<String>> {
             let conn = conn.lock().map_err(|_| EngineError::EnginePoisoned)?;
             conn.execute_batch(&sql)?;
-            // Best-effort: the ATTACH already succeeded; an enumeration hiccup must
-            // not undo it. Swallow + warn (matches the md arm) so origins may be
-            // incomplete rather than failing a good attach.
-            let names = match crate::catalog::list_attached_tables(&conn, &alias_owned) {
-                Ok(rows) => rows.into_iter().map(|(_schema, table)| table).collect(),
+            // ATTACH opens a SQLite file lazily, so one that cannot be read
+            // attaches all the same, and from then on every catalog query
+            // fails on it: `duckdb_tables()` scans every database, so this
+            // engine's own `get_tables` fails too. Reading the attached
+            // catalog is what finds out; when it fails, the attachment is
+            // undone and the attach fails.
+            match crate::catalog::list_attached_tables(&conn, &alias_owned) {
+                Ok(rows) => Ok(rows.into_iter().map(|(_schema, table)| table).collect()),
                 Err(e) => {
-                    tracing::warn!(
-                        alias = %alias_owned,
-                        error = %e,
-                        "attach: attached-table enumeration failed; origins may be incomplete"
-                    );
-                    Vec::new()
+                    if let Err(undo) =
+                        conn.execute_batch(&crate::attach::build_detach_sql(&alias_owned))
+                    {
+                        tracing::warn!(alias = %alias_owned, error = %undo, "attach: could not undo");
+                    }
+                    Err(e)
                 }
-            };
-            Ok(names)
+            }
         })
         .await
         .map_err(|e| EngineError::TaskJoin(e.to_string()))??;
@@ -895,6 +1022,24 @@ impl crate::QueryEngine for DuckDBEngine {
         Ok(())
     }
 
+    async fn attached_tables(&self, alias: &str) -> Result<Vec<String>> {
+        self.assert_open()?;
+        let conn = self.conn.clone();
+        let alias = alias.to_owned();
+        tokio::task::spawn_blocking(move || -> Result<Vec<String>> {
+            let conn = conn.lock().map_err(|_| EngineError::EnginePoisoned)?;
+            let mut names: Vec<String> = crate::catalog::list_attached_tables(&conn, &alias)?
+                .into_iter()
+                .map(|(_, name)| name)
+                .collect();
+            names.sort();
+            names.dedup();
+            Ok(names)
+        })
+        .await
+        .map_err(|e| EngineError::TaskJoin(e.to_string()))?
+    }
+
     #[instrument(skip(self), fields(table = table))]
     async fn ensure_rowid(&self, table: &str) -> Result<()> {
         self.assert_open()?;
@@ -904,6 +1049,30 @@ impl crate::QueryEngine for DuckDBEngine {
         tokio::task::spawn_blocking(move || -> Result<()> {
             let conn = conn.lock().map_err(|_| EngineError::EnginePoisoned)?;
             ensure_rowid_blocking(&conn, &raw)
+        })
+        .await
+        .map_err(|e| EngineError::TaskJoin(e.to_string()))?
+    }
+
+    async fn check_single_query(&self, sql: &str) -> Result<()> {
+        self.assert_open()?;
+        let conn = self.conn.clone();
+        let sql = sql.to_owned();
+        tokio::task::spawn_blocking(move || -> Result<()> {
+            let conn = conn.lock().map_err(|_| EngineError::EnginePoisoned)?;
+            crate::confine::check_single_query_blocking(&conn, &sql)
+        })
+        .await
+        .map_err(|e| EngineError::TaskJoin(e.to_string()))?
+    }
+
+    async fn confine_to(&self, dir: &std::path::Path) -> Result<()> {
+        self.assert_open()?;
+        let conn = self.conn.clone();
+        let dir = dir.to_path_buf();
+        tokio::task::spawn_blocking(move || -> Result<()> {
+            let conn = conn.lock().map_err(|_| EngineError::EnginePoisoned)?;
+            crate::confine::confine_blocking(&conn, &dir)
         })
         .await
         .map_err(|e| EngineError::TaskJoin(e.to_string()))?
@@ -966,6 +1135,22 @@ impl DuckDBEngine {
     /// going through this accessor. Available for T8/T9 call sites and tests.
     pub fn table_origin(&self, name: &str) -> Option<TableOrigin> {
         self.table_origins.read().get(name).cloned()
+    }
+
+    /// Record where `name` came from, for a table this engine found in its
+    /// database rather than made. Origins are held in memory only, so an
+    /// engine opened on an existing database knows its tables but not their
+    /// sources: reading a tab's file again (Live Refresh) then found the
+    /// table's name held by an unknown table, and imported beside it.
+    pub fn restore_origin(&self, name: &str, origin: TableOrigin) {
+        self.table_origins.write().insert(name.to_string(), origin);
+    }
+
+    /// Every table's recorded origin, for an engine opened on the same
+    /// database under another name — Save Workspace moves it — to be given
+    /// with [`Self::restore_origin`].
+    pub fn origins(&self) -> HashMap<String, TableOrigin> {
+        self.table_origins.read().clone()
     }
 }
 

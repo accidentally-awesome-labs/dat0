@@ -24,6 +24,7 @@ pub fn info_plist(version: &str, git_sha: &str) -> String {
   <array><dict>
     <key>CFBundleTypeName</key><string>dat0 Package</string>
     <key>CFBundleTypeRole</key><string>Editor</string>
+    <key>LSHandlerRank</key><string>Owner</string>
     <key>LSItemContentTypes</key><array><string>dev.dat0.package</string></array>
   </dict></array>
   <key>UTExportedTypeDeclarations</key>
@@ -77,9 +78,13 @@ pub fn tar_app() -> Result<u64> {
     Ok(len)
 }
 
+/// The two halves of the universal binary. `release.yml`'s macOS job must
+/// install both targets; `xtask/tests/release_workflow.rs` holds it to that.
+pub const TRIPLES: [&str; 2] = ["aarch64-apple-darwin", "x86_64-apple-darwin"];
+
 pub fn bundle(version: &str, git_sha: &str) -> Result<PathBuf> {
     // 1. Build both arches.
-    for triple in ["aarch64-apple-darwin", "x86_64-apple-darwin"] {
+    for triple in TRIPLES {
         run(Command::new("cargo").args([
             "build",
             "-p",
@@ -104,9 +109,11 @@ pub fn bundle(version: &str, git_sha: &str) -> Result<PathBuf> {
             "-output",
         ])
         .arg(macos_dir.join("dat0")))?;
-    // 3. Icon + Info.plist.
+    // 3. Icon, Info.plist and the notices the licences ask to travel with
+    //    the binary.
     super::icon::generate(Path::new("target/icon"))?;
     std::fs::copy("target/icon/dat0.icns", res_dir.join("dat0.icns")).context("copy icns")?;
+    super::legal::copy_into(Path::new("."), &res_dir)?;
     std::fs::write(
         app.join("Contents/Info.plist"),
         info_plist(version, git_sha),

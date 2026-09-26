@@ -22,7 +22,7 @@ use dioxus::html::HasFileData as _;
 /// picker that offers a file the app then refuses is a worse experience than
 /// one that does not list it.
 const DATA_EXTENSIONS: &[&str] = &[
-    "csv", "tsv", "txt", "parquet", "pq", "json", "ndjson", "jsonl",
+    "csv", "tsv", "txt", "parquet", "pq", "json", "ndjson", "jsonl", "sqlite", "sqlite3", "db",
 ];
 
 /// Pick one data file to open.
@@ -56,6 +56,36 @@ pub async fn pick_package() -> Option<PathBuf> {
 /// Pick a folder — the workspace open/save-as target.
 pub async fn pick_folder() -> Option<PathBuf> {
     rfd::AsyncFileDialog::new()
+        .pick_folder()
+        .await
+        .map(|h| h.path().to_path_buf())
+}
+
+/// Pick the folder to unpack a package into. The panel can make one.
+pub async fn pick_folder_to_unpack() -> Option<PathBuf> {
+    rfd::AsyncFileDialog::new()
+        .set_title(dat0_i18n::t("package.unpack.pick"))
+        .set_can_create_directories(true)
+        .pick_folder()
+        .await
+        .map(|h| h.path().to_path_buf())
+}
+
+/// Pick the file a replay reads in place of the package's source `source`.
+pub async fn pick_replay_source(source: &str) -> Option<PathBuf> {
+    rfd::AsyncFileDialog::new()
+        .set_title(dat0_i18n::t("package.replay.pick_source").replace("{source}", source))
+        .pick_file()
+        .await
+        .map(|h| h.path().to_path_buf())
+}
+
+/// Pick the folder to save a window's work into as a workspace. The panel
+/// can make one, since a new workspace usually wants a new folder.
+pub async fn pick_folder_to_save() -> Option<PathBuf> {
+    rfd::AsyncFileDialog::new()
+        .set_title(dat0_i18n::t("workspace.save.pick"))
+        .set_can_create_directories(true)
         .pick_folder()
         .await
         .map(|h| h.path().to_path_buf())
@@ -100,10 +130,11 @@ mod tests {
     use super::*;
 
     #[test]
-    fn the_picker_does_not_offer_a_file_the_app_would_refuse() {
-        // `handle_drop` banners `.sqlite` rather than importing it; listing it
-        // here would be an invitation to that banner.
-        assert!(!DATA_EXTENSIONS.contains(&"sqlite"));
-        assert!(DATA_EXTENSIONS.contains(&"parquet"));
+    fn the_picker_offers_what_the_app_opens() {
+        // A SQLite file is attached (`sqlite_open`); it used to be refused,
+        // and was left out here so as not to invite that banner.
+        for ext in ["csv", "parquet", "sqlite", "db"] {
+            assert!(DATA_EXTENSIONS.contains(&ext), "{ext}");
+        }
     }
 }

@@ -18,6 +18,11 @@ pub fn data_dir() -> Result<PathBuf> {
 }
 
 pub fn cache_dir() -> Result<PathBuf> {
+    // The same relocation seam as `DAT0_CONFIG_DIR`, for the log's folder
+    // (step 5.11f): a test writes its log where it can read it back.
+    if let Some(p) = std::env::var_os("DAT0_CACHE_DIR").filter(|p| !p.is_empty()) {
+        return Ok(PathBuf::from(p));
+    }
     Ok(dirs::home_dir()
         .context("no home")?
         .join("Library/Caches/dat0"))

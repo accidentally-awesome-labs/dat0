@@ -36,6 +36,7 @@ impl Writer {
     /// types faithfully, so no CAST-pinning is needed).
     ///
     /// # Errors
+    /// - [`FormatError::UnsafeTableName`] — a table name cannot be a file name.
     /// - [`FormatError::Io`] — `dest` unwritable, or a temp parquet unreadable.
     /// - [`FormatError::Engine`] — a table export failed.
     /// - [`FormatError::Zip`] / [`FormatError::Json`] — zip/serialize failures.
@@ -48,7 +49,50 @@ impl Writer {
             path: dest.into(),
             source: e,
         })?;
-        let file = std::fs::File::create(dest).map_err(|e| FormatError::Io {
+        Self::write_using(contents, engine, dest, tmp.path()).await
+    }
+
+    /// [`write`](Self::write), staging each table's Parquet under `scratch`
+    /// rather than a fresh system temp directory — for an engine confined to
+    /// `scratch` (`QueryEngine::confine_to`), which can write nowhere else.
+    pub async fn write_using(
+        contents: &PackageContents,
+        engine: &dyn QueryEngine,
+        dest: &Path,
+        scratch: &Path,
+    ) -> Result<()> {
+        // Before anything touches the disk: each name becomes a path below.
+        for t in &contents.recipe.tables {
+            if !crate::is_safe_table_name(&t.name) || t.data != crate::data_entry(&t.name) {
+                return Err(FormatError::UnsafeTableName {
+                    name: t.name.clone(),
+                });
+            }
+        }
+        let tmp = tempfile::tempdir_in(scratch).map_err(|e| FormatError::Io {
+            path: scratch.into(),
+            source: e,
+        })?;
+        // Written beside `dest` and renamed into place once whole, so a write
+        // that fails leaves a package already at `dest` as it was, rather
+        // than truncated.
+        let dir = match dest.parent() {
+            Some(p) if !p.as_os_str().is_empty() => p,
+            _ => std::path::Path::new("."),
+        };
+        let mut builder = tempfile::Builder::new();
+        // Readable as `File::create` would leave it, as the umask allows,
+        // rather than by the owner alone, as a temporary file starts.
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt as _;
+            builder.permissions(std::fs::Permissions::from_mode(0o666));
+        }
+        let staged = builder.tempfile_in(dir).map_err(|e| FormatError::Io {
+            path: dest.into(),
+            source: e,
+        })?;
+        let file = staged.reopen().map_err(|e| FormatError::Io {
             path: dest.into(),
             source: e,
         })?;
@@ -76,7 +120,10 @@ impl Writer {
                 path: dest.into(), // write target is the zip, not the temp source
                 source: e,
             })?;
-            checksums.insert(entry, format!("sha256:{:x}", Sha256::digest(&bytes)));
+            checksums.insert(
+                entry,
+                format!("sha256:{}", hex::encode(Sha256::digest(&bytes))),
+            );
         }
 
         // 2. JSON sidecars (Deflated). EVERY sidecar is checksummed, not just
@@ -99,7 +146,7 @@ impl Writer {
             |zip: &mut zip::ZipWriter<std::fs::File>, name: &str, bytes: &[u8]| -> Result<()> {
                 checksums.insert(
                     name.to_string(),
-                    format!("sha256:{:x}", Sha256::digest(bytes)),
+                    format!("sha256:{}", hex::encode(Sha256::digest(bytes))),
                 );
                 write_json(zip, name, bytes, deflated)
             };
@@ -147,7 +194,15 @@ impl Writer {
             deflated,
         )?;
 
-        zip.finish()?;
+        // On disk before it replaces anything.
+        zip.finish()?.sync_all().map_err(|e| FormatError::Io {
+            path: dest.into(),
+            source: e,
+        })?;
+        staged.persist(dest).map_err(|e| FormatError::Io {
+            path: dest.into(),
+            source: e.error,
+        })?;
         Ok(())
     }
 }

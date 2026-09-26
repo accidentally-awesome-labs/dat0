@@ -159,28 +159,41 @@ async fn register_file_as_table_ctas_failure_rolls_back_transient_view() {
     // a later one fails, so without an explicit transaction + ROLLBACK a failing
     // CTAS would leak the transient view permanently.
     //
-    // Deterministic failure trigger: pre-create a VIEW named `orders`, then
-    // import a file deriving table name `orders`. `CREATE OR REPLACE TABLE
-    // orders …` errors ("Existing object orders is of type View, trying to
-    // replace with type Table"), which fires AFTER the transient-view create.
+    // Deterministic failure trigger: a type the sniffer settles from its
+    // sample that a row past the sample does not fit. The transient view is
+    // created from the sniff; the CTAS then reads every row, and fails
+    // converting `x` to an integer — AFTER the transient-view create. (This
+    // used to collide the table name with an existing view, which an import now
+    // avoids by taking `orders_2`: see `tests/register_names.rs`.)
     let tmp = TempDir::new().unwrap();
     let eng = engine(&tmp).await;
 
-    // Pre-create a VIEW that collides with the derived table name.
-    eng.__test_execute_batch("CREATE VIEW orders AS SELECT 1 AS x;")
-        .await
-        .unwrap();
-
     let csv = tmp.path().join("orders.csv");
-    std::fs::write(&csv, "name,score\nalice,10\nbob,20\n").unwrap();
+    let mut body = String::from("name,score\n");
+    for i in 0..5_000 {
+        body.push_str(&format!("n{i},{i}\n"));
+    }
+    body.push_str("carol,x\n");
+    std::fs::write(&csv, body).unwrap();
 
-    // (a) The import fails (CTAS cannot replace a view with a table).
+    // (a) The import fails (a row does not fit the sniffed type).
     let res = eng
-        .register_file_as_table(&csv, RegisterOpts::default())
+        .register_file_as_table(
+            &csv,
+            RegisterOpts {
+                sample_rows: Some(1),
+                ..RegisterOpts::default()
+            },
+        )
         .await;
     assert!(
         res.is_err(),
-        "import must fail when the derived name is an existing VIEW: {res:?}"
+        "import must fail when a row does not fit the sniffed type: {res:?}"
+    );
+    // Reading the rows failed, not the view: the view binds from the sniff.
+    assert!(
+        format!("{res:?}").contains("convert"),
+        "the CTAS's row conversion is what failed: {res:?}"
     );
 
     // (b) The transient intermediate must NOT be leaked — the transaction's
@@ -190,9 +203,10 @@ async fn register_file_as_table_ctas_failure_rolls_back_transient_view() {
         "transient __dat0_import_tmp_orders view leaked after a failed CTAS"
     );
 
-    // The pre-existing `orders` view is untouched (rollback restored state).
+    // And no half-made table is left behind under the name.
+    let tables = eng.get_tables().await.unwrap();
     assert!(
-        is_view(&eng, "orders").await,
-        "pre-existing 'orders' view must survive the rolled-back import"
+        !tables.iter().any(|t| t.name == "orders"),
+        "a failed import must not leave a table behind"
     );
 }

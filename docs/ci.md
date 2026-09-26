@@ -13,7 +13,7 @@
 
 | File | Triggers | Jobs | Runner |
 |---|---|---|---|
-| `.github/workflows/ci.yml` | push to `main`, all PRs | fmt, clippy, i18n-check, build-and-test (macos-arm64, linux-x86_64), coverage, supply-chain, no-standalone-arrow, no-debug-query-scalar | hosted macos-14 + hosted/self-hosted Linux |
+| `.github/workflows/ci.yml` | push to `main`, all PRs | fmt, clippy, i18n-check, build-and-test (macos-arm64, linux-x86_64), windowed-probes, coverage, supply-chain, no-standalone-arrow, no-debug-query-scalar | hosted macos-14 + hosted/self-hosted Linux |
 | `.github/workflows/ci.yml` (`perf-gate`) | PRs labelled `run-perf` | perf-gate — blocking `cargo xtask perf --check`, all six scenarios | hosted macos-14 |
 | `.github/workflows/heavy.yml` | **weekly cron (Mon 06:00 UTC)**, `workflow_dispatch`, PRs with `run-heavy` label | exit-criteria (1 GB CSV + 500 MB Parquet + 100 MB SQLite), view-regen-bench | hosted Linux |
 | `.github/workflows/notice.yml` | NOTICE.md / manifest drift | notice — **hard gate** since QA2 (PD-003 closed) | hosted `ubuntu-latest` (pinned; see below) |
@@ -31,6 +31,7 @@ cannot rescue a hang. This happened twice on PR #49.
 | Gate | Blocking? | Why |
 |---|---|---|
 | fmt, clippy, build-and-test, i18n-check (pass 2), supply-chain, notice, no-standalone-arrow, no-debug-query-scalar | **yes** | deterministic, hermetic |
+| windowed-probes | yes — make it a required check once it has a green week | six real WebKitGTK windows under Xvfb; see "Visual gate" |
 | coverage | no — reporting only | no threshold exists yet; see below |
 | perf advisory step (inside build-and-test) | no | virtualized GPU cannot defend a frame-rate claim |
 | perf-gate | **yes**, when the `run-perf` label is applied | same command, real verdict |
@@ -183,7 +184,25 @@ minor+patch into one PR each. It **ignores** `dioxus`, `dioxus-desktop`,
 rationale (`crates/dat0-ui/Cargo.toml`, root `Cargo.toml`) and their upgrade
 cadence is governed by `docs/upstream-watch.md`, not by a bot. The dioxus crates
 share a `VirtualDom` across the four, so a bot bumping one of them alone mixes
-two versions of the same core types in one build.
+two versions of the same core types in one build. It also ignores the
+`dtolnay/rust-toolchain` action: that action's ref is the Rust version, which
+moves with `rust-toolchain.toml` in one deliberate PR.
+
+A Dependabot PR gets no Actions secrets, so `build-and-test` skips the live
+MotherDuck and OpenRouter steps for it (and for fork PRs), announcing the skip
+with a notice; they run on the push to `main`. Every other run still hard-fails
+without the secrets.
+
+## NOTICE gate
+
+`notice.yml` regenerates `NOTICE.md` with `scripts/notice-regen.sh` and fails
+if the result differs from the committed file. The script rewrites only the
+block between the `cargo-about generated` markers and pins the cargo-about
+version the job installs; the job runs on Linux because the dual-licence
+tiebreak differs on macOS (PD-003). Every dependency bump changes the block,
+since it lists versions. When the gate fails, the regenerated file is attached
+to the run as the `NOTICE.md` artifact: committing it is the fix, from any
+machine, including for a Dependabot PR.
 
 ## Perf gate
 
@@ -218,7 +237,7 @@ successor).
 
 ## Visual gate
 
-Two tiers, and only one of them is a CI job.
+Two tiers, both in CI.
 
 1. **HTML snapshots — `crates/dat0-ui/tests/visual_snapshot.rs`.** An ordinary
    test target, so `cargo nextest run --workspace` already picks it up; the
@@ -246,12 +265,25 @@ Two tiers, and only one of them is a CI job.
    cargo run -p dat0-ui --features visual --example visual_probe   # ~15s, exits 0/1
    ```
 
-   **Deliberately not a CI job.** It needs a display; hosted runners have none —
-   the same constraint `docs/deferrals.md` records as D-032 for the perf scroll
-   scenarios. Run it locally before a UI change lands, and on the dedicated
-   hardware alongside the perf gate when that arrives. Its window must be
-   1440×900; the probe fails loudly rather than silently mis-measuring if the
-   window manager hands back anything smaller.
+   **CI runs it on Linux** in the `windowed-probes` job, under Xvfb, together
+   with the five other real-window probes (`shell_probe`, `window_probe`,
+   `modal_trap_probe`, `settings_window_probe`, `console_probe`), through
+   `.github/scripts/windowed-probes.sh`. This used to be "deliberately not a CI
+   job" on the grounds that hosted runners have no display; on Linux, Xvfb is
+   one, and WebKitGTK renders into it like any other. macOS still has to be run
+   by hand before a UI change lands:
+
+   ```bash
+   cargo build --release -p dat0-ui --example visual_probe   # and the others
+   .github/scripts/windowed-probes.sh visual_probe           # any subset
+   xvfb-run -a -s "-screen 0 1920x1200x24" .github/scripts/windowed-probes.sh   # Linux, headless
+   ```
+
+   Its window must be 1440×900 inside, which is why it launches with no menu
+   bar — GTK draws one inside the window on Linux — and it fails loudly rather
+   than mis-measuring if the window manager hands back anything smaller. The
+   frame-time scenarios are another matter: timing a virtual display measures
+   the runner, which is why those stay on dedicated hardware (D-032).
 
 `examples/visual_page.rs` is the human half of the same renders: it writes every
 scene to a self-contained HTML file under `target/visual/`, fonts inlined as

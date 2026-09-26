@@ -23,7 +23,7 @@ expression: "rendered[0].1"
 <div class="d0-search-slot" data-a11y-id="command-slot">
 <button class="d0-search-gutter" data-a11y-id="command-launcher" role="button" aria-label="Open the command palette" tabindex="0">
 <span>search tables, queries…</span>
-<span class="d0-key">⌘K</span>
+<span class="d0-key" data-chord="palette">CHORD</span>
 </button>
 </div>
 <div class="d0-tab-filler">
@@ -55,7 +55,7 @@ expression: "rendered[0].1"
 <div class="d0-sidebar-foot">
 <span>session · 1 window · 0 tabs</span>
 <span>ai none</span>
-<span class="is-ok">egress 0 B</span>
+<span class="is-ok" data-a11y-id="sidebar-egress">egress 0 B</span>
 </div>
 </div>
 <div class="d0-splitter is-col" data-a11y-id="sidebar-splitter" role="separator" aria-orientation="vertical">
@@ -67,7 +67,7 @@ expression: "rendered[0].1"
 <div class="d0-hero-headline">
 <h1 class="d0-h1" data-a11y-id="hero-title" role="note" aria-label="Your data outgrew the spreadsheet.">Your data outgrew the spreadsheet.</h1>
 <p class="d0-h2 is-muted">It never outgrew your laptop.</p>
-<p class="d0-lead is-muted">Open a 12 GB Parquet like a 5 MB CSV, join it to live Postgres in one SELECT, and seal the whole analysis — data, queries, lineage — into a single file anyone can replay, inspect, or diff.</p>
+<p class="d0-lead is-muted">Open a 12 GB Parquet like a 5 MB CSV, query it alongside SQLite or MotherDuck in one SELECT, and seal the whole analysis — data, queries, lineage — into a single file anyone can replay, inspect, or diff.</p>
 </div>
 <div class="d0-hero-cols">
 <div class="d0-hero-drop" data-a11y-id="hero-drop">
@@ -76,7 +76,7 @@ expression: "rendered[0].1"
 </span>
 <span class="d0-skel is-secondary" style="width: 220px;">
 </span>
-<span class="d0-mono is-ok">nothing imported · 0 bytes left this machine</span>
+<span class="d0-mono is-ok" data-a11y-id="hero-privacy">nothing imported · 0 bytes left this machine</span>
 </div>
 <div class="d0-hero-right">
 <div class="d0-hero-list" data-a11y-id="hero-samples">
@@ -106,7 +106,8 @@ expression: "rendered[0].1"
 <span class="d0-chevron">▾</span>
 <span class="d0-label">console</span>
 <span class="d0-head-title">SQL editor</span>
-<span class="d0-pane-meta d0-label">⌘⏎ run</span>
+<span class="d0-pane-meta d0-label">
+<span data-chord="console">CHORD</span> run</span>
 </button>
 <div class="d0-pane-body" data-a11y-id="pane-body-console">
 <div class="d0-console" data-a11y-id="sql-console">
@@ -116,16 +117,17 @@ expression: "rendered[0].1"
 </div>
 <button class="d0-chip" data-a11y-id="console-run" role="button" aria-label="Run" tabindex="0">
 <span style="color: var(--d0-ok)">Run</span>
-<span class="d0-key">⌘⏎</span>
+<span class="d0-key" data-chord="run">CHORD</span>
 </button>
 </div>
 <div class="d0-console-toolbar" data-a11y-id="console-toolbar">
-<button class="d0-btn" data-a11y-id="console-run-pane" role="button" aria-label="Run in results pane" tabindex="0">Run in results pane</button>
 <button class="d0-btn" data-a11y-id="console-new-tab" role="button" aria-label="New query tab" tabindex="0">New query tab</button>
 <button class="d0-btn" data-a11y-id="console-history" role="button" aria-label="History" tabindex="0">History</button>
 <button class="d0-btn" data-a11y-id="console-save-query" role="button" aria-label="Save Query…" tabindex="0">Save Query…</button>
 <button class="d0-btn" data-a11y-id="console-load-query" role="button" aria-label="Saved Queries…" tabindex="0">Saved Queries…</button>
-<button class="d0-btn" data-a11y-id="console-save-as-table" role="button" aria-label="Save as Table…" tabindex="0">Save as Table…</button>
+<button class="d0-btn" data-a11y-id="console-save-as-table" role="button" aria-label="Save Query as Table…" tabindex="0">Save Query as Table…</button>
+<button class="d0-btn" data-a11y-id="console-nl2sql" role="button" aria-label="NL→SQL" tabindex="0" disabled=true>NL→SQL</button>
+<button class="d0-btn" data-a11y-id="console-explain" role="button" aria-label="Explain" tabindex="0" disabled=true>Explain</button>
 </div>
 <div class="d0-editor" id="cm-console-<UUID7>" data-a11y-id="sql-editor-console-<UUID7>" role="textbox" aria-label="SQL editor" aria-multiline="true" tabindex="0">
 </div>
@@ -136,13 +138,14 @@ expression: "rendered[0].1"
 </div>
 </div>
 <div class="d0-statusbar" data-a11y-id="statusbar" role="status">
-<span class="d0-dot is-live">
+<span class="d0-dot is-busy">
 </span>
-<span>engine duckdb · native</span>
+<span data-a11y-id="status-engine">engine duckdb · starting</span>
 <span class="d0-spacer">
 </span>
-<span class="is-ok" style="color: var(--d0-ok)">egress 0 B</span>
-<span class="d0-key">⌘K commands</span>
+<span class="d0-egress is-ok" data-a11y-id="status-egress">egress 0 B</span>
+<span class="d0-key">
+<span data-chord="palette">CHORD</span> commands</span>
 </div>
 </div>
 </div>

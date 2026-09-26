@@ -46,7 +46,7 @@ pub fn download_verified(
         on_progress(done, artifact.size);
     }
     file.flush().context("flush")?;
-    let got = format!("{:x}", hasher.finalize());
+    let got = hex::encode(hasher.finalize());
     if got != artifact.sha256.to_lowercase() {
         let _ = std::fs::remove_file(&dest);
         bail!("sha256 mismatch: expected {}, got {got}", artifact.sha256);
