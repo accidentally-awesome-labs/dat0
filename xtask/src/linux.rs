@@ -11,7 +11,7 @@ Name=dat0
 Comment=Native data workbench
 Exec=dat0 %F
 Icon=dat0
-Categories=Utility;Development;Database;
+Categories=Development;Database;
 Terminal=false
 MimeType=application/x-dat0;
 "

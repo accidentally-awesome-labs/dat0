@@ -7,6 +7,10 @@ fn desktop_entry_declares_dat0_mime_and_file_arg() {
     assert!(d.contains("Exec=dat0 %F")); // receives the file path as argv
     assert!(d.contains("MimeType=application/x-dat0;"));
     assert!(d.contains("Icon=dat0"));
+    // One main category: with two (it read Utility;Development;), a desktop
+    // may list dat0 twice, and appimagetool's desktop-file-validate says so.
+    // Database is an additional category, which Development anchors.
+    assert!(d.contains("Categories=Development;Database;"), "{d}");
 }
 
 #[test]
