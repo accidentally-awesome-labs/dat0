@@ -19,7 +19,7 @@ use dioxus::desktop::{Config, WindowBuilder};
 use dioxus::prelude::*;
 
 use dat0_core::app_lock::{AppLock, OpenWindowMessage};
-use dat0_core::events::{AppEvent, AppEvents};
+use dat0_core::events::{AppEvent, AppEvents, Opening};
 
 /// Initial window size. Matches the GPUI build's.
 const WINDOW_SIZE: (f64, f64) = (1280.0, 800.0);
@@ -68,6 +68,32 @@ pub fn main() -> anyhow::Result<()> {
         }
     };
 
+    // What the last run left behind, now that this is the only instance:
+    // every scratch directory belongs to a window that is gone. Those holding
+    // nothing to recover go; the rest are counted in one banner, which the
+    // first window shows whenever it arrives. Off the main thread, so a long
+    // list of old sessions does not hold the first frame: a window opening
+    // meanwhile counts as open before its directory exists, so neither step
+    // touches it. Recents are left out until a workspace can be opened again,
+    // so an interrupted Save Workspace is not offered for a Resume that
+    // cannot run yet.
+    {
+        let scratch = state_dir.join("scratch");
+        let scan = std::thread::Builder::new()
+            .name("dat0-recovery-scan".into())
+            .spawn(move || {
+                let swept = dat0_core::recovery_scan::sweep_scratch(&scratch);
+                if swept > 0 {
+                    tracing::info!(swept, "removed scratch sessions with nothing to recover");
+                }
+                let _ = dat0_core::recovery_scan::recovery_scan_emit(&scratch, &[]);
+            });
+        // Worth a line in the log, not a failed launch: the next one scans.
+        if let Err(e) = scan {
+            tracing::warn!(error = %e, "could not start the recovery scan");
+        }
+    }
+
     let registry = dat0_core::actions::registry::ActionRegistry::new();
     dat0_core::actions::builtin::register_all(&registry)
         .expect("built-in actions must register without conflict");
@@ -102,7 +128,7 @@ pub fn run_app(
             // must not take the running instance down.
             if let Err(e) = lock
                 .serve(move |msg: OpenWindowMessage| {
-                    events.send(AppEvent::OpenWindow { paths: msg.paths });
+                    events.send(AppEvent::OpenWindow(Opening::files(msg.paths)));
                 })
                 .await
             {
@@ -139,11 +165,13 @@ pub struct Boot {
     /// The open workbench windows, and the one the menu bar acts on.
     pub windows: WindowRegistry,
     pub registry: dat0_core::actions::registry::ActionRegistry,
-    /// Paths from the command line, opened by the FIRST window only.
+    /// What the window mounting this `Boot` opens on: the command line's paths
+    /// for the first window, or what `open_window` was asked for.
     ///
     /// Take-once: `Boot` is cloned into every window, and a second window that
-    /// also opened them would duplicate every tab the user asked for once.
-    pub cli_paths: Arc<parking_lot::Mutex<Vec<PathBuf>>>,
+    /// also opened the same paths would duplicate every tab the user asked for
+    /// once.
+    pub opening: Arc<parking_lot::Mutex<Option<Opening>>>,
 }
 
 impl Boot {
@@ -159,13 +187,17 @@ impl Boot {
             bus_free: Arc::new(tokio::sync::Notify::new()),
             windows: WindowRegistry::default(),
             registry,
-            cli_paths: Arc::new(parking_lot::Mutex::new(cli_paths)),
+            opening: Arc::new(parking_lot::Mutex::new(Some(Opening::files(cli_paths)))),
         }
     }
 
-    /// The CLI paths, once. Every later caller gets an empty vec.
-    pub fn take_cli_paths(&self) -> Vec<PathBuf> {
-        std::mem::take(&mut *self.cli_paths.lock())
+    /// What this window opens on, once. Every later caller gets a fresh
+    /// scratch window with no files.
+    pub fn take_opening(&self) -> Opening {
+        self.opening
+            .lock()
+            .take()
+            .unwrap_or_else(|| Opening::files(Vec::new()))
     }
 }
 
@@ -363,20 +395,29 @@ fn window_builder() -> WindowBuilder {
     }
 }
 
-/// Open an additional window. Returns its `tao` id.
+/// Open an additional window on `opening`. Returns its `tao` id.
 ///
 /// Each window gets its own `VirtualDom`, which is what makes multi-window work
 /// at all here — the thing Blitz cannot do today (`DioxusNativeApplication`
 /// holds a single `pending_window`).
 pub async fn open_window(
     boot: Boot,
-    paths: Vec<PathBuf>,
+    opening: Opening,
 ) -> Option<dioxus::desktop::tao::window::WindowId> {
-    // The new window's `Boot` carries the paths as its own take-once CLI slot,
+    // A session open in a window stays in that one: a second window on the
+    // same database would open a second engine over it. The recovery panel
+    // leaves open sessions out; this holds when its list is out of date.
+    if let Opening::Recover { dir } = &opening
+        && dat0_core::globals::is_live_scratch_dir(dir)
+    {
+        tracing::info!(dir = %dir.display(), "recover: that session is open already");
+        return None;
+    }
+    // The new window's `Boot` carries the opening as its own take-once slot,
     // so "open these files in a new window" and "open the files this process
     // was launched with" are the same code path in the child.
     let boot = Boot {
-        cli_paths: Arc::new(parking_lot::Mutex::new(paths)),
+        opening: Arc::new(parking_lot::Mutex::new(Some(opening))),
         ..boot
     };
     let dom = VirtualDom::new(crate::components::App).with_root_context(boot);
@@ -458,12 +499,13 @@ mod tests {
         tokio::task::yield_now().await;
         drop(lease); // the first window closes
 
-        boot.events.send(AppEvent::OpenWindow { paths: Vec::new() });
+        boot.events
+            .send(AppEvent::OpenWindow(Opening::files(Vec::new())));
         let got = tokio::time::timeout(std::time::Duration::from_secs(5), waiter)
             .await
             .expect("the waiting window was woken")
             .unwrap();
-        assert!(matches!(got, Some(AppEvent::OpenWindow { .. })), "{got:?}");
+        assert!(matches!(got, Some(AppEvent::OpenWindow(_))), "{got:?}");
     }
 
     fn window() -> (uuid::Uuid, AppEvents, dat0_core::events::AppEventRx) {

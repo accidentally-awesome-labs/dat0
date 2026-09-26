@@ -382,12 +382,12 @@ fn every_hidden_id_is_still_a_real_command() {
 }
 
 /// A modal whose reply is `ModalReply::new(|_| {})` looks like a feature and
-/// throws the user's answer away — how History, Load, Save, Export and Live
-/// Refresh shipped. The count may only go down. `src/visual/` is exempt: its
-/// scenes are fixtures that render a modal and never submit it.
+/// throws the user's answer away — how History, Load, Save, Export, Live
+/// Refresh and the recovery panel shipped. The last of them is wired, so one
+/// added now fails here. `src/visual/` is exempt: its scenes are fixtures
+/// that render a modal and never submit it.
 #[test]
-fn discarded_modal_replies_only_decrease() {
-    const AT_MOST: usize = 1;
+fn no_modal_discards_its_reply() {
     let src = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
     let mut found = Vec::new();
     collect(&src, &mut |path, text| {
@@ -401,17 +401,11 @@ fn discarded_modal_replies_only_decrease() {
         }
     });
     assert!(
-        found.len() <= AT_MOST,
-        "{} modals discard their reply (at most {AT_MOST}); a new one is a feature \
-         that looks finished and is not:\n  {}",
+        found.is_empty(),
+        "{} modals discard their reply; each is a feature that looks finished \
+         and is not:\n  {}",
         found.len(),
         found.join("\n  ")
-    );
-    assert_eq!(
-        found.len(),
-        AT_MOST,
-        "fewer discarded replies than recorded — lower AT_MOST to {} so they stay gone",
-        found.len()
     );
 }
 

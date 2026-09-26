@@ -187,6 +187,28 @@ fn default_schema_version_v1() -> u32 {
     1
 }
 
+impl SessionState {
+    /// Whether this session holds nothing that exists only in it: every tab
+    /// shows a file still on disk, as the file has it, and nothing was typed,
+    /// run, saved or attached. Its scratch directory is then a copy of files
+    /// the user still has, and the boot sweep removes it rather than offer it
+    /// for recovery (`recovery_scan::sweep_scratch`).
+    ///
+    /// A query run is enough to keep a session, whatever it did: its SQL may
+    /// have made a table no tab shows, and this answers from the session file
+    /// alone, without opening the database.
+    pub fn nothing_to_recover(&self) -> bool {
+        self.query_history.is_empty()
+            && self.saved_queries.is_empty()
+            && self.charts.is_empty()
+            && self.attachments.is_empty()
+            && self.sql_tabs.iter().all(|t| t.sql.trim().is_empty())
+            && self.tabs.iter().all(|t| {
+                t.transform_stack.is_empty() && t.source_path.as_deref().is_some_and(Path::is_file)
+            })
+    }
+}
+
 impl Default for SessionState {
     fn default() -> Self {
         Self {
@@ -594,6 +616,11 @@ impl Session {
         self.active_tab.and_then(|i| self.tabs.get(i))
     }
 
+    /// The active tab's place in [`Session::tabs`], if any.
+    pub fn active_tab_index(&self) -> Option<usize> {
+        self.active_tab.filter(|&i| i < self.tabs.len())
+    }
+
     /// All persisted SQL console tabs (buffer text + title).
     pub fn sql_tabs(&self) -> &[SqlTabState] {
         &self.sql_tabs
@@ -613,6 +640,16 @@ impl Session {
         self.tabs.push(tab);
         self.active_tab = Some(self.tabs.len() - 1);
         self.persist().context("session::add_tab: persist failed")
+    }
+
+    /// Replace the tab list and the active tab, then persist. The window
+    /// records its tabs and each tab's view here as they change, so a session
+    /// reopened later — recovered after a crash, or a workspace — shows them
+    /// as they were.
+    pub fn set_tabs(&mut self, tabs: Vec<Tab>, active: Option<usize>) -> Result<()> {
+        self.active_tab = active.filter(|&i| i < tabs.len());
+        self.tabs = tabs;
+        self.persist().context("session::set_tabs: persist failed")
     }
 
     /// Set the active tab by index. Returns an error if `index` is out of bounds.
@@ -986,6 +1023,46 @@ mod tests {
         assert_eq!(state.tabs[0].table_name, "my_table");
         assert_eq!(state.active_tab, Some(0));
         assert_eq!(state.schema_version, SESSION_SCHEMA_VERSION);
+    }
+
+    #[tokio::test]
+    async fn set_tabs_replaces_the_tabs_and_their_views_and_survives_recovery() {
+        use dat0_engine::{SortDirection, SortKey};
+        let root = tempfile::tempdir().expect("tempdir");
+        let sorted = Transformation::Sort {
+            keys: vec![SortKey {
+                column: "qty".into(),
+                direction: SortDirection::Desc,
+            }],
+        };
+        let tab = |name: &str, stack: Vec<Transformation>| Tab {
+            table_name: name.to_string(),
+            source_path: Some(PathBuf::from(format!("/data/{name}.csv"))),
+            undo_cursor: stack.len(),
+            transform_stack: stack,
+            extra: Default::default(),
+        };
+        let dir = {
+            let mut sess = Session::new(root.path(), TEST_BUDGET).await.unwrap();
+            sess.add_tab(tab("stale", Vec::new())).unwrap();
+            sess.set_tabs(
+                vec![tab("a", Vec::new()), tab("b", vec![sorted.clone()])],
+                Some(1),
+            )
+            .unwrap();
+            // An active tab past the list is no active tab, not a panic later.
+            let mut other = Session::new(root.path(), TEST_BUDGET).await.unwrap();
+            other.set_tabs(vec![tab("a", Vec::new())], Some(4)).unwrap();
+            assert!(other.active_tab().is_none());
+            sess.home.root_dir().to_path_buf()
+        };
+
+        let back = Session::recover(dir, TEST_BUDGET).await.unwrap();
+        let names: Vec<&str> = back.tabs().iter().map(|t| t.table_name.as_str()).collect();
+        assert_eq!(names, ["a", "b"], "replaced, not appended to");
+        assert_eq!(back.active_tab().unwrap().table_name, "b");
+        assert_eq!(back.tabs()[1].transform_stack, vec![sorted]);
+        assert_eq!(back.tabs()[1].undo_cursor, 1);
     }
 
     #[tokio::test]

@@ -109,6 +109,7 @@
   "engine.error.arrow": "Data conversion failed",
   "engine.error.duck_db": "Query engine error",
   "engine.error.engine_closed": "The engine is closed",
+  "engine.error.already_open": "This data is already open in another window",
   "engine.error.engine_failed": "The engine failed to start",
   "engine.error.engine_poisoned": "The engine stopped responding",
   "engine.error.extension_load": "Extension failed to load",

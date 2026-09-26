@@ -22,6 +22,7 @@ use std::time::Duration;
 use dioxus::prelude::*;
 use parking_lot::Mutex;
 
+use dat0_core::events::Opening;
 use dat0_core::file_drop::{DropOutcome, handle_drop};
 use dat0_core::session::Session;
 use dat0_core::session::dock_layout::DockLayout;
@@ -194,11 +195,20 @@ async fn land(ws: Workspace, slot: SessionSlot) {
     }
 }
 
-/// Open this window's session, then drain anything queued while it booted.
-///
-/// Mount-once: `use_future` runs one task for the component's life.
+/// Open a fresh scratch session with `cli_paths` in it. See [`use_session_on`].
 pub fn use_session(ws: Workspace, cli_paths: Vec<PathBuf>) {
+    use_session_on(ws, Opening::files(cli_paths));
+}
+
+/// Open this window's session on `opening`, then drain anything queued while
+/// it booted.
+///
+/// Mount-once: `use_future` runs one task for the component's life. The
+/// opening stays in context, so a retry after a failure rebuilds the session
+/// this window was opened for rather than a blank one.
+pub fn use_session_on(ws: Workspace, opening: Opening) {
     let mut ws = ws;
+    let opening = use_context_provider(|| opening);
     // Hangs off the same hook so a window cannot get a session without also
     // getting its layout: they are one lifecycle, not two.
     use_layout_persistence(ws);
@@ -210,39 +220,43 @@ pub fn use_session(ws: Workspace, cli_paths: Vec<PathBuf>) {
     use_hook(move || dat0_core::globals::register_live_window(window_id));
     use_drop(move || dat0_core::globals::unregister_live_window(window_id));
     use_future(move || {
-        let paths = cli_paths.clone();
+        let opening = opening.clone();
         async move {
             // The launch arguments are simply the first entries in the queue.
             // Treating them as a separate channel is what let the GPUI build
             // open the CLI files and swallow a drop made while it did.
-            if !paths.is_empty() {
-                ws.pending_open.write().extend(paths);
+            if let Opening::Scratch { paths } = &opening {
+                ws.pending_open.write().extend(paths.iter().cloned());
             }
+            let slot = build(ws, &opening).await;
+            land(ws, slot).await;
+        }
+    });
+}
 
+/// The session `opening` asks for: a new one, or the one a closed or crashed
+/// window left behind.
+async fn build(ws: Workspace, opening: &Opening) -> SessionSlot {
+    let budget = dat0_core::settings::budget::configured();
+    let built = match opening {
+        Opening::Scratch { .. } => {
             let Some(state_root) = dat0_core::globals::state_root() else {
                 // The state root is installed by `launch::main` before any
                 // window exists. Missing means the process was started some
                 // other way, and a session opened against a guessed directory
                 // is worse than a visible failure.
-                land(
-                    ws,
-                    SessionSlot::Failed("state root not installed".to_string()),
-                )
-                .await;
-                return;
+                return SessionSlot::Failed("state root not installed".to_string());
             };
-            let budget = dat0_core::settings::budget::configured();
-            let id = ws.window_id;
-
-            let slot = match Session::new_with_id(state_root, budget, id).await {
-                Ok(s) => SessionSlot::Ready(Arc::new(Mutex::new(s))),
-                // `{e:#}` renders the whole anyhow chain — `Session::new`'s
-                // context lines are the only diagnosis a user gets here.
-                Err(e) => SessionSlot::Failed(format!("{e:#}")),
-            };
-            land(ws, slot).await;
+            Session::new_with_id(state_root, budget, ws.window_id).await
         }
-    });
+        Opening::Recover { dir } => Session::recover(dir.clone(), budget).await,
+    };
+    match built {
+        Ok(s) => SessionSlot::Ready(Arc::new(Mutex::new(s))),
+        // `{e:#}` renders the whole anyhow chain — `Session::new`'s context
+        // lines are the only diagnosis a user gets here.
+        Err(e) => SessionSlot::Failed(format!("{e:#}")),
+    }
 }
 
 /// Register `paths` as tables and append a tab for each.
@@ -334,21 +348,15 @@ pub fn retry(ws: Workspace) {
     if ws.session.read().failure().is_none() {
         return;
     }
+    // What the window was opened for. Its files were dropped with the
+    // failure, so a scratch retry starts empty.
+    let opening = match try_consume_context::<Opening>() {
+        Some(Opening::Recover { dir }) => Opening::Recover { dir },
+        _ => Opening::files(Vec::new()),
+    };
     ws.session.set(Arc::new(SessionSlot::Booting));
     spawn(async move {
-        let Some(state_root) = dat0_core::globals::state_root() else {
-            land(
-                ws,
-                SessionSlot::Failed("state root not installed".to_string()),
-            )
-            .await;
-            return;
-        };
-        let budget = dat0_core::settings::budget::configured();
-        let slot = match Session::new_with_id(state_root, budget, ws.window_id).await {
-            Ok(s) => SessionSlot::Ready(Arc::new(Mutex::new(s))),
-            Err(e) => SessionSlot::Failed(format!("{e:#}")),
-        };
+        let slot = build(ws, &opening).await;
         land(ws, slot).await;
     });
 }

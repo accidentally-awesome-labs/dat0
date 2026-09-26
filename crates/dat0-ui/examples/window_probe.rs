@@ -18,7 +18,7 @@
 use dioxus::prelude::*;
 
 use dat0_core::actions::registry::ActionRegistry;
-use dat0_core::events::AppEvent;
+use dat0_core::events::{AppEvent, Opening};
 use dat0_ui::launch::Boot;
 
 fn main() {
@@ -66,12 +66,14 @@ fn Probe() -> Element {
             let before = dioxus::desktop::window().window.id();
 
             // Exactly what the UDS handler and the `window.new` action send.
-            boot.events.send(AppEvent::OpenWindow { paths: Vec::new() });
+            boot.events
+                .send(AppEvent::OpenWindow(Opening::files(Vec::new())));
 
             // The root drains the bus and calls `launch::open_window`. Give it
             // time on a throttled timer, then confirm a *different* window
             // exists and is not the one we started in.
-            let second = dat0_ui::launch::open_window(boot.clone(), Vec::new()).await;
+            let second =
+                dat0_ui::launch::open_window(boot.clone(), Opening::files(Vec::new())).await;
             match second {
                 Some(id) if id != before => {
                     println!("--- dat0 window probe ---");

@@ -61,6 +61,7 @@ fn every_variant() -> Vec<EngineError> {
         EngineError::Interrupted,
         EngineError::TaskJoin("worker panicked".into()),
         EngineError::EngineClosed,
+        EngineError::AlreadyOpen(std::path::PathBuf::from("/data/w.duckdb")),
         EngineError::EnginePoisoned,
         EngineError::EngineFailed("result stream ended early".into()),
         EngineError::NotASingleQuery("it is 2 statements".into()),

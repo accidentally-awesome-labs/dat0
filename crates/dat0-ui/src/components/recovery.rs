@@ -2,9 +2,10 @@
 //!
 //! Two kinds of wreckage, from the two boot scans:
 //!
-//! * **Orphan** — a scratch directory holding a `session.json` from a session
-//!   that never exited cleanly. Its restored table names label the row, so the
-//!   user is choosing between recognisable sessions rather than between UUIDs.
+//! * **Orphan** — the scratch directory of a window no longer open, whose
+//!   `session.json` holds something to recover. Its table names label the
+//!   row, so the user is choosing between recognisable sessions rather than
+//!   between UUIDs.
 //! * **Incomplete** — a recent workspace folder whose `.dat0/` is a
 //!   half-finished promotion (no `manifest.json`, or no `workspace.duckdb`).
 //!
@@ -51,11 +52,43 @@ pub struct RestoredTab {
     pub path: Option<PathBuf>,
 }
 
+/// One query tab's SQL, as the panel surfaces it.
+#[derive(Debug, Clone, Deserialize)]
+pub struct RestoredSql {
+    #[serde(default)]
+    pub sql: String,
+}
+
 /// The restored session-level state the panel surfaces.
 #[derive(Debug, Clone, Deserialize)]
 pub struct RestoredSession {
     #[serde(default)]
     pub tabs: Vec<RestoredTab>,
+    #[serde(default)]
+    pub sql_tabs: Vec<RestoredSql>,
+}
+
+impl RestoredSession {
+    /// What its row is labelled with: its tables, or — for a session holding
+    /// only SQL, which a blank label would leave unrecognisable — the first
+    /// line of it.
+    pub fn names(self) -> Vec<String> {
+        if !self.tabs.is_empty() {
+            return self.tabs.into_iter().map(|t| t.table).collect();
+        }
+        self.sql_tabs
+            .iter()
+            .map(|q| q.sql.trim())
+            .find(|sql| !sql.is_empty())
+            .map(|sql| {
+                crate::components::query_library::first_line(
+                    sql,
+                    crate::components::query_library::PREVIEW_CHARS,
+                )
+            })
+            .into_iter()
+            .collect()
+    }
 }
 
 /// Read `session.json` out of an orphan scratch directory.
@@ -101,34 +134,26 @@ pub enum RecoveryRow {
 
 /// Collect every recoverable item.
 ///
-/// The orphan test — a `session.json` under a scratch subdirectory — matches
-/// the boot scan's definition exactly, and the incomplete half delegates to
-/// [`dat0_core::recovery_scan::scan_incomplete_workspaces`], so the panel and
-/// the boot banner can never disagree about what counts as recoverable.
+/// Both halves delegate to the boot scan's own definitions —
+/// [`dat0_core::recovery_scan::recoverable_scratch`] and
+/// [`dat0_core::recovery_scan::scan_incomplete_workspaces`] — so the panel and
+/// the boot banner can never disagree about what counts as recoverable. That
+/// leaves out open windows (the panel once offered the current session for
+/// Discard) and sessions holding nothing a file on disk does not.
 ///
 /// A row's table list is best-effort: an unparseable `session.json` still
 /// yields a row with no tables, because it is still recoverable and still
 /// discardable, and hiding it would strand the directory forever.
-///
-/// Open windows are not orphans. Every running window keeps its own
-/// `session.json` under this root, so without the live check the panel
-/// offered the current session for recovery — and for Discard.
 pub fn collect_rows(scratch_root: &Path, recent_roots: &[PathBuf]) -> Vec<RecoveryRow> {
-    let mut rows = Vec::new();
-    if let Ok(read) = fs::read_dir(scratch_root) {
-        for entry in read.flatten() {
-            let dir = entry.path();
-            if dat0_core::globals::is_live_scratch_dir(&dir) {
-                continue;
-            }
-            if dir.join("session.json").is_file() {
-                let tables = load_for_open(&dir)
-                    .map(|s| s.tabs.into_iter().map(|t| t.table).collect())
-                    .unwrap_or_default();
-                rows.push(RecoveryRow::Orphan { dir, tables });
-            }
-        }
-    }
+    let mut rows: Vec<RecoveryRow> = dat0_core::recovery_scan::recoverable_scratch(scratch_root)
+        .into_iter()
+        .map(|dir| {
+            let tables = load_for_open(&dir)
+                .map(RestoredSession::names)
+                .unwrap_or_default();
+            RecoveryRow::Orphan { dir, tables }
+        })
+        .collect();
     // Stable order: `read_dir` is filesystem order, which is arbitrary and
     // differs between machines. A recovery list that reshuffles between
     // launches is a list whose rows cannot be described to anyone.
@@ -345,6 +370,19 @@ mod tests {
         let rows = collect_rows(tmp.path(), &[]);
         assert_eq!(rows.len(), 1);
         assert!(matches!(&rows[0], RecoveryRow::Orphan { tables, .. } if tables.is_empty()));
+    }
+
+    #[test]
+    fn a_session_holding_only_sql_is_labelled_by_it() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        seed_orphan(
+            tmp.path(),
+            "typed",
+            r#"{"tabs":[],"sql_tabs":[{"id":"0192f0c4-0000-7000-8000-000000000000","title":"Query 1","sql":"  "},{"id":"0192f0c4-0000-7000-8000-000000000001","title":"Query 2","sql":"\n  select 7 as seven\n  from t"}]}"#,
+        );
+        let rows = collect_rows(tmp.path(), &[]);
+        assert_eq!(rows.len(), 1);
+        assert_eq!(label_of(&rows[0]), "select 7 as seven");
     }
 
     #[test]

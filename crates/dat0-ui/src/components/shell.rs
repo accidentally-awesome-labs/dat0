@@ -190,6 +190,9 @@ pub fn Shell() -> Element {
     let edits = crate::components::grid::edits::Edits::new(ws, views, selection, source);
     // Say when the active tab's file changes on disk (Live Refresh).
     crate::components::grid::refresh::use_source_watch(ws, events.clone());
+    // Keep the tabs, their views and the console's SQL in the session, and
+    // bring back what a reopened session holds.
+    crate::session_sync::use_session_sync(ws, views, console_host.tabs);
 
     // The chart's plot data. `use_resource` for the same reason the grid's
     // source is one: building it runs a query. Holding the table (not just the
@@ -414,9 +417,7 @@ pub fn Shell() -> Element {
                                 crate::state::SECTION_PACKAGES => {
                                     if let Some(p) = packages.get(i) {
                                         open_events
-                                            .send(dat0_core::events::AppEvent::OpenWindow {
-                                                paths: vec![p.path.clone()],
-                                            });
+                                            .send(dat0_core::events::AppEvent::OpenWindow(dat0_core::events::Opening::files(vec![p.path.clone()])));
                                     }
                                 }
                                 // CONNECTIONS rows arrive with the engine feed.
@@ -766,7 +767,9 @@ fn open_demo(ws: Workspace, events: dat0_core::events::AppEvents) {
         }
         let dest = base.join("demo").join(uuid::Uuid::now_v7().to_string());
         match dat0_core::cli::unpack_async(&staging, &dest).await {
-            Ok(()) => events.send(dat0_core::events::AppEvent::OpenWindow { paths: vec![dest] }),
+            Ok(()) => events.send(dat0_core::events::AppEvent::OpenWindow(
+                dat0_core::events::Opening::files(vec![dest]),
+            )),
             Err(e) => ws.push_banner(dat0_core::error_ux::Banner::warning_with_body(
                 dat0_i18n::t("package.unpack.failed.title"),
                 format!("{e:#}"),
@@ -1066,13 +1069,6 @@ fn surface_command(
             ai.hydrate();
             ws.modal.set(Some(Modal::Ai { controller: ai }));
         }
-        ids::RECOVERY_REVIEW => ws.modal.set(Some(Modal::Recovery {
-            scratch_root: dat0_core::globals::state_root()
-                .map(|p| p.join("scratch"))
-                .unwrap_or_default(),
-            recent_roots: dat0_core::globals::recents_snapshot(),
-            reply: crate::components::modals::ModalReply::new(|_| {}),
-        })),
         ids::WORKSPACE_SAVE => {
             if !crate::launch::has_desktop() {
                 return true;

@@ -47,12 +47,58 @@ pub struct DuckDBEngine {
     /// clock (`crates/dat0-app/tests/view_supersede.rs`); nothing in production
     /// reads it.
     pub(crate) interrupts_fired: Arc<AtomicU64>,
+    /// This engine's claim on its database file; released when it drops.
+    _held: Held,
+}
+
+/// The database files an engine in this process holds open.
+///
+/// DuckDB's file lock is per process, so it does not refuse a second engine
+/// this process opens on a file it already holds, and the two would each
+/// write the one file and its WAL. dat0 opens a database again in the normal
+/// course of things — a session recovered moments after its window closed,
+/// while a task may still hold the old engine — so the refusal lives here.
+static OPEN: std::sync::LazyLock<parking_lot::Mutex<std::collections::HashSet<PathBuf>>> =
+    std::sync::LazyLock::new(Default::default);
+
+/// One engine's claim on a database file in [`OPEN`].
+struct Held(Option<PathBuf>);
+
+impl Held {
+    /// Claim `path`, or say who has it. An in-memory database is nobody's.
+    fn claim(path: &std::path::Path) -> Result<Self> {
+        if path.as_os_str().is_empty() || path == std::path::Path::new(":memory:") {
+            return Ok(Self(None));
+        }
+        // The same file by any name: the directory resolved, since the file
+        // itself may not exist yet.
+        let key = match (path.parent(), path.file_name()) {
+            (Some(dir), Some(name)) if !dir.as_os_str().is_empty() => dir
+                .canonicalize()
+                .map(|d| d.join(name))
+                .unwrap_or_else(|_| path.to_path_buf()),
+            _ => std::path::absolute(path).unwrap_or_else(|_| path.to_path_buf()),
+        };
+        if !OPEN.lock().insert(key.clone()) {
+            return Err(EngineError::AlreadyOpen(key));
+        }
+        Ok(Self(Some(key)))
+    }
+}
+
+impl Drop for Held {
+    fn drop(&mut self) {
+        if let Some(key) = self.0.take() {
+            OPEN.lock().remove(&key);
+        }
+    }
 }
 
 impl DuckDBEngine {
     /// Construct an engine bound to `scratch_path` (a DuckDB file). Status begins
     /// `Initializing`; call `init()` to transition to `Ready`.
     pub fn new(scratch_path: PathBuf, budget: MemoryBudget) -> Result<Self> {
+        let held = Held::claim(&scratch_path)?;
         let conn = duckdb::Connection::open(&scratch_path)?;
         // duckdb-rs 1.4.x: `interrupt_handle()` returns `Arc<InterruptHandle>` directly.
         let interrupt = conn.interrupt_handle();
@@ -66,6 +112,7 @@ impl DuckDBEngine {
             inflight: Arc::new(parking_lot::Mutex::new(None)),
             next_token: Arc::new(AtomicU64::new(1)),
             interrupts_fired: Arc::new(AtomicU64::new(0)),
+            _held: held,
         })
     }
 
@@ -995,6 +1042,15 @@ impl DuckDBEngine {
     /// going through this accessor. Available for T8/T9 call sites and tests.
     pub fn table_origin(&self, name: &str) -> Option<TableOrigin> {
         self.table_origins.read().get(name).cloned()
+    }
+
+    /// Record where `name` came from, for a table this engine found in its
+    /// database rather than made. Origins are held in memory only, so an
+    /// engine opened on an existing database knows its tables but not their
+    /// sources: reading a tab's file again (Live Refresh) then found the
+    /// table's name held by an unknown table, and imported beside it.
+    pub fn restore_origin(&self, name: &str, origin: TableOrigin) {
+        self.table_origins.write().insert(name.to_string(), origin);
     }
 }
 

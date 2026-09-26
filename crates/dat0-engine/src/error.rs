@@ -51,6 +51,11 @@ pub enum EngineError {
     #[error("Engine is closed or closing; new operations rejected")]
     EngineClosed,
 
+    /// Another engine in this process holds the database open. DuckDB's file
+    /// lock is per process, so it does not refuse a second engine itself.
+    #[error("the database {} is already open in dat0", .0.display())]
+    AlreadyOpen(PathBuf),
+
     #[error("Engine connection mutex poisoned (prior panic in worker thread)")]
     EnginePoisoned,
 

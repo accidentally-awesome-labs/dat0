@@ -39,7 +39,7 @@ use dioxus::prelude::*;
 use futures::StreamExt as _;
 
 use dat0_core::actions::registry::ActionRegistry;
-use dat0_core::events::{AppEvent, AppEvents};
+use dat0_core::events::{AppEvent, AppEvents, Opening};
 
 use crate::launch::Boot;
 use crate::theme::{Theme, ThemeStyle};
@@ -54,14 +54,15 @@ pub fn App() -> Element {
 
     let boot = use_context::<Boot>();
     Theme::provide(None);
-    let ws = crate::state::Workspace::provide();
+    let opening = use_hook(|| boot.take_opening());
+    let ws = crate::state::Workspace::provide_for(&opening);
     // The shell installs its own command handler here once it mounts. Provided
     // by `App` rather than by the shell, because the bus drain is App's and a
     // child's context is invisible to its parent.
     let surface = use_context_provider(|| Signal::new(Option::<crate::router::Surface>::None));
-    // The session opens after the first frame; the CLI's paths are opened into
-    // it when it lands. Only the first window takes them.
-    crate::session_boot::use_session(ws, boot.take_cli_paths());
+    // The session opens after the first frame, on what this window was opened
+    // for: the CLI's paths go to the first window only.
+    crate::session_boot::use_session_on(ws, opening);
     use_context_provider(|| boot.registry.clone());
     let events = use_window_bus(boot.clone(), ws, surface);
 
@@ -199,8 +200,8 @@ pub fn use_window_bus(
 /// choice.
 async fn pass_on(ev: AppEvent, boot: &Boot) {
     let window = match ev {
-        AppEvent::OpenWindow { paths } => {
-            open_window(boot, paths).await;
+        AppEvent::OpenWindow(opening) => {
+            open_window(boot, opening).await;
             return;
         }
         AppEvent::ThemeChanged { id } => {
@@ -217,13 +218,13 @@ async fn pass_on(ev: AppEvent, boot: &Boot) {
     }
 }
 
-async fn open_window(boot: &Boot, paths: Vec<std::path::PathBuf>) {
+async fn open_window(boot: &Boot, opening: Opening) {
     if !crate::launch::has_desktop() {
         tracing::debug!("open window: no window system");
         return;
     }
-    tracing::info!(count = paths.len(), "opening a window");
-    let _ = crate::launch::open_window(boot.clone(), paths).await;
+    tracing::info!(?opening, "opening a window");
+    let _ = crate::launch::open_window(boot.clone(), opening).await;
 }
 
 /// Perform one bus event on this window. `events` is the window's own bus, so
@@ -236,7 +237,7 @@ async fn handle(
     events: &AppEvents,
 ) {
     match ev {
-        AppEvent::OpenWindow { paths } => open_window(boot, paths).await,
+        AppEvent::OpenWindow(opening) => open_window(boot, opening).await,
         AppEvent::ThemeChanged { id } => Theme::current().set(&id),
         // Raised off the UI thread, by a file watcher. One of each: a burst of
         // saves is one change to act on.
@@ -273,9 +274,7 @@ fn menu_local(id: &str, events: &AppEvents) {
             };
             let recents = dat0_core::globals::recents_snapshot();
             if let Some(path) = recents.get(ix) {
-                events.send(AppEvent::OpenWindow {
-                    paths: vec![path.clone()],
-                });
+                events.send(AppEvent::OpenWindow(Opening::files(vec![path.clone()])));
             }
         }
         other => tracing::info!(menu_id = other, "menu item has no handler yet"),

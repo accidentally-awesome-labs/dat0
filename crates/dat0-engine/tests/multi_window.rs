@@ -138,3 +138,28 @@ async fn same_file_concurrent_register() {
     a.close().await.unwrap();
     b.close().await.unwrap();
 }
+
+/// DuckDB's file lock is per process, so it lets a second engine in this
+/// process open a database another engine holds, and both would write it. A
+/// session recovered moments after its window closed can meet the old engine
+/// still alive in a task; the engine refuses the second open instead.
+#[tokio::test]
+async fn a_database_open_in_this_process_is_not_opened_twice() {
+    let dir = tempfile::tempdir().unwrap();
+    let db = dir.path().join("w.duckdb");
+    let first = DuckDBEngine::new(db.clone(), budget_512mb()).unwrap();
+    first.init().await.unwrap();
+
+    let again = DuckDBEngine::new(db.clone(), budget_512mb());
+    assert!(
+        matches!(again, Err(dat0_engine::EngineError::AlreadyOpen(_))),
+        "a second engine on the same file"
+    );
+    // By another name for the same file, too.
+    let dotted = dir.path().join(".").join("w.duckdb");
+    assert!(DuckDBEngine::new(dotted, budget_512mb()).is_err());
+
+    drop(first);
+    let reopened = DuckDBEngine::new(db, budget_512mb()).expect("once the first is gone");
+    reopened.init().await.unwrap();
+}

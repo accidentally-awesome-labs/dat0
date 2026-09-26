@@ -17,7 +17,7 @@ use std::rc::Rc;
 use dioxus::prelude::*;
 
 use dat0_core::actions::builtin::ids;
-use dat0_core::events::{AppEvent, AppEvents};
+use dat0_core::events::{AppEvent, AppEvents, Opening};
 
 use crate::state::{Modal, Workspace};
 
@@ -89,7 +89,7 @@ pub fn route(ws: Workspace, events: &AppEvents, surface: SurfaceSlot, id: &str) 
     let mut ws = ws;
     match id {
         // ── Window and shell ───────────────────────────────────────────────
-        ids::WINDOW_NEW => events.send(AppEvent::OpenWindow { paths: Vec::new() }),
+        ids::WINDOW_NEW => events.send(AppEvent::OpenWindow(Opening::files(Vec::new()))),
         ids::SIDEBAR_TOGGLE => ws.toggle_sidebar(),
         ids::INSPECTOR_TOGGLE => {
             let open = ws.layout.read().inspector_visible;
@@ -138,9 +138,7 @@ pub fn route(ws: Workspace, events: &AppEvents, surface: SurfaceSlot, id: &str) 
             let events = events.clone();
             spawn(async move {
                 if let Some(folder) = crate::files::pick_folder().await {
-                    events.send(AppEvent::OpenWindow {
-                        paths: vec![folder],
-                    });
+                    events.send(AppEvent::OpenWindow(Opening::files(vec![folder])));
                 }
             });
         }
@@ -166,6 +164,26 @@ pub fn route(ws: Workspace, events: &AppEvents, surface: SurfaceSlot, id: &str) 
 
         // ── Session ────────────────────────────────────────────────────────
         ids::SESSION_RETRY => crate::session_boot::retry(ws),
+        // What windows that are gone left behind. Open brings a session back
+        // in a window of its own, with its tabs, their views and its SQL. The
+        // new window belongs to no workbench window, so it is asked for on the
+        // process bus, and still opens if this one closes first. Recents are
+        // left out until a workspace can be opened again: they are where an
+        // interrupted Save Workspace is found, and its Resume opens one.
+        ids::RECOVERY_REVIEW => {
+            let events = crate::launch::process_bus().unwrap_or_else(|| events.clone());
+            ws.modal.set(Some(Modal::Recovery {
+                scratch_root: dat0_core::globals::state_root()
+                    .map(|p| p.join("scratch"))
+                    .unwrap_or_default(),
+                recent_roots: Vec::new(),
+                reply: crate::components::modals::ModalReply::new(move |outcome| {
+                    if let crate::components::modals::ModalOutcome::RecoveryOpen(dir) = outcome {
+                        events.send(AppEvent::OpenWindow(Opening::Recover { dir }));
+                    }
+                }),
+            }));
+        }
 
         // ── Modals the shell can open from workspace state alone ───────────
         ids::IMPORT_CANCEL => {

@@ -265,6 +265,25 @@ pub struct Workspace {
 impl Workspace {
     /// Create and provide the workspace to the tree below.
     pub fn provide() -> Self {
+        Self::provide_with_id(uuid::Uuid::now_v7())
+    }
+
+    /// The workspace of a window opened on `opening`. A recovered session
+    /// keeps the id its directory is named for, so the directory counts as
+    /// open for as long as this window is — and is neither offered for
+    /// recovery again nor swept.
+    pub fn provide_for(opening: &dat0_core::events::Opening) -> Self {
+        let id = match opening {
+            dat0_core::events::Opening::Recover { dir } => dir
+                .file_name()
+                .and_then(|n| n.to_str())
+                .and_then(|n| uuid::Uuid::parse_str(n).ok()),
+            dat0_core::events::Opening::Scratch { .. } => None,
+        };
+        Self::provide_with_id(id.unwrap_or_else(uuid::Uuid::now_v7))
+    }
+
+    fn provide_with_id(window_id: uuid::Uuid) -> Self {
         let ws = Self {
             name: Signal::new("scratch".into()),
             tabs: Signal::new(Vec::new()),
@@ -279,7 +298,7 @@ impl Workspace {
             drag_over: Signal::new(false),
             session: Signal::new(Arc::new(SessionSlot::Booting)),
             pending_open: Signal::new(Vec::new()),
-            window_id: uuid::Uuid::now_v7(),
+            window_id,
         };
         use_context_provider(|| ws)
     }

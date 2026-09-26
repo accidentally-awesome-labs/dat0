@@ -96,7 +96,7 @@ that's modifying it; merge conflicts are signals worth investigating.
 | PD-020 | P4c T14 wired inline-editor `Enter` → commit + move-DOWN + focus-on-mount, but `Tab` → commit + move-RIGHT could NOT be wired: gpui-component `Input` (rev `0f0ab35`) consumes Tab internally for focus tab-stops and surfaces no `InputEvent::PressTab` variant (`InputEvent` is `{ Change, PressEnter, Focus, Blur }`). **Closed by Phase 6 of the GPUI→Dioxus migration (2026-08-10):** the limitation was the toolkit's, and a plain `<input>` surfaces Tab like any other key, so `dat0-ui`'s cell editor commits and steps one column right on Tab, one left on Shift-Tab, clamped at the row's ends. | closed | low |
 | PD-021 | P4c (T11 review): `error_ux::push` enqueues success/error banners into the global `PENDING` queue, but NOTHING drains it in the runtime render tree — only `#[cfg(test)]` code calls `drain_pending`. So export completion/failure feedback (`window.rs::run_export`) AND the pre-existing P4b paste-reject banner (`grid/edit_ops.rs`) are invisible to the user at runtime. **Closed by P6a T1:** `WorkspaceShell::render` now calls `error_ux::banner::merge_pending` into a per-window `banners` field and renders a host strip atop the shell. | closed | medium |
 | PD-022 | P6a (T12 review): the Inspector profile is refreshed on forward data/schema mutations (cell edit, paste, cut, delete, rename, reorder, transform-apply via `route_change`), but NOT on `undo`/`redo` or SQL-console grid-bind — those rebind via `apply_view_change`, which has no inspector hook. So undoing an edit (or rebinding a grid from the SQL console) leaves the inspector profile stale until the next forward mutation. Single well-scoped fix: hook `apply_view_change` (or an `on_rebind_complete` seam) to invalidate/re-profile the inspected table. Not a regression — the inspector did not refresh at all before P6a. | closed | low |
-| PD-023 | The Dioxus shell is not wired to `dat0-core`: 22 of 40 registered actions only logged, opened an empty dialog, or discarded the reply (3 still do; the SQL console runs, the grid sorts, filters, edits, saves and exports, and Live Refresh reads a file again, since 2026-09-26). Packages, workspaces, MotherDuck, AI key entry, updates and recovery are unreachable. "Logic green, screen dead" at app scale, recorded nowhere until 2026-09-25 | open | high |
+| PD-023 | The Dioxus shell is not wired to `dat0-core`: 22 of 40 registered actions only logged, opened an empty dialog, or discarded the reply (3 still do; the SQL console runs, the grid sorts, filters, edits, saves and exports, Live Refresh reads a file again, and a closed or crashed window's work comes back, since 2026-09-26). Packages, workspaces, MotherDuck, AI key entry and updates are unreachable. "Logic green, screen dead" at app scale, recorded nowhere until 2026-09-25 | open | high |
 | PD-024 | Banners raised after a window's first frame were never shown — the shell drained the queue once per mount; a refused drop surfaced later, twice, in another window | closed | high |
 | PD-025 | The recovery panel listed the running window's own session as an orphan, and its Discard deleted it | closed | high |
 | PD-026 | The grid cannot scroll past row ~1,290,555: the canvas is rows × 26 px, uncapped, and WebKit clamps layout at ~33.5M px | closed | high |
@@ -104,6 +104,7 @@ that's modifying it; merge conflicts are signals worth investigating.
 | PD-028 | A file drop aborted the app when `session.json` could not be written (`.expect` under `panic = "abort"`) | closed | medium |
 | PD-029 | Package replay trusted the recipe: its SQL ran with the engine's full access, and table names were used as file names unchecked | closed | high |
 | PD-030 | Opening a second file with the same stem (another folder's `data.csv`) replaced the first file's table, so the first tab showed the second file's rows | closed | high |
+| PD-031 | A table's origin lives only in the engine's memory: a session opened again from disk knows its tables but not where they came from, so a package made from it cannot replay its derived tables | open | medium |
 
 > **Missing originating docs (noted 2026-09-25).** D-030 and D-032–D-036 cite
 > `docs/plans/2026-08-08-dat0-production-v1-plan.md`, and the migration log cites
@@ -2263,9 +2264,9 @@ that's modifying it; merge conflicts are signals worth investigating.
   - Still open in the console: PRAGMA and EXPLAIN run, but their rows are not
     shown — DuckDB will neither define a view as them nor select from them,
     and the grid reads views. SHOW, DESCRIBE and SUMMARIZE do reach the grid.
-    Query tabs are not saved with the session (`Session::set_sql_tabs` has no
-    caller), so what was typed does not survive a restart; the GPUI build
-    saved them after every run.
+    Query tabs were not saved with the session (`Session::set_sql_tabs` had no
+    caller), so what was typed did not survive a restart; they are recorded
+    as they change since step 5.7b.
   - Found on the way and fixed with it: a grid handed a new source — another
     tab, or a query run again in place — kept checking the old source's
     cache, so the new table showed placeholders until a scroll
@@ -2328,6 +2329,28 @@ that's modifying it; merge conflicts are signals worth investigating.
     different engine form, not a larger cap. The clipboard falls back to
     dat0's own process where there is no system clipboard, so a copy there
     pastes inside dat0 only.
+  - 2026-09-26, recovery (`session_sync.rs`, step 5.7b). A window records its
+    tabs, each tab's view — sorts, filters, edits, column changes — and its
+    query tabs in its session as they change. It used to record a file's tab
+    when it opened and nothing after, and the console's SQL never. The
+    recovery panel's Open, whose answer was thrown away, opens the session in
+    a window of its own with its tabs, their views and its SQL, and records
+    each tab's file again, so Live Refresh reads it into the same table. At
+    launch, scratch directories holding nothing to recover — every tab a file
+    still on disk, shown as it is, nothing typed, run or saved — are removed,
+    and the rest are counted in one banner whose Review opens the panel. The
+    boot scan ran nowhere, and every window ever opened left its directory
+    behind. A session open in one window is not opened in another: the engine
+    refuses a second engine on a database this process holds, which DuckDB's
+    per-process file lock does not. Discarded modal replies 1 → 0.
+    `tests/session_sync.rs` records a window, opens a second one on what it
+    left, and opens it from the panel.
+  - Still open in recovery: Resume on an interrupted Save Workspace waits for
+    Open Workspace, so the panel and the banner leave recents out until then.
+    A graceful close keeps a window's directory as a crash does, and the next
+    launch removes it or offers it; the design's "Promote to Workspace?"
+    prompt on close comes with Save Workspace. A table's origin other than a
+    tab's file is not kept (PD-031).
 - **Discovered:** project review, 2026-09-25 — seven read-only audits plus a
   Linux release build driven under Xvfb.
 - **Fix:** port each surface's orchestration from `95627c8` onto the
@@ -2558,6 +2581,31 @@ that's modifying it; merge conflicts are signals worth investigating.
   a file again, as Live Refresh does, replaces its own table), else the first
   free `stem_2`, `stem_3`, …. `tests/register_names.rs` covers both files, a
   re-read, and a table made by SQL.
+- **Last touched:** 2026-09-26
+
+### PD-031 — A table's origin lives only in the engine's memory
+
+- **Status:** open
+- **Severity:** medium — lineage is lost quietly, and a package made from a
+  reopened session is wrong rather than refused
+- **Affected files:** `crates/dat0-engine/src/duckdb_engine.rs`
+  (`table_origins`), `crates/dat0-core/src/package/mod.rs` (`classify`)
+- **Symptom:** where each table came from — a file, a SQL statement, a
+  view's steps — is held in `DuckDBEngine::table_origins`, in memory, and
+  written nowhere. An engine opened on an existing database (a recovered
+  session, a workspace, an unpacked package) knows its tables but not their
+  origins: `get_tables` reports the engine's "unknown", `Derived(Sql(""))`.
+  Since step 5.7b a reopened window records each tab's file again
+  (`DuckDBEngine::restore_origin`), which is what Live Refresh and the
+  same-name rule (PD-030) need. Nothing restores the rest: a table made by
+  SQL or saved from a view loses its derivation, and one with no tab loses
+  its file, so `package::classify` exports them as plain base tables and a
+  package made from a reopened session cannot replay them. The GPUI build
+  had the same gap.
+- **Fix:** keep origins in the database beside the tables — a
+  `__dat0_meta_origins` table written with each origin change and read at
+  `init` — so they travel with the file, whichever home it is in.
+- **Discovered:** 2026-09-26, wiring recovery (PD-023, step 5.7b).
 - **Last touched:** 2026-09-26
 
 ## How to add an entry
