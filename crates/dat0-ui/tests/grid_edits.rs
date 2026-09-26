@@ -53,6 +53,7 @@ const COMMANDS: &[&str] = &[
     ids::VIEW_SET_VALUE,
     ids::VIEW_DELETE_ROWS,
     ids::VIEW_DELETE_COLUMN,
+    ids::VIEW_EXPORT,
 ];
 
 #[derive(Clone, PartialEq, Props)]
@@ -499,6 +500,59 @@ fn save_as_table_keeps_the_view_as_it_is_shown() {
         .filter_map(|c| h.attr(c, "aria-label"))
         .collect();
     assert_eq!(labels, ["name", "qty"], "day stays hidden");
+}
+
+#[test]
+#[serial]
+fn export_writes_the_view_as_shown_or_the_whole_table() {
+    let rt = runtime();
+    let _guard = rt.enter();
+    let mut h = window("export");
+
+    // Sorted by qty, descending, with day hidden: the file says so.
+    h.click("col-sort-1");
+    h.click("col-sort-1");
+    assert!(pump(&mut h, |h| column(h, 0) == ["a", "b", "c"]));
+    select(&mut h, (0, 2), (0, 2));
+    perform(&mut h, ids::VIEW_DELETE_COLUMN);
+    assert!(pump(&mut h, |h| h.by_a11y_id("col-2").is_none()));
+
+    // The dialog starts beside the file the tab came from.
+    let beside = STATE_ROOT.join("export");
+    perform(&mut h, ids::VIEW_EXPORT);
+    assert_eq!(text(&h, "export-destination"), beside.display().to_string());
+    h.click("export-run");
+    assert!(
+        pump(&mut h, |h| banner_says(h, "export.done.title")),
+        "the export reports done"
+    );
+    let view = std::fs::read_to_string(beside.join("export.csv")).expect("export.csv");
+    assert_eq!(
+        view.lines().collect::<Vec<_>>(),
+        ["name,qty", "a,3", "b,2", "c,1"],
+        "the view's rows, in its order, with its columns"
+    );
+
+    // The whole table: every column, in the file's order.
+    perform(&mut h, ids::VIEW_EXPORT);
+    h.click("export-scope-full");
+    let name = h.by_a11y_id("export-name").expect("the name field");
+    h.dispatch(name, "input", typed("full"));
+    h.click("export-run");
+    let full = beside.join("full.csv");
+    assert!(pump(&mut h, |_| full.exists()), "full.csv was not written");
+    assert!(pump(&mut h, |_| std::fs::read_to_string(&full)
+        .is_ok_and(|t| t.lines().count() == 4)));
+    let table = std::fs::read_to_string(&full).expect("full.csv");
+    assert_eq!(
+        table.lines().collect::<Vec<_>>(),
+        [
+            "name,qty,day",
+            "b,2,2024-01-02",
+            "a,3,2024-02-03",
+            "c,1,2024-03-04"
+        ]
+    );
 }
 
 #[test]

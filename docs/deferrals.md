@@ -96,7 +96,7 @@ that's modifying it; merge conflicts are signals worth investigating.
 | PD-020 | P4c T14 wired inline-editor `Enter` → commit + move-DOWN + focus-on-mount, but `Tab` → commit + move-RIGHT could NOT be wired: gpui-component `Input` (rev `0f0ab35`) consumes Tab internally for focus tab-stops and surfaces no `InputEvent::PressTab` variant (`InputEvent` is `{ Change, PressEnter, Focus, Blur }`). **Closed by Phase 6 of the GPUI→Dioxus migration (2026-08-10):** the limitation was the toolkit's, and a plain `<input>` surfaces Tab like any other key, so `dat0-ui`'s cell editor commits and steps one column right on Tab, one left on Shift-Tab, clamped at the row's ends. | closed | low |
 | PD-021 | P4c (T11 review): `error_ux::push` enqueues success/error banners into the global `PENDING` queue, but NOTHING drains it in the runtime render tree — only `#[cfg(test)]` code calls `drain_pending`. So export completion/failure feedback (`window.rs::run_export`) AND the pre-existing P4b paste-reject banner (`grid/edit_ops.rs`) are invisible to the user at runtime. **Closed by P6a T1:** `WorkspaceShell::render` now calls `error_ux::banner::merge_pending` into a per-window `banners` field and renders a host strip atop the shell. | closed | medium |
 | PD-022 | P6a (T12 review): the Inspector profile is refreshed on forward data/schema mutations (cell edit, paste, cut, delete, rename, reorder, transform-apply via `route_change`), but NOT on `undo`/`redo` or SQL-console grid-bind — those rebind via `apply_view_change`, which has no inspector hook. So undoing an edit (or rebinding a grid from the SQL console) leaves the inspector profile stale until the next forward mutation. Single well-scoped fix: hook `apply_view_change` (or an `on_rebind_complete` seam) to invalidate/re-profile the inspected table. Not a regression — the inspector did not refresh at all before P6a. | closed | low |
-| PD-023 | The Dioxus shell is not wired to `dat0-core`: 22 of 40 registered actions only logged, opened an empty dialog, or discarded the reply (5 still do; the SQL console runs, and the grid sorts, filters, edits and saves, since 2026-09-26). Export, packages, workspaces, MotherDuck, AI key entry, updates, recovery and live refresh are unreachable. "Logic green, screen dead" at app scale, recorded nowhere until 2026-09-25 | open | high |
+| PD-023 | The Dioxus shell is not wired to `dat0-core`: 22 of 40 registered actions only logged, opened an empty dialog, or discarded the reply (4 still do; the SQL console runs, and the grid sorts, filters, edits, saves and exports, since 2026-09-26). Packages, workspaces, MotherDuck, AI key entry, updates, recovery and live refresh are unreachable. "Logic green, screen dead" at app scale, recorded nowhere until 2026-09-25 | open | high |
 | PD-024 | Banners raised after a window's first frame were never shown — the shell drained the queue once per mount; a refused drop surfaced later, twice, in another window | closed | high |
 | PD-025 | The recovery panel listed the running window's own session as an orphan, and its Discard deleted it | closed | high |
 | PD-026 | The grid cannot scroll past row ~1,290,555: the canvas is rows × 26 px, uncapped, and WebKit clamps layout at ~33.5M px | closed | high |
@@ -2303,6 +2303,13 @@ that's modifying it; merge conflicts are signals worth investigating.
     6 → 5. The GPUI build compiled the view's SQL alone, which would have
     carried hidden columns, and the view's row id as a stray
     `__dat0_rowid__src` column, into the new table.
+  - 2026-09-26, Export… (`grid::export`). Browse runs the folder picker and
+    Export writes the file: the current view as shown (its rows, its order,
+    its columns under their names, no row id) or the whole table, as CSV,
+    JSON or Parquet, streamed by DuckDB's `COPY … TO`. The dialog starts in
+    the folder the tab's file came from. `UNWIRED` 5 → 4, discarded modal
+    replies 3 → 2. An existing file of the same name is overwritten without
+    asking, as the GPUI build did.
   - Still open in the grid: one edit or delete takes at most 10,000 cells or
     rows, and one copy at most 100,000 cells. Each edited cell is a `CASE`
     branch that every read of the view walks, so a larger overlay needs a

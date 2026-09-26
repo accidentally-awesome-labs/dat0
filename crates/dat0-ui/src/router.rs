@@ -34,7 +34,6 @@ use crate::state::{Modal, Workspace};
 /// in the same change as the test that shows its effect.
 pub const UNWIRED: &[&str] = &[
     // Dialogs whose reply is discarded.
-    ids::VIEW_EXPORT,
     ids::LIVE_REFRESH,
     // Workspaces: a picked folder is refused as an unsupported file, and Save
     // only logs the path it was given.

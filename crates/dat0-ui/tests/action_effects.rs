@@ -123,7 +123,6 @@ const GRID_VERB: &str = "acts on a selection over a table's rows, and a table ne
 /// Frozen here so the list can shrink but never grow; see
 /// [`the_unwired_list_only_shrinks`].
 const UNWIRED_AT_MOST: &[&str] = &[
-    ids::VIEW_EXPORT,
     ids::LIVE_REFRESH,
     ids::WORKSPACE_OPEN,
     ids::WORKSPACE_SAVE,
@@ -384,7 +383,7 @@ fn every_hidden_id_is_still_a_real_command() {
 /// scenes are fixtures that render a modal and never submit it.
 #[test]
 fn discarded_modal_replies_only_decrease() {
-    const AT_MOST: usize = 3;
+    const AT_MOST: usize = 2;
     let src = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
     let mut found = Vec::new();
     collect(&src, &mut |path, text| {

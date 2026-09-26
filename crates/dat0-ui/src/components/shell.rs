@@ -273,6 +273,7 @@ pub fn Shell() -> Element {
                 surface_host.clone(),
                 views,
                 edits,
+                source,
                 chart_spec,
                 chart_data,
                 perf_hud,
@@ -949,6 +950,7 @@ fn surface_command(
     console: crate::components::sql_console::host::ConsoleHost,
     views: crate::components::grid::views::Views,
     edits: crate::components::grid::edits::Edits,
+    grid_source: crate::components::grid::views::Shown,
     chart_spec: Signal<dat0_core::charts::spec::ChartSpec>,
     chart_data: Resource<Option<dat0_core::charts::data::PlotTable>>,
     perf_hud: Signal<bool>,
@@ -1054,10 +1056,7 @@ fn surface_command(
         // in its way.
         ids::VIEW_UNDO => views.undo(),
         ids::VIEW_REDO => views.redo(),
-        ids::VIEW_EXPORT => ws.modal.set(Some(Modal::Export {
-            destination: None,
-            reply: crate::components::modals::ModalReply::new(|_| {}),
-        })),
+        ids::VIEW_EXPORT => crate::components::grid::export::open(ws, views, grid_source),
 
         // ── Panels and windows ─────────────────────────────────────────────
         ids::AI_PANEL_OPEN => {
