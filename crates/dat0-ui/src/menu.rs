@@ -40,14 +40,10 @@ pub mod menu_ids {
     pub const RECENT_PREFIX: &str = "recents.open.";
 }
 
-/// Menu-local ids with no handler yet: the package verbs and the update check
+/// Menu-local ids with no handler yet: Replay Package and the update check
 /// (PD-023). Built disabled, like the [`crate::router::UNWIRED`] actions, so
 /// the menu bar offers nothing that does nothing.
-pub const UNWIRED_LOCAL: &[&str] = &[
-    menu_ids::EXPORT_PACKAGE,
-    menu_ids::REPLAY_PACKAGE,
-    menu_ids::CHECK_UPDATES,
-];
+pub const UNWIRED_LOCAL: &[&str] = &[menu_ids::REPLAY_PACKAGE, menu_ids::CHECK_UPDATES];
 
 /// Whether the menu bar builds the item for `id` enabled.
 ///

@@ -17,32 +17,42 @@ async fn engine_with_table() -> (tempfile::TempDir, DuckDBEngine) {
     (dir, e)
 }
 
-#[tokio::test]
-async fn writer_emits_expected_zip_entries() {
-    let (dir, engine) = engine_with_table().await;
-    let contents = PackageContents {
+/// A base table of `ids` rows named `name`, as the recipe describes it.
+fn recipe_table(name: &str, ids: u64) -> RecipeTable {
+    RecipeTable {
+        id: format!("t_{name}"),
+        name: name.into(),
+        kind: TableKind::Base,
+        schema: vec![ColumnFingerprint {
+            name: "id".into(),
+            r#type: "BIGINT".into(),
+        }],
+        row_count: ids,
+        data: format!("data/{name}.parquet"),
+        source_ref: None,
+        derivation: None,
+    }
+}
+
+/// A package holding [`engine_with_table`]'s `sales`.
+fn sales_contents() -> PackageContents {
+    PackageContents {
         workspace_id: uuid::Uuid::now_v7(),
         created_at: "2026-06-13T00:00:00Z".into(),
         recipe: Recipe {
-            tables: vec![RecipeTable {
-                id: "t_sales".into(),
-                name: "sales".into(),
-                kind: TableKind::Base,
-                schema: vec![ColumnFingerprint {
-                    name: "id".into(),
-                    r#type: "BIGINT".into(),
-                }],
-                row_count: 42,
-                data: "data/sales.parquet".into(),
-                source_ref: None,
-                derivation: None,
-            }],
+            tables: vec![recipe_table("sales", 42)],
         },
         sources: Sources { sources: vec![] },
         views: Views { views: vec![] },
         queries: Queries { queries: vec![] },
         charts: Charts { charts: vec![] },
-    };
+    }
+}
+
+#[tokio::test]
+async fn writer_emits_expected_zip_entries() {
+    let (dir, engine) = engine_with_table().await;
+    let contents = sales_contents();
     let out = dir.path().join("out.dat0");
     Writer::write(&contents, &engine, &out).await.unwrap();
     engine.close().await.unwrap();
@@ -69,6 +79,58 @@ async fn writer_emits_expected_zip_entries() {
     let m: PackageManifest = serde_json::from_reader(&mut mf).unwrap();
     assert_eq!(m.table_count, 1);
     assert!(m.checksums.contains_key("data/sales.parquet"));
+}
+
+/// A package is written beside its destination and renamed into place once
+/// whole: a write that fails part-way leaves the package already there as it
+/// was, where it used to leave it truncated.
+#[tokio::test]
+async fn a_write_that_fails_leaves_the_package_already_there() {
+    let (dir, engine) = engine_with_table().await;
+    let out = dir.path().join("out.dat0");
+    Writer::write(&sales_contents(), &engine, &out)
+        .await
+        .unwrap();
+    let before = std::fs::read(&out).unwrap();
+
+    // `gone` passes the name check, but no table has that name: the write
+    // fails once `sales` is in the package.
+    let mut broken = sales_contents();
+    broken.recipe.tables.push(recipe_table("gone", 1));
+    let written = Writer::write(&broken, &engine, &out).await;
+    engine.close().await.unwrap();
+
+    assert!(written.is_err());
+    assert_eq!(
+        std::fs::read(&out).unwrap(),
+        before,
+        "the package as it was"
+    );
+    let beside: Vec<_> = std::fs::read_dir(dir.path())
+        .unwrap()
+        .map(|e| e.unwrap().file_name().to_string_lossy().into_owned())
+        .filter(|n| !n.starts_with("w.duckdb"))
+        .collect();
+    assert_eq!(beside, ["out.dat0"], "and nothing left beside it");
+}
+
+/// Renamed into place, a package is readable as a file written in place
+/// would be, not by its owner alone as a temporary file starts.
+#[cfg(unix)]
+#[tokio::test]
+async fn a_written_package_is_readable_as_a_file_made_in_its_place() {
+    use std::os::unix::fs::PermissionsExt as _;
+    let (dir, engine) = engine_with_table().await;
+    let out = dir.path().join("out.dat0");
+    Writer::write(&sales_contents(), &engine, &out)
+        .await
+        .unwrap();
+    engine.close().await.unwrap();
+    let made = dir.path().join("made");
+    std::fs::File::create(&made).unwrap();
+
+    let mode = |p: &std::path::Path| std::fs::metadata(p).unwrap().permissions().mode() & 0o777;
+    assert_eq!(mode(&out), mode(&made));
 }
 
 /// The four sidecars QA4 added to the manifest's `checksums` map, plus the two

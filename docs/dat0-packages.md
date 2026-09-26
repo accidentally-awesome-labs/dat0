@@ -49,12 +49,13 @@ dat0 or Rust.
 
 All package actions live under the **File** menu.
 
-> **In this build**, **Open** and **Unpack** work in the app. Export and Replay
-> are not wired back yet (PD-023 in `docs/deferrals.md`), and their menu items
-> are disabled; the CLI below does both meanwhile.
+> **In this build**, Replay is not wired back into the app yet (PD-023 in
+> `docs/deferrals.md`), and its menu item is disabled; `dat0 replay` below does
+> it meanwhile.
 
-- **File → Export .dat0 Package** — write the current workspace to a `.dat0`
-  file you choose. Exporting from a **live session** captures the full
+- **File → Export as .dat0 Package** — write the window's tables, tabs, saved
+  queries and charts to a `.dat0` file you choose. A package already there is
+  replaced only once the new one is written whole. Exporting from a **live session** captures the full
   recipe, including derived tables and their lineage (see the known limitation
   below).
 - **File → Open .dat0 Package** — open a package **read-only** to inspect it (see
@@ -87,7 +88,8 @@ dat0 export <workspace-dir> -o out.dat0
 ```
 
 Opens the workspace directory, materializes every table to Parquet, and writes
-the package to `out.dat0`.
+the package to `out.dat0`. A package already at `out.dat0` is replaced only once
+the new one is written whole.
 
 ### `dat0 inspect` — print a package's recipe
 

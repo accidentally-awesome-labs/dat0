@@ -116,60 +116,79 @@ fn make_source(
 /// `SELECT *` parquet export), so this function only produces the metadata
 /// recipe + the portable session state.
 pub async fn session_to_contents(sess: &Session) -> Result<PackageContents> {
-    // Snapshot the portable session state (tabs → views, saved queries) up front
-    // so the engine-walking work can run without borrowing the Session — this is
-    // what lets the GUI export flow (P8 T9) release its session lock BEFORE the
-    // async engine I/O begins (no parking_lot guard held across `.await`).
-    let views = Views {
-        views: sess
-            .tabs()
-            .iter()
-            .map(|tab| PackageView {
-                table_name: tab.table_name.clone(),
-                transform_stack: tab.transform_stack.clone(),
-                undo_cursor: tab.undo_cursor,
-            })
-            .collect(),
-    };
-    let queries = Queries {
-        queries: sess
-            .saved_queries()
-            .iter()
-            .map(|q| PackageQuery {
-                id: q.id,
-                name: q.name.clone(),
-                sql: q.sql.clone(),
-                saved_at: q.saved_at,
-            })
-            .collect(),
-    };
-    let charts = Charts {
-        charts: sess
-            .charts()
-            .iter()
-            .map(|c| PackageChart {
-                id: c.id,
-                name: c.name.clone(),
-                spec: c.spec.clone(),
-                saved_at: c.saved_at,
-            })
-            .collect(),
-    };
-    contents_from_engine(sess.engine.as_ref(), sess.window_id, views, queries, charts).await
+    contents_from_engine(sess.engine.as_ref(), Portable::of(sess)).await
+}
+
+/// What a package carries of a [`Session`] besides its tables: the id, its
+/// tabs' views, its saved queries and charts. A copy, so a caller can take it
+/// under a brief lock and walk the engine holding none, as the app's export
+/// does: no lock is held across an `.await`.
+pub struct Portable {
+    pub workspace_id: uuid::Uuid,
+    pub views: Views,
+    pub queries: Queries,
+    pub charts: Charts,
+}
+
+impl Portable {
+    pub fn of(sess: &Session) -> Self {
+        let views = Views {
+            views: sess
+                .tabs()
+                .iter()
+                .map(|tab| PackageView {
+                    table_name: tab.table_name.clone(),
+                    transform_stack: tab.transform_stack.clone(),
+                    undo_cursor: tab.undo_cursor,
+                })
+                .collect(),
+        };
+        let queries = Queries {
+            queries: sess
+                .saved_queries()
+                .iter()
+                .map(|q| PackageQuery {
+                    id: q.id,
+                    name: q.name.clone(),
+                    sql: q.sql.clone(),
+                    saved_at: q.saved_at,
+                })
+                .collect(),
+        };
+        let charts = Charts {
+            charts: sess
+                .charts()
+                .iter()
+                .map(|c| PackageChart {
+                    id: c.id,
+                    name: c.name.clone(),
+                    spec: c.spec.clone(),
+                    saved_at: c.saved_at,
+                })
+                .collect(),
+        };
+        Self {
+            workspace_id: sess.window_id,
+            views,
+            queries,
+            charts,
+        }
+    }
 }
 
 /// EXPORT core, decoupled from a live [`Session`]: walk `engine`'s catalog into a
-/// recipe + sources, and assemble [`PackageContents`] with the caller-supplied
-/// portable `views` / `queries` and `workspace_id`. Lets the GUI export flow
-/// snapshot the session (drop its lock) and then run the async engine work
-/// without holding the lock across an `.await`.
+/// recipe + sources, and assemble [`PackageContents`] with what `portable`
+/// carries of the session.
 pub async fn contents_from_engine(
     engine: &dyn QueryEngine,
-    workspace_id: uuid::Uuid,
-    views: Views,
-    queries: Queries,
-    charts: Charts,
+    portable: Portable,
 ) -> Result<PackageContents> {
+    let Portable {
+        workspace_id,
+        views,
+        queries,
+        charts,
+    } = portable;
     let tables = engine
         .get_tables()
         .await

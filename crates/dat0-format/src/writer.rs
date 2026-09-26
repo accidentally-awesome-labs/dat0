@@ -73,7 +73,26 @@ impl Writer {
             path: scratch.into(),
             source: e,
         })?;
-        let file = std::fs::File::create(dest).map_err(|e| FormatError::Io {
+        // Written beside `dest` and renamed into place once whole, so a write
+        // that fails leaves a package already at `dest` as it was, rather
+        // than truncated.
+        let dir = match dest.parent() {
+            Some(p) if !p.as_os_str().is_empty() => p,
+            _ => std::path::Path::new("."),
+        };
+        let mut builder = tempfile::Builder::new();
+        // Readable as `File::create` would leave it, as the umask allows,
+        // rather than by the owner alone, as a temporary file starts.
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt as _;
+            builder.permissions(std::fs::Permissions::from_mode(0o666));
+        }
+        let staged = builder.tempfile_in(dir).map_err(|e| FormatError::Io {
+            path: dest.into(),
+            source: e,
+        })?;
+        let file = staged.reopen().map_err(|e| FormatError::Io {
             path: dest.into(),
             source: e,
         })?;
@@ -175,7 +194,15 @@ impl Writer {
             deflated,
         )?;
 
-        zip.finish()?;
+        // On disk before it replaces anything.
+        zip.finish()?.sync_all().map_err(|e| FormatError::Io {
+            path: dest.into(),
+            source: e,
+        })?;
+        staged.persist(dest).map_err(|e| FormatError::Io {
+            path: dest.into(),
+            source: e.error,
+        })?;
         Ok(())
     }
 }

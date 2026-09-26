@@ -1,10 +1,12 @@
-//! Opening a `.dat0` package read-only, and unpacking one (step 5.4d).
+//! Opening a `.dat0` package read-only, unpacking one, and exporting a
+//! window's work as one (step 5.4d).
 //!
-//! File → Open Package and Unpack Package were disabled, the sidebar's
+//! File → Open, Unpack and Export Package were disabled, the sidebar's
 //! Packages rows and the hero's recent packages opened the package as a data
 //! file, and a dropped package was refused as a file type dat0 does not know
 //! (PD-023). These tests seal a real package with dat0-core, then open and
-//! unpack it each way and mount a window on what they ask for.
+//! unpack it each way and mount a window on what they ask for, and export
+//! from a window and read back what it wrote.
 
 mod support;
 
@@ -62,8 +64,8 @@ const COMMANDS: &[&str] = &[ids::SQL_LOAD_QUERY, ids::VIEW_SET_NULL];
 #[derive(Clone, Props)]
 struct HostProps {
     opening: Opening,
-    /// What the `open` button opens through `package_open::open`, and the
-    /// `drop` button drops on the window.
+    /// What the `open` button opens through `package_open::open`, the `drop`
+    /// button drops on the window, and the `export` button writes.
     package: Option<PathBuf>,
     /// Where the `unpack` button unpacks `package`.
     folder: Option<PathBuf>,
@@ -88,7 +90,11 @@ fn Host(props: HostProps) -> Element {
     use_context_provider(|| boot.registry.clone());
     session_boot::use_session_on(ws, props.opening.clone());
     let events = use_window_bus(boot, ws, surface);
-    let (opened, dropped) = (props.package.clone(), props.package.clone());
+    let (opened, dropped, exported) = (
+        props.package.clone(),
+        props.package.clone(),
+        props.package.clone(),
+    );
     let unpacked = props.package.clone().zip(props.folder.clone());
     rsx! {
         div { "data-a11y-id": "window-name", "{ws.name}" }
@@ -114,6 +120,14 @@ fn Host(props: HostProps) -> Element {
                             dat0_ui::package_unpack::unpack(ws, &events, package, folder).await
                         });
                     }
+                }
+            },
+        }
+        button {
+            "data-a11y-id": "export",
+            onclick: move |_| {
+                if let Some(dest) = exported.clone() {
+                    spawn(async move { dat0_ui::package_export::export(ws, dest).await });
                 }
             },
         }
@@ -519,4 +533,91 @@ fn a_package_that_will_not_unpack_leaves_the_folder_as_it_was() {
         .collect();
     assert_eq!(left, ["notes.txt"], "no half-made workspace");
     assert!(asked(&mut rx).is_empty());
+}
+
+/// A workspace unpacked from [`package`] into `name` under the state root.
+fn workspace(rt: &tokio::runtime::Runtime, name: &str) -> PathBuf {
+    let sealed = package(rt, &format!("{name}-sealed"));
+    let root = STATE_ROOT.join(name);
+    rt.block_on(async {
+        let parsed = dat0_format::Reader::open(&sealed).expect("sealed");
+        dat0_core::package::contents_to_workspace(&parsed, &root, BUDGET)
+            .await
+            .expect("unpacked");
+    });
+    root
+}
+
+fn mount_workspace(root: PathBuf, package: Option<PathBuf>) -> Harness {
+    let (boot, _rx) = boot();
+    let opening = Opening::Workspace {
+        root,
+        networked: false,
+    };
+    let mut h = mount(opening, package, boot);
+    assert!(
+        pump(&mut h, |h| column(h, 0) == ["a", "b", "c"]),
+        "its tab: {:?}; banners: {:?}",
+        column(&h, 0),
+        banners(&h)
+    );
+    h
+}
+
+#[test]
+#[serial]
+fn a_window_exports_its_tables_views_and_queries_as_a_package() {
+    let rt = runtime();
+    let _guard = rt.enter();
+    let root = workspace(&rt, "export-ws");
+    let out = STATE_ROOT.join("exported.dat0");
+    std::fs::write(&out, b"an older package").unwrap();
+    let mut h = mount_workspace(root, Some(out.clone()));
+
+    h.click("export");
+    let done = t("package.export.done.title");
+    assert!(
+        pump(&mut h, |h| banners(h).contains(&done)),
+        "{:?}",
+        banners(&h)
+    );
+
+    let parsed = dat0_format::Reader::open(&out).expect("the package opens and verifies");
+    let tables: Vec<_> = parsed
+        .recipe
+        .tables
+        .iter()
+        .map(|t| t.name.as_str())
+        .collect();
+    assert_eq!(tables, ["stock"]);
+    let views = &parsed.views.views;
+    assert_eq!(views.len(), 1, "{views:?}");
+    assert_eq!(views[0].table_name, "stock");
+    assert_eq!(views[0].transform_stack.len(), 1, "with its sort");
+    let queries: Vec<_> = parsed
+        .queries
+        .queries
+        .iter()
+        .map(|q| q.name.as_str())
+        .collect();
+    assert_eq!(queries, ["lucky"]);
+}
+
+#[test]
+#[serial]
+fn an_export_that_fails_says_so() {
+    let rt = runtime();
+    let _guard = rt.enter();
+    let root = workspace(&rt, "export-fails-ws");
+    let out = STATE_ROOT.join("no-such-folder").join("exported.dat0");
+    let mut h = mount_workspace(root, Some(out.clone()));
+
+    h.click("export");
+    let failed = t("package.export.failed.title");
+    assert!(
+        pump(&mut h, |h| banners(h).contains(&failed)),
+        "{:?}",
+        banners(&h)
+    );
+    assert!(!out.exists());
 }
