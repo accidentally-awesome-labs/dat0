@@ -91,9 +91,14 @@ pub struct Status {
     pub rows: Option<(u64, u64, u64)>,
     /// Frames per second from the existing frame clock.
     pub fps: u32,
-    /// Bytes sent off-device this session. Zero unless a cloud connection or
-    /// the AI panel is in use, and shown always so that is visible.
+    /// Bytes dat0 has sent off this machine since it started, from any window
+    /// (`telemetry::egress`, kept current by `chrome::use_egress`). Zero
+    /// unless a cloud connection, AI or an update check is used, and shown
+    /// always so that is visible.
     pub egress: u64,
+    /// A channel dat0 cannot meter is open (the MotherDuck extension's own
+    /// connection), so `egress` is a floor. Shown as a `+`.
+    pub egress_floor: bool,
 }
 
 impl Default for Status {
@@ -104,6 +109,7 @@ impl Default for Status {
             rows: None,
             fps: 0,
             egress: 0,
+            egress_floor: false,
         }
     }
 }

@@ -15,6 +15,7 @@
 pub mod a11y;
 pub mod ai_flow;
 pub mod background;
+pub mod chrome;
 pub mod clipboard;
 pub mod components;
 pub mod connections_flow;

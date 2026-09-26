@@ -198,6 +198,35 @@ fn the_chord_opens_the_palette_from_the_shell() {
     });
 }
 
+/// ⌘K is the chord the chrome shows, in the tab strip's launcher and the
+/// status bar, and it was bound to nothing: only ⌘⇧P opened the palette
+/// (PD-023, step 5.8b). The hint is the platform's, `Ctrl+K` off macOS.
+#[test]
+#[serial]
+fn the_chord_the_chrome_shows_opens_the_palette() {
+    with_config_dir(|dir| {
+        let mut h = returning_shell(dir);
+        let shown = dat0_ui::chrome::palette_chord();
+        let key = if cfg!(target_os = "macos") {
+            "cmd-k"
+        } else {
+            "ctrl-k"
+        };
+        assert_eq!(
+            shown,
+            dat0_ui::components::command_palette::pretty_chord(key)
+        );
+        for id in ["command-launcher", "statusbar"] {
+            let text = h.text_of(h.by_a11y_id(id).expect(id));
+            assert!(text.contains(&shown), "{id} shows {shown}: {text:?}");
+        }
+
+        h.key_at("window", Key::Character("k".into()), support::primary());
+
+        assert!(palette_is_open(&h), "{shown} must mount the palette");
+    });
+}
+
 /// ⌘⇧P is a GLOBAL row, so it fires while a dialog owns the screen too.
 /// Mounting the palette on top would make two overlays, the second one
 /// untrapped.

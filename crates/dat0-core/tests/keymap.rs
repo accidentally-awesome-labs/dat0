@@ -203,10 +203,11 @@ fn no_duplicate_chord_within_a_context() {
     }
     assert_eq!(
         DEFAULT_KEYMAP.len(),
-        17,
-        "the SH4 migration moved 16 bindings verbatim and the GPUI→Dioxus \
-         migration added ⌘B for the catalog sidebar (S1), which this shell \
-         does not implement; changing the count is a behaviour change and \
-         wants its own review"
+        18,
+        "the SH4 migration moved 16 bindings verbatim, the GPUI→Dioxus \
+         migration added ⌘B for the catalog sidebar (S1), and PD-023 step \
+         5.8b added ⌘K for the palette, the chord the chrome shows, beside \
+         ⌘⇧P; changing the count is a behaviour change and wants its own \
+         review"
     );
 }

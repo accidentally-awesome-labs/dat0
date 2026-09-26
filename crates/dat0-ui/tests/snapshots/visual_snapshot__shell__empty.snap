@@ -23,7 +23,7 @@ expression: "rendered[0].1"
 <div class="d0-search-slot" data-a11y-id="command-slot">
 <button class="d0-search-gutter" data-a11y-id="command-launcher" role="button" aria-label="Open the command palette" tabindex="0">
 <span>search tables, queries…</span>
-<span class="d0-key">⌘K</span>
+<span class="d0-key" data-chord="palette">CHORD</span>
 </button>
 </div>
 <div class="d0-tab-filler">
@@ -109,7 +109,8 @@ expression: "rendered[0].1"
 <span class="d0-spacer">
 </span>
 <span class="is-ok" style="color: var(--d0-ok)">egress 0 B</span>
-<span class="d0-key">⌘K commands</span>
+<span class="d0-key">
+<span data-chord="palette">CHORD</span> commands</span>
 </div>
 </div>
 </div>

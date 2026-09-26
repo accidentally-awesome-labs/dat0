@@ -341,13 +341,22 @@ pub fn scene(id: &str) -> Option<&'static Scene> {
 /// hint that moves, vanishes or gains a class is still caught. What is no longer
 /// caught is the hint's *text*, and that already has a better home:
 /// `keymap::chord_for` is unit-tested per platform.
+///
+/// The chrome's palette chord, `⌘K` or `Ctrl+K` (PD-023, step 5.8b), is
+/// platform text too, and carries `data-chord="palette"` for the same
+/// treatment.
 pub fn normalise(html: String) -> String {
     let html = html.replace("><", ">\n<");
+    let html = mask_chords(&html, "class=\"d0-hint\" aria-hidden=\"true\">");
+    mask_chords(&html, "data-chord=\"palette\">")
+}
+
+/// Replace the text between each `open` and the next tag with `CHORD`.
+fn mask_chords(html: &str, open: &str) -> String {
     let mut out = String::with_capacity(html.len());
-    let mut rest = html.as_str();
-    const OPEN: &str = "class=\"d0-hint\" aria-hidden=\"true\">";
-    while let Some(i) = rest.find(OPEN) {
-        let (head, tail) = rest.split_at(i + OPEN.len());
+    let mut rest = html;
+    while let Some(i) = rest.find(open) {
+        let (head, tail) = rest.split_at(i + open.len());
         out.push_str(head);
         match tail.find('<') {
             Some(j) => {
@@ -465,6 +474,7 @@ fn seed(
                 rows: Some((1, 12, 12)),
                 fps: 60,
                 egress: 0,
+                egress_floor: false,
             });
         }
         "shell/sidebar-collapsed" => ws.layout.write().sidebar_open = false,

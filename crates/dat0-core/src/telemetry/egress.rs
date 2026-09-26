@@ -36,6 +36,7 @@
 //! bytes of each other for every URL dat0 contacts. The approximation is
 //! deliberate and documented rather than hidden behind a fake precision.
 
+use std::sync::LazyLock;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 
 /// Monotonic total. `Relaxed` throughout: this is a display counter with no
@@ -47,9 +48,28 @@ static SENT: AtomicU64 = AtomicU64::new(0);
 /// already left, and a disconnect does not un-send them.
 static UNMETERED: AtomicBool = AtomicBool::new(false);
 
+/// Bumped whenever [`total_sent`] or [`has_unmetered_channel`] changes, so a
+/// window redraws its figure when bytes leave rather than polling for them.
+/// The Dioxus status bar read a field nothing wrote until it waited on this
+/// (PD-023, step 5.8b).
+static CHANGED: LazyLock<tokio::sync::watch::Sender<u64>> =
+    LazyLock::new(|| tokio::sync::watch::channel(0).0);
+
+fn changed() {
+    CHANGED.send_modify(|g| *g = g.wrapping_add(1));
+}
+
+/// A receiver that changes whenever the total grows or an unmetered channel
+/// opens. Subscribe before the first read: a send between the two then wakes
+/// the reader once more, rather than slipping past both.
+pub fn subscribe() -> tokio::sync::watch::Receiver<u64> {
+    CHANGED.subscribe()
+}
+
 /// Add `bytes` to the process-wide egress total.
 pub fn record_sent(bytes: u64) {
     SENT.fetch_add(bytes, Ordering::Relaxed);
+    changed();
 }
 
 /// Application-layer bytes dat0 has sent since process start.
@@ -64,6 +84,7 @@ pub fn total_sent() -> u64 {
 /// so — see [`has_unmetered_channel`].
 pub fn note_unmetered_channel() {
     UNMETERED.store(true, Ordering::Relaxed);
+    changed();
 }
 
 /// Whether [`total_sent`] is a floor rather than the whole story.
@@ -131,6 +152,19 @@ mod tests {
         let n = record_request("POST", "https://x/y", 40, 200);
         assert_eq!(n, request_bytes("POST", "https://x/y", 40, 200));
         assert_eq!(total_sent(), before + 18 + n);
+    }
+
+    #[test]
+    fn an_unmetered_channel_wakes_a_window_waiting_on_the_figure() {
+        // Not `record_sent`: the counter test above measures deltas of the
+        // process-wide total, and a send from a parallel test would land
+        // inside its window. `tests/chrome.rs` sends, in a process of its own.
+        let rx = subscribe();
+        note_unmetered_channel();
+        assert!(
+            rx.has_changed()
+                .expect("the sender lives as long as the process")
+        );
     }
 
     #[test]

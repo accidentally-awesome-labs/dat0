@@ -26,7 +26,7 @@ use crate::components::pipeline_bar::PipelineBar;
 use crate::components::sidebar::{self, Sidebar};
 use crate::components::sql_console::{ConsoleIntent, SqlConsole};
 use crate::keys::Cascade;
-use crate::state::{Modal, Status, Workspace};
+use crate::state::{Modal, Workspace};
 use crate::theme::Theme;
 
 /// The whole window.
@@ -184,6 +184,10 @@ pub fn Shell() -> Element {
     let connections = crate::connections_flow::ConnectionsHost::use_new(ws);
     // A crashed run's report, offered once, in the first window.
     crate::crash_flow::use_relaunch_offer(ws);
+    // What the chrome states about the process: the bytes sent off this
+    // machine, and how many windows are open.
+    crate::chrome::use_egress(ws);
+    let windows = crate::chrome::use_window_count();
 
     // The AI panel's controller, built once so the modal can be opened from a
     // command without rebuilding the provider draft each time, and the prompt
@@ -339,9 +343,9 @@ pub fn Shell() -> Element {
                         files: rows.files.clone(),
                         connections: rows.connections.clone(),
                         packages: rows.packages.clone(),
-                        session_line: session_line(&ws),
+                        session_line: crate::chrome::session_line(windows(), ws.tabs.read().len()),
                         ai_line: ai_line(&ai),
-                        egress_line: egress_line(&ws.status.read()),
+                        egress_line: crate::chrome::egress_line(&ws.status.read()),
                         on_open: move |(section, i): (&'static str, usize)| {
                             match section {
                                 // A FILES row is one of the open tabs, in the
@@ -847,30 +851,6 @@ fn ai_line(ai: &crate::components::ai::AiController) -> String {
     }
 }
 
-fn session_line(ws: &Workspace) -> String {
-    let tabs = ws.tabs.read().len();
-    format!("session · 1 window · {tabs} tabs")
-}
-
-fn egress_line(status: &Status) -> String {
-    format!("egress {}", human_bytes(status.egress))
-}
-
-/// Bytes at one decimal place, binary units.
-fn human_bytes(n: u64) -> String {
-    const UNITS: [&str; 5] = ["B", "KB", "MB", "GB", "TB"];
-    if n < 1024 {
-        return format!("{n} B");
-    }
-    let mut v = n as f64;
-    let mut u = 0;
-    while v >= 1024.0 && u + 1 < UNITS.len() {
-        v /= 1024.0;
-        u += 1;
-    }
-    format!("{v:.1} {}", UNITS[u])
-}
-
 #[component]
 fn TitleBar() -> Element {
     let ws = Workspace::use_current();
@@ -902,6 +882,7 @@ fn TabStrip() -> Element {
     let mut ws = Workspace::use_current();
     let tabs = ws.tabs.read().clone();
     let active = *ws.active.read();
+    let chord = crate::chrome::palette_chord();
 
     rsx! {
         div { class: "d0-tabstrip", "data-a11y-id": "tabstrip", role: "tablist",
@@ -916,7 +897,7 @@ fn TabStrip() -> Element {
                     tabindex: "0",
                     onclick: move |_| ws.palette.set(true),
                     span { "search tables, queries…" }
-                    span { class: "d0-key", "⌘K" }
+                    span { class: "d0-key", "data-chord": "palette", "{chord}" }
                 }
             }
 
@@ -952,6 +933,8 @@ fn StatusBar(theme_id: String) -> Element {
     let ws = Workspace::use_current();
     let s = ws.status.read().clone();
     let _ = theme_id;
+    let chord = crate::chrome::palette_chord();
+    let commands = dat0_i18n::t("status.commands");
     rsx! {
         div { class: "d0-statusbar", "data-a11y-id": "statusbar", role: "status",
             span { class: if s.engine_ok { "d0-dot is-live" } else { "d0-dot is-error" } }
@@ -971,8 +954,11 @@ fn StatusBar(theme_id: String) -> Element {
                 span { class: "d0-num", "{s.fps} fps" }
             }
             span { class: "d0-spacer" }
-            span { class: "is-ok", style: "color: var(--d0-ok)", "{egress_line(&s)}" }
-            span { class: "d0-key", "⌘K commands" }
+            span { class: "is-ok", style: "color: var(--d0-ok)", "{crate::chrome::egress_line(&s)}" }
+            span { class: "d0-key",
+                span { "data-chord": "palette", "{chord}" }
+                " {commands}"
+            }
         }
     }
 }
@@ -1098,12 +1084,5 @@ mod tests {
         assert_eq!(thousands(999), "999");
         assert_eq!(thousands(1_048_576), "1,048,576");
         assert_eq!(thousands(1_200_000_000), "1,200,000,000");
-    }
-
-    #[test]
-    fn egress_reads_zero_rather_than_disappearing() {
-        // Always shown: "no bytes left this machine" is the claim dat0 makes,
-        // and a hidden counter cannot make it.
-        assert_eq!(egress_line(&Status::default()), "egress 0 B");
     }
 }

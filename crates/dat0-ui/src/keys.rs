@@ -105,7 +105,8 @@ pub struct Cascade {
     pub sql_console_focused: bool,
 }
 
-/// The gpui action name the ⌘⇧P keymap row carries.
+/// The gpui action name the palette's keymap rows carry: ⌘K, the chord the
+/// chrome shows, and ⌘⇧P.
 ///
 /// Named here rather than spelled at the match site for the same reason the
 /// chord is not: `dat0_core::keymap` is the one table, and a second literal is
@@ -149,11 +150,11 @@ impl Cascade {
 
     /// Does this row open the command palette?
     ///
-    /// The ⌘⇧P row carries no `action_id` — the palette cannot list "open the
-    /// palette" among its own commands — so the shell cannot reach it through
-    /// [`resolve`] and matches on the gpui action name instead.
+    /// The palette's rows carry no `action_id` — the palette cannot list "open
+    /// the palette" among its own commands — so the shell cannot reach them
+    /// through [`resolve`] and matches on the gpui action name instead.
     ///
-    /// The chord is GLOBAL, so it fires while a dialog owns the screen too.
+    /// The chords are GLOBAL, so they fire while a dialog owns the screen too.
     /// Answering that here rather than at the call site keeps the rule beside
     /// the state it is about: [`Cascade`] is what knows a modal is up, and a
     /// palette mounted on top of a dialog is a second overlay nobody trapped.

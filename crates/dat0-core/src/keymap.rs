@@ -182,6 +182,19 @@ pub const DEFAULT_KEYMAP: &[Binding] = &[
     // `OpenCommandPalette` is declared unconditionally in `menu_macos.rs`, so
     // this binds on Linux too even though the Linux menu module does not exist:
     // the handler resolves and the keystroke fires without a visible menu item.
+    //
+    // ⌘K is the chord the chrome shows, in the tab strip's launcher and the
+    // status bar, and the design's (PD-023, step 5.8b); it was bound to
+    // nothing. ⌘⇧P, the GPUI build's, still opens the palette. This row comes
+    // first because `chord_for_gpui_action` gives the chrome its hint.
+    Binding {
+        scope: Scope::Palette,
+        context: None,
+        macos: "cmd-k",
+        other: Some("ctrl-k"),
+        action: Some("dat0_menu::OpenCommandPalette"),
+        action_id: None,
+    },
     Binding {
         scope: Scope::Palette,
         context: None,

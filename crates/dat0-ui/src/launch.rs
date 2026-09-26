@@ -229,6 +229,8 @@ struct Windows {
     focused: Option<uuid::Uuid>,
     /// The workspace folder each workspace window holds.
     roots: Vec<(uuid::Uuid, PathBuf)>,
+    /// How many are open, for the footers that say so.
+    count: tokio::sync::watch::Sender<usize>,
 }
 
 impl Windows {
@@ -252,6 +254,7 @@ impl WindowRegistry {
         let mut w = self.0.lock();
         w.open.retain(|(id, _)| *id != window);
         w.open.push((window, bus));
+        w.count.send_replace(w.open.len());
     }
 
     /// `window` closed.
@@ -262,6 +265,12 @@ impl WindowRegistry {
         if w.focused == Some(window) {
             w.focused = None;
         }
+        w.count.send_replace(w.open.len());
+    }
+
+    /// How many windows are open, changing as they open and close.
+    pub fn count(&self) -> tokio::sync::watch::Receiver<usize> {
+        self.0.lock().count.subscribe()
     }
 
     /// `window` holds the workspace in `root`.

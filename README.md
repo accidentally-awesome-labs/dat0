@@ -22,7 +22,7 @@ PD-023 in [`docs/deferrals.md`](docs/deferrals.md)).
 
 | Works in the current build | Being reconnected |
 |---|---|
-| Opening CSV, TSV, JSON, Parquet and SQLite — file picker, drag-and-drop, command line — into a virtualized grid | ⌘K, the status bar's egress and window count, and a theme kept across launches |
+| Opening CSV, TSV, JSON, Parquet and SQLite — file picker, drag-and-drop, command line — into a virtualized grid | A theme kept across launches, and the status bar's table size, selection, last run and connection |
 | MotherDuck, with your token: the account's databases listed and their tables opened | |
 | The SQL console: running a query into the grid, history, saved queries, completion | |
 | AI assist, with your own key: SQL written from a question, and a statement explained, from the schema alone | |
