@@ -141,7 +141,11 @@ try {
   clearTimeout(guard);
   dioxus.send({ error: String(e) });
 }
-await new Promise((r) => setTimeout(r, 0));
+// Held open until Rust has read the result. A query's slot, and anything
+// still unread in it, is dropped the moment its script finishes, so a script
+// that sends and returns races its reader and can lose (`EvalError::Finished`).
+// A zero-delay timer only narrowed the window; a slow CI runner still lost.
+await dioxus.recv();
 "#;
 
 fn script() -> String {
@@ -180,7 +184,10 @@ fn Probe() -> Element {
     use_effect(move || {
         spawn(async move {
             let mut ev = document::eval(&script());
-            match ev.recv::<serde_json::Value>().await {
+            let got = ev.recv::<serde_json::Value>().await;
+            // Let the script finish, now that its report is read.
+            let _ = ev.send(true);
+            match got {
                 Ok(v) => check(v),
                 Err(e) => fail(&format!("the probe script never reported: {e}")),
             }

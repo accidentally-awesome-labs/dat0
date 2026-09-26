@@ -135,14 +135,11 @@ function run() {
 }
 
 dioxus.send(run());
-// Hold the script open for a tick after the send.
-//
-// `DesktopEvaluator` is owned by its query slot, and the slot is dropped the
-// moment the script finishes — so a script that sends and immediately returns
-// races the reader and usually loses, surfacing as
-// `EvalError::Finished: eval has already ran`. A zero-delay timer defers
-// completion past the send without holding the queue meaningfully.
-await new Promise((r) => setTimeout(r, 0));
+// Held open until Rust has read the result. A query's slot, and anything
+// still unread in it, is dropped the moment its script finishes, so a script
+// that sends and returns races its reader and can lose (`EvalError::Finished`).
+// A zero-delay timer only narrowed the window; a slow CI runner still lost.
+await dioxus.recv();
 "#;
 
 #[derive(serde::Deserialize, Debug, Default)]
@@ -183,7 +180,10 @@ async fn step(name: &str) -> Step {
         .replace("STEP_NAME", &format!("{name:?}"))
         .replace("MOD_KEY", modifier);
     let mut eval = document::eval(&script);
-    match eval.recv::<Step>().await {
+    let got = eval.recv::<Step>().await;
+    // Let the script finish, now that its result is read (see `STEP`).
+    let _ = eval.send(true);
+    match got {
         Ok(s) => s,
         Err(e) => {
             eprintln!("probe step {name} failed: {e}");

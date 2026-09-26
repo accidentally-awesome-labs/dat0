@@ -37,6 +37,9 @@ const settle = () => new Promise((r) => setTimeout(r, 4));
 for (let i = 0; i < 500; i++) {
   if (document.querySelector('[data-a11y-id="statusbar"]')) {
     dioxus.send(true);
+    // Held open until Rust has read it: a finished script's unread messages
+    // are dropped with its query slot (`EvalError::Finished`).
+    await dioxus.recv();
     break;
   }
   await settle();
@@ -51,7 +54,9 @@ fn Probe() -> Element {
         let boot = boot.clone();
         spawn(async move {
             let mut first = document::eval(WAIT_FOR_SHELL);
-            if first.recv::<bool>().await.is_err() {
+            let mounted = first.recv::<bool>().await;
+            let _ = first.send(true);
+            if mounted.is_err() {
                 fail("the workbench window never mounted a shell");
             }
 
