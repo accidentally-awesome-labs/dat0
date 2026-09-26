@@ -128,3 +128,40 @@ fn the_manifest_is_signed_without_a_terminal_and_checked_before_publishing() {
         "the step holding the manifest key runs cargo, whose build scripts would see it"
     );
 }
+
+/// Clients fetch `releases/latest/download/latest.json` and its signature
+/// (`dat0_core::update::MANIFEST_URL`). The publish job attaches them in its
+/// one `gh release create`, which keeps the release a draft until every asset
+/// is up. Attached by a second call, they were missing from a release already
+/// published, and every update check found nothing until that call ran.
+#[test]
+fn the_release_goes_public_with_its_update_manifest() {
+    let workflow = workflow();
+    assert!(
+        !workflow.contains("gh release upload"),
+        "an asset attached after `gh release create` is missing from a published release"
+    );
+    let steps = publish_steps(&workflow);
+    let step = steps
+        .iter()
+        .find(|step| step.contains("gh release create"))
+        .expect("the publish job creates no release");
+    let assets: Vec<&str> = step
+        .split("gh release create")
+        .nth(1)
+        .unwrap()
+        .split_whitespace()
+        .map(|word| word.trim_matches(['"', '\\']))
+        .filter(|word| !word.is_empty())
+        .collect();
+    for asset in [
+        "target/latest.json",
+        "target/latest.json.minisig",
+        "upload/dat0.app.tar.gz",
+    ] {
+        assert!(
+            assets.contains(&asset),
+            "the release is created without {asset}: {assets:?}"
+        );
+    }
+}

@@ -22,8 +22,8 @@ pub fn build_manifest(
 ) -> String {
     // The macOS updater artifact is the `.app` TARBALL, not the DMG, and it is
     // uploaded to the release under its plain name by `release.yml`'s publish
-    // job (`gh release upload … dist/dat0-app-tarball/dat0.app.tar.gz`) — the
-    // asset name is the basename, so this URL must stay unversioned. Only the
+    // job (`gh release create … upload/dat0.app.tar.gz`) — the asset name is
+    // the basename, so this URL must stay unversioned. Only the
     // DMG and the AppImage are re-staged under versioned names before upload.
     let macos_url = format!(
         "https://github.com/accidentally-awesome-labs/dat0/releases/download/v{}/dat0.app.tar.gz",

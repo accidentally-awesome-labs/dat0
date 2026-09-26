@@ -3186,6 +3186,9 @@ that's modifying it; merge conflicts are signals worth investigating.
     signature. Nothing checked that the secret key is the pair of the key
     the app trusts, and `rsign2` was installed unpinned in the step that
     holds the key.
+  - The release was published before the update manifest was attached, by
+    a second call: until it ran, and for good if it failed, every client's
+    update check found no `latest.json` on the latest release.
 - **Fix:**
   - The AppImage carries the binary, libxdo and libxdo's two X extensions,
     and takes WebKitGTK, GTK and GLib from the host; a library the binary
@@ -3223,6 +3226,9 @@ that's modifying it; merge conflicts are signals worth investigating.
     failed with "No such device or address"; the new one signs, dat0-core's
     `verify_manifest` accepts the result, and a secret that is not the
     committed key's pair stops at the check.
+  - Every asset, the manifest and its signature among them, goes up in the
+    one `gh release create`, which keeps the release a draft until all are
+    attached and deletes it if one fails.
 - **Discovered:** 2026-09-26, step 7 of the 2026-09-25 review.
 - **Last touched:** 2026-09-26
 

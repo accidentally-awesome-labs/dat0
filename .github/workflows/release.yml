@@ -301,15 +301,19 @@ jobs:
         # the update; nothing is published yet.
         run: cargo xtask verify-manifest
       - name: Publish to GitHub Release
+        # One call: gh keeps the release a draft until every asset is up, and
+        # deletes it if one fails, so a re-run starts clean. Clients fetch
+        # releases/latest/download/latest.json and its signature; attached by
+        # a second call, they were missing from a release already published,
+        # and every update check found nothing.
         env: { GH_TOKEN: "${{ github.token }}" }
         run: |
           V="${GITHUB_REF_NAME#v}"
-          gh release create "${{ github.ref_name }}" --generate-notes \
+          gh release create "$GITHUB_REF_NAME" --generate-notes \
             "upload/dat0-${V}-universal.dmg" \
             "upload/dat0-${V}-x86_64.AppImage" \
             "upload/dat0-${V}-x86_64.AppImage.sig" \
-            upload/SHA256SUMS
-          gh release upload "${{ github.ref_name }}" \
+            upload/SHA256SUMS \
+            upload/dat0.app.tar.gz \
             target/latest.json \
-            target/latest.json.minisig \
-            upload/dat0.app.tar.gz
+            target/latest.json.minisig
