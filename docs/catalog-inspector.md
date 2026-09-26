@@ -1,8 +1,8 @@
 # Catalog & Inspector
 
 dat0's left **Catalog** dock and right **Inspector** dock give you a structural
-view of every table in the workspace and a one-scan statistical profile of any
-table you select. Both are introduced in P6a.
+view of the window's tables and a one-scan statistical profile of the table in
+the active tab.
 
 ## Toggling the docks
 
@@ -16,17 +16,14 @@ v8).
 
 ## Catalog tree
 
-The Catalog groups every table in the current workspace by where it came from:
+The Catalog lists what the window has open, in three sections:
 
-- **Sources** — tables backed by an imported file (`TableOrigin::File`) or by an
-  attached database (`TableOrigin::Attached`, e.g. a MotherDuck workspace database
-  or an attached SQLite file).
-- **Tables** — local base tables (created in-session, no transform lineage).
-- **Derived** — tables produced by a transform pipeline or by a non-trivial
-  `CREATE TABLE AS` (SQL-derived).
-
-Each section header shows a live count, e.g. `Tables (4)`. **Click a node** to
-open that table in the main grid; selecting it also drives the Inspector.
+- **FILES** — the window's tabs: the files it opened, the tables saved from a
+  view or a query, and a query's rows. Click a row to bring its tab up; the
+  Inspector follows the active tab.
+- **CONNECTIONS** — attached databases and their tables (below).
+- **PACKAGES** — recently opened `.dat0` packages. Click one to open it
+  read-only in a window of its own.
 
 Attached databases are listed under **CONNECTIONS**, one row per database with
 its tables below it: open or drop a SQLite file and it is attached, read-only,
@@ -37,12 +34,15 @@ MotherDuck is not connected in this build (PD-023).
 
 ## Inspector
 
-The Inspector profiles the **selected table** in a single pass and shows:
+The Inspector profiles the **active tab's table** in a single pass, off the
+window's thread, whenever its pane is open, and shows:
 
 - **Overview** — table name, row count, and column count.
-- **Whole table ⇄ Current view toggle** — profile either the full base table or
-  the current grid view (the active filter/sort/projection pipeline). The button
-  label reflects the active mode; toggling re-profiles.
+- **Whole table ⇄ Current view toggle** — profile either the stored table or
+  what the grid shows: the table with the tab's sorts, filters, edits and
+  deleted rows laid over it. dat0 never writes those into the table, so an
+  edited value shows in Current view and not in Whole table. The button label
+  reflects the active mode; toggling re-profiles.
 - **Per-column cards** — for every column: name and type, plus
   - numeric columns: `min · max · μ (mean) · med (median) · σ (std)`,
   - text columns: length stats (`len min–max`),
@@ -56,27 +56,31 @@ The Inspector profiles the **selected table** in a single pass and shows:
   surrogate is never shown. This holds in both Whole-table and Current-view modes
   — the toggle changes only which rows are profiled, not which cards appear or
   their order.
-- **Inline charts** (drawn as lightweight GPUI quads, no chart library):
+- **Inline charts** (inline SVG, Whole table mode):
   - **top-N bars** for low-cardinality columns (the most frequent values), and
   - a **histogram** for numeric high-cardinality columns (16 even-width bins over
     the column's true min/max, counts sampled from the data).
-- **Lineage chain (live)** — the selected table's full ancestry and descendants
-  as a clickable chain (see [Lineage](#lineage) below). Updates whenever the
-  catalog changes (create/drop/transform).
+- **Lineage chain (live)** — the table's full ancestry and descendants as a
+  clickable chain (see [Lineage](#lineage) below). Built again when the tab
+  changes, a table is saved, a chart is saved, or the rows are read again.
 
 ### How profiling works
 
 Profiling is built on DuckDB's `SUMMARIZE`, which computes all column statistics
 in a single table scan. Whole-table mode runs `SUMMARIZE <table>`; current-view
-mode runs `SUMMARIZE (<the compiled view SQL>)`. Profiling a 1M-row table
-completes well under the 2-second target (≈85 ms measured on a typical machine).
+mode runs `SUMMARIZE (SELECT * FROM <the view the grid reads>)`. Profiling a
+1M-row table completes well under the 2-second target (≈85 ms measured on a
+typical machine).
 
-### Live refresh on edits
+### When it profiles again
 
-When you edit the inspected table (cell edits, paste, cut, delete, fill, or
-applying a transform), the Inspector re-profiles so the stats, charts, and
-lineage stay current. Refresh now also fires on **undo/redo** and on SQL-console
-grid-binds (this closed the PD-022 follow-up).
+A Whole table profile is kept until the table's rows are read again: a Live
+Refresh of its file, or a console run replacing a query's rows. A sort, a
+filter or an edit is laid over the table, not written into it, so it leaves the
+stored table, and its profile, as they were.
+
+In Current view mode, every change to what the grid reads profiles again: a
+sort, a filter, an edit, a deleted row, **undo/redo**, a Live Refresh.
 
 A display-only column edit — rename, reorder, or hide a column — only re-arranges
 the per-column cards to match the new projection; it does not re-profile, since
@@ -99,9 +103,19 @@ everything that ultimately depends on it.
   `json_serialize_sql` — and charts (a saved chart built from the table).
 - **Node glyphs** distinguish the kinds: files (📄), external/attached database
   tables (☁), regular tables (▦), and saved charts (📊).
-- **Click any table node** to open it in a grid tab and re-root the Inspector on
-  it — this lets you walk the lineage hop by hop. File leaves are not clickable.
-  Clicking a saved-chart node (📊) reopens that chart in the panel.
+- **Click any table node** to bring up its tab, opening one if it has none, and
+  re-root the Inspector on it — this lets you walk the lineage hop by hop. File
+  leaves are not clickable.
+- **Click a saved-chart node** (📊) to show that chart as it was saved, over its
+  table's tab, in the Charts pane.
+
+### Saved charts
+
+**Save** on the Charts pane's toolbar asks for a name, suggesting one from the
+chart's type and axes, and keeps the chart in the session beside the saved
+queries; a name already used is replaced. A saved chart joins its table's
+lineage. A chart of a query's rows cannot be saved: the rows are a view that
+goes with the window, so save them as a table first.
 
 This chain replaces the P6a flat **Dependents** list, which only surfaced
 transform children; descendants now include SQL references as well.

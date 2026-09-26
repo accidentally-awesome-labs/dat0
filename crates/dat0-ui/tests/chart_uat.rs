@@ -18,18 +18,16 @@
 //! error state, supersede, axis cycling, save gating on an unbound source, pane
 //! header. Nothing here repeats it.
 //!
-//! ## Two guarantees from the original that have no home yet
+//! ## Two guarantees from the original that live elsewhere
 //!
 //! `save_chart_shows_toast_and_persists` and `saved_chart_appears_as_lineage_node`
-//! are **not** ported, because the code they would test does not exist in the
-//! Dioxus build — the shell's `on_save` is `move |_| {}` and nothing maps a
-//! `SavedChart` onto a `lineage::ChartNode` (GPUI did it in
-//! `window/catalog_inspector.rs`). Writing them against `dat0-core`'s
-//! `upsert_chart` would be a green test for a feature the user cannot reach.
-//! Both halves of each are covered where they *are* real: persistence by
-//! `dat0-core/tests/package_roundtrip.rs`, attachment by
-//! `inspector::lineage`'s own tests, and the click routing by
-//! `dat0-ui/tests/inspector.rs`. What is missing is the wiring between them.
+//! were not ported here while the code they test did not exist in the Dioxus
+//! build: the shell's `on_save` was `move |_| {}`, and nothing mapped a
+//! `SavedChart` onto a `lineage::ChartNode`. Both are wired since steps 5.5c
+//! and 5.5d, and tested against the real shell over a real session:
+//! `tests/chart_binding.rs` saves a chart under a name and reads it back from
+//! the session, and `tests/inspector_binding.rs` finds it in its table's
+//! lineage and shows it again from there.
 
 mod support;
 
@@ -360,12 +358,11 @@ fn a_chart_with_nothing_to_save_cannot_be_saved() {
 
 /// A persisted chart reopens with its spec intact, not blanked.
 ///
-/// The half of `click_lineage_chart_reopens_panel_with_restored_spec` that
-/// still has an implementation: given a `SavedChart`'s spec, the pane must show
-/// every field of it — the type, both axes and the title. The other half (the
-/// lineage click that produces this spec) is asserted in `tests/inspector.rs`,
-/// which drives a `NodeKind::Chart` row and checks the shell is asked to reopen
-/// it by name. What joins them is the wiring noted in this file's header.
+/// The pane's half of `click_lineage_chart_reopens_panel_with_restored_spec`:
+/// given a `SavedChart`'s spec, the pane must show every field of it — the
+/// type, both axes and the title. The lineage click that produces this spec is
+/// asserted in `tests/inspector.rs`, which drives a `NodeKind::Chart` row, and
+/// the two are joined in `tests/inspector_binding.rs`.
 #[test]
 fn a_saved_chart_reopens_with_its_spec_intact() {
     let saved = SavedChart {

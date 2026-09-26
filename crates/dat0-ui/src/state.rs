@@ -416,6 +416,22 @@ impl Workspace {
         let i = (*self.active.read())?;
         self.tabs.read().get(i).cloned()
     }
+
+    /// Bring up `table`'s tab, opening one for it when it has none. `path`
+    /// is the file a new tab reads again on a Live Refresh.
+    pub fn show_tab(&self, table: String, path: Option<PathBuf>) {
+        let (mut tabs, mut active) = (self.tabs, self.active);
+        let open = tabs.peek().iter().position(|t| t.table == table);
+        let at = open.unwrap_or_else(|| {
+            tabs.write().push(TabView {
+                table,
+                path,
+                label: None,
+            });
+            tabs.peek().len() - 1
+        });
+        active.set(Some(at));
+    }
 }
 
 /// A persisted dock size resolved into the pixels to mount with.

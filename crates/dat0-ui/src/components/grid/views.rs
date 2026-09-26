@@ -68,6 +68,9 @@ pub struct Views {
     models: Signal<HashMap<String, ViewModel>>,
     pub bound: Bound,
     pub funnel: Signal<Option<Funnel>>,
+    /// How many times each tab's rows were read again, for what keeps a
+    /// profile of them.
+    pub reread: Signal<HashMap<String, u64>>,
 }
 
 impl Views {
@@ -78,6 +81,7 @@ impl Views {
             models: use_signal(HashMap::new),
             bound: use_signal(HashMap::new),
             funnel: use_signal(|| None),
+            reread: use_signal(HashMap::new),
         };
         use_follow_session(views);
         views
@@ -217,6 +221,7 @@ impl Views {
     /// steps that survive a re-import, and bind it anew even when its SQL is
     /// unchanged, since the rows under it are not.
     pub fn replay(&self, table: String, ops: Vec<Transformation>) {
+        self.reread(&table);
         self.change_on(table, |vm| Some(vm.reset_to_replayed(ops)));
     }
 
@@ -225,7 +230,13 @@ impl Views {
     pub fn replaced(&self, table: String, source: Arc<GridDataSource>) {
         let (mut models, mut bound) = (self.models, self.bound);
         models.write().remove(&table);
+        self.reread(&table);
         bound.write().insert(table.clone(), (table, source));
+    }
+
+    fn reread(&self, table: &str) {
+        let mut reread = self.reread;
+        *reread.write().entry(table.to_string()).or_default() += 1;
     }
 
     /// Build every tab's view again, in the engine the window has now. A

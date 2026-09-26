@@ -41,13 +41,16 @@ use crate::state::Workspace;
 pub struct Suggested(Rc<Cell<bool>>);
 
 /// Suggest saving the window as a workspace, once, when its scratch session
-/// holds work worth keeping: three steps in its views, or a saved query. A
-/// read-only window has nothing of its own to keep. The GPUI build's nudge.
+/// holds work worth keeping: three steps in its views, a saved query or a
+/// saved chart. A read-only window has nothing of its own to keep. The GPUI
+/// build's nudge.
 pub fn suggest(ws: Workspace, session: &Session) {
     let Some(Suggested(done)) = try_consume_context::<Suggested>() else {
         return;
     };
-    let worth = session.transform_count() >= 3 || !session.saved_queries().is_empty();
+    let worth = session.transform_count() >= 3
+        || !session.saved_queries().is_empty()
+        || !session.charts().is_empty();
     if done.get() || *ws.read_only.peek() || session.is_workspace() || !worth {
         return;
     }

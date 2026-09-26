@@ -64,6 +64,13 @@ pub struct ChartHost {
     pub state: Signal<ChartLoad>,
     /// The chart as last plotted, which is what an export writes.
     pub plotted: Resource<Plotted>,
+    /// Bumped each time a chart is saved: what lists the saved charts reads
+    /// it, since the session holding them is not a signal.
+    pub saved: Signal<u64>,
+    /// The table the chart is bound to.
+    pub(super) bound_to: Signal<Option<String>>,
+    /// Each table's chart, kept for when its tab comes back.
+    kept: Signal<HashMap<String, ChartSpec>>,
     theme: Theme,
 }
 
@@ -73,8 +80,7 @@ impl ChartHost {
         let mut spec = use_signal(unbound);
         let mut columns = use_signal(Vec::<(String, String)>::new);
         let mut state = use_signal(ChartLoad::default);
-        // The table the chart is bound to, and each table's chart, kept for
-        // when its tab comes back.
+        let saved = use_signal(|| 0u64);
         let mut bound_to = use_signal(|| Option::<String>::None);
         let mut kept = use_signal(HashMap::<String, ChartSpec>::new);
         let open = use_memo(move || ws.layout.read().charts_visible);
@@ -166,6 +172,9 @@ impl ChartHost {
             columns,
             state,
             plotted,
+            saved,
+            bound_to,
+            kept,
             theme,
         }
     }
@@ -176,16 +185,44 @@ impl ChartHost {
         (!spec.source.is_empty()).then(|| spec.source.clone())
     }
 
+    /// What the pane's header calls the bound table: the title of its tab.
+    pub fn label(&self, ws: &Workspace) -> Option<String> {
+        let bound = self.bound_to.read().clone()?;
+        let tabs = ws.tabs.read();
+        let tab = tabs.iter().find(|t| t.table == bound)?;
+        Some(tab.title().to_string())
+    }
+
     /// The user changed the chart's type or an axis.
     pub fn configure(&self, request: ChartRequest) {
         let mut spec = self.spec;
         spec.set(request.spec);
     }
+
+    /// Show `spec` as `table`'s chart, over the table's tab.
+    pub(super) fn show(
+        &self,
+        ws: Workspace,
+        table: String,
+        path: Option<PathBuf>,
+        spec: ChartSpec,
+    ) {
+        let (mut current, mut kept) = (self.spec, self.kept);
+        if self.bound_to.peek().as_deref() == Some(table.as_str()) {
+            // Bound already, so the binding will not run again: show it now.
+            current.set(chart_for(&table, &self.columns.peek(), Some(&spec)));
+        } else {
+            kept.write().insert(table.clone(), spec);
+        }
+        ws.show_tab(table, path);
+        let mut layout = ws.layout;
+        layout.write().charts_visible = true;
+    }
 }
 
 /// What `table`'s tab reads: the view its filters and edits are laid over it
 /// as, or the table itself.
-fn reads(views: Views, table: &str) -> String {
+pub(crate) fn reads(views: Views, table: &str) -> String {
     views
         .bound
         .read()

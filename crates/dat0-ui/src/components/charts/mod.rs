@@ -42,6 +42,7 @@ use crate::components::pane::Pane;
 use crate::state::Workspace;
 
 pub mod host;
+pub mod saved;
 
 /// The chart's logical size, in CSS pixels.
 ///
@@ -265,6 +266,11 @@ pub struct ChartsProps {
     /// The bound source (a quoted identifier), or `None` when nothing is bound.
     #[props(default)]
     pub source: Option<String>,
+    /// What the header calls the source: its tab's title, when it has one. A
+    /// query's rows are a view named `__dat0_qr_…`, and its tab is named for
+    /// its query tab.
+    #[props(default)]
+    pub label: Option<String>,
     /// Render state and supersede counter. A `Signal` because the async loader
     /// writes into it from outside this component's render.
     pub state: Signal<ChartLoad>,
@@ -291,9 +297,10 @@ pub fn Charts(props: ChartsProps) -> Element {
 
     let spec = props.spec.clone();
     let kind = dat0_i18n::t(spec.chart_type.label_key());
-    let title = match props.source.as_deref() {
-        Some(s) => source_label(s),
-        None => dat0_i18n::t("chart.panel.title"),
+    let title = match (&props.label, props.source.as_deref()) {
+        (Some(label), Some(_)) => label.clone(),
+        (None, Some(s)) => source_label(s),
+        (_, None) => dat0_i18n::t("chart.panel.title"),
     };
 
     // Save is gated exactly as the GPUI toolbar gated it: a source must be

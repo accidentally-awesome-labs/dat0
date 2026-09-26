@@ -35,6 +35,9 @@ const MAX_LINES: &[(&str, usize)] = &[
     // console's host is.
     ("charts/host.rs", 500),
     ("charts/mod.rs", 700),
+    // Saving a chart and showing a saved one (step 5.5c), kept out of the
+    // feed, which binds and draws.
+    ("charts/saved.rs", 200),
     ("command_palette.rs", 600),
     ("connections.rs", 600),
     ("crash_report.rs", 300),
@@ -50,10 +53,15 @@ const MAX_LINES: &[(&str, usize)] = &[
     ("grid/mod.rs", 700),
     ("grid/refresh.rs", 300),
     ("grid/scroll.rs", 500),
-    ("grid/views.rs", 400),
+    // 400 -> 500: each tab's re-read count (step 5.5d), which the
+    // inspector's profile is kept by and which belongs beside the rebinds
+    // that bump it.
+    ("grid/views.rs", 500),
     ("import_progress.rs", 400),
     ("import_wizard.rs", 900),
-    ("inspector.rs", 900),
+    // New with the inspector's feed (step 5.5d), as the charts' is.
+    ("inspector/host.rs", 400),
+    ("inspector/mod.rs", 900),
     ("live_refresh.rs", 200),
     ("mod.rs", 300),
     ("modals.rs", 900),

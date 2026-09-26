@@ -53,7 +53,13 @@ static STATE_ROOT: LazyLock<PathBuf> = LazyLock::new(|| {
     root
 });
 
-const COMMANDS: &[&str] = &[ids::CHART_VISUALIZE, ids::CHART_EXPORT_PNG, ids::VIEW_UNDO];
+const COMMANDS: &[&str] = &[
+    ids::CHART_VISUALIZE,
+    ids::CHART_EXPORT_PNG,
+    ids::VIEW_UNDO,
+    ids::SQL_HISTORY,
+    ids::SQL_RUN,
+];
 
 const SALES: &str = "region,amt\nEU,3\nUS,5\nEU,4\n";
 const STOCK: &str = "name,qty\nb,2\na,3\nc,1\n";
@@ -77,7 +83,37 @@ fn Host(props: HostProps) -> Element {
     use_context_provider(|| boot.registry.clone());
     session_boot::use_session(ws, props.cli_paths.clone());
     let events = use_window_bus(boot, ws, surface);
+    // The session's saved charts, read on demand: the session is not a signal.
+    let mut saved = use_signal(String::new);
     rsx! {
+        button {
+            "data-a11y-id": "read-charts",
+            onclick: move |_| {
+                let charts = ws.session.peek().ready().map(|s| {
+                    s.lock()
+                        .charts()
+                        .iter()
+                        .map(|c| format!("{} = {:?} of {} by {:?}, {:?}", c.name, c.spec.chart_type, c.spec.source, c.spec.x, c.spec.y))
+                        .collect::<Vec<_>>()
+                        .join("; ")
+                });
+                saved.set(charts.unwrap_or_default());
+            },
+        }
+        div { "data-a11y-id": "saved-charts", "{saved}" }
+        button {
+            "data-a11y-id": "seed-query",
+            onclick: move |_| {
+                let slot = ws.session.peek().ready().cloned().expect("session ready");
+                let entry = dat0_core::session::queries::HistoryEntry {
+                    sql: "SELECT 'EU' AS region, 3 AS amt".into(),
+                    ran_at: 0,
+                    ok: true,
+                    elapsed_ms: 0,
+                };
+                slot.lock().set_query_history(vec![entry]).expect("seed history");
+            },
+        }
         for id in COMMANDS.iter().copied() {
             button {
                 key: "{id}",
@@ -193,6 +229,24 @@ fn edit(h: &mut Harness, (row, col): (usize, usize), value: &str) {
     let typed = dioxus::html::SerializedFormData::new(value.to_string(), Vec::new());
     h.dispatch(editor, "input", typed);
     h.key(editor, Key::Enter, Modifiers::empty());
+}
+
+fn banners(h: &Harness) -> String {
+    text(h, "banner-host")
+}
+
+fn type_into(h: &mut Harness, id: &str, value: &str) {
+    let field = h.by_a11y_id(id).expect("the field");
+    let typed = dioxus::html::SerializedFormData::new(value.to_string(), Vec::new());
+    h.dispatch(field, "input", typed);
+    h.settle();
+}
+
+/// The session's saved charts, as the `read-charts` button reads them.
+fn saved_charts(h: &mut Harness) -> String {
+    h.click("read-charts");
+    h.settle();
+    text(h, "saved-charts")
 }
 
 /// The tab strip's tab for `table`.
@@ -333,6 +387,102 @@ fn an_edited_value_is_drawn_and_undoing_it_draws_the_chart_again() {
     assert!(
         pump(&mut h, |h| svg(h) == summed),
         "Undo draws the chart it took the edit from"
+    );
+}
+
+#[test]
+#[serial]
+fn a_chart_saved_under_a_name_is_kept_in_the_session() {
+    let rt = runtime();
+    let _guard = rt.enter();
+    let mut h = window("saved", &[("sales.csv", SALES)]);
+    perform(&mut h, ids::CHART_VISUALIZE);
+    assert!(pump(&mut h, |h| head(h).contains("sales")));
+    h.click("chart-axis-x");
+    h.click("chart-axis-y");
+    assert!(pump(&mut h, |h| text(h, "chart-axis-y").contains("amt")));
+
+    h.click("chart-save");
+    let field = h
+        .by_a11y_id("name-prompt-field")
+        .expect("Save asks for a name");
+    assert_eq!(
+        h.attr(field, "value").as_deref(),
+        Some("Bar: amt by region"),
+        "the prompt opens on the name the chart suggests"
+    );
+    type_into(&mut h, "name-prompt-field", "Sales by region");
+    h.click("name-prompt-ok");
+    let done = t("chart.save.done.title");
+    assert!(
+        pump(&mut h, |h| banners(h).contains(&done)),
+        "{:?}",
+        banners(&h)
+    );
+    assert!(
+        banners(&h).contains(&t("workspace.prompt.title")),
+        "a saved chart is work worth keeping, so the window suggests saving it"
+    );
+    assert_eq!(
+        saved_charts(&mut h),
+        r#"Sales by region = Bar of "sales" by Some("region"), Some("amt")"#
+    );
+
+    // The same name again replaces it.
+    h.click("chart-type");
+    assert!(pump(&mut h, |h| head(h).contains(&t("chart.type.line"))));
+    h.click("chart-save");
+    type_into(&mut h, "name-prompt-field", "sales BY region");
+    h.click("name-prompt-ok");
+    h.settle();
+    assert_eq!(
+        saved_charts(&mut h),
+        r#"sales BY region = Line of "sales" by Some("region"), Some("amt")"#
+    );
+}
+
+#[test]
+#[serial]
+fn a_querys_rows_chart_and_saving_that_chart_asks_for_a_table_first() {
+    let rt = runtime();
+    let _guard = rt.enter();
+    let mut h = window("query", &[("sales.csv", SALES)]);
+    h.click("seed-query");
+    perform(&mut h, ids::SQL_HISTORY);
+    h.click("hist-row-0");
+    perform(&mut h, ids::SQL_RUN);
+    perform(&mut h, ids::CHART_VISUALIZE);
+    // The rows land in a tab of their own, named for their query tab.
+    assert!(
+        pump(&mut h, |h| has(h, "tab-1")
+            && !text(h, "tab-1").is_empty()
+            && head(h).contains(&text(h, "tab-1"))),
+        "the chart binds the query's rows: {:?} / {:?}",
+        text(&h, "tab-1"),
+        head(&h)
+    );
+    assert!(
+        !head(&h).contains("__dat0"),
+        "the header names the rows as their tab does, not by their view: {:?}",
+        head(&h)
+    );
+    h.click("chart-axis-x");
+    assert!(
+        pump(&mut h, |h| !svg(h).is_empty()),
+        "{:?}",
+        text(&h, "chart-body")
+    );
+
+    h.click("chart-save");
+    h.settle();
+    assert!(
+        !has(&h, "name-prompt"),
+        "nothing to name: it could not be kept"
+    );
+    assert!(
+        banners(&h).contains(&t("chart.save.transient")),
+        "{:?}",
+        banners(&h)
     );
 }
 

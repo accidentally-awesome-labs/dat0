@@ -271,9 +271,9 @@ async fn the_inspector_announces_the_shape_and_types_the_engine_profiled() {
 
     assert_eq!(profile.rows, 3, "fixture has 3 rows");
     // 3, not 2: `create_table` injects the `__dat0_rowid` surrogate at create
-    // time and SUMMARIZE profiles it too. The overview counts the raw profile
-    // list; `project_cards` filters the surrogate back out, so exactly two
-    // cards render.
+    // time and SUMMARIZE profiles it too. `project_cards` filters it back out,
+    // so exactly two cards render, and the overview counts those two: it
+    // counted the surrogate too until step 5.5d.
     assert_eq!(
         profile.columns.len(),
         3,
@@ -293,10 +293,10 @@ async fn the_inspector_announces_the_shape_and_types_the_engine_profiled() {
         .expect("the overview line must render");
     assert_eq!(
         h.attr(overview, "aria-label").as_deref(),
-        Some("probe — 3 rows · 3 cols"),
+        Some("probe — 3 rows · 2 cols"),
         "the overview announces the real profiled counts"
     );
-    assert_eq!(h.text_of(overview), "probe — 3 rows · 3 cols");
+    assert_eq!(h.text_of(overview), "probe — 3 rows · 2 cols");
 
     assert!(
         h.has_label("id · BIGINT"),

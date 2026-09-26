@@ -19,7 +19,8 @@ use crate::components::dock::{DragShield, Edge, SplitDrag, Splitter};
 use crate::components::empty_state::EmptyState;
 use crate::components::filter_popover::FilterPopover;
 use crate::components::grid::Grid;
-use crate::components::inspector::{Inspector, InspectorState};
+use crate::components::inspector::Inspector;
+use crate::components::inspector::host::InspectorHost;
 use crate::components::modals::ModalHost;
 use crate::components::pane::Pane;
 use crate::components::pipeline_bar::PipelineBar;
@@ -58,7 +59,6 @@ pub fn Shell() -> Element {
 
     // Surfaces the shell owns state for. Each is a signal rather than a field
     // on `Workspace` because nothing outside this subtree reads them.
-    let inspector = InspectorState::use_new();
     // Read once per window: the flag flips at most once per install, and
     // re-reading settings.toml on every render to learn that would be absurd.
     let first_run_done = use_signal(|| {
@@ -177,8 +177,10 @@ pub fn Shell() -> Element {
     // bring back what a reopened session holds.
     crate::session_sync::use_session_sync(ws, views, console_host.tabs);
 
-    // The chart, bound to the active tab's table while its pane is open.
+    // The chart and the inspector, each on the active tab's table while its
+    // pane is open.
     let charts = ChartHost::use_new(ws, views, theme);
+    let inspector = InspectorHost::use_new(ws, views, charts);
 
     // The AI panel's controller, built once so the modal can be opened from a
     // command without rebuilding the provider draft each time.
@@ -630,14 +632,21 @@ pub fn Shell() -> Element {
                             // the column is just a stack — S5's "not a
                             // reserved split": each collapses independently
                             // and the column disappears when both are shut.
-                            Inspector { state: inspector }
+                            Inspector {
+                                state: inspector.state,
+                                projection: inspected(source, views, &inspector),
+                                focus_column: focused(source, views, selection),
+                                on_open: move |node| crate::components::inspector::host::open(ws, charts, node),
+                                on_reload: move |_| inspector.reload(),
+                            }
                             Charts {
                                 spec: charts.spec.cloned(),
                                 columns: charts.columns.cloned(),
                                 source: charts.source(),
+                                label: charts.label(&ws),
                                 state: charts.state,
                                 on_config: move |req| charts.configure(req),
-                                on_save: move |_| {},
+                                on_save: move |_| crate::components::charts::saved::save(ws, charts),
                                 on_export: move |format| crate::components::charts::host::export(ws, charts, format),
                             }
                         }
@@ -794,6 +803,41 @@ fn shell_catalog(ws: &Workspace) -> dat0_core::catalog::CatalogTree {
             .collect(),
         packages: dat0_core::catalog::packages_from_recents(),
     }
+}
+
+/// The grid's columns as the inspector mirrors them: only while it inspects
+/// the table the grid shows, so a card is never projected by another table's
+/// view.
+fn inspected(
+    source: crate::components::grid::views::Shown,
+    views: crate::components::grid::views::Views,
+    inspector: &InspectorHost,
+) -> Option<dat0_core::inspector::projection::ProjectionContext> {
+    let (shown, Ok(src)) = source.read_unchecked().clone().flatten()? else {
+        return None;
+    };
+    if inspector.state.target().as_deref() != Some(shown.as_str()) {
+        return None;
+    }
+    let base = src.visible_column_names();
+    Some(dat0_core::inspector::projection::ProjectionContext {
+        visible: views.columns(&shown, &base),
+        base_sources: base,
+    })
+}
+
+/// The column the grid's cursor is on, by its source name.
+fn focused(
+    source: crate::components::grid::views::Shown,
+    views: crate::components::grid::views::Views,
+    selection: Signal<dat0_core::grid::selection::SelectionModel>,
+) -> Option<String> {
+    let (shown, Ok(src)) = source.read_unchecked().clone().flatten()? else {
+        return None;
+    };
+    let columns = views.columns(&shown, &src.visible_column_names());
+    let col = selection.read().active().col;
+    columns.get(col).map(|c| c.source.clone())
 }
 
 fn session_line(ws: &Workspace) -> String {
