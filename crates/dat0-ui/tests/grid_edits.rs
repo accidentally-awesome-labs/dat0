@@ -555,6 +555,59 @@ fn export_writes_the_view_as_shown_or_the_whole_table() {
     );
 }
 
+/// The context menu acts on the selection, so the right-click that opens it
+/// must not collapse the selection to the cell it landed on.
+#[test]
+#[serial]
+fn a_right_click_inside_the_selection_keeps_it_for_the_menu() {
+    use dioxus::html::input_data::MouseButton;
+    let rt = runtime();
+    let _guard = rt.enter();
+    let mut h = window("right-click");
+
+    select(&mut h, (0, 0), (1, 1));
+    let right = |h: &mut Harness, row: usize, col: usize| {
+        use dioxus::html::geometry::{
+            ClientPoint, Coordinates, ElementPoint, PagePoint, ScreenPoint,
+        };
+        let at = Coordinates::new(
+            ScreenPoint::new(0.0, 0.0),
+            ClientPoint::new(0.0, 0.0),
+            ElementPoint::new(0.0, 0.0),
+            PagePoint::new(0.0, 0.0),
+        );
+        let m = dioxus::html::SerializedMouseData::new(
+            Some(MouseButton::Secondary),
+            MouseButton::Secondary.into(),
+            at,
+            Modifiers::empty(),
+        );
+        let cell = h.by_a11y_id(&format!("cell-{row}-{col}")).unwrap();
+        h.dispatch(cell, "mousedown", m);
+    };
+    let selected = |h: &Harness, cell: &str| {
+        h.by_a11y_id(cell)
+            .and_then(|c| h.attr(c, "class"))
+            .is_some_and(|c| c.contains("is-selected"))
+    };
+
+    right(&mut h, 1, 0);
+    assert!(
+        selected(&h, "cell-0-0") && selected(&h, "cell-1-1"),
+        "a right-click inside keeps the range"
+    );
+    perform(&mut h, ids::VIEW_DELETE_ROWS);
+    assert!(
+        pump(&mut h, |h| column(h, 0) == ["c"]),
+        "both rows go: {:?}",
+        column(&h, 0)
+    );
+
+    // Outside the selection, it selects the cell it landed on.
+    right(&mut h, 0, 1);
+    assert!(selected(&h, "cell-0-1"));
+}
+
 #[test]
 #[serial]
 fn a_read_only_workspace_refuses_every_edit_but_copy() {

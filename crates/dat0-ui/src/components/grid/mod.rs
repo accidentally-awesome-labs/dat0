@@ -388,9 +388,23 @@ pub fn Grid(props: GridProps) -> Element {
                                     move |ev: MouseEvent, coord| {
                                         let m = ev.modifiers();
                                         let mut s = selection.write();
+                                        // A right-click inside the selection keeps it, so
+                                        // the context menu acts on all of it; outside, it
+                                        // selects the cell it landed on. On macOS a
+                                        // Ctrl-click is that right-click, so only Cmd adds.
+                                        let mac = cfg!(target_os = "macos");
+                                        let secondary = ev.trigger_button()
+                                            == Some(dioxus::html::input_data::MouseButton::Secondary)
+                                            || (mac && m.ctrl());
+                                        if secondary {
+                                            if !s.contains(coord.row, coord.col) {
+                                                s.click(coord);
+                                            }
+                                            return;
+                                        }
                                         if m.shift() {
                                             s.extend_to(coord);
-                                        } else if m.meta() || m.ctrl() {
+                                        } else if m.meta() || (!mac && m.ctrl()) {
                                             s.add_click(coord);
                                         } else {
                                             s.click(coord);
