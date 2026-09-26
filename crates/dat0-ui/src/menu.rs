@@ -36,6 +36,7 @@ pub mod menu_ids {
     pub const EXPORT_PACKAGE: &str = "menu.export_package";
     pub const UNPACK_PACKAGE: &str = "menu.unpack_package";
     pub const REPLAY_PACKAGE: &str = "menu.replay_package";
+    pub const CONNECTIONS: &str = "menu.connections";
     /// `recents.open.0` … `recents.open.9`.
     pub const RECENT_PREFIX: &str = "recents.open.";
 }
@@ -239,6 +240,7 @@ pub fn build() -> Menu {
         &item(ids::SQL_CANCEL, "sql.cancel"),
         &PredefinedMenuItem::separator(),
         &item(ids::AI_PANEL_OPEN, "menu.ai_panel"),
+        &plain(menu_ids::CONNECTIONS, "menu.connections"),
         &PredefinedMenuItem::separator(),
         &PredefinedMenuItem::fullscreen(None),
     ]);
@@ -309,6 +311,7 @@ pub fn emitted_ids() -> Vec<String> {
         menu_ids::EXPORT_PACKAGE,
         menu_ids::UNPACK_PACKAGE,
         menu_ids::REPLAY_PACKAGE,
+        menu_ids::CONNECTIONS,
         menu_ids::CHECK_UPDATES,
         menu_ids::DOCS,
         menu_ids::GITHUB,
@@ -331,6 +334,7 @@ pub fn local_ids() -> Vec<String> {
         menu_ids::EXPORT_PACKAGE,
         menu_ids::UNPACK_PACKAGE,
         menu_ids::REPLAY_PACKAGE,
+        menu_ids::CONNECTIONS,
     ]
     .into_iter()
     .map(str::to_string)
@@ -381,6 +385,7 @@ pub fn label_keys() -> Vec<&'static str> {
         "sql.run",
         "sql.cancel",
         "menu.ai_panel",
+        "menu.connections",
         // Window
         "menu.window",
         "menu.window.minimize",

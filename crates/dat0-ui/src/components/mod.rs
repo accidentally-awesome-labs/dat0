@@ -275,6 +275,7 @@ fn menu_local(id: &str, events: &AppEvents, ws: crate::state::Workspace) {
         menu_ids::REPLAY_PACKAGE => crate::package_replay::pick(ws),
         menu_ids::CHECK_UPDATES => crate::update_flow::check(ws, true),
         menu_ids::UNPACK_PACKAGE => crate::package_unpack::pick(ws, events),
+        menu_ids::CONNECTIONS => crate::connections_flow::request(events),
         other if other.starts_with(menu_ids::RECENT_PREFIX) => {
             crate::workspace_open::open_recent(ws, events, &other[menu_ids::RECENT_PREFIX.len()..]);
         }

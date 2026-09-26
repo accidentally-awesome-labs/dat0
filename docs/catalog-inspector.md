@@ -30,7 +30,17 @@ its tables below it: open or drop a SQLite file and it is attached, read-only,
 under a name made of the file's. A table's row opens it in a tab (a view of the
 session's own over the attached table); the database's row folds its tables.
 The session remembers the file and attaches it again when it is opened again.
-MotherDuck is not connected in this build (PD-023).
+
+**View → Connections…** (or Settings → MotherDuck → Manage) opens the
+Connections panel. **Connect** asks for a MotherDuck token when none is kept
+(it is kept in the OS keychain), then lists the account's databases in the
+panel and under CONNECTIONS, where their tables open like a SQLite file's.
+**Test connection** reports without changing anything; **Disconnect** and
+**Forget token** take MotherDuck out of the session (a soft disconnect: the
+account's own workspace is not changed). A session opened again with
+MotherDuck in it connects again while a token is kept. The panel also lists
+the attached SQLite files: **Detach** closes their tables' tabs and forgets
+the file, and **Attach SQLite…** picks one.
 
 ## Inspector
 

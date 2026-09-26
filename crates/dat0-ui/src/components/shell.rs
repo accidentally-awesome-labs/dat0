@@ -180,6 +180,8 @@ pub fn Shell() -> Element {
     // pane is open.
     let charts = ChartHost::use_new(ws, views, theme);
     let inspector = InspectorHost::use_new(ws, views, charts);
+    // MotherDuck and the attached files, and the panel that manages them.
+    let connections = crate::connections_flow::ConnectionsHost::use_new(ws);
 
     // The AI panel's controller, built once so the modal can be opened from a
     // command without rebuilding the provider draft each time, and the prompt
@@ -216,13 +218,14 @@ pub fn Shell() -> Element {
                 edits,
                 source,
                 charts,
+                connections,
                 perf_hud,
                 id,
             )
         })));
     });
 
-    let catalog = shell_catalog(&ws);
+    let catalog = shell_catalog(&ws, &connections.databases.read());
     let packages = catalog.packages.clone();
     let rows = sidebar::sections(&catalog, &collapsed.read());
     let connection_rows = rows.connections.clone();
@@ -768,7 +771,10 @@ fn open_demo(ws: Workspace, events: dat0_core::events::AppEvents) {
 /// store; CONNECTIONS arrive with the engine feed (5.8). Building a real
 /// [`CatalogTree`] rather than three row lists is what lets the sidebar run
 /// `nav::visible_rows` and `nav::tree_nav` over it.
-fn shell_catalog(ws: &Workspace) -> dat0_core::catalog::CatalogTree {
+fn shell_catalog(
+    ws: &Workspace,
+    databases: &[crate::state::Attached],
+) -> dat0_core::catalog::CatalogTree {
     dat0_core::catalog::CatalogTree {
         files: ws
             .tabs
@@ -780,10 +786,12 @@ fn shell_catalog(ws: &Workspace) -> dat0_core::catalog::CatalogTree {
                 children: Vec::new(),
             })
             .collect(),
+        // The attached files, then MotherDuck's databases.
         connections: ws
             .attached
             .read()
             .iter()
+            .chain(databases)
             .map(|a| dat0_core::catalog::CatalogNode {
                 name: a.alias.clone(),
                 schema: String::new(),
@@ -993,6 +1001,7 @@ fn surface_command(
     edits: crate::components::grid::edits::Edits,
     grid_source: crate::components::grid::views::Shown,
     charts: ChartHost,
+    connections: crate::connections_flow::ConnectionsHost,
     perf_hud: Signal<bool>,
     id: &str,
 ) -> bool {
@@ -1061,6 +1070,7 @@ fn surface_command(
         ids::LIVE_REFRESH => crate::components::grid::refresh::refresh(ws, views),
 
         // ── Panels and windows ─────────────────────────────────────────────
+        crate::components::settings_ui::CONNECTIONS_OPEN => connections.open(ws),
         ids::AI_PANEL_OPEN => {
             ai.hydrate();
             ws.modal.set(Some(Modal::Ai { controller: ai }));
