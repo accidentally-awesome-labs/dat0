@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://dat0.dev/format/v1/dat0-manifest-v1.schema.json",
+  "$id": "https://dat0.app/format/v1/dat0-manifest-v1.schema.json",
   "title": "dat0 package manifest (format v1)",
   "description": "Ratified schema for the `manifest.json` entry of a `.dat0` package. See docs/dat0-format-v1.md §3.",
   "type": "object",

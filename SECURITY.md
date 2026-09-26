@@ -4,7 +4,7 @@
 
 Please report suspected security vulnerabilities **privately** to:
 
-**security@dat0.dev**
+**security@dat0.app**
 
 Do **not** open public GitHub issues for security reports. Public disclosure before a fix is available puts users at risk.
 

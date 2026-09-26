@@ -677,14 +677,14 @@ mod tests {
 
     #[test]
     fn an_open_documents_event_names_its_local_files() {
-        let event = an_open_documents_event(&["file:///tmp/sales.dat0", "https://dat0.dev/x"]);
+        let event = an_open_documents_event(&["file:///tmp/sales.dat0", "https://dat0.app/x"]);
         assert_eq!(
             opened_paths(&event),
             Some(vec![PathBuf::from("/tmp/sales.dat0")])
         );
         // One naming no local file, and any other event, ask nothing.
         assert_eq!(
-            opened_paths(&an_open_documents_event(&["https://dat0.dev/x"])),
+            opened_paths(&an_open_documents_event(&["https://dat0.app/x"])),
             None
         );
         let other = dioxus::desktop::tao::event::Event::<()>::MainEventsCleared;

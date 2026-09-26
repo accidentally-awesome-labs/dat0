@@ -120,13 +120,13 @@ P10 enforces signing, notarization, and live crash submission. These items must 
 **Effort:** ~3-5 hours.
 
 - [ ] **C3.1** Provision a small VPS (Hetzner CX21 / Fly.io shared-cpu-2x / DigitalOcean $6 Basic Droplet)
-- [ ] **C3.2** Set up subdomain `glitchtip.dat0.dev` (A record). Requires Domain D1 first.
+- [ ] **C3.2** Set up subdomain `glitchtip.dat0.app` (A record). Requires Domain D1 first.
 - [ ] **C3.3** TLS via Let's Encrypt (Caddy or nginx + certbot)
 - [ ] **C3.4** Install GlitchTip via Docker Compose: <https://glitchtip.com/documentation/install>
 - [ ] **C3.5** Create the dat0 organization + dat0 project; copy the DSN
 - [ ] **C3.6** Store DSN as `GLITCHTIP_DSN_PUBLIC` GitHub Actions secret
 - [ ] **C3.7** Postgres backups: nightly `pg_dump` to local cron + offsite copy (rclone to cloud storage)
-- [ ] **C3.8** Uptime monitoring (UptimeRobot free tier or self-hosted Uptime Kuma); alert on `glitchtip.dat0.dev/_health` 5xx or down > 5 min
+- [ ] **C3.8** Uptime monitoring (UptimeRobot free tier or self-hosted Uptime Kuma); alert on `glitchtip.dat0.app/_health` 5xx or down > 5 min
 - [ ] **C3.9** Send a test event via curl; verify it appears in the UI
 
 **Verification:** Test event ingested and visible in GlitchTip UI; backup runs and offsite copy verified.
@@ -153,19 +153,19 @@ P11 is the public launch. These items must be live and configured by then. They 
 
 ### D1. Domain registration
 
-**Why:** `dat0.dev` hosts the Astro+Starlight site (P11) and the GlitchTip subdomain (C3).
+**Why:** `dat0.app` hosts the site (P11) and the GlitchTip subdomain (C3). It is the primary domain (decided 2026-09-26; the plan first named `dat0.dev`).
 **When:** Anytime before D2 / C3 / P11.
 **Effort:** ~1-2 hours.
 
-- [ ] **D1.1** Register `dat0.dev` (primary). Recommended registrar: Namecheap, Porkbun, or Cloudflare Registrar.
-- [ ] **D1.2** Register `dat0.app` (defensive — common typo destination)
+- [x] **D1.1** Register `dat0.app` (primary). The site is live there.
+- [ ] **D1.2** Register `dat0.dev` (defensive — the name the plan first chose)
 - [ ] **D1.3** Register `dato.dev` (defensive — typo against DatoCMS)
-- [ ] **D1.4** Configure DNS for `dat0.dev`:
-  - A or CNAME → static-host placeholder ("coming soon")
-  - MX records → forwarding service for `security@`, `conduct@`, `noreply@` (ImprovMX free tier, ForwardEmail, paid email provider)
-- [ ] **D1.5** Configure DNS for `dat0.app` and `dato.dev`: 301 redirect to `dat0.dev`
+- [ ] **D1.4** Configure DNS for `dat0.app`:
+  - A or CNAME → the site
+  - MX records → forwarding service for `security@`, `conduct@`, `noreply@` (ImprovMX free tier, ForwardEmail, paid email provider). `SECURITY.md` and `CODE_OF_CONDUCT.md` name `security@dat0.app` and `conduct@dat0.app`.
+- [ ] **D1.5** Configure DNS for `dat0.dev` and `dato.dev`: 301 redirect to `dat0.app`
 
-**Verification:** `dig dat0.dev` returns valid A record; placeholder reachable; email aliases deliver.
+**Verification:** `dig dat0.app` returns valid A record; the site is reachable; email aliases deliver.
 
 ### D2. Companion site repo
 

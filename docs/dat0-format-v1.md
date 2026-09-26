@@ -10,7 +10,7 @@ The canonical model types live in the `dat0-format` crate
 (`crates/dat0-format/src/model.rs`); the published JSON Schema for the manifest
 is at [`docs/schemas/dat0-manifest-v1.schema.json`](schemas/dat0-manifest-v1.schema.json).
 
-> A public mirror of this spec at `dat0.dev/format/v1` is a P11 deliverable;
+> A public mirror of this spec at `dat0.app/format/v1` is a P11 deliverable;
 > until then this file in the repo is authoritative.
 
 ---
