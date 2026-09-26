@@ -46,7 +46,7 @@ expression: "rendered[0].1"
 </span>
 <span class="d0-skel is-secondary" style="width: 220px;">
 </span>
-<span class="d0-mono is-ok">nothing imported · 0 bytes left this machine</span>
+<span class="d0-mono is-ok" data-a11y-id="hero-privacy">nothing imported · 0 bytes left this machine</span>
 </div>
 <div class="d0-hero-right">
 <div class="d0-hero-list" data-a11y-id="hero-samples">
@@ -78,7 +78,7 @@ expression: "rendered[0].1"
 <span data-a11y-id="status-engine">engine duckdb · starting</span>
 <span class="d0-spacer">
 </span>
-<span class="is-ok" style="color: var(--d0-ok)">egress 0 B</span>
+<span class="d0-egress is-ok" data-a11y-id="status-egress">egress 0 B</span>
 <span class="d0-key">
 <span data-chord="palette">CHORD</span> commands</span>
 </div>

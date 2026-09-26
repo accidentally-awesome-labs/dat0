@@ -485,6 +485,9 @@ button {
 .d0-statusbar .d0-spacer {
   margin-left: auto;
 }
+.d0-statusbar .is-ok {
+  color: var(--d0-ok);
+}
 .d0-statusbar .d0-key {
   background: var(--d0-chrome-raised);
   border-color: var(--d0-chrome-border-2);

@@ -12,7 +12,7 @@ expression: html
 <div class="d0-hero-cols">
 <div class="d0-hero-drop" data-a11y-id="hero-drop">
 <p class="d0-body">Drop a CSV, Parquet, JSON, or SQLite file. No import wizard, no waiting.</p>
-<span class="d0-mono is-ok">nothing imported · 0 bytes left this machine</span>
+<span class="d0-mono is-ok" data-a11y-id="hero-privacy">nothing imported · 0 bytes left this machine</span>
 </div>
 <div class="d0-hero-right">
 <div class="d0-hero-list" data-a11y-id="hero-recents">

@@ -35,6 +35,7 @@ mod support;
 
 use std::cell::RefCell;
 use std::path::PathBuf;
+use std::sync::LazyLock;
 
 use dioxus::prelude::*;
 use tempfile::TempDir;
@@ -48,6 +49,19 @@ use dat0_ui::components::modals::{
 use dat0_ui::components::update_ui::UpdateState;
 use dat0_ui::state::{Modal, Workspace};
 use support::{Harness, Key, Modifiers};
+
+/// Settings of this binary's own, with crash reports off, as they are by
+/// default. Send reads them when it is pressed (step 5.11a): a test reading
+/// a developer's own settings, with reports on, would send for real.
+static CONFIG: LazyLock<PathBuf> = LazyLock::new(|| {
+    let tmp = TempDir::new().expect("tempdir");
+    // SAFETY: the one write, of one value, made before any test mounts a
+    // dialog; `std::env` serialises it with the reads.
+    unsafe { std::env::set_var("DAT0_CONFIG_DIR", tmp.path()) };
+    let dir = tmp.path().to_path_buf();
+    std::mem::forget(tmp);
+    dir
+});
 
 thread_local! {
     static INITIAL: RefCell<Option<Modal>> = const { RefCell::new(None) };
@@ -73,6 +87,7 @@ fn Host() -> Element {
 }
 
 fn mount(modal: Modal) -> Harness {
+    LazyLock::force(&CONFIG);
     INITIAL.with(|c| *c.borrow_mut() = Some(modal));
     REPLIES.with(|r| r.borrow_mut().clear());
     Harness::new(Host, ())
@@ -118,12 +133,19 @@ fn crash_modal(dir: &TempDir, with_crash: bool) -> Modal {
 
 /// The safety spine every crash-report test in the GPUI suite opened with.
 ///
-/// With no telemetry client bound, `submit_staged` / `submit_report`
-/// early-return inside `telemetry::capture`, so pressing **Send** transmits
-/// nothing and does not block on sentry's 5 s flush. That is the only reason
-/// a test is allowed to press Send at all; if it ever stops holding, these
-/// tests would start posting real crash reports from CI.
+/// `submit_staged` / `submit_report` send only while crash reports are on in
+/// the settings, read when Send is pressed, and bind a client then if none is
+/// bound (step 5.11a). With this binary's settings, reports are off and no
+/// client is bound, so pressing **Send** transmits nothing and does not block
+/// on sentry's 5 s flush. That is the only reason a test is allowed to press
+/// Send at all; if either stops holding, these tests would start posting real
+/// crash reports from CI.
 fn assert_telemetry_inactive(when: &str) {
+    LazyLock::force(&CONFIG);
+    assert!(
+        !dat0_core::telemetry::submission_allowed(),
+        "SAFETY: crash reports must be off {when}, or Send transmits for real"
+    );
     assert!(
         !dat0_core::telemetry::is_active(),
         "SAFETY: telemetry must be inactive {when}, or Send transmits for real"
@@ -177,7 +199,9 @@ fn a_bug_report_never_creates_a_crash_sentinel() {
     // sentinel is a harmless no-op remove — but "harmless" is exactly the
     // kind of claim that stops being true after a refactor, and a bug report
     // that left a `last-crash.json` behind would make the next launch open a
-    // crash prompt for a crash that never happened.
+    // crash prompt for a crash that never happened. With reports off, as
+    // here, a bug report has no Send, so it leaves by Close; `crash_flow.rs`
+    // sends one.
     assert_telemetry_inactive("before the dialog opens");
     let tmp = TempDir::new().unwrap();
     assert!(
@@ -186,14 +210,15 @@ fn a_bug_report_never_creates_a_crash_sentinel() {
     );
 
     let mut h = mount(crash_modal(&tmp, false));
-    h.click("report-send");
+    assert!(h.by_a11y_id("report-send").is_none(), "nothing can be sent");
+    h.click("report-dismiss");
 
     assert_eq!(dialogs(&h), 0);
     assert!(
         crash::read_staged(tmp.path()).is_none(),
         "Report-a-Bug must not create a last-crash.json"
     );
-    assert_telemetry_inactive("after Send");
+    assert_telemetry_inactive("after Close");
 }
 
 #[test]

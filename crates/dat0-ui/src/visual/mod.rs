@@ -288,6 +288,7 @@ pub const SCENES: &[Scene] = &[
     ),
     s("modal/onboarding", "modal", "tour panel one"),
     s("modal/crash-report", "modal", "staged payload"),
+    s("modal/bug-report-off", "modal", "crash reports off"),
     s(
         "modal/workspace-in-use",
         "modal",
@@ -551,6 +552,12 @@ fn modal(
                 backtrace: "   0: dat0_ui::components::grid::Grid\n   1: dioxus_core::scope".into(),
                 version: "0.1.0".into(),
             }),
+            data_dir: PathBuf::from("/data/state"),
+        },
+        // The fixtures' settings leave crash reports off, as they are by
+        // default: Report a Bug says so, with nothing to send.
+        "modal/bug-report-off" => Modal::CrashReport {
+            staged: None,
             data_dir: PathBuf::from("/data/state"),
         },
         "modal/workspace-in-use" => Modal::WorkspaceInUse {

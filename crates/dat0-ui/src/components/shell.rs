@@ -196,9 +196,14 @@ pub fn Shell() -> Element {
         let console_host = console_host.clone();
         use_memo(move || console_host.chip())
     };
-    // The sidebar's egress line, read through a memo for the same reason:
-    // the status it lives in changes as the grid scrolls.
+    // The sidebar's egress line, and what has left this machine for the
+    // hero's privacy line, read through memos for the same reason: the
+    // status they live in changes as the grid scrolls.
     let egress = use_memo(move || crate::chrome::egress_line(&ws.status.read()));
+    let sent = use_memo(move || {
+        let s = ws.status.read();
+        (s.egress, s.egress_floor)
+    });
 
     // The AI panel's controller, built once so the modal can be opened from a
     // command without rebuilding the provider draft each time, and the prompt
@@ -357,6 +362,7 @@ pub fn Shell() -> Element {
                         session_line: crate::chrome::session_line(windows(), ws.tabs.read().len()),
                         ai_line: ai_line(&ai),
                         egress_line: egress(),
+                        nothing_sent: crate::chrome::nothing_sent(sent().0, sent().1),
                         on_open: move |(section, i): (&'static str, usize)| {
                             match section {
                                 // A FILES row is one of the open tabs, in the
@@ -474,6 +480,8 @@ pub fn Shell() -> Element {
                                     recents: dat0_core::globals::recent_entries(),
                                     first_run_done: first_run_done(),
                                     booting: ws.session.read().is_booting(),
+                                    sent: sent().0,
+                                    sent_floor: sent().1,
                                     on_open_sample: move |kind| open_sample(ws, kind),
                                     // A recent workspace opens as one, and a recent
                                     // package read-only; neither is handed to the

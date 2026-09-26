@@ -1,0 +1,23 @@
+---
+source: crates/dat0-ui/tests/visual_snapshot.rs
+expression: "rendered[0].1"
+---
+<div class="d0-scene" data-scene="modal/bug-report-off" style="width: 1440px; height: 900px; overflow: hidden">
+<div class="d0-scrim" data-a11y-id="modal-scrim">
+<div class="d0-modal" data-a11y-id="modal" role="dialog" aria-modal="true" aria-label="Report a Bug" tabindex="-1">
+<div class="d0-modal-head">
+<span class="d0-label">report</span>
+<span class="d0-head-title">Report a Bug</span>
+<button class="d0-btn is-ghost d0-modal-close" data-a11y-id="modal-close" role="button" aria-label="Close">✕</button>
+</div>
+<div class="d0-modal-body" data-a11y-id="modal-body">
+<div class="d0-report" data-a11y-id="report">
+<p class="d0-body" data-a11y-id="report-body" role="note" aria-label="Crash reports are off, so nothing can be sent from here. To send one, turn on “Enable crash report submission” in Settings → Telemetry, then choose Help → Report a Bug… again.">Crash reports are off, so nothing can be sent from here. To send one, turn on “Enable crash report submission” in Settings → Telemetry, then choose Help → Report a Bug… again.</p>
+<div class="d0-report-actions">
+<button class="d0-btn is-ghost" data-a11y-id="report-dismiss" role="button" aria-label="Close">Close</button>
+</div>
+</div>
+</div>
+</div>
+</div>
+</div>

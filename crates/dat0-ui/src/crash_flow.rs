@@ -26,7 +26,8 @@ pub fn use_relaunch_offer(ws: Workspace) {
             let Some(dir) = data_dir() else {
                 return;
             };
-            if let Some(staged) = crash_report::on_relaunch(&dir, opted_in()) {
+            let opted_in = dat0_core::telemetry::submission_allowed();
+            if let Some(staged) = crash_report::on_relaunch(&dir, opted_in) {
                 offer(ws, dir, staged);
             }
         });
@@ -64,17 +65,4 @@ fn data_dir() -> Option<PathBuf> {
     dat0_core::globals::state_root()
         .map(std::path::Path::to_path_buf)
         .or_else(|| dat0_core::platform::data_dir().ok())
-}
-
-/// Whether the user opted in to crash reports. Off when the settings cannot
-/// be read: the privacy-safe answer.
-fn opted_in() -> bool {
-    dat0_core::platform::config_dir()
-        .ok()
-        .and_then(|dir| {
-            dat0_core::settings::store::SettingsStore::with_path(dir.join("settings.toml"))
-                .load_or_default()
-                .ok()
-        })
-        .is_some_and(|s| s.telemetry.crash_submission_enabled)
 }

@@ -35,7 +35,11 @@ something goes wrong. This feature is:
 - **Off by default.** The `crash_submission_enabled` field in `Settings.toml`
   defaults to `false`. Nothing leaves your machine until you explicitly turn it on.
 - **Your choice, always.** You can toggle it at any time in
-  **Settings → Telemetry → Send crash reports**.
+  **Settings → Telemetry → Enable crash report submission**. The setting is
+  read when a report is sent, so turning it off stops the next one, and
+  turning it on lets **Help → Report a Bug…** send one without a restart.
+  With it off, Report a Bug says so and has nothing to send.
+- **Counted.** A report sent is counted in the status bar's egress figure.
 
 ### 2.1 What is transmitted (only when opted in)
 
@@ -48,6 +52,9 @@ are included in the crash report:
 | OS name + version | e.g. `macOS 15.5` |
 | dat0 version | e.g. `0.9.0` |
 | Optional user note | Free-text note you may attach from the crash dialog |
+
+A report you send from **Help → Report a Bug…** carries your note and the dat0
+version, and no stack trace.
 
 ### 2.2 Redaction applied before transmission
 

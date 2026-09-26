@@ -99,7 +99,12 @@ pub fn StatusBar(props: StatusBarProps) -> Element {
                 },
             }
             span { class: "d0-spacer" }
-            span { class: "is-ok", style: "color: var(--d0-ok)", "{crate::chrome::egress_line(&s)}" }
+            span {
+                // Green only while nothing has left this machine (step 5.11a).
+                class: if crate::chrome::nothing_sent(s.egress, s.egress_floor) { "d0-egress is-ok" } else { "d0-egress" },
+                "data-a11y-id": "status-egress",
+                "{crate::chrome::egress_line(&s)}"
+            }
             span { class: "d0-key",
                 span { "data-chord": "palette", "{chord}" }
                 " {commands}"

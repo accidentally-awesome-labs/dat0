@@ -7,11 +7,16 @@
 //!
 //! The offer is made once per process, so exactly one test here mounts the
 //! real shell; the others drive the flow's functions under a modal host.
+//!
+//! A report sent here goes to a transport of the test's own (`SENT`), never
+//! the network: the settings here say reports are on, and Send reads them
+//! when it is pressed (step 5.11a).
 
 mod support;
 
 use std::path::{Path, PathBuf};
-use std::sync::LazyLock;
+use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::{Arc, LazyLock};
 use std::time::Duration;
 
 use dioxus::prelude::*;
@@ -20,6 +25,7 @@ use serial_test::serial;
 use dat0_core::actions::builtin::register_all;
 use dat0_core::actions::registry::ActionRegistry;
 use dat0_core::telemetry::crash::{self, StagedCrash};
+use dat0_core::telemetry::egress;
 use dat0_i18n::t;
 use dat0_ui::components::modals::{ModalHost, ModalOutcome, ModalReply};
 use dat0_ui::components::shell::Shell;
@@ -31,9 +37,36 @@ use dat0_ui::state::{Modal, Workspace};
 use dat0_ui::theme::Theme;
 use support::Harness;
 
+/// The reports this binary has sent, as its own transport counts them.
+static SENT: LazyLock<Arc<Captured>> = LazyLock::new(|| Arc::new(Captured(AtomicUsize::new(0))));
+
+struct Captured(AtomicUsize);
+
+impl sentry::Transport for Captured {
+    fn send_envelope(&self, _: sentry::Envelope) {
+        self.0.fetch_add(1, Ordering::SeqCst);
+    }
+}
+
+fn sent() -> usize {
+    SENT.0.load(Ordering::SeqCst)
+}
+
 /// The state root the crash guard would stage into, with a crash from the
 /// last run staged, and the config dir, with crash reports opted in.
 static STATE_ROOT: LazyLock<PathBuf> = LazyLock::new(|| {
+    // A client of the test's own, bound on the process's hub before any
+    // test reads a hub, so each thread's starts from it and Send never binds
+    // the real one.
+    let transport = SENT.clone();
+    let client = sentry::Client::from(sentry::ClientOptions {
+        dsn: Some("https://public@dat0.invalid/1".parse().expect("a dsn")),
+        transport: Some(Arc::new(move |_: &sentry::ClientOptions| {
+            transport.clone() as Arc<dyn sentry::Transport>
+        })),
+        ..Default::default()
+    });
+    sentry::Hub::main().bind_client(Some(Arc::new(client)));
     let tmp = tempfile::tempdir().expect("tempdir");
     let root = tmp.path().join("state");
     let cfg = tmp.path().join("cfg");
@@ -113,6 +146,11 @@ fn Slot(props: SlotProps) -> Element {
             onclick: move |_| dat0_ui::crash_flow::report_bug(ws),
         }
         ModalHost {}
+        div { "data-a11y-id": "banners",
+            for (i, b) in ws.banners.read().iter().enumerate() {
+                p { key: "{i}", "{b.title}" }
+            }
+        }
     }
 }
 
@@ -145,6 +183,31 @@ fn has(h: &Harness, id: &str) -> bool {
 
 fn staged_on_disk(root: &Path) -> bool {
     crash::staged_path(root).exists()
+}
+
+/// Turn crash reports on or off in this binary's settings.
+fn reports(on: bool) {
+    let dir = dat0_core::platform::config_dir().expect("config dir");
+    let store = dat0_core::settings::store::SettingsStore::with_path(dir.join("settings.toml"));
+    let mut settings = store.load_or_default().expect("settings");
+    settings.telemetry.crash_submission_enabled = on;
+    store.save(&settings).expect("save settings");
+}
+
+/// Crash reports off until dropped, then on again, as the other tests expect.
+struct ReportsOff;
+
+impl ReportsOff {
+    fn now() -> Self {
+        reports(false);
+        Self
+    }
+}
+
+impl Drop for ReportsOff {
+    fn drop(&mut self) {
+        reports(true);
+    }
 }
 
 #[test]
@@ -215,4 +278,86 @@ fn report_a_bug_opens_the_report_with_nothing_staged() {
         text(&h, "modal")
     );
     assert!(text(&h, "report").contains(&t("report.dialog.body")));
+}
+
+#[test]
+#[serial]
+fn a_bug_report_sent_says_so_and_counts_what_left() {
+    let rt = runtime();
+    let _guard = rt.enter();
+    let _ = STATE_ROOT.as_path();
+    assert!(
+        dat0_core::telemetry::submission_allowed(),
+        "seed: reports on"
+    );
+    let (reports_before, bytes_before) = (sent(), egress::total_sent());
+
+    let mut h = Harness::new(Slot, SlotProps { busy: false });
+    h.settle();
+    h.click("report-bug");
+    h.settle();
+    h.click("report-send");
+    h.settle();
+
+    assert!(!has(&h, "report"));
+    assert_eq!(sent(), reports_before + 1, "the report went");
+    assert!(
+        egress::total_sent() > bytes_before,
+        "and what left this machine is counted"
+    );
+    assert!(
+        text(&h, "banners").contains(&t("report.sent")),
+        "{:?}",
+        text(&h, "banners")
+    );
+}
+
+#[test]
+#[serial]
+fn report_a_bug_while_reports_are_off_says_so_and_sends_nothing() {
+    let rt = runtime();
+    let _guard = rt.enter();
+    let _ = STATE_ROOT.as_path();
+    let _off = ReportsOff::now();
+
+    let mut h = Harness::new(Slot, SlotProps { busy: false });
+    h.settle();
+    h.click("report-bug");
+    h.settle();
+    assert_eq!(text(&h, "report-body"), t("report.dialog.off"));
+    assert!(
+        !has(&h, "report-send"),
+        "no Send for a report that cannot go"
+    );
+}
+
+#[test]
+#[serial]
+fn a_report_sent_after_reports_are_turned_off_does_not_go_and_says_so() {
+    // Settings is a window of its own: reports can be turned off while a
+    // crash report is up. Send reads them when it is pressed.
+    let rt = runtime();
+    let _guard = rt.enter();
+    let root = STATE_ROOT.clone();
+    crash::write_staged(&root, &staged()).expect("stage again");
+    let (reports_before, bytes_before) = (sent(), egress::total_sent());
+
+    let mut h = Harness::new(Slot, SlotProps { busy: false });
+    h.settle();
+    h.click("offer");
+    h.settle();
+    assert!(has(&h, "report-send"));
+    let _off = ReportsOff::now();
+    h.click("report-send");
+    h.settle();
+
+    assert!(!has(&h, "report"));
+    assert_eq!(sent(), reports_before, "nothing went");
+    assert_eq!(egress::total_sent(), bytes_before, "nothing is counted");
+    assert!(
+        text(&h, "banners").contains(&t("report.not_sent")),
+        "{:?}",
+        text(&h, "banners")
+    );
+    assert!(!staged_on_disk(&root), "and it is not offered again");
 }

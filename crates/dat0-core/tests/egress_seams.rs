@@ -31,10 +31,13 @@ use std::path::{Path, PathBuf};
 
 /// Substrings that mean "this file talks to the network".
 ///
-/// Both are path-qualified (`::`) rather than bare crate names so a mention in
+/// All are path-qualified (`::`) rather than bare crate names so a mention in
 /// prose ("reqwest sets Content-Length itself") does not trip the gate — the
 /// module doc of `telemetry/egress.rs` contains exactly such a mention.
-const CLIENT_MARKERS: &[&str] = &["reqwest::", "ureq::"];
+/// `sentry::capture_event` names no HTTP client and is a send all the same:
+/// Sentry's client carries the event over its own connection, which crash
+/// and bug reports went through uncounted until step 5.11a.
+const CLIENT_MARKERS: &[&str] = &["reqwest::", "ureq::", "sentry::capture_event"];
 
 /// The marker a metered seam must carry.
 const SEAM_MARKER: &str = "// egress-seam";
@@ -110,6 +113,9 @@ fn seam_report(unmarked: &[String], marked: &[String], allow: &BTreeMap<&str, ()
 fn scanner_matches_qualified_paths_only() {
     assert!(uses_http_client("let c = reqwest::Client::new();"));
     assert!(uses_http_client("    ureq::get(url)"));
+    // Sentry's client sends an event over its own connection, so capturing
+    // one is a send even though no HTTP client is named (step 5.11a).
+    assert!(uses_http_client("    sentry::capture_event(event);"));
     // Prose mentioning the crate without a path does not count — the egress
     // module doc names both clients while calling neither.
     assert!(!uses_http_client("//! reqwest sets Content-Length itself"));

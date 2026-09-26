@@ -16,7 +16,7 @@ expression: html
 </span>
 <span class="d0-skel is-secondary" style="width: 220px;">
 </span>
-<span class="d0-mono is-ok">nothing imported · 0 bytes left this machine</span>
+<span class="d0-mono is-ok" data-a11y-id="hero-privacy">nothing imported · 0 bytes left this machine</span>
 </div>
 <div class="d0-hero-right">
 <div class="d0-hero-list" data-a11y-id="hero-recents">

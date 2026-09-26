@@ -4,7 +4,9 @@
 //! The status bar's egress figure was a field nothing wrote, so it read
 //! `egress 0 B` whatever had been sent, and the sidebar's footer said
 //! `1 window` whatever was open. These mount the real shell, on a real `Boot`,
-//! and change what it states from outside.
+//! and change what it states from outside. The hero's privacy line was a
+//! constant, "0 bytes left this machine", and it and both egress figures
+//! were green whatever they said (step 5.11a).
 //!
 //! The egress counter is process-wide: this binary is the one that records
 //! into it, and its tests are `#[serial]`.
@@ -88,6 +90,16 @@ fn text(h: &Harness, id: &str) -> String {
     h.by_a11y_id(id).map(|k| h.text_of(k)).unwrap_or_default()
 }
 
+/// Whether the node is drawn in the green that means nothing has left.
+fn green(h: &Harness, id: &str) -> bool {
+    h.by_a11y_id(id)
+        .and_then(|k| h.attr(k, "class"))
+        .is_some_and(|c| c.split_whitespace().any(|c| c == "is-ok"))
+}
+
+/// The three places the chrome states what has left this machine.
+const EGRESS_IDS: [&str; 3] = ["hero-privacy", "status-egress", "sidebar-egress"];
+
 /// The figure the counter stands at now, as the chrome writes it.
 fn measured() -> String {
     dat0_ui::chrome::egress_line(&Status {
@@ -112,9 +124,16 @@ fn the_status_bar_and_the_footer_say_what_dat0_has_sent() {
         "{:?}",
         text(&h, "statusbar")
     );
+    let before = egress::total_sent();
+    if before == 0 && !egress::has_unmetered_channel() {
+        // Nothing has left: the hero says so, and all three are green.
+        assert_eq!(text(&h, "hero-privacy"), dat0_i18n::t("hero.privacy"));
+        for id in EGRESS_IDS {
+            assert!(green(&h, id), "{id} is green while nothing has left");
+        }
+    }
 
     // An AI request, say: bytes dat0 put on the wire.
-    let before = egress::total_sent();
     egress::record_sent(3 * 1024);
     let sent = measured();
     assert_ne!(sent, "egress 0 B");
@@ -125,6 +144,17 @@ fn the_status_bar_and_the_footer_say_what_dat0_has_sent() {
     );
     if before == 0 {
         assert!(text(&h, "statusbar").contains("egress 3.0 KB"));
+        assert!(
+            text(&h, "hero-privacy").contains("3.0 KB left this machine"),
+            "{:?}",
+            text(&h, "hero-privacy")
+        );
+    }
+    // Something has left: the hero no longer says nothing has, and none of
+    // the three is green.
+    assert!(!text(&h, "hero-privacy").contains("0 bytes"));
+    for id in EGRESS_IDS {
+        assert!(!green(&h, id), "{id} is not green once bytes have left");
     }
 
     // MotherDuck's own connection, which dat0 cannot meter: the figure is a

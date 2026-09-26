@@ -7,6 +7,12 @@
 //! said `1 window` however many were open; and ⌘K, shown in the tab strip and
 //! the status bar, was bound to nothing. The status bar's memory figure was
 //! never written either (step 5.8c).
+//!
+//! The egress figure, the sidebar's and the hero's privacy line were green
+//! whatever they said, and the hero's line was a constant, "0 bytes left this
+//! machine", shown after the launch's update check had sent its request. All
+//! three are the measured figure now, green only while nothing has left
+//! (step 5.11a).
 
 use dioxus::prelude::*;
 
@@ -117,12 +123,33 @@ pub fn session_line(windows: usize, tabs: usize) -> String {
 /// included: "no bytes left this machine" is a claim, and a hidden counter
 /// cannot make it.
 pub fn egress_line(status: &Status) -> String {
-    let floor = if status.egress_floor { "+" } else { "" };
-    format!("egress {}{floor}", human_bytes(status.egress))
+    format!("egress {}", sent_figure(status.egress, status.egress_floor))
+}
+
+/// Whether nothing has left this machine: no bytes sent, and no channel open
+/// that dat0 cannot meter. The chrome shows its egress in green only then.
+pub fn nothing_sent(sent: u64, floor: bool) -> bool {
+    sent == 0 && !floor
+}
+
+/// What has left this machine, `1.2 KB`, with a `+` once it is a floor.
+pub fn sent_figure(sent: u64, floor: bool) -> String {
+    let floor = if floor { "+" } else { "" };
+    format!("{}{floor}", human_bytes(sent))
+}
+
+/// The hero's privacy line: "0 bytes left this machine" while that is so, and
+/// the figure once anything has left.
+pub fn hero_privacy(sent: u64, floor: bool) -> String {
+    if nothing_sent(sent, floor) {
+        dat0_i18n::t("hero.privacy")
+    } else {
+        dat0_i18n::t("hero.privacy_sent").replace("{sent}", &sent_figure(sent, floor))
+    }
 }
 
 /// Bytes at one decimal place, binary units.
-fn human_bytes(n: u64) -> String {
+pub fn human_bytes(n: u64) -> String {
     const UNITS: [&str; 5] = ["B", "KB", "MB", "GB", "TB"];
     if n < 1024 {
         return format!("{n} B");
@@ -157,6 +184,25 @@ mod tests {
             ..Status::default()
         };
         assert_eq!(egress_line(&status), "egress 3.0 KB+");
+    }
+
+    #[test]
+    fn only_nothing_sent_is_nothing_sent() {
+        assert!(nothing_sent(0, false));
+        assert!(!nothing_sent(1, false), "a byte is not nothing");
+        assert!(
+            !nothing_sent(0, true),
+            "a channel dat0 cannot meter may have sent"
+        );
+    }
+
+    #[test]
+    fn the_hero_says_what_left_once_anything_has() {
+        assert_eq!(hero_privacy(0, false), dat0_i18n::t("hero.privacy"));
+        let sent = hero_privacy(1536, false);
+        assert!(sent.contains("1.5 KB"), "{sent}");
+        assert!(!sent.contains("0 bytes"), "{sent}");
+        assert!(hero_privacy(0, true).contains("0 B+"));
     }
 
     #[test]
