@@ -33,14 +33,6 @@ use crate::state::{Modal, Workspace};
 /// a ratchet: `tests/action_effects.rs` fails if it grows, and an id leaves it
 /// in the same change as the test that shows its effect.
 pub const UNWIRED: &[&str] = &[
-    // SQL console: Run and Cancel only clear the error, the library dialogs
-    // open empty, and the save prompts discard their answer.
-    ids::SQL_RUN,
-    ids::SQL_CANCEL,
-    ids::SQL_HISTORY,
-    ids::SQL_LOAD_QUERY,
-    ids::SQL_SAVE_QUERY,
-    ids::SQL_SAVE_AS_TABLE,
     // Grid edits: logged, never applied.
     ids::VIEW_COPY,
     ids::VIEW_CUT,

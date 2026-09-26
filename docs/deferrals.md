@@ -96,7 +96,7 @@ that's modifying it; merge conflicts are signals worth investigating.
 | PD-020 | P4c T14 wired inline-editor `Enter` → commit + move-DOWN + focus-on-mount, but `Tab` → commit + move-RIGHT could NOT be wired: gpui-component `Input` (rev `0f0ab35`) consumes Tab internally for focus tab-stops and surfaces no `InputEvent::PressTab` variant (`InputEvent` is `{ Change, PressEnter, Focus, Blur }`). **Closed by Phase 6 of the GPUI→Dioxus migration (2026-08-10):** the limitation was the toolkit's, and a plain `<input>` surfaces Tab like any other key, so `dat0-ui`'s cell editor commits and steps one column right on Tab, one left on Shift-Tab, clamped at the row's ends. | closed | low |
 | PD-021 | P4c (T11 review): `error_ux::push` enqueues success/error banners into the global `PENDING` queue, but NOTHING drains it in the runtime render tree — only `#[cfg(test)]` code calls `drain_pending`. So export completion/failure feedback (`window.rs::run_export`) AND the pre-existing P4b paste-reject banner (`grid/edit_ops.rs`) are invisible to the user at runtime. **Closed by P6a T1:** `WorkspaceShell::render` now calls `error_ux::banner::merge_pending` into a per-window `banners` field and renders a host strip atop the shell. | closed | medium |
 | PD-022 | P6a (T12 review): the Inspector profile is refreshed on forward data/schema mutations (cell edit, paste, cut, delete, rename, reorder, transform-apply via `route_change`), but NOT on `undo`/`redo` or SQL-console grid-bind — those rebind via `apply_view_change`, which has no inspector hook. So undoing an edit (or rebinding a grid from the SQL console) leaves the inspector profile stale until the next forward mutation. Single well-scoped fix: hook `apply_view_change` (or an `on_rebind_complete` seam) to invalidate/re-profile the inspected table. Not a regression — the inspector did not refresh at all before P6a. | closed | low |
-| PD-023 | The Dioxus shell is not wired to `dat0-core`: 22 of 40 registered actions only log, open an empty dialog, or discard the reply. SQL does not run; sort, filter, edit, clipboard, undo, export, packages, workspaces, MotherDuck, AI key entry, updates, recovery and live refresh are unreachable. "Logic green, screen dead" at app scale, recorded nowhere until 2026-09-25 | open | high |
+| PD-023 | The Dioxus shell is not wired to `dat0-core`: 22 of 40 registered actions only logged, opened an empty dialog, or discarded the reply (16 still do; the SQL console runs since 2026-09-26). Sort, filter, edit, clipboard, undo, export, packages, workspaces, MotherDuck, AI key entry, updates, recovery and live refresh are unreachable. "Logic green, screen dead" at app scale, recorded nowhere until 2026-09-25 | open | high |
 | PD-024 | Banners raised after a window's first frame were never shown — the shell drained the queue once per mount; a refused drop surfaced later, twice, in another window | closed | high |
 | PD-025 | The recovery panel listed the running window's own session as an orphan, and its Discard deleted it | closed | high |
 | PD-026 | The grid cannot scroll past row ~1,290,555: the canvas is rows × 26 px, uncapped, and WebKit clamps layout at ~33.5M px | open | high |
@@ -2195,7 +2195,8 @@ that's modifying it; merge conflicts are signals worth investigating.
   at the scale of the whole application
 - **Target:** feature parity in the Dioxus shell, one surface at a time
 - **Affected files:** `crates/dat0-ui/src/components/shell.rs`
-  (`console_intent`, `surface_command`), `crates/dat0-ui/src/router.rs`,
+  (`surface_command`; `console_intent` until it moved to
+  `components/sql_console/host.rs`), `crates/dat0-ui/src/router.rs`,
   `crates/dat0-ui/src/components/mod.rs` (`menu_local`),
   `crates/dat0-ui/src/session_boot.rs`
 - **Symptom:** the GPUI→Dioxus port rebuilt the components and the shell
@@ -2245,6 +2246,29 @@ that's modifying it; merge conflicts are signals worth investigating.
   `action_routing.rs`) requires an observable effect from every command still
   offered, and lets `UNWIRED` only shrink. Each surface ported under this entry
   removes its ids from that list in the same change.
+- **Progress:**
+  - 2026-09-26, event routing (PD-027, closed). The settings window's
+    `ThemeChanged` now reaches every window. Keeping a theme across launches
+    is still open.
+  - 2026-09-26, SQL console. A query's rows land in the main grid, as a tab
+    named for its query tab; a statement that returns nothing says it ran; a
+    failure shows DuckDB's message in the console; Cancel interrupts the run.
+    Every run is recorded, and History reopens one in a new tab. Saved queries
+    save, load and delete. Save as Table keeps the statement as a table and
+    opens it. Completion now knows the window's tables and columns, read when
+    a query tab initialises. Six ids left `UNWIRED` (22 → 16), and
+    `tests/console_run.rs` drives each against a real session. "Run in
+    results pane" is gone until the console has a pane.
+  - Still open in the console: PRAGMA and EXPLAIN run, but their rows are not
+    shown — DuckDB will neither define a view as them nor select from them,
+    and the grid reads views. SHOW, DESCRIBE and SUMMARIZE do reach the grid.
+    Query tabs are not saved with the session (`Session::set_sql_tabs` has no
+    caller), so what was typed does not survive a restart; the GPUI build
+    saved them after every run.
+  - Found on the way and fixed with it: a grid handed a new source — another
+    tab, or a query run again in place — kept checking the old source's
+    cache, so the new table showed placeholders until a scroll
+    (`tests/shell_grid_binding.rs`).
 - **Discovered:** project review, 2026-09-25 — seven read-only audits plus a
   Linux release build driven under Xvfb.
 - **Fix:** port each surface's orchestration from `95627c8` onto the
@@ -2256,7 +2280,7 @@ that's modifying it; merge conflicts are signals worth investigating.
   crash prompt, recovery, scratch cleanup) → honest chrome.
 - **Originating doc:** `docs/internal/2026-08-09-gpui-to-dioxus-migration-log.md`
   (Phases 5–6: "router::route claiming all 40 ids")
-- **Last touched:** 2026-09-25
+- **Last touched:** 2026-09-26
 
 ### PD-024 — Banners raised after a window's first frame were never shown
 

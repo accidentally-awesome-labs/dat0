@@ -139,6 +139,7 @@ fn boot_with_tabs() -> Harness {
     boot_with(vec![TabView {
         table: "t_1".into(),
         path: Some(std::path::PathBuf::from("/data/sales.csv")),
+        label: None,
     }])
 }
 

@@ -113,6 +113,7 @@ fn tab(path: &str) -> TabView {
     TabView {
         table: path.replace(['/', '.'], "_"),
         path: Some(PathBuf::from(path)),
+        label: None,
     }
 }
 

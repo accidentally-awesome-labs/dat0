@@ -116,14 +116,19 @@ pub fn statement_at(sql: &str, cursor: usize) -> Span {
     *spans.last().unwrap()
 }
 
-/// Classify a single statement as result-producing or exec-only by leading keyword.
-pub fn classify(stmt: &str) -> ResultKind {
-    let head = strip_leading_noise(stmt);
-    let word: String = head
+/// A statement's first keyword, upper-cased, past leading whitespace and
+/// comments. Empty when it starts with anything else.
+pub fn leading_keyword(stmt: &str) -> String {
+    strip_leading_noise(stmt)
         .chars()
         .take_while(|c| c.is_ascii_alphabetic())
         .collect::<String>()
-        .to_ascii_uppercase();
+        .to_ascii_uppercase()
+}
+
+/// Classify a single statement as result-producing or exec-only by leading keyword.
+pub fn classify(stmt: &str) -> ResultKind {
+    let word = leading_keyword(stmt);
     const RESULT_KW: &[&str] = &[
         "SELECT",
         "WITH",

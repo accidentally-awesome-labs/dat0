@@ -90,18 +90,17 @@ const NOT_HEADLESS: &[(&str, &str)] = &[
         ids::SAMPLE_DATA_RETRY_TAXI,
         "downloads over the network; dat0-core's tests/sample_data_fetch.rs covers the fetch",
     ),
+    (
+        ids::SQL_CANCEL,
+        "interrupts a running query, and a run needs a real session; \
+         tests/console_run.rs cancels one",
+    ),
 ];
 
 /// The `UNWIRED` list as of the review that introduced it (2026-09-25).
 /// Frozen here so the list can shrink but never grow; see
 /// [`the_unwired_list_only_shrinks`].
 const UNWIRED_AT_MOST: &[&str] = &[
-    ids::SQL_RUN,
-    ids::SQL_CANCEL,
-    ids::SQL_HISTORY,
-    ids::SQL_LOAD_QUERY,
-    ids::SQL_SAVE_QUERY,
-    ids::SQL_SAVE_AS_TABLE,
     ids::VIEW_COPY,
     ids::VIEW_CUT,
     ids::VIEW_PASTE,
@@ -374,7 +373,7 @@ fn every_hidden_id_is_still_a_real_command() {
 /// scenes are fixtures that render a modal and never submit it.
 #[test]
 fn discarded_modal_replies_only_decrease() {
-    const AT_MOST: usize = 6;
+    const AT_MOST: usize = 3;
     let src = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
     let mut found = Vec::new();
     collect(&src, &mut |path, text| {

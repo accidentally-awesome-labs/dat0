@@ -42,11 +42,19 @@ pub struct TabView {
     pub table: String,
     /// Source file, when the tab came from one. Drives the S8 swatch.
     pub path: Option<PathBuf>,
+    /// A name to show instead of the file's or the table's. A console run's
+    /// rows sit in a view named `__dat0_qr_…`, and the tab is named for the
+    /// query tab they came from.
+    pub label: Option<String>,
 }
 
 impl TabView {
-    /// The tab's display title: the file's stem when it has one, else the table.
+    /// The tab's display title: its label, else the file's name, else the
+    /// table.
     pub fn title(&self) -> &str {
+        if let Some(label) = &self.label {
+            return label;
+        }
         self.path
             .as_ref()
             .and_then(|p| p.file_name())
@@ -385,14 +393,22 @@ mod tests {
         let from_file = TabView {
             table: "t_1".into(),
             path: Some(PathBuf::from("/data/sales.csv")),
+            label: None,
         };
         assert_eq!(from_file.title(), "sales.csv");
 
         let from_query = TabView {
             table: "results".into(),
             path: None,
+            label: None,
         };
         assert_eq!(from_query.title(), "results");
+
+        let labelled = TabView {
+            label: Some("Query 1".into()),
+            ..from_file
+        };
+        assert_eq!(labelled.title(), "Query 1", "a label wins over the file");
     }
 
     #[test]

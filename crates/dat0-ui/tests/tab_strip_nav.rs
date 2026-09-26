@@ -122,6 +122,7 @@ fn tab(table: &str, path: Option<&str>) -> TabView {
     TabView {
         table: table.to_string(),
         path: path.map(PathBuf::from),
+        label: None,
     }
 }
 

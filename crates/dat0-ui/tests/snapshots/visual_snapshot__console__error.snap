@@ -15,7 +15,6 @@ expression: "rendered[0].1"
 </button>
 </div>
 <div class="d0-console-toolbar" data-a11y-id="console-toolbar">
-<button class="d0-btn" data-a11y-id="console-run-pane" role="button" aria-label="Run in results pane" tabindex="0">Run in results pane</button>
 <button class="d0-btn" data-a11y-id="console-new-tab" role="button" aria-label="New query tab" tabindex="0">New query tab</button>
 <button class="d0-btn" data-a11y-id="console-history" role="button" aria-label="History" tabindex="0">History</button>
 <button class="d0-btn" data-a11y-id="console-save-query" role="button" aria-label="Save Query…" tabindex="0">Save Query…</button>
@@ -25,7 +24,7 @@ expression: "rendered[0].1"
 <div class="d0-editor" id="cm-tab-1" data-a11y-id="sql-editor-tab-1" role="textbox" aria-label="SQL editor" aria-multiline="true" tabindex="0">
 </div>
 <div class="d0-console-strip is-error" data-a11y-id="console-error" role="alert">
-<span class="d0-mono" data-a11y-id="console-error-text">Catalog Error: Table with name saless does not exist!</span>
+<pre class="d0-mono" data-a11y-id="console-error-text">Catalog Error: Table with name saless does not exist!</pre>
 <button class="d0-btn" data-a11y-id="console-error-dismiss" role="button" aria-label="Dismiss error" tabindex="0">Dismiss error</button>
 </div>
 </div>

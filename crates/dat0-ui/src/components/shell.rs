@@ -140,6 +140,11 @@ pub fn Shell() -> Element {
     let selection = use_signal(|| dat0_core::grid::selection::SelectionModel::new(1, 1));
     let widths = use_signal(Vec::<f64>::new);
 
+    // The console's tabs, its run, its failure strip and the schema the
+    // editor completes against (`sql_console::host`).
+    let console_host = crate::components::sql_console::host::ConsoleHost::use_new(ws);
+    let prepared = console_host.prepared;
+
     // One `GridDataSource` per active tab, rebuilt when the tab changes.
     // `use_resource` because building one runs a DESCRIBE against DuckDB: it is
     // a query, not a field read, and it must not block the render that asks.
@@ -157,11 +162,18 @@ pub fn Shell() -> Element {
     let mut selection_seed = selection;
     let source = use_resource(move || async move {
         let table = ws.active_tab().map(|t| t.table)?;
-        let engine = ws.session.read().ready().map(|s| s.lock().engine.clone())?;
-        let built = dat0_core::grid::data_source::GridDataSource::new(engine, table)
-            .await
-            .map(std::sync::Arc::new)
-            .map_err(|e| format!("{e:#}"));
+        // A console run counts its rows itself, under its own cancel guard,
+        // and hands the finished source over rather than have it counted twice.
+        let built = match prepared.read().clone().filter(|(t, _)| *t == table) {
+            Some((_, src)) => Ok(src),
+            None => {
+                let engine = ws.session.read().ready().map(|s| s.lock().engine.clone())?;
+                dat0_core::grid::data_source::GridDataSource::new(engine, table)
+                    .await
+                    .map(std::sync::Arc::new)
+                    .map_err(|e| format!("{e:#}"))
+            }
+        };
 
         // Size the grid's two pieces of shell-owned state to the table that
         // just bound. `Grid` derives its visible column range from
@@ -180,8 +192,6 @@ pub fn Shell() -> Element {
         Some(built)
     });
 
-    // The console's tabs and its last failure. The schema snapshot is shared
-    // with the editor's completion provider.
     // The chart's plot data. `use_resource` for the same reason the grid's
     // source is one: building it runs a query. Holding the table (not just the
     // rendered SVG) is what makes PNG export possible — plotters rasterises
@@ -227,9 +237,7 @@ pub fn Shell() -> Element {
     // subtree reads it, and hoisting it would widen `Workspace` for one toggle.
     let perf_hud = use_signal(|| false);
 
-    let mut console = use_signal(crate::components::sql_console::tabs::Tabs::new);
-    let console_error = use_signal(|| Option::<String>::None);
-    let schema = use_hook(dat0_core::query::completion::new_shared_snapshot);
+    let mut console = console_host.tabs;
 
     // The commands whose state lives in this function. `router::route` performs
     // everything that is window state and falls through to here for the rest,
@@ -256,6 +264,7 @@ pub fn Shell() -> Element {
     // a component mounted without one — the headless harness, a probe — is
     // simply a tree with no router attached, not a broken window.
     let mut surface_slot = try_consume_context::<crate::router::SurfaceSlot>();
+    let surface_host = console_host.clone();
     use_hook(move || {
         let Some(mut slot) = surface_slot.take() else {
             return;
@@ -264,8 +273,7 @@ pub fn Shell() -> Element {
             surface_command(
                 ws,
                 ai.clone(),
-                console,
-                console_error,
+                surface_host.clone(),
                 chart_spec,
                 chart_data,
                 selection,
@@ -582,11 +590,15 @@ pub fn Shell() -> Element {
                                 SqlConsole {
                                     tabs: console.read().all().to_vec(),
                                     active: console.read().active(),
-                                    schema: schema.clone(),
-                                    running: false,
+                                    schema: console_host.schema.clone(),
+                                    running: console_host.running(),
                                     stream: StreamView::default(),
-                                    error: console_error(),
-                                    on_intent: move |i| console_intent(ws, console, console_error, i),
+                                    error: console_host.error.cloned(),
+                                    carets: Some(console_host.carets),
+                                    on_intent: {
+                                        let host = console_host.clone();
+                                        move |i| crate::components::sql_console::host::perform(&host, i)
+                                    },
                                     on_select_tab: move |i| console.write().select(i),
                                 }
                             }
@@ -897,65 +909,6 @@ fn thousands(n: u64) -> String {
     out
 }
 
-/// Perform one console intent.
-///
-/// The console never touches the engine or the registry itself — it reports
-/// what the user asked for and the shell decides. That is what lets the whole
-/// component be driven headlessly, and it is why every one of these arms is
-/// here rather than inside it.
-fn console_intent(
-    ws: Workspace,
-    console: Signal<crate::components::sql_console::tabs::Tabs>,
-    error: Signal<Option<String>>,
-    intent: ConsoleIntent,
-) {
-    let mut ws = ws;
-    let mut console = console;
-    let mut error = error;
-    match intent {
-        ConsoleIntent::NewTab => {
-            console.write().open();
-        }
-        ConsoleIntent::CloseTab => {
-            // Refused on the last tab: a console with no tab has nowhere to
-            // type, and the widget would have to invent one back.
-            console.write().close_active();
-        }
-        ConsoleIntent::DocChanged { tab, doc } => {
-            console.write().set_doc(&tab, doc);
-        }
-        ConsoleIntent::ShowHistory => {
-            ws.modal.set(Some(Modal::QueryLibrary {
-                entries: Vec::new(),
-                reply: crate::components::modals::ModalReply::new(|_| {}),
-            }));
-        }
-        ConsoleIntent::LoadQuery => {
-            ws.modal.set(Some(Modal::SavedQueries {
-                queries: Vec::new(),
-                reply: crate::components::modals::ModalReply::new(|_| {}),
-            }));
-        }
-        ConsoleIntent::SaveQuery { .. } | ConsoleIntent::SaveAsTable { .. } => {
-            ws.modal.set(Some(Modal::NamePrompt {
-                title: dat0_i18n::t("prompt.save"),
-                initial: String::new(),
-                placeholder: None,
-                confirm_label: None,
-                secret: false,
-                reply: crate::components::modals::ModalReply::new(|_| {}),
-            }));
-        }
-        ConsoleIntent::Run { .. } | ConsoleIntent::Cancel { .. } => {
-            // The engine path. Reported rather than performed until the console
-            // owns a result pane; clearing the error keeps a stale failure from
-            // outliving the run that fixed it.
-            error.set(None);
-        }
-        other => tracing::debug!(?other, "console intent not routed yet"),
-    }
-}
-
 /// Perform a command whose state belongs to the shell.
 ///
 /// Returns false for an id nothing here owns, which `router::route` reports as
@@ -964,8 +917,7 @@ fn console_intent(
 fn surface_command(
     ws: Workspace,
     ai: crate::components::ai::AiController,
-    console: Signal<crate::components::sql_console::tabs::Tabs>,
-    console_error: Signal<Option<String>>,
+    console: crate::components::sql_console::host::ConsoleHost,
     chart_spec: Signal<dat0_core::charts::spec::ChartSpec>,
     chart_data: Resource<Option<dat0_core::charts::data::PlotTable>>,
     selection: Signal<dat0_core::grid::selection::SelectionModel>,
@@ -974,46 +926,32 @@ fn surface_command(
 ) -> bool {
     use dat0_core::actions::builtin::ids;
 
+    use crate::components::sql_console::host;
+
     let mut ws = ws;
-    let mut console_m = console;
+    let mut tabs = console.tabs;
     match id {
         // ── SQL console ────────────────────────────────────────────────────
         ids::SQL_NEW_TAB => {
-            console_m.write().open();
+            tabs.write().open();
         }
         ids::SQL_CLOSE_TAB => {
-            console_m.write().close_active();
+            tabs.write().close_active();
         }
-        ids::SQL_RUN | ids::SQL_CANCEL => {
-            let tab = console.read().active_tab().clone();
-            console_intent(
-                ws,
-                console,
-                console_error,
-                if id == ids::SQL_RUN {
-                    ConsoleIntent::Run {
-                        tab: tab.id,
-                        sql: tab.doc,
-                        target: dat0_core::query::ResultTarget::MainGrid,
-                    }
-                } else {
-                    ConsoleIntent::Cancel { tab: tab.id }
-                },
-            );
+        ids::SQL_RUN => {
+            let (tab, doc) = host::active(&console);
+            host::run(&console, &tab, doc);
         }
-        ids::SQL_HISTORY => console_intent(ws, console, console_error, ConsoleIntent::ShowHistory),
-        ids::SQL_LOAD_QUERY => console_intent(ws, console, console_error, ConsoleIntent::LoadQuery),
-        ids::SQL_SAVE_QUERY | ids::SQL_SAVE_AS_TABLE => {
-            let tab = console.read().active_tab().clone();
-            console_intent(
-                ws,
-                console,
-                console_error,
-                ConsoleIntent::SaveQuery {
-                    tab: tab.id,
-                    sql: tab.doc,
-                },
-            );
+        ids::SQL_CANCEL => host::cancel(&console),
+        ids::SQL_HISTORY => host::perform(&console, ConsoleIntent::ShowHistory),
+        ids::SQL_LOAD_QUERY => host::perform(&console, ConsoleIntent::LoadQuery),
+        ids::SQL_SAVE_QUERY => {
+            let (tab, sql) = host::active(&console);
+            host::perform(&console, ConsoleIntent::SaveQuery { tab, sql });
+        }
+        ids::SQL_SAVE_AS_TABLE => {
+            let (tab, sql) = host::active(&console);
+            host::perform(&console, ConsoleIntent::SaveAsTable { tab, sql });
         }
 
         // ── Charts ─────────────────────────────────────────────────────────

@@ -64,6 +64,11 @@ const MAX_LINES: &[(&str, usize)] = &[
     ("shell.rs", 1200),
     ("sidebar.rs", 600),
     ("sql_console/editor.rs", 400),
+    // New with the console's run (step 5.2): what a console intent does, kept
+    // out of shell.rs, which was 45 lines from its ceiling, and the SQL-text
+    // rules it applies.
+    ("sql_console/host.rs", 600),
+    ("sql_console/sql_text.rs", 300),
     ("sql_console/mod.rs", 700),
     ("sql_console/tabs.rs", 400),
     ("update_ui.rs", 400),

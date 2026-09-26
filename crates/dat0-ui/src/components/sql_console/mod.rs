@@ -37,6 +37,8 @@
 //! is reachable from.
 
 pub mod editor;
+pub mod host;
+pub mod sql_text;
 pub mod tabs;
 
 use std::collections::BTreeMap;
@@ -129,6 +131,10 @@ pub struct SqlConsoleProps {
     pub error: Option<String>,
     pub on_intent: EventHandler<ConsoleIntent>,
     pub on_select_tab: EventHandler<usize>,
+    /// Where each tab's caret was last reported, so a run takes the statement
+    /// the caret is in. `None` where nothing runs, as in the gallery.
+    #[props(default)]
+    pub carets: Option<host::Carets>,
 }
 
 // The schema snapshot is shared, mutable, and refreshed from a background task;
@@ -142,6 +148,7 @@ impl PartialEq for SqlConsoleProps {
             && self.running == other.running
             && self.stream == other.stream
             && self.error == other.error
+            && self.carets == other.carets
             && std::sync::Arc::ptr_eq(&self.schema, &other.schema)
     }
 }
@@ -189,6 +196,7 @@ pub fn SqlConsole(props: SqlConsoleProps) -> Element {
     let active = props.active.min(tabs.len().saturating_sub(1));
     let on_intent = props.on_intent;
     let on_select_tab = props.on_select_tab;
+    let carets = props.carets;
     let running = props.running;
     let stream = props.stream.clone();
     let strip = strip_phase(&stream);
@@ -209,7 +217,13 @@ pub fn SqlConsole(props: SqlConsoleProps) -> Element {
         // `id` is empty for the bundle's own boot ping, and the tab id when
         // an instance mounts.
         EditorMsg::Ready { id } => tracing::debug!(tab = %id, "editor ready"),
-        EditorMsg::Cursor { .. } => {}
+        EditorMsg::Cursor { id, line, col } => {
+            if let Some(mut carets) = carets {
+                // Written, never read during render: a caret move must not
+                // re-render the console.
+                carets.write().insert(id, (line, col));
+            }
+        }
     });
 
     let active_tab = tabs.get(active).cloned();
@@ -406,21 +420,6 @@ pub fn SqlConsole(props: SqlConsoleProps) -> Element {
             // so the commands are discoverable without knowing they are there.
             div { class: "d0-console-toolbar", "data-a11y-id": "console-toolbar",
                 Tool {
-                    id: "console-run-pane",
-                    label: dat0_i18n::t("sql.run_in_pane"),
-                    on_act: {
-                        let (tab_id, sql) = (tab_id.clone(), sql.clone());
-                        move |_| {
-                            on_intent
-                                .call(ConsoleIntent::Run {
-                                    tab: tab_id.clone(),
-                                    sql: sql.clone(),
-                                    target: ResultTarget::Pane,
-                                })
-                        }
-                    },
-                }
-                Tool {
                     id: "console-new-tab",
                     label: dat0_i18n::t("sql.new_tab"),
                     on_act: move |_| on_intent.call(ConsoleIntent::NewTab),
@@ -529,7 +528,8 @@ pub fn SqlConsole(props: SqlConsoleProps) -> Element {
                     class: "d0-console-strip is-error",
                     "data-a11y-id": "console-error",
                     role: AccessRole::Alert.aria(),
-                    span { class: "d0-mono", "data-a11y-id": "console-error-text", "{msg}" }
+                    // `pre`: DuckDB lines its caret up under the fault.
+                    pre { class: "d0-mono", "data-a11y-id": "console-error-text", "{msg}" }
                     Tool {
                         id: ERROR_DISMISS,
                         label: dat0_i18n::t("sql.error.dismiss"),

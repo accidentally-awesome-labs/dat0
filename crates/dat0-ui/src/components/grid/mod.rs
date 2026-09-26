@@ -214,7 +214,13 @@ pub fn Grid(props: GridProps) -> Element {
     {
         let source = props.source.clone();
         let (start, last) = (range.rows.start, range.rows.end.saturating_sub(1));
-        use_effect(move || {
+        // The source's identity is a dependency too. A mounted grid is handed
+        // a new source when the tab changes or a query reruns in place, and an
+        // effect that watched only the viewport went on checking the old
+        // source's cache: the new table sat on placeholders until a scroll.
+        let bound = Arc::as_ptr(&source) as usize;
+        use_effect(use_reactive!(|bound| {
+            let _ = bound;
             // Read inside the effect so a scroll re-runs it: `use_effect`
             // re-runs on the signals its body touches, and `start`/`last` are
             // plain values computed during render. Without this the grid
@@ -236,7 +242,7 @@ pub fn Grid(props: GridProps) -> Element {
                 let next = pages_loaded().wrapping_add(1);
                 pages_loaded.set(next);
             });
-        });
+        }));
     }
 
     let mut selection = props.selection;

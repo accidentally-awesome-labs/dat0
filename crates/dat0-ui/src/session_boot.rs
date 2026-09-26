@@ -289,6 +289,7 @@ pub async fn open_paths(ws: Workspace, paths: Vec<PathBuf>) {
                 ws.tabs.write().push(TabView {
                     table: table_name,
                     path: Some(source_path),
+                    label: None,
                 });
                 let last = ws.tabs.read().len() - 1;
                 ws.active.set(Some(last));

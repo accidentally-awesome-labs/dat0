@@ -15,7 +15,6 @@ expression: "rendered[0].1"
 </button>
 </div>
 <div class="d0-console-toolbar" data-a11y-id="console-toolbar">
-<button class="d0-btn" data-a11y-id="console-run-pane" role="button" aria-label="Run in results pane" tabindex="0">Run in results pane</button>
 <button class="d0-btn" data-a11y-id="console-new-tab" role="button" aria-label="New query tab" tabindex="0">New query tab</button>
 <button class="d0-btn" data-a11y-id="console-history" role="button" aria-label="History" tabindex="0">History</button>
 <button class="d0-btn" data-a11y-id="console-save-query" role="button" aria-label="Save Query…" tabindex="0">Save Query…</button>

@@ -231,7 +231,6 @@ fn every_console_command_is_a_tab_stop() {
     let seen = tab_labels(&mut h, 30);
     for key in [
         "sql.run",
-        "sql.run_in_pane",
         "sql.new_tab",
         "sql.history",
         "sql.save_query",
@@ -251,16 +250,6 @@ fn running_asks_for_the_main_grid() {
     let mut h = console(1);
     h.click_label(&t("sql.run"));
     assert_eq!(log(&h), "run:grid:", "an empty tab still asks for a run");
-}
-
-#[test]
-fn running_in_the_pane_asks_for_the_pane_instead() {
-    // The two Run controls differ only in where the rows land; a copy-paste
-    // that left both on `MainGrid` would look right and quietly ignore the
-    // results pane.
-    let mut h = console(2);
-    h.click_label(&t("sql.run_in_pane"));
-    assert_eq!(log(&h), "run:pane:");
 }
 
 #[test]
@@ -343,7 +332,6 @@ fn no_console_command_exists_while_the_pane_is_shut() {
     );
     for key in [
         "sql.run",
-        "sql.run_in_pane",
         "sql.new_tab",
         "sql.history",
         "sql.save_query",

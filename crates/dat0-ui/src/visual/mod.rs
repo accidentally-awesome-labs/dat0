@@ -445,14 +445,17 @@ fn seed(
                 TabView {
                     table: "sales".into(),
                     path: Some(PathBuf::from("/data/sales.csv")),
+                    label: None,
                 },
                 TabView {
                     table: "trips".into(),
                     path: Some(PathBuf::from("/data/trips.parquet")),
+                    label: None,
                 },
                 TabView {
                     table: "revenue_by_region".into(),
                     path: None,
+                    label: None,
                 },
             ]);
             ws.active.set(Some(0));
