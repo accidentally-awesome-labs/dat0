@@ -209,6 +209,13 @@ impl Views {
         self.change(ViewModel::redo);
     }
 
+    /// `table` was read again from its file: rebuild its view from `ops`, the
+    /// steps that survive a re-import, and bind it anew even when its SQL is
+    /// unchanged, since the rows under it are not.
+    pub fn replay(&self, table: String, ops: Vec<Transformation>) {
+        self.change_on(table, |vm| Some(vm.reset_to_replayed(ops)));
+    }
+
     /// A console run replaced `table`'s rows: show `source`, and start its
     /// view over, since the stack was built on the rows it replaced.
     pub fn replaced(&self, table: String, source: Arc<GridDataSource>) {

@@ -188,6 +188,8 @@ pub fn Shell() -> Element {
     // keyboard cursor to A1 whatever the table holds.
     crate::components::grid::views::use_fit(views, source, widths, selection);
     let edits = crate::components::grid::edits::Edits::new(ws, views, selection, source);
+    // Say when the active tab's file changes on disk (Live Refresh).
+    crate::components::grid::refresh::use_source_watch(ws, events.clone());
 
     // The chart's plot data. `use_resource` for the same reason the grid's
     // source is one: building it runs a query. Holding the table (not just the
@@ -1057,6 +1059,7 @@ fn surface_command(
         ids::VIEW_UNDO => views.undo(),
         ids::VIEW_REDO => views.redo(),
         ids::VIEW_EXPORT => crate::components::grid::export::open(ws, views, grid_source),
+        ids::LIVE_REFRESH => crate::components::grid::refresh::refresh(ws, views),
 
         // ── Panels and windows ─────────────────────────────────────────────
         ids::AI_PANEL_OPEN => {

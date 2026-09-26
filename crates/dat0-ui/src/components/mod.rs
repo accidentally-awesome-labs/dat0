@@ -238,6 +238,13 @@ async fn handle(
     match ev {
         AppEvent::OpenWindow { paths } => open_window(boot, paths).await,
         AppEvent::ThemeChanged { id } => Theme::current().set(&id),
+        // Raised off the UI thread, by a file watcher. One of each: a burst of
+        // saves is one change to act on.
+        AppEvent::Banner(banner) => {
+            if !ws.banners.peek().iter().any(|b| b.title == banner.title) {
+                ws.push_banner(banner);
+            }
+        }
         AppEvent::RunAction { id, .. } => {
             if !crate::router::route(ws, events, surface, id) {
                 // Loud, because it can only mean a descriptor was registered

@@ -44,6 +44,7 @@ const MAX_LINES: &[(&str, usize)] = &[
     ("grid/export.rs", 200),
     ("grid/header.rs", 300),
     ("grid/mod.rs", 700),
+    ("grid/refresh.rs", 300),
     ("grid/scroll.rs", 500),
     ("grid/views.rs", 400),
     ("import_progress.rs", 400),

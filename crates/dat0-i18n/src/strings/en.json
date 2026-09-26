@@ -230,6 +230,7 @@
   "inspector.toggle_section": "Toggle section",
   "livedata.changed.refresh": "Refresh",
   "livedata.changed.title": "{file} changed on disk",
+  "livedata.no_file": "This tab has no file to read again",
   "livedata.refresh.confirm.body": "Re-importing discards {edits} cell edit(s) and {deletes} row deletion(s). Filters, sorts, and column changes will be kept. Continue?",
   "livedata.refresh.confirm.continue": "Refresh anyway",
   "livedata.refresh.confirm.title": "Refresh will discard edits",

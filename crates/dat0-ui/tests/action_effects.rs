@@ -114,6 +114,11 @@ const NOT_HEADLESS: &[(&str, &str)] = &[
     (ids::VIEW_DELETE_ROWS, GRID_VERB),
     (ids::VIEW_DELETE_COLUMN, GRID_VERB),
     (ids::VIEW_SAVE_AS_TABLE, GRID_VERB),
+    (
+        ids::LIVE_REFRESH,
+        "reads a tab's file again, and a tab from a file needs a real session; \
+         tests/live_refresh.rs refreshes one",
+    ),
 ];
 
 const GRID_VERB: &str = "acts on a selection over a table's rows, and a table needs a real \
@@ -123,7 +128,6 @@ const GRID_VERB: &str = "acts on a selection over a table's rows, and a table ne
 /// Frozen here so the list can shrink but never grow; see
 /// [`the_unwired_list_only_shrinks`].
 const UNWIRED_AT_MOST: &[&str] = &[
-    ids::LIVE_REFRESH,
     ids::WORKSPACE_OPEN,
     ids::WORKSPACE_SAVE,
     ids::PERF_HUD_TOGGLE,
@@ -383,7 +387,7 @@ fn every_hidden_id_is_still_a_real_command() {
 /// scenes are fixtures that render a modal and never submit it.
 #[test]
 fn discarded_modal_replies_only_decrease() {
-    const AT_MOST: usize = 2;
+    const AT_MOST: usize = 1;
     let src = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
     let mut found = Vec::new();
     collect(&src, &mut |path, text| {

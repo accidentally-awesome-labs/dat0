@@ -35,6 +35,7 @@ pub mod context_menu;
 pub mod edits;
 pub mod export;
 pub mod header;
+pub mod refresh;
 pub mod scroll;
 pub mod views;
 

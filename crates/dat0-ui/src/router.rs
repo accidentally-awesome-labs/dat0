@@ -34,7 +34,6 @@ use crate::state::{Modal, Workspace};
 /// in the same change as the test that shows its effect.
 pub const UNWIRED: &[&str] = &[
     // Dialogs whose reply is discarded.
-    ids::LIVE_REFRESH,
     // Workspaces: a picked folder is refused as an unsupported file, and Save
     // only logs the path it was given.
     ids::WORKSPACE_OPEN,
@@ -169,11 +168,6 @@ pub fn route(ws: Workspace, events: &AppEvents, surface: SurfaceSlot, id: &str) 
         ids::SESSION_RETRY => crate::session_boot::retry(ws),
 
         // ── Modals the shell can open from workspace state alone ───────────
-        ids::LIVE_REFRESH => ws.modal.set(Some(Modal::LiveRefresh {
-            dropped_edits: 0,
-            dropped_deletes: 0,
-            reply: crate::components::modals::ModalReply::new(|_| {}),
-        })),
         ids::IMPORT_CANCEL => {
             // Idempotent by design: cancelling an import that already finished
             // is a no-op, not an error, because the user cannot know which.
