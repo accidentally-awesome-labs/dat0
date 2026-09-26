@@ -235,7 +235,11 @@ gh workflow run release.yml && gh run watch              # steps 2 + 3 end to en
 The `workflow_dispatch` dry run exercises `gate`, `macos` and `linux` and
 skips `publish` (gated on `github.ref_type == 'tag'`), so it proves the
 signing and notarization chain but not manifest signing. That gap is covered
-locally by `crates/dat0-core/tests/update_manifest_roundtrip.rs`.
+locally: `crates/dat0-core/tests/update_manifest_roundtrip.rs` checks that
+the app reads what xtask writes, and `xtask/tests/release_workflow.rs` and
+`manifest_verify.rs` check the publish job's signing steps. On the tag,
+`cargo xtask verify-manifest` checks the real signature against the committed
+key before anything is published.
 
 It needs none of the secrets (step 7 of the 2026-09-25 review): each
 platform builds, is checked and uploads its artefacts, and signs only what the
