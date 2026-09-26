@@ -177,7 +177,10 @@ pub fn route(ws: Workspace, events: &AppEvents, surface: SurfaceSlot, id: &str) 
                 tracing::debug!("settings.open: no window system, nothing to open");
                 return true;
             }
-            let events = events.clone();
+            // The settings window belongs to no workbench window, so its
+            // controls post on the process bus and reach whichever window was
+            // focused last by then — not this one, which may have closed.
+            let events = crate::launch::process_bus().unwrap_or_else(|| events.clone());
             spawn(async move {
                 crate::components::settings_ui::open_settings_window(events).await;
             });

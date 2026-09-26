@@ -38,13 +38,9 @@
 //!
 //! Exits 0 on PASS, 1 on FAIL.
 
-use std::sync::Arc;
-
 use dioxus::prelude::*;
-use parking_lot::Mutex;
 
 use dat0_core::actions::registry::ActionRegistry;
-use dat0_core::events::AppEvents;
 use dat0_core::query::completion::{SchemaSnapshot, TableEntry, new_shared_snapshot};
 use dat0_ui::components::ai::{StreamKind, StreamPhase, StreamView};
 use dat0_ui::components::sql_console::{ConsoleIntent, SqlConsole, Tab};
@@ -264,15 +260,9 @@ struct Report {
 }
 
 fn main() {
-    let (events, rx) = AppEvents::channel();
     let registry = ActionRegistry::new();
     dat0_core::actions::builtin::register_all(&registry).expect("built-ins register");
-    let boot = Boot {
-        events,
-        rx: Arc::new(Mutex::new(Some(rx))),
-        registry,
-        cli_paths: std::sync::Arc::new(parking_lot::Mutex::new(Vec::new())),
-    };
+    let boot = Boot::new(registry, Vec::new());
 
     dioxus::LaunchBuilder::desktop()
         .with_cfg(dat0_ui::launch::config())

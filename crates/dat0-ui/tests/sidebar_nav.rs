@@ -43,8 +43,9 @@ struct HostProps {
 }
 
 /// The real `Shell` with `components::App`'s four contexts. `pump` stands in
-/// for the async event-bus drain the harness has no runtime for; the chord
-/// table, the registry and the router are all production code.
+/// for the event-bus drain, so each test says when a command lands
+/// (`window_routing.rs` runs the real drain); the chord table, the registry
+/// and the router are all production code.
 #[component]
 fn Host(props: HostProps) -> Element {
     let mut ws = Workspace::provide();

@@ -100,7 +100,7 @@ that's modifying it; merge conflicts are signals worth investigating.
 | PD-024 | Banners raised after a window's first frame were never shown — the shell drained the queue once per mount; a refused drop surfaced later, twice, in another window | closed | high |
 | PD-025 | The recovery panel listed the running window's own session as an orphan, and its Discard deleted it | closed | high |
 | PD-026 | The grid cannot scroll past row ~1,290,555: the canvas is rows × 26 px, uncapped, and WebKit clamps layout at ~33.5M px | open | high |
-| PD-027 | The first window owns the event bus: commands raised in any window act on window 1, and closing window 1 silences menus, palette, chords and second-launch forwarding | open | medium |
+| PD-027 | The first window owns the event bus: commands raised in any window act on window 1, and closing window 1 silences menus, palette, chords and second-launch forwarding | closed | medium |
 | PD-028 | A file drop aborted the app when `session.json` could not be written (`.expect` under `panic = "abort"`) | closed | medium |
 | PD-029 | Package replay trusted the recipe: its SQL ran with the engine's full access, and table names were used as file names unchecked | closed | high |
 
@@ -2344,9 +2344,11 @@ that's modifying it; merge conflicts are signals worth investigating.
 
 ### PD-027 — The first window owns the event bus
 
-- **Status:** open
+- **Status:** closed — 2026-09-26
 - **Severity:** medium
-- **Affected files:** `crates/dat0-ui/src/components/mod.rs` (`App`, `handle`)
+- **Affected files:** `crates/dat0-ui/src/components/mod.rs` (`App`,
+  `use_window_bus`), `crates/dat0-ui/src/launch.rs` (`WindowRegistry`,
+  `ProcessBusLease`), `crates/dat0-ui/src/router.rs` (`settings.open`)
 - **Symptom:** exactly one window — the first to mount — takes the process's
   `AppEventRx` and routes every event with its own `Workspace` and surface.
   Menus, chords, palette rows and banner buttons all post
@@ -2357,10 +2359,33 @@ that's modifying it; merge conflicts are signals worth investigating.
   reaches all of them, so one click can fire once per open window. Verified
   in code; the runtime effects are inferred from `dioxus-desktop` 0.7.10 and
   not yet reproduced.
-- **Fix:** drain the bus at process level, carry the originating window's id
-  on `RunAction`, route to that window's surface, and register the menu
-  handler once per process.
-- **Last touched:** 2026-09-25
+- **Fix:** every window has a bus of its own. `components::use_window_bus`
+  provides it as the `AppEvents` context that chords, palette rows, banner
+  buttons and the window's menu handler post on, and drains it with that
+  window's `Workspace` and surface, so a command acts where it was raised.
+  - What belongs to no workbench window — a second launch's paths, the
+    settings window's controls — stays on the process bus. One window drains
+    it at a time through a `launch::ProcessBusLease`; when the holder closes,
+    the lease goes back and a waiting window takes it over.
+  - The holder opens windows itself and passes every other event on through
+    `launch::WindowRegistry`: to the window the event names, or else to the
+    workbench window focused last (before any focus event, the newest).
+  - The same target gates the menu handler: every window still receives every
+    click, and only the target acts. Focus is recorded from tao's `Focused`
+    events, not asked for when the click lands, because an open GTK menu holds
+    a keyboard grab.
+  - The settings window's theme choice was posted as `ThemeChanged` and never
+    handled. It now reaches every workbench window.
+- **Tests:** `crates/dat0-ui/tests/window_routing.rs` mounts two windows over
+  one `Boot`. A chord acts in its own window, and a command from no window
+  reaches the one focused last. After the first window closes, the second
+  still gets both. A theme change reaches both windows. The registry and the
+  lease have unit tests in `launch.rs`. No test drives a native menu click:
+  the handler's gate is `WindowRegistry::target`, which those unit tests
+  cover.
+- **Closed by:** PR #95, branch `claude/project-review-next-steps-a2t52o`
+  (the commit that records this closure)
+- **Last touched:** 2026-09-26
 
 ### PD-028 — A file drop aborted the app when `session.json` could not be written
 

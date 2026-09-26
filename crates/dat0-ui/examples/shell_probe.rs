@@ -20,7 +20,6 @@
 use dioxus::prelude::*;
 
 use dat0_core::actions::registry::ActionRegistry;
-use dat0_core::events::AppEvents;
 use dat0_ui::launch::Boot;
 
 /// Read back what the browser actually laid out.
@@ -154,16 +153,9 @@ struct Report {
 }
 
 fn main() {
-    let (events, rx) = AppEvents::channel();
     let registry = ActionRegistry::new();
     dat0_core::actions::builtin::register_all(&registry).expect("built-ins register");
-
-    let boot = Boot {
-        events,
-        rx: std::sync::Arc::new(parking_lot::Mutex::new(Some(rx))),
-        registry,
-        cli_paths: std::sync::Arc::new(parking_lot::Mutex::new(Vec::new())),
-    };
+    let boot = Boot::new(registry, Vec::new());
 
     dioxus::LaunchBuilder::desktop()
         .with_cfg(dat0_ui::launch::config())

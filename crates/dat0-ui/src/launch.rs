@@ -90,12 +90,12 @@ pub fn run_app(
         .enable_all()
         .build()?;
 
-    let (events, rx) = AppEvents::channel();
+    let boot = Boot::new(registry, cli_paths);
 
     // The single-instance server: a second launch forwards its paths here
     // rather than starting a second process.
     {
-        let events = events.clone();
+        let events = boot.events.clone();
         runtime.spawn(async move {
             // A failed listener means a second launch silently opens nothing
             // instead of a window, so it is logged rather than dropped — but it
@@ -117,12 +117,7 @@ pub fn run_app(
 
     dioxus::LaunchBuilder::desktop()
         .with_cfg(config())
-        .with_context(Boot {
-            events,
-            rx: Arc::new(parking_lot::Mutex::new(Some(rx))),
-            registry,
-            cli_paths: Arc::new(parking_lot::Mutex::new(cli_paths)),
-        })
+        .with_context(boot)
         .launch(crate::components::App);
 
     Ok(())
@@ -131,22 +126,179 @@ pub fn run_app(
 /// Everything the root component needs that cannot be recreated inside it.
 #[derive(Clone)]
 pub struct Boot {
+    /// The process bus: what belongs to no workbench window. A second launch
+    /// forwards its paths here, and the settings window posts its cross-window
+    /// controls here. Commands raised in a workbench window go on that
+    /// window's own bus instead (`components::use_window_bus`).
     pub events: AppEvents,
-    /// Taken exactly once, by the root's drain task.
+    /// The process bus's receiver, held by one window at a time through a
+    /// [`ProcessBusLease`].
     pub rx: Arc<parking_lot::Mutex<Option<dat0_core::events::AppEventRx>>>,
+    /// Woken when a lease is dropped, so a waiting window takes the bus over.
+    pub bus_free: Arc<tokio::sync::Notify>,
+    /// The open workbench windows, and the one the menu bar acts on.
+    pub windows: WindowRegistry,
     pub registry: dat0_core::actions::registry::ActionRegistry,
     /// Paths from the command line, opened by the FIRST window only.
     ///
-    /// Take-once for the same reason `rx` is: `Boot` is cloned into every
-    /// window, and a second window that also opened them would duplicate every
-    /// tab the user asked for once.
+    /// Take-once: `Boot` is cloned into every window, and a second window that
+    /// also opened them would duplicate every tab the user asked for once.
     pub cli_paths: Arc<parking_lot::Mutex<Vec<PathBuf>>>,
 }
 
 impl Boot {
+    /// A boot around a fresh process bus, with no window open yet.
+    pub fn new(
+        registry: dat0_core::actions::registry::ActionRegistry,
+        cli_paths: Vec<PathBuf>,
+    ) -> Self {
+        let (events, rx) = AppEvents::channel();
+        Self {
+            events,
+            rx: Arc::new(parking_lot::Mutex::new(Some(rx))),
+            bus_free: Arc::new(tokio::sync::Notify::new()),
+            windows: WindowRegistry::default(),
+            registry,
+            cli_paths: Arc::new(parking_lot::Mutex::new(cli_paths)),
+        }
+    }
+
     /// The CLI paths, once. Every later caller gets an empty vec.
     pub fn take_cli_paths(&self) -> Vec<PathBuf> {
         std::mem::take(&mut *self.cli_paths.lock())
+    }
+}
+
+/// The open workbench windows, and the one a command from no particular
+/// window acts on.
+///
+/// The menu bar raises commands from no particular window: macOS has one bar
+/// per process, and dioxus hands each menu event to every window's handler on
+/// every platform. The settings window's controls and a second launch's paths
+/// belong to no workbench window either. All of them go to the workbench
+/// window focused last or, before any has been focused, the one opened last
+/// (PD-027).
+///
+/// Focus is recorded when it changes rather than asked for when a click
+/// lands: an open GTK menu holds a keyboard grab, so the window a menu belongs
+/// to can read as unfocused at the moment its item is chosen.
+#[derive(Clone, Default)]
+pub struct WindowRegistry(Arc<parking_lot::Mutex<Windows>>);
+
+#[derive(Default)]
+struct Windows {
+    /// Each open window's own bus, in the order the windows opened.
+    open: Vec<(uuid::Uuid, AppEvents)>,
+    focused: Option<uuid::Uuid>,
+}
+
+impl Windows {
+    fn target(&self) -> Option<uuid::Uuid> {
+        self.focused
+            .filter(|f| self.bus(*f).is_some())
+            .or_else(|| self.open.last().map(|(id, _)| *id))
+    }
+
+    fn bus(&self, window: uuid::Uuid) -> Option<&AppEvents> {
+        self.open
+            .iter()
+            .find(|(id, _)| *id == window)
+            .map(|(_, bus)| bus)
+    }
+}
+
+impl WindowRegistry {
+    /// `window` opened, and `bus` performs commands on it.
+    pub fn opened(&self, window: uuid::Uuid, bus: AppEvents) {
+        let mut w = self.0.lock();
+        w.open.retain(|(id, _)| *id != window);
+        w.open.push((window, bus));
+    }
+
+    /// `window` closed.
+    pub fn closed(&self, window: uuid::Uuid) {
+        let mut w = self.0.lock();
+        w.open.retain(|(id, _)| *id != window);
+        if w.focused == Some(window) {
+            w.focused = None;
+        }
+    }
+
+    /// `window` was focused.
+    pub fn focused(&self, window: uuid::Uuid) {
+        self.0.lock().focused = Some(window);
+    }
+
+    /// The window a command from no particular window acts on, if any is open.
+    pub fn target(&self) -> Option<uuid::Uuid> {
+        self.0.lock().target()
+    }
+
+    /// Post `ev` on `window`'s bus, or on the target's when `window` is
+    /// `None`. False when that window is not open.
+    pub fn send(&self, window: Option<uuid::Uuid>, ev: AppEvent) -> bool {
+        let bus = {
+            let w = self.0.lock();
+            window
+                .or_else(|| w.target())
+                .and_then(|id| w.bus(id).cloned())
+        };
+        match bus {
+            Some(bus) => {
+                bus.send(ev);
+                true
+            }
+            None => false,
+        }
+    }
+
+    /// Post an event on every open window's bus.
+    pub fn broadcast(&self, ev: impl Fn() -> AppEvent) {
+        let buses: Vec<AppEvents> = self.0.lock().open.iter().map(|(_, b)| b.clone()).collect();
+        for bus in buses {
+            bus.send(ev());
+        }
+    }
+}
+
+/// One window's hold on the process bus.
+///
+/// Exactly one window drains the process bus at a time. The first window used
+/// to take the receiver for good, so closing it left a second launch's
+/// forwarded paths with nobody to open them (PD-027). A lease hands the
+/// receiver back when it is dropped — which is what happens to the holding
+/// window's drain task when the window closes — and wakes one waiting window
+/// to take it over.
+pub struct ProcessBusLease {
+    rx: Option<dat0_core::events::AppEventRx>,
+    boot: Boot,
+}
+
+impl ProcessBusLease {
+    /// The bus, if no other window holds it.
+    pub fn take(boot: &Boot) -> Option<Self> {
+        let rx = boot.rx.lock().take()?;
+        Some(Self {
+            rx: Some(rx),
+            boot: boot.clone(),
+        })
+    }
+
+    /// The next process event, or `None` once every sender is gone.
+    pub async fn next(&mut self) -> Option<AppEvent> {
+        use futures::StreamExt as _;
+        self.rx.as_mut()?.next().await
+    }
+}
+
+impl Drop for ProcessBusLease {
+    fn drop(&mut self) {
+        if let Some(rx) = self.rx.take() {
+            *self.boot.rx.lock() = Some(rx);
+            // `notify_one` keeps a permit if nobody is waiting yet, so a
+            // window that starts waiting a moment later is not missed.
+            self.boot.bus_free.notify_one();
+        }
     }
 }
 
@@ -232,6 +384,12 @@ pub async fn open_window(
     Some(pending.window.id())
 }
 
+/// The process bus, from anywhere in a window's tree. `None` where no [`Boot`]
+/// was provided, as in the headless harness.
+pub fn process_bus() -> Option<AppEvents> {
+    try_consume_context::<Boot>().map(|boot| boot.events)
+}
+
 /// Whether this tree is running inside a real desktop window.
 ///
 /// False in the headless component harness, where there is no webview, no
@@ -256,6 +414,113 @@ mod tests {
         assert_eq!(background_color(), want);
         // Light is the default, so the first frame must not be dark.
         assert!(want.0 > 0xf0 && want.1 > 0xf0, "{want:?}");
+    }
+
+    fn test_boot() -> Boot {
+        Boot::new(
+            dat0_core::actions::registry::ActionRegistry::new(),
+            Vec::new(),
+        )
+    }
+
+    #[test]
+    fn one_window_holds_the_process_bus_at_a_time() {
+        let boot = test_boot();
+        let lease = ProcessBusLease::take(&boot).expect("the first window gets the bus");
+        assert!(
+            ProcessBusLease::take(&boot).is_none(),
+            "and nobody else does"
+        );
+        drop(lease);
+        assert!(
+            ProcessBusLease::take(&boot).is_some(),
+            "a closed window's lease goes back for the next one"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_waiting_window_takes_the_bus_over_when_its_holder_closes() {
+        let boot = test_boot();
+        let lease = ProcessBusLease::take(&boot).unwrap();
+
+        // The second window: waits, then takes the bus and reads from it.
+        let waiter = {
+            let boot = boot.clone();
+            tokio::spawn(async move {
+                loop {
+                    if let Some(mut lease) = ProcessBusLease::take(&boot) {
+                        return lease.next().await;
+                    }
+                    boot.bus_free.notified().await;
+                }
+            })
+        };
+        tokio::task::yield_now().await;
+        drop(lease); // the first window closes
+
+        boot.events.send(AppEvent::OpenWindow { paths: Vec::new() });
+        let got = tokio::time::timeout(std::time::Duration::from_secs(5), waiter)
+            .await
+            .expect("the waiting window was woken")
+            .unwrap();
+        assert!(matches!(got, Some(AppEvent::OpenWindow { .. })), "{got:?}");
+    }
+
+    fn window() -> (uuid::Uuid, AppEvents, dat0_core::events::AppEventRx) {
+        let (bus, rx) = AppEvents::channel();
+        (uuid::Uuid::now_v7(), bus, rx)
+    }
+
+    #[test]
+    fn commands_from_no_window_go_to_the_window_focused_last() {
+        let reg = WindowRegistry::default();
+        assert_eq!(reg.target(), None, "no window, no target");
+
+        let (a, a_bus, _a_rx) = window();
+        let (b, b_bus, _b_rx) = window();
+        reg.opened(a, a_bus);
+        reg.opened(b, b_bus);
+        assert_eq!(reg.target(), Some(b), "before any focus, the newest window");
+
+        reg.focused(a);
+        assert_eq!(reg.target(), Some(a));
+        reg.focused(uuid::Uuid::now_v7()); // a window the registry never saw
+        assert_eq!(reg.target(), Some(b), "an unknown window is no target");
+
+        reg.focused(a);
+        reg.closed(a);
+        assert_eq!(reg.target(), Some(b), "the focused window closed");
+        reg.closed(b);
+        assert_eq!(reg.target(), None);
+    }
+
+    #[test]
+    fn an_event_reaches_the_window_it_names_or_else_the_target() {
+        let reg = WindowRegistry::default();
+        let (a, a_bus, mut a_rx) = window();
+        let (b, b_bus, mut b_rx) = window();
+        reg.opened(a, a_bus);
+        reg.opened(b, b_bus);
+        reg.focused(b);
+
+        let run = || AppEvent::RunAction {
+            id: "sidebar.toggle",
+            window: None,
+        };
+        assert!(reg.send(Some(a), run()));
+        assert!(matches!(a_rx.try_recv(), Ok(AppEvent::RunAction { .. })));
+        assert!(b_rx.try_recv().is_err(), "only the named window");
+
+        assert!(reg.send(None, run()));
+        assert!(matches!(b_rx.try_recv(), Ok(AppEvent::RunAction { .. })));
+        assert!(a_rx.try_recv().is_err(), "only the target");
+
+        reg.closed(a);
+        assert!(!reg.send(Some(a), run()), "a closed window is not sent to");
+
+        reg.opened(a, AppEvents::channel().0);
+        reg.broadcast(|| AppEvent::ThemeChanged { id: "dark".into() });
+        assert!(matches!(b_rx.try_recv(), Ok(AppEvent::ThemeChanged { .. })));
     }
 
     #[test]
