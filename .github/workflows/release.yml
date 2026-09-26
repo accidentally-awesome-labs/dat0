@@ -80,10 +80,15 @@ jobs:
             *) echo "::error::--version printed '$printed', not dat0 $VERSION"; exit 1 ;;
           esac
           archs=$(lipo -archs "$app/Contents/MacOS/dat0")
-          case " $archs " in
-            *" x86_64 "*" arm64 "*|*" arm64 "*" x86_64 "*) ;;
-            *) echo "::error::the binary holds '$archs', not both architectures"; exit 1 ;;
-          esac
+          echo "architectures: $archs"
+          # Each on its own: one pattern for both needs the space between
+          # them twice, and failed a binary holding both (release run #2).
+          for arch in x86_64 arm64; do
+            case " $archs " in
+              *" $arch "*) ;;
+              *) echo "::error::the binary holds '$archs', without $arch"; exit 1 ;;
+            esac
+          done
           plutil -lint "$app/Contents/Info.plist"
       # Signing comes after the build, so the keychain is unlocked only for as
       # long as signing takes.
