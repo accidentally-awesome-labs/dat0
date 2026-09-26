@@ -337,7 +337,9 @@ impl crate::QueryEngine for DuckDBEngine {
     ) -> Result<crate::types::TableInfo> {
         self.assert_open()?;
         let conn = self.conn.clone();
-        let table_name = crate::register::derive_table_name(path);
+        // What each table was read from, for `table_name_for`: a table of the
+        // file's name that came from somewhere else keeps its name and its data.
+        let origins = self.table_origins.read().clone();
 
         // PD-017 Path A1: build the SAME `CREATE OR REPLACE VIEW … AS SELECT *
         // FROM read_*(…)` SQL that `register_file` uses — reusing 100% of the
@@ -350,16 +352,18 @@ impl crate::QueryEngine for DuckDBEngine {
         //
         // NOTE: `dispatch_register_sql` emits `CREATE OR REPLACE VIEW` for the
         // transient, so we rewrite the leading statement to target `tmp_view`.
-        let tmp_view = format!("__dat0_import_tmp_{table_name}");
-        let view_sql = crate::register::dispatch_register_sql(path, &opts, &tmp_view)?;
         let path = path.to_path_buf();
 
-        let columns = tokio::task::spawn_blocking({
+        let (table_name, columns) = tokio::task::spawn_blocking({
             let conn = conn.clone();
-            let table_name = table_name.clone();
-            let tmp_view = tmp_view.clone();
-            move || -> Result<Vec<crate::types::ColumnInfo>> {
+            let path = path.clone();
+            move || -> Result<(String, Vec<crate::types::ColumnInfo>)> {
                 let conn = conn.lock().map_err(|_| EngineError::EnginePoisoned)?;
+                // Named under the lock, so no other import can take the name
+                // between the check and the table.
+                let table_name = crate::register::table_name_for(&conn, &path, &origins)?;
+                let tmp_view = format!("__dat0_import_tmp_{table_name}");
+                let view_sql = crate::register::dispatch_register_sql(&path, &opts, &tmp_view)?;
                 let qt = quote_ident(&table_name);
                 let qv = quote_ident(&tmp_view);
                 // Materialize the import atomically:
@@ -406,7 +410,8 @@ impl crate::QueryEngine for DuckDBEngine {
                 // outside the materialization txn is fine since it only fires on
                 // a committed base table.
                 ensure_rowid_blocking(&conn, &table_name)?;
-                crate::catalog::describe_table(&conn, &table_name, None)
+                let columns = crate::catalog::describe_table(&conn, &table_name, None)?;
+                Ok((table_name, columns))
             }
         })
         .await

@@ -158,6 +158,17 @@ pub(crate) fn get_tables(
     Ok(tables)
 }
 
+/// Whether `main` has a table or view named `name`.
+pub(crate) fn table_exists(conn: &duckdb::Connection, name: &str) -> Result<bool> {
+    let n: i64 = conn.query_row(
+        "SELECT count(*) FROM information_schema.tables \
+         WHERE table_schema = 'main' AND table_name = ?",
+        duckdb::params![name],
+        |r| r.get(0),
+    )?;
+    Ok(n > 0)
+}
+
 pub(crate) fn create_table(conn: &duckdb::Connection, name: &str, sql: &str) -> Result<TableInfo> {
     let create_sql = format!("CREATE TABLE {} AS {}", quote_ident(name), sql);
     conn.execute_batch(&create_sql)?;

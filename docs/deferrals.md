@@ -103,6 +103,7 @@ that's modifying it; merge conflicts are signals worth investigating.
 | PD-027 | The first window owns the event bus: commands raised in any window act on window 1, and closing window 1 silences menus, palette, chords and second-launch forwarding | closed | medium |
 | PD-028 | A file drop aborted the app when `session.json` could not be written (`.expect` under `panic = "abort"`) | closed | medium |
 | PD-029 | Package replay trusted the recipe: its SQL ran with the engine's full access, and table names were used as file names unchecked | closed | high |
+| PD-030 | Opening a second file with the same stem (another folder's `data.csv`) replaced the first file's table, so the first tab showed the second file's rows | closed | high |
 
 > **Missing originating docs (noted 2026-09-25).** D-030 and D-032–D-036 cite
 > `docs/plans/2026-08-08-dat0-production-v1-plan.md`, and the migration log cites
@@ -2527,6 +2528,26 @@ that's modifying it; merge conflicts are signals worth investigating.
   query from someone else should say so before it runs is a product decision,
   recorded here rather than made silently.
 - **Last touched:** 2026-09-25
+
+### PD-030 — A second file of the same stem replaced the first one's table
+
+- **Status:** closed — 2026-09-26
+- **Severity:** high (silent data mix-up)
+- **Affected files:** `crates/dat0-engine/src/duckdb_engine.rs`
+  (`register_file_as_table`), `crates/dat0-engine/src/register/mod.rs`
+- **Symptom:** a file's table was named for the file's stem, and imported
+  with `CREATE OR REPLACE TABLE`. Opening `b/data.csv` after `a/data.csv`
+  replaced table `data`: the first tab, still titled and pathed for
+  `a/data.csv`, showed `b`'s rows, and `a`'s table was gone. A table of that
+  name made another way — Save as Table, a package — was replaced the same
+  way. Found while wiring Live Refresh (step 5.7), whose re-import relies on
+  the name.
+- **Fix:** `register::table_name_for` picks the name under the engine's
+  lock: the stem when it is free or already holds this same file (so reading
+  a file again, as Live Refresh does, replaces its own table), else the first
+  free `stem_2`, `stem_3`, …. `tests/register_names.rs` covers both files, a
+  re-read, and a table made by SQL.
+- **Last touched:** 2026-09-26
 
 ## How to add an entry
 
