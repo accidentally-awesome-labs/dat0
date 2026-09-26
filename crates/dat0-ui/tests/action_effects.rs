@@ -113,6 +113,7 @@ const NOT_HEADLESS: &[(&str, &str)] = &[
     (ids::VIEW_SET_VALUE, GRID_VERB),
     (ids::VIEW_DELETE_ROWS, GRID_VERB),
     (ids::VIEW_DELETE_COLUMN, GRID_VERB),
+    (ids::VIEW_SAVE_AS_TABLE, GRID_VERB),
 ];
 
 const GRID_VERB: &str = "acts on a selection over a table's rows, and a table needs a real \
@@ -122,7 +123,6 @@ const GRID_VERB: &str = "acts on a selection over a table's rows, and a table ne
 /// Frozen here so the list can shrink but never grow; see
 /// [`the_unwired_list_only_shrinks`].
 const UNWIRED_AT_MOST: &[&str] = &[
-    ids::VIEW_SAVE_AS_TABLE,
     ids::VIEW_EXPORT,
     ids::LIVE_REFRESH,
     ids::WORKSPACE_OPEN,

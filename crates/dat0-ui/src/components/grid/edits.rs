@@ -1,5 +1,6 @@
 //! The grid's edit verbs: a typed cell, copy, cut, paste, fill down, set NULL,
-//! set a value, delete rows, and delete (hide) columns.
+//! set a value, delete rows, delete (hide) columns, and saving the view as a
+//! table.
 //!
 //! Each becomes one step on the tab's view (`grid::views`) — an `Edit` or a
 //! `RowDelete` laid over the table, or a hidden column — never a write to the
@@ -26,12 +27,16 @@ use dat0_core::grid::edit_ops::{mutation_blocked, parse_cell_text};
 use dat0_core::grid::selection::{CellCoord, SelectionModel};
 use dat0_core::view::filter_popover::ColumnType;
 use dat0_engine::transform::ProjectionColumn;
-use dat0_engine::{CellEdit, RowKey, Scalar, Transformation};
+use dat0_engine::types::DerivedOrigin;
+use dat0_engine::{
+    CellEdit, QueryEngine, RowKey, Scalar, Transformation, compile_view_sql, quote_ident,
+    render_export_select,
+};
 use dat0_i18n::t;
 
 use super::views::{Shown, Views};
 use crate::components::modals::{ModalOutcome, ModalReply};
-use crate::state::{Modal, Workspace};
+use crate::state::{Modal, TabView, Workspace};
 
 /// The most cells one edit writes, or rows one delete removes. Each edited
 /// cell is a branch in the view's SQL, which every read of the view walks.
@@ -90,6 +95,7 @@ impl Edits {
             ids::VIEW_SET_VALUE => self.ask_value(),
             ids::VIEW_DELETE_ROWS => self.delete_rows(),
             ids::VIEW_DELETE_COLUMN => self.delete_columns(),
+            ids::VIEW_SAVE_AS_TABLE => self.ask_table_name(),
             _ => return false,
         }
         true
@@ -404,6 +410,87 @@ impl Edits {
         self.views.change_on(grid.table, |vm| {
             Some(vm.apply(Transformation::DeleteColumn { columns }))
         });
+    }
+
+    /// Ask for a name, then keep the view as a table under it.
+    fn ask_table_name(&self) {
+        if self.refused() {
+            return;
+        }
+        let this = *self;
+        let mut modal = self.ws.modal;
+        modal.set(Some(Modal::NamePrompt {
+            title: t("view.save_as_table"),
+            initial: String::new(),
+            placeholder: None,
+            confirm_label: Some(t("prompt.save")),
+            secret: false,
+            reply: ModalReply::new(move |outcome| {
+                if let ModalOutcome::Named(name) = outcome {
+                    this.save_as_table(name.trim().to_string());
+                }
+            }),
+        }));
+    }
+
+    /// Keep the view as a new table named `name`, and open it: the rows the
+    /// view has, in its order, with its columns as shown — hidden ones left
+    /// out, renamed ones under their new names. The table records the view's
+    /// steps as its lineage.
+    fn save_as_table(&self, name: String) {
+        if name.is_empty() {
+            return;
+        }
+        let Some(grid) = self.grid() else {
+            return;
+        };
+        let (stack, cursor) = self.views.stack(&grid.table);
+        let ops = stack[..cursor.min(stack.len())].to_vec();
+        let base = quote_ident(&grid.table);
+        let rows = if ops.is_empty() {
+            format!("SELECT * FROM {base}")
+        } else {
+            match compile_view_sql(&base, &ops) {
+                Ok(sql) => sql,
+                Err(e) => return self.not_saved(e.to_string()),
+            }
+        };
+        // Only the columns shown, which leaves out the source's own row id:
+        // the new table is given one of its own.
+        let sql = render_export_select(&rows, &grid.columns);
+        let Some(engine) = super::views::engine(&self.ws) else {
+            return;
+        };
+        let this = *self;
+        spawn(async move {
+            let origin = DerivedOrigin::Transform {
+                parent: grid.table,
+                ops,
+            };
+            match engine.create_table(&name, &sql, origin).await {
+                Ok(info) => {
+                    let mut ws = this.ws;
+                    ws.tabs.write().push(TabView {
+                        table: info.name.clone(),
+                        path: None,
+                        label: None,
+                    });
+                    let last = ws.tabs.peek().len() - 1;
+                    ws.active.set(Some(last));
+                    let mut saved = Banner::info(t("sql.table_saved"));
+                    saved.body = info.name;
+                    ws.push_banner(saved);
+                }
+                Err(e) => this.not_saved(e.to_string()),
+            }
+        });
+    }
+
+    fn not_saved(&self, why: String) {
+        self.ws.push_banner(Banner::warning_with_body(
+            t("save_as_table.failed.title"),
+            why,
+        ));
     }
 
     /// Write `cells`, as `(row, column, value)`, into the view as one step.

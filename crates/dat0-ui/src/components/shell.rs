@@ -524,7 +524,9 @@ pub fn Shell() -> Element {
                                     }),
                                     on_jump: move |k| views.jump(k),
                                     on_remove: move |i| views.remove(i),
-                                    on_save_as_table: move |_| {},
+                                    on_save_as_table: move |_| {
+                                        edits.perform(dat0_core::actions::builtin::ids::VIEW_SAVE_AS_TABLE);
+                                    },
                                 }
                                 match source.read_unchecked().clone().flatten() {
                                     Some((shown, Ok(src))) => {
@@ -1043,7 +1045,8 @@ fn surface_command(
         | ids::VIEW_SET_NULL
         | ids::VIEW_SET_VALUE
         | ids::VIEW_DELETE_ROWS
-        | ids::VIEW_DELETE_COLUMN => {
+        | ids::VIEW_DELETE_COLUMN
+        | ids::VIEW_SAVE_AS_TABLE => {
             edits.perform(id);
         }
         // Undo steps back through the view — a sort, a filter or an edit laid
@@ -1051,15 +1054,6 @@ fn surface_command(
         // in its way.
         ids::VIEW_UNDO => views.undo(),
         ids::VIEW_REDO => views.redo(),
-        ids::VIEW_SAVE_AS_TABLE => {
-            if *ws.read_only.read() {
-                ws.push_banner(dat0_core::error_ux::Banner::warning(dat0_i18n::t(
-                    "view.read_only",
-                )));
-                return true;
-            }
-            tracing::debug!(action = id, "grid edit");
-        }
         ids::VIEW_EXPORT => ws.modal.set(Some(Modal::Export {
             destination: None,
             reply: crate::components::modals::ModalReply::new(|_| {}),

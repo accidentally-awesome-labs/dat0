@@ -437,6 +437,72 @@ fn delete_rows_and_delete_column_change_the_view_and_undo_restores_them() {
 
 #[test]
 #[serial]
+fn save_as_table_keeps_the_view_as_it_is_shown() {
+    let rt = runtime();
+    let _guard = rt.enter();
+    let mut h = window("save");
+
+    // Sorted by qty, descending, with day hidden and b's quantity edited.
+    h.click("col-sort-1");
+    h.click("col-sort-1");
+    assert!(pump(&mut h, |h| column(h, 0) == ["a", "b", "c"]));
+    select(&mut h, (0, 2), (0, 2));
+    perform(&mut h, ids::VIEW_DELETE_COLUMN);
+    assert!(pump(&mut h, |h| h.by_a11y_id("col-2").is_none()));
+    select(&mut h, (1, 1), (1, 1));
+    key(&mut h, Key::Enter, Modifiers::empty());
+    let editor = h.by_a11y_id("cell-editor").expect("the editor");
+    h.dispatch(editor, "input", typed("20"));
+    h.key(editor, Key::Enter, Modifiers::empty());
+    assert!(
+        pump(&mut h, |h| column(h, 0) == ["b", "a", "c"]),
+        "the edit re-sorts: {:?}",
+        column(&h, 0)
+    );
+
+    // The pipeline bar's own button; the palette row routes to the same verb.
+    h.click("pipeline-save-table");
+    let field = h.by_a11y_id("name-prompt-field").expect("the name prompt");
+    h.dispatch(field, "input", typed("kept"));
+    h.click("name-prompt-ok");
+    assert!(
+        pump(&mut h, |h| banner_says(h, "sql.table_saved")),
+        "the table is saved"
+    );
+
+    // The new table opens in its own tab. It carries no sort of its own, so
+    // the header's sort mark going out says the grid shows it, not the view
+    // it came from, which looks the same otherwise.
+    // Real values, not the placeholders a page not yet read paints.
+    let loaded = |h: &Harness| {
+        let qty = column(h, 1);
+        !qty.is_empty() && !qty.iter().any(|v| v == "—")
+    };
+    assert!(
+        pump(&mut h, |h| text(h, "col-sort-1").is_empty() && loaded(h)),
+        "the new table never showed: {:?}",
+        column(&h, 1)
+    );
+    assert_eq!(
+        h.by_a11y_id("tab-1")
+            .and_then(|t| h.attr(t, "aria-selected"))
+            .as_deref(),
+        Some("true")
+    );
+    assert_eq!(text(&h, "tab-1"), "kept");
+    // As the view showed it: its rows, its order, its columns, and no row id
+    // of the view's.
+    assert_eq!(column(&h, 0), ["b", "a", "c"]);
+    assert_eq!(column(&h, 1), ["20", "3", "1"]);
+    let labels: Vec<String> = (0..4)
+        .filter_map(|i| h.by_a11y_id(&format!("col-{i}")))
+        .filter_map(|c| h.attr(c, "aria-label"))
+        .collect();
+    assert_eq!(labels, ["name", "qty"], "day stays hidden");
+}
+
+#[test]
+#[serial]
 fn a_read_only_workspace_refuses_every_edit_but_copy() {
     let rt = runtime();
     let _guard = rt.enter();

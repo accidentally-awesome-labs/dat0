@@ -327,7 +327,7 @@ pub fn use_fit(
     });
 }
 
-fn engine(ws: &Workspace) -> Option<Arc<DuckDBEngine>> {
+pub(super) fn engine(ws: &Workspace) -> Option<Arc<DuckDBEngine>> {
     ws.session
         .peek()
         .ready()

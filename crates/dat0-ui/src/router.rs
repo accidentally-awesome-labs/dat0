@@ -33,8 +33,6 @@ use crate::state::{Modal, Workspace};
 /// a ratchet: `tests/action_effects.rs` fails if it grows, and an id leaves it
 /// in the same change as the test that shows its effect.
 pub const UNWIRED: &[&str] = &[
-    // Logged, never applied.
-    ids::VIEW_SAVE_AS_TABLE,
     // Dialogs whose reply is discarded.
     ids::VIEW_EXPORT,
     ids::LIVE_REFRESH,
