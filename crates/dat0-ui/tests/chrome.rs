@@ -204,3 +204,19 @@ fn the_footer_counts_the_windows_open() {
         footer(&first)
     );
 }
+
+#[test]
+#[serial]
+fn the_title_bar_takes_a_press() {
+    // On macOS the bar dat0 draws is the window's only title bar, and
+    // `-webkit-app-region: drag` is Chromium's: WKWebView took every press,
+    // and the window could not be moved (step 5.11d). The drag itself needs
+    // a window system; the press reaching `launch::title_bar_press` does not.
+    let rt = runtime();
+    let _guard = rt.enter();
+    LazyLock::force(&CONFIG);
+    let mut h = Harness::new(Window, ());
+    h.settle();
+    let bar = h.by_a11y_id("titlebar").expect("the title bar");
+    assert!(h.has_listener(bar, "mousedown"));
+}

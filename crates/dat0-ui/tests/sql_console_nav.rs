@@ -203,6 +203,19 @@ fn t(key: &str) -> String {
 /// second tab is open, or a strip that stops responding once the toolbar has
 /// been used, passes every test below and is still broken.
 #[test]
+fn run_shows_this_platform_s_chord() {
+    // `⌘⏎` everywhere, Linux included (step 5.11e).
+    let h = console(1);
+    let run = h.text_of(h.by_a11y_id("console-run").expect("Run is shown"));
+    let chord = dat0_ui::chrome::run_chord();
+    assert!(!chord.is_empty());
+    assert!(run.ends_with(&chord), "{run:?} does not end with {chord:?}");
+    if !cfg!(target_os = "macos") {
+        assert!(!run.contains('⌘'), "{run:?}");
+    }
+}
+
+#[test]
 fn the_console_is_drivable_from_the_keyboard_end_to_end() {
     let mut h = console(2);
     assert_eq!(titles(&h), "Query 1,Query 2");

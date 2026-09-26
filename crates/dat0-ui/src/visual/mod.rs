@@ -349,7 +349,33 @@ pub fn scene(id: &str) -> Option<&'static Scene> {
 pub fn normalise(html: String) -> String {
     let html = html.replace("><", ">\n<");
     let html = mask_chords(&html, "class=\"d0-hint\" aria-hidden=\"true\">");
-    mask_chords(&html, "data-chord=\"palette\">")
+    mask_chord_elements(&html)
+}
+
+/// Mask the text of every element carrying `data-chord`: a chord is platform
+/// text (`⌘K` on macOS, `Ctrl+K` elsewhere), and a snapshot is shared by both.
+fn mask_chord_elements(html: &str) -> String {
+    let mut out = String::with_capacity(html.len());
+    let mut rest = html;
+    while let Some(i) = rest.find("data-chord=\"") {
+        let Some(end) = rest[i..].find('>') else {
+            break;
+        };
+        let (head, tail) = rest.split_at(i + end + 1);
+        out.push_str(head);
+        match tail.find('<') {
+            Some(j) => {
+                out.push_str("CHORD");
+                rest = &tail[j..];
+            }
+            None => {
+                rest = tail;
+                break;
+            }
+        }
+    }
+    out.push_str(rest);
+    out
 }
 
 /// Replace the text between each `open` and the next tag with `CHORD`.

@@ -394,6 +394,23 @@ fn reviewing_nothing_to_recover_says_so() {
 }
 
 #[test]
+fn no_two_palette_rows_read_the_same() {
+    // Save View as Table and Save Query as Table both read "Save as Table…"
+    // (step 5.11e): two rows a user could not tell apart.
+    let reg = builtins();
+    let mut seen = std::collections::BTreeMap::new();
+    for id in offered(&reg, "") {
+        let label = reg
+            .get(&dat0_core::actions::registry::ActionId::from(id.clone()))
+            .expect("an offered command is registered")
+            .title;
+        if let Some(other) = seen.insert(label.clone(), id.clone()) {
+            panic!("{id} and {other} both read {label:?}");
+        }
+    }
+}
+
+#[test]
 #[serial]
 fn an_unregistered_id_is_refused_rather_than_swallowed() {
     // The other half: if `route` returned true for everything, a command that

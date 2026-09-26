@@ -232,6 +232,9 @@ pub struct SettingsProps {
 pub fn SettingsPanel(props: SettingsProps) -> Element {
     let mut selected = use_signal(|| SECTIONS[0].id);
     use_context_provider(|| Revision(Signal::new(0)));
+    // A theme chosen in a workbench window reaches the others over the bus,
+    // and this one here (step 5.11e).
+    crate::theme::use_follow_chosen();
     let store = props.store.clone();
     let current = selected();
 
@@ -394,15 +397,19 @@ fn Profile(store: Store) -> Element {
 #[component]
 fn ThemeSection(store: Store, events: Bus) -> Element {
     let rev = Revision::subscribe();
-    let current = store
-        .get_string("theme.id")
-        .unwrap_or_else(|| DEFAULT_ID.to_string());
-    // The label is dynamic, so it is its own accessible name rather than a
-    // fixed i18n key that would disagree with what is painted.
-    let label = format!("{}: {}", dat0_i18n::t("settings.theme"), current);
     // Absent in a headless mount, which is why this is a `try_`: the section
     // must render and persist without a theme provider above it.
     let local = try_use_context::<Signal<ThemeTokens>>();
+    // The window's theme when there is one, which follows a theme chosen in
+    // another window; the file only says what was chosen here (step 5.11e).
+    let current = local.map(|t| t.read().id.clone()).unwrap_or_else(|| {
+        store
+            .get_string("theme.id")
+            .unwrap_or_else(|| DEFAULT_ID.to_string())
+    });
+    // The label is dynamic, so it is its own accessible name rather than a
+    // fixed i18n key that would disagree with what is painted.
+    let label = format!("{}: {}", dat0_i18n::t("settings.theme"), current);
     let cycle_store = store.clone();
 
     rsx! {

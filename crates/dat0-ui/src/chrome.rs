@@ -109,6 +109,15 @@ pub fn palette_chord() -> String {
         .unwrap_or_default()
 }
 
+/// The chord that runs the console's statement on this platform: `⌘⏎` on
+/// macOS, `Ctrl+⏎` elsewhere. The console and its pane said `⌘⏎` on every
+/// platform (step 5.11e); they read the keymap now, as the palette does.
+pub fn run_chord() -> String {
+    dat0_core::keymap::chord_for(dat0_core::actions::builtin::ids::SQL_RUN)
+        .map(crate::components::command_palette::pretty_chord)
+        .unwrap_or_default()
+}
+
 /// The sidebar footer's first line: `session · 2 windows · 1 tab`.
 pub fn session_line(windows: usize, tabs: usize) -> String {
     format!(
@@ -203,6 +212,16 @@ mod tests {
         assert!(sent.contains("1.5 KB"), "{sent}");
         assert!(!sent.contains("0 bytes"), "{sent}");
         assert!(hero_privacy(0, true).contains("0 B+"));
+    }
+
+    #[test]
+    fn the_run_hint_is_this_platform_s_chord() {
+        let chord = run_chord();
+        if cfg!(target_os = "macos") {
+            assert_eq!(chord, "⌘⏎");
+        } else {
+            assert_eq!(chord, "Ctrl+⏎", "not ⌘ off macOS");
+        }
     }
 
     #[test]

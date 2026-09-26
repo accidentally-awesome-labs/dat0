@@ -2,11 +2,12 @@
 //! (PD-023, step 5.9).
 //!
 //! `App` provided its theme with no settings, so every window opened in the
-//! default whatever had been chosen, and View → Toggle Theme repainted only
-//! the window it was chosen in, and kept nothing. The Settings window's own
-//! control already kept its choice and told every window; the toggle does
-//! both now. These mount `App`'s theme and bus over a real `Boot`, and run
-//! the toggle as the View menu does.
+//! default whatever had been chosen, and the palette's Toggle Theme repainted
+//! only the window it was chosen in, and kept nothing. The Settings window's
+//! own control already kept its choice and told every window; the toggle
+//! does both now. These mount `App`'s theme and bus over a real `Boot`, and
+//! run the toggle as the palette does. The Settings window, which the bus
+//! does not reach, follows too (step 5.11e).
 
 mod support;
 
@@ -34,8 +35,8 @@ thread_local! {
     };
 }
 
-/// `App`'s theme and bus, the theme it paints, and the toggle as the View
-/// menu runs it.
+/// `App`'s theme and bus, the theme it paints, and the toggle as the palette
+/// runs it.
 #[component]
 fn Window() -> Element {
     let theme = Theme::provide_saved();
@@ -51,6 +52,25 @@ fn Window() -> Element {
             onclick: move |_| {
                 dat0_ui::router::route(ws, &events, surface, ids::THEME_TOGGLE);
             },
+        }
+    }
+}
+
+/// The Settings window as `SettingsWindow` mounts it, without the desktop's
+/// asset handler: a theme of its own, read from the settings file, and the
+/// panel.
+#[component]
+fn SettingsHost() -> Element {
+    let store = use_hook(|| {
+        let dir = dat0_core::platform::config_dir().expect("config dir");
+        dat0_ui::components::settings_ui::Store::open(dir.join("settings.toml"))
+    });
+    let theme = Theme::provide(Some(&store));
+    rsx! {
+        div { "data-a11y-id": "theme", "{theme.tokens().id}" }
+        dat0_ui::components::settings_ui::SettingsPanel {
+            store: store.clone(),
+            events: dat0_ui::components::settings_ui::Bus::default(),
         }
     }
 }
@@ -146,5 +166,49 @@ fn every_window_follows_the_theme_chosen_in_one() {
         "{} / {}",
         theme(&first),
         theme(&second)
+    );
+}
+
+#[test]
+#[serial]
+fn the_settings_window_follows_a_theme_chosen_in_a_workbench_window() {
+    // The Settings window is not a workbench window, so the bus does not
+    // reach it, and it kept the theme it opened in (step 5.11e).
+    let rt = runtime();
+    let _guard = rt.enter();
+    let _dir = fresh_config();
+
+    let mut window = Harness::new(Window, ());
+    let mut settings = Harness::new(SettingsHost, ());
+    assert!(pump(&mut [&mut window, &mut settings], |w| w
+        .iter()
+        .all(|h| theme(h) == "light")));
+
+    settings.click_label(&dat0_i18n::t("settings.theme"));
+    settings.settle();
+    let label = |h: &Harness| {
+        h.by_a11y_id("settings-theme-cycle")
+            .and_then(|k| h.attr(k, "aria-label"))
+            .unwrap_or_default()
+    };
+    assert!(
+        label(&settings).ends_with(": light"),
+        "{}",
+        label(&settings)
+    );
+
+    window.click("toggle");
+    assert!(
+        pump(&mut [&mut window, &mut settings], |w| w
+            .iter()
+            .all(|h| theme(h) == "dark")),
+        "{} / {}",
+        theme(&window),
+        theme(&settings)
+    );
+    assert!(
+        label(&settings).ends_with(": dark"),
+        "the section says so too: {}",
+        label(&settings)
     );
 }

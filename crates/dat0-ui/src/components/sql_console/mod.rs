@@ -424,7 +424,7 @@ pub fn SqlConsole(props: SqlConsoleProps) -> Element {
                             }
                         },
                         span { style: "color: var(--d0-ok)", {dat0_i18n::t("sql.run")} }
-                        span { class: "d0-key", "⌘⏎" }
+                        span { class: "d0-key", "data-chord": "run", {crate::chrome::run_chord()} }
                     }
                 }
             }

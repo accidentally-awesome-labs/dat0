@@ -75,8 +75,8 @@ impl Theme {
 ///
 /// This window repaints at once. The others are told over the process bus,
 /// as the settings window's own control tells them, and `theme.id` is written
-/// where [`Theme::provide_saved`] reads it. The View menu's toggle repainted
-/// only the window it was chosen in, and kept nothing.
+/// where [`Theme::provide_saved`] reads it. The palette's Toggle Theme
+/// repainted only the window it was chosen in, and kept nothing.
 pub fn choose(id: &str) {
     Theme::current().set(id);
     match settings_store().map(|store| store.set("theme.id", id)) {
@@ -87,6 +87,39 @@ pub fn choose(id: &str) {
     if let Some(bus) = crate::launch::process_bus() {
         bus.send(dat0_core::events::AppEvent::ThemeChanged { id: id.to_string() });
     }
+    CHOSEN.send_replace(Some(id.to_string()));
+}
+
+/// The theme last chosen in this process, for the window the bus does not
+/// reach: the Settings window is not a workbench window, and it kept the
+/// theme it opened in whatever was chosen after (step 5.11e).
+static CHOSEN: std::sync::LazyLock<tokio::sync::watch::Sender<Option<String>>> =
+    std::sync::LazyLock::new(|| tokio::sync::watch::channel(None).0);
+
+/// Repaint this window in each theme chosen elsewhere, from now on: the
+/// Settings window's. Nothing where no theme is provided, as in a headless
+/// mount of the panel alone.
+pub fn use_follow_chosen() {
+    let theme = try_use_context::<Signal<ThemeTokens>>();
+    use_future(move || async move {
+        let Some(mut tokens) = theme else {
+            return;
+        };
+        let mut chosen = CHOSEN.subscribe();
+        while chosen.changed().await.is_ok() {
+            let id = chosen.borrow_and_update().clone();
+            if let Some(id) = id {
+                tokens.set(builtin_or_default(&id));
+            }
+        }
+    });
+}
+
+/// The theme the settings file keeps, or the default: what a window opens in.
+pub fn saved_id() -> String {
+    settings_store()
+        .and_then(|store| store.get_string("theme.id"))
+        .unwrap_or_else(|| DEFAULT_ID.to_string())
 }
 
 /// The settings file the theme is kept in, where there is a config directory.

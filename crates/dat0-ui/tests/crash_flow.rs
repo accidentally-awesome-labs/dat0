@@ -216,6 +216,10 @@ fn a_crashed_run_is_offered_its_report_at_the_next_launch() {
     let rt = runtime();
     let _guard = rt.enter();
     let root = STATE_ROOT.clone();
+    // Staged here as well as at the root's making: a report sent by a test
+    // before this one clears it, as either exit does.
+    crash::mark_running(&root).expect("the last run's marker");
+    crash::write_staged(&root, &staged()).expect("stage the crash");
     assert!(staged_on_disk(&root), "seed: a crash is staged");
 
     let mut h = Harness::new(ShellHost, ());

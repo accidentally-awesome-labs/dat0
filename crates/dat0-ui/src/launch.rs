@@ -380,9 +380,16 @@ pub fn config() -> Config {
 }
 
 /// The window's ground colour, so the first frame is not a white flash on a
-/// dark theme. Read from the tokens rather than hard-coded.
+/// dark theme: the theme the window opens in, from the tokens rather than
+/// hard-coded. It was the default's, whatever theme was kept, so a dark
+/// window opened white (step 5.11e).
 fn background_color() -> (u8, u8, u8, u8) {
-    let tokens = dat0_core::theme::builtin_or_default(dat0_core::theme::DEFAULT_ID);
+    background_for(&crate::theme::saved_id())
+}
+
+/// The ground colour of the theme `id`.
+fn background_for(id: &str) -> (u8, u8, u8, u8) {
+    let tokens = dat0_core::theme::builtin_or_default(id);
     parse_hex(&tokens.canvas).unwrap_or((0xff, 0xff, 0xff, 0xff))
 }
 
@@ -564,12 +571,15 @@ mod tests {
     }
 
     #[test]
-    fn the_window_background_comes_from_the_default_theme() {
+    fn the_window_background_is_the_theme_it_opens_in() {
         let tokens = dat0_core::theme::builtin_or_default(dat0_core::theme::DEFAULT_ID);
         let want = parse_hex(&tokens.canvas).expect("canvas is a 6-digit hex");
-        assert_eq!(background_color(), want);
-        // Light is the default, so the first frame must not be dark.
+        assert_eq!(background_for(dat0_core::theme::DEFAULT_ID), want);
+        // Light is the default, so its first frame must not be dark…
         assert!(want.0 > 0xf0 && want.1 > 0xf0, "{want:?}");
+        // …and a dark theme's must not be light.
+        let dark = background_for("dark");
+        assert!(dark.0 < 0x40 && dark.1 < 0x40, "{dark:?}");
     }
 
     fn test_boot() -> Boot {

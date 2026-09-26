@@ -614,7 +614,8 @@ pub fn Shell() -> Element {
                             Pane {
                                 id: "console".to_string(),
                                 title: dat0_i18n::t("sql.editor"),
-                                meta: "⌘⏎ run".to_string(),
+                                meta: "run".to_string(),
+                                chord: crate::chrome::run_chord(),
                                 open: true,
                                 on_toggle: move |_| {
                                     let v = ws.layout.read().console_open;
