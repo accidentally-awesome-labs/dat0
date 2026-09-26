@@ -271,6 +271,7 @@ fn menu_local(id: &str, events: &AppEvents, ws: crate::state::Workspace) {
         menu_ids::GITHUB => open_url("https://github.com/accidentally-awesome-labs/dat0"),
         menu_ids::OPEN_PACKAGE => crate::package_open::pick(ws, events),
         menu_ids::EXPORT_PACKAGE => crate::package_export::pick(ws),
+        menu_ids::REPLAY_PACKAGE => crate::package_replay::pick(ws),
         menu_ids::UNPACK_PACKAGE => crate::package_unpack::pick(ws, events),
         other if other.starts_with(menu_ids::RECENT_PREFIX) => {
             crate::workspace_open::open_recent(ws, events, &other[menu_ids::RECENT_PREFIX.len()..]);

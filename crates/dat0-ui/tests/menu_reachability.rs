@@ -186,6 +186,6 @@ fn the_scrapers_see_what_they_should() {
     assert!(handled_locally(menu::menu_ids::DOCS));
     assert!(handled_locally("recents.open.3"));
     assert!(handled_locally(menu::menu_ids::OPEN_PACKAGE));
-    assert!(!handled_locally(menu::menu_ids::REPLAY_PACKAGE));
+    assert!(!handled_locally(menu::menu_ids::CHECK_UPDATES));
     assert!(paths(body(MENU_SRC, "pub fn build() -> Menu {"), "ids").len() > 10);
 }

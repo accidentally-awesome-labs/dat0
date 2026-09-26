@@ -49,22 +49,19 @@ dat0 or Rust.
 
 All package actions live under the **File** menu.
 
-> **In this build**, Replay is not wired back into the app yet (PD-023 in
-> `docs/deferrals.md`), and its menu item is disabled; `dat0 replay` below does
-> it meanwhile.
-
 - **File → Export as .dat0 Package** — write the window's tables, tabs, saved
   queries and charts to a `.dat0` file you choose. A package already there is
-  replaced only once the new one is written whole. Exporting from a **live session** captures the full
-  recipe, including derived tables and their lineage (see the known limitation
-  below).
+  replaced only once the new one is written whole. Exporting from a **live
+  session** captures the full recipe, including derived tables and their
+  lineage (see the known limitation below).
 - **File → Open .dat0 Package** — open a package **read-only** to inspect it (see
   below).
 - **File → Unpack .dat0 Package** — materialize a package into a fresh workspace
   in a folder you choose, and open it to edit. A folder that is a workspace
   already is refused.
-- **File → Replay .dat0 Package** — rebuild a package's derived tables against a
-  fresh source file (see *Replay* below).
+- **File → Replay .dat0 Package** — rebuild a package's derived tables against
+  fresh source files: it asks for a file in place of each of the package's
+  sources, then where to write the new package (see *Replay* below).
 
 ### Read-only Inspect mode
 

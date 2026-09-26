@@ -304,6 +304,8 @@
   "package.open.failed.title": "Could not open package",
   "package.replay.done.title": "Package replayed",
   "package.replay.failed.title": "Replay package failed",
+  "package.replay.none": "This package has no source files to replay against.",
+  "package.replay.pick_source": "Choose the file to read in place of {source}",
   "package.unpack.done.title": "Package unpacked",
   "package.unpack.exists": "That folder is already a workspace. Choose another folder to unpack into.",
   "package.unpack.failed.title": "Unpack package failed",

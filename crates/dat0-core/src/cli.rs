@@ -446,7 +446,17 @@ pub async fn replay_async(
         }
         new_sources.insert(logical.to_string(), PathBuf::from(path_str));
     }
+    replay_with(package, &new_sources, out).await
+}
 
+/// [`replay_async`] with the sources already bound: each of the package's
+/// sources is read from the file `new_sources` maps its name to. The app's
+/// Replay binds its files this way, so a source's name is never parsed.
+pub async fn replay_with(
+    package: &std::path::Path,
+    new_sources: &HashMap<String, PathBuf>,
+    out: Option<PathBuf>,
+) -> Result<PathBuf> {
     let parsed = dat0_format::Reader::open(package)
         .with_context(|| format!("open package {}", package.display()))?;
 
@@ -466,7 +476,7 @@ pub async fn replay_async(
 
     let new_contents = dat0_format::replay::ReplayEngine::replay(
         &parsed,
-        &new_sources,
+        new_sources,
         &engine,
         scratch_dir.path(),
     )

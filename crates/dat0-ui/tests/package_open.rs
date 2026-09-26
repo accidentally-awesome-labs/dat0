@@ -1,15 +1,16 @@
-//! Opening a `.dat0` package read-only, unpacking one, and exporting a
-//! window's work as one (step 5.4d).
+//! Opening a `.dat0` package read-only, unpacking one, exporting a window's
+//! work as one, and replaying one (step 5.4d).
 //!
-//! File → Open, Unpack and Export Package were disabled, the sidebar's
+//! File → Open, Unpack, Export and Replay Package were disabled, the sidebar's
 //! Packages rows and the hero's recent packages opened the package as a data
 //! file, and a dropped package was refused as a file type dat0 does not know
 //! (PD-023). These tests seal a real package with dat0-core, then open and
-//! unpack it each way and mount a window on what they ask for, and export
-//! from a window and read back what it wrote.
+//! unpack it each way and mount a window on what they ask for, export from a
+//! window and read back what it wrote, and replay a package on a fresh file.
 
 mod support;
 
+use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::LazyLock;
 use std::time::Duration;
@@ -22,7 +23,9 @@ use dat0_core::actions::registry::ActionRegistry;
 use dat0_core::events::{AppEvent, AppEventRx, Opening};
 use dat0_core::session::queries::SavedQuery;
 use dat0_core::session::{Session, Tab};
-use dat0_engine::{QueryEngine as _, SortDirection, SortKey, Transformation};
+use dat0_engine::{
+    DerivedOrigin, QueryEngine as _, RegisterOpts, SortDirection, SortKey, Transformation,
+};
 use dat0_i18n::t;
 use dat0_ui::components::shell::Shell;
 use dat0_ui::components::use_window_bus;
@@ -620,4 +623,102 @@ fn an_export_that_fails_says_so() {
         banners(&h)
     );
     assert!(!out.exists());
+}
+
+/// A package whose `sales` was read from `sales.csv`, qty 10 to 50, with
+/// `big`, its rows of qty over 2, made from it: a source replay reads anew.
+fn replayable(rt: &tokio::runtime::Runtime, name: &str) -> PathBuf {
+    let dir = STATE_ROOT.join(name);
+    std::fs::create_dir_all(&dir).expect("mkdir");
+    let csv = dir.join("sales.csv");
+    std::fs::write(&csv, "id,qty\n1,10\n2,20\n3,30\n4,40\n5,50\n").expect("csv");
+    let out = dir.join(format!("{name}.dat0"));
+    rt.block_on(async {
+        let sess = Session::new(&STATE_ROOT.join("sealing"), BUDGET)
+            .await
+            .expect("session");
+        sess.engine
+            .register_file_as_table(&csv, RegisterOpts::default())
+            .await
+            .expect("sales");
+        let sql = "SELECT * FROM sales WHERE qty > 2";
+        sess.engine
+            .create_table("big", sql, DerivedOrigin::Sql(sql.into()))
+            .await
+            .expect("big");
+        let contents = dat0_core::package::session_to_contents(&sess)
+            .await
+            .expect("contents");
+        dat0_format::Writer::write(&contents, sess.engine.as_ref(), &out)
+            .await
+            .expect("seal");
+        sess.engine.close().await.expect("close");
+    });
+    out
+}
+
+fn row_counts(package: &std::path::Path) -> HashMap<String, u64> {
+    let parsed = dat0_format::Reader::open(package).expect("the package opens");
+    parsed
+        .recipe
+        .tables
+        .iter()
+        .map(|t| (t.name.clone(), t.row_count))
+        .collect()
+}
+
+#[test]
+#[serial]
+fn a_package_replays_on_a_fresh_file_for_its_source() {
+    let rt = runtime();
+    let _guard = rt.enter();
+    let pkg = replayable(&rt, "replayed");
+    assert_eq!(row_counts(&pkg)["big"], 5);
+    let fresh = STATE_ROOT.join("replayed").join("june.csv");
+    std::fs::write(&fresh, "id,qty\n1,1\n2,2\n3,3\n4,4\n5,5\n6,6\n7,7\n8,8\n").unwrap();
+    let out = STATE_ROOT.join("replayed").join("june.dat0");
+
+    let sources = rt
+        .block_on(dat0_ui::package_replay::sources(&pkg))
+        .expect("its sources");
+    assert_eq!(sources, ["sales.csv"]);
+    let bound = sources.into_iter().map(|s| (s, fresh.clone())).collect();
+    let wrote = rt
+        .block_on(dat0_ui::package_replay::replay(pkg, bound, out.clone()))
+        .expect("replayed");
+
+    assert_eq!(wrote, out);
+    let rows = row_counts(&out);
+    assert_eq!(rows["sales"], 8, "read from the fresh file");
+    assert_eq!(rows["big"], 6, "and what was made from it, made again");
+}
+
+#[test]
+#[serial]
+fn a_replay_on_a_file_that_does_not_fit_says_why() {
+    let rt = runtime();
+    let _guard = rt.enter();
+    let pkg = replayable(&rt, "misfit");
+    let fresh = STATE_ROOT.join("misfit").join("other.csv");
+    std::fs::write(&fresh, "id,amount\n1,1\n").unwrap();
+    let out = STATE_ROOT.join("misfit").join("out.dat0");
+
+    let bound = HashMap::from([("sales.csv".to_string(), fresh)]);
+    let replayed = rt.block_on(dat0_ui::package_replay::replay(pkg, bound, out.clone()));
+
+    let err = replayed.expect_err("a file without the source's columns");
+    assert!(format!("{err:#}").contains("qty"), "{err:#}");
+    assert!(!out.exists());
+}
+
+#[test]
+#[serial]
+fn a_package_of_tables_alone_has_no_source_to_replay() {
+    let rt = runtime();
+    let _guard = rt.enter();
+    let pkg = package(&rt, "sourceless");
+    let sources = rt
+        .block_on(dat0_ui::package_replay::sources(&pkg))
+        .expect("its sources");
+    assert!(sources.is_empty(), "{sources:?}");
 }

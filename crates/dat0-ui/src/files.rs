@@ -71,6 +71,15 @@ pub async fn pick_folder_to_unpack() -> Option<PathBuf> {
         .map(|h| h.path().to_path_buf())
 }
 
+/// Pick the file a replay reads in place of the package's source `source`.
+pub async fn pick_replay_source(source: &str) -> Option<PathBuf> {
+    rfd::AsyncFileDialog::new()
+        .set_title(dat0_i18n::t("package.replay.pick_source").replace("{source}", source))
+        .pick_file()
+        .await
+        .map(|h| h.path().to_path_buf())
+}
+
 /// Pick the folder to save a window's work into as a workspace. The panel
 /// can make one, since a new workspace usually wants a new folder.
 pub async fn pick_folder_to_save() -> Option<PathBuf> {

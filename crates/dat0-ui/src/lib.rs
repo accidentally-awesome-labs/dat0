@@ -24,6 +24,7 @@ pub mod launch;
 pub mod menu;
 pub mod package_export;
 pub mod package_open;
+pub mod package_replay;
 pub mod package_unpack;
 #[cfg(feature = "perf-harness")]
 pub mod perf;
