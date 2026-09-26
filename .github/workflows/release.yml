@@ -266,9 +266,7 @@ jobs:
             "dat0-${V}-x86_64.AppImage" \
             "dat0-${V}-x86_64.AppImage.sig" \
             dat0.app.tar.gz > SHA256SUMS
-      - name: Generate + sign update manifest
-        env:
-          MINISIGN_SECRET_KEY: ${{ secrets.MINISIGN_SECRET_KEY }}
+      - name: Generate the update manifest
         run: |
           TARBALL=dist/dat0-app-tarball/dat0.app.tar.gz
           APPIMAGE=dist/dat0-appimage/dat0.AppImage
@@ -282,11 +280,26 @@ jobs:
             --macos-size "$MACOS_SIZE" \
             --linux-sha "$LINUX_SHA" \
             --linux-size "$LINUX_SIZE"
-          cargo install rsign2 --locked
-          printf '%s' "$MINISIGN_SECRET_KEY" > /tmp/minisign.key
-          # CI key is PASSWORDLESS (no passphrase env needed — avoids the P10a GPG-passphrase-in-CI trap)
-          rsign sign -s /tmp/minisign.key -x target/latest.json.minisig target/latest.json
-          rm -f /tmp/minisign.key
+          # Pinned, as appimagetool is: the next step hands it the key.
+          cargo install rsign2 --locked --version 0.6.7
+      - name: Sign the update manifest
+        # The one step that holds the key, and it runs nothing but rsign:
+        # no build script sees it.
+        env:
+          MINISIGN_SECRET_KEY: ${{ secrets.MINISIGN_SECRET_KEY }}
+        run: |
+          key="$RUNNER_TEMP/minisign.key"
+          trap 'rm -f "$key"' EXIT
+          printf '%s' "$MINISIGN_SECRET_KEY" > "$key"
+          # The key has no password (docs/security-runbook.md), and -W says so:
+          # without it rsign asks for one on a terminal, which a runner does
+          # not have, and fails, leaving an empty signature.
+          rsign sign -W -s "$key" -x target/latest.json.minisig target/latest.json
+      - name: The manifest verifies against the key dat0 trusts
+        # As the app will check it. A secret that is not the pair of the
+        # committed key signs without complaint, and every client would refuse
+        # the update; nothing is published yet.
+        run: cargo xtask verify-manifest
       - name: Publish to GitHub Release
         env: { GH_TOKEN: "${{ github.token }}" }
         run: |

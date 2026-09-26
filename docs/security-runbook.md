@@ -186,7 +186,10 @@ detach-sign hung waiting for a PIN. See the
 above. A passwordless minisign key avoids that class of bug entirely: the key
 is disposable (rotate on compromise), and the GitHub Secret encryption is the
 sole access control — a passphrase would add no meaningful protection over the
-secret itself. The CI signs `latest.json` non-interactively with no PIN prompt.
+secret itself. The CI signs `latest.json` non-interactively: `rsign sign -W`
+reads the key without asking for a password. Without `-W`, rsign asks on the
+terminal even for a passwordless key, and a runner has none, so the signing
+fails.
 
 ### Storage
 
@@ -199,16 +202,22 @@ secret itself. The CI signs `latest.json` non-interactively with no PIN prompt.
   via `include_str!`. This is the only key material that belongs in version
   control.
 
-To load the secret in CI (`release.yml`):
+How CI uses the secret (`release.yml`'s `publish` job, abridged): the step
+that holds it runs nothing but the pinned `rsign`, and the next checks the
+signature as the app will, against the committed public key, before anything
+is uploaded.
 
 ```yaml
-- name: Sign latest.json
+- name: Sign the update manifest
   env:
     MINISIGN_SECRET_KEY: ${{ secrets.MINISIGN_SECRET_KEY }}
   run: |
-    echo "$MINISIGN_SECRET_KEY" > /tmp/minisign.key
-    rsign sign -s /tmp/minisign.key latest.json
-    rm /tmp/minisign.key
+    key="$RUNNER_TEMP/minisign.key"
+    trap 'rm -f "$key"' EXIT
+    printf '%s' "$MINISIGN_SECRET_KEY" > "$key"
+    rsign sign -W -s "$key" -x target/latest.json.minisig target/latest.json
+- name: The manifest verifies against the key dat0 trusts
+  run: cargo xtask verify-manifest
 ```
 
 ### Rotation

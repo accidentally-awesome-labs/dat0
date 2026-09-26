@@ -165,9 +165,11 @@ Jobs run in order: `gate` → `macos` and `linux` (in parallel) → `publish`
 release before anything is built when the tag does not name the workspace
 version, the updater still trusts the test key, the crash-report DSN or a
 signing secret is missing, or the NYC taxi sample's hash is a placeholder.
-Run `cargo xtask release-check` before tagging to see the same list. If any
-job fails, check its log for the failing step. Common failure modes are
-documented in the troubleshooting section below.
+Run `cargo xtask release-check` before tagging to see the same list.
+`publish` signs `latest.json` and checks the signature as the app will
+(`cargo xtask verify-manifest`, against the committed public key) before it
+uploads anything. If any job fails, check its log for the failing step.
+Common failure modes are documented in the troubleshooting section below.
 
 ### 5. Run the perf gate on the release host
 
@@ -253,10 +255,12 @@ gh workflow run release.yml
 
 All jobs run normally but the `publish` job is skipped (gated on
 `github.ref_type == 'tag'`), and `gate` lists its findings as warnings instead
-of stopping. Artifacts are uploaded and available for download from the
-Actions run summary. It needs no secrets: without them, macOS makes a disk
-image of the app signed ad hoc and Linux an unsigned AppImage, and both are
-still built, checked and smoke-tested. Use this for:
+of stopping. So a dry run never signs the update manifest; its steps are
+checked offline instead (`xtask/tests/release_workflow.rs`,
+`xtask/tests/manifest_verify.rs`). Artifacts are uploaded and available for
+download from the Actions run summary. It needs no secrets: without them,
+macOS makes a disk image of the app signed ad hoc and Linux an unsigned
+AppImage, and both are still built, checked and smoke-tested. Use this for:
 
 - First-time pipeline validation (esp. the GPG passphrase wiring check above).
 - Testing cert/key rotation after a renewal.
@@ -291,6 +295,7 @@ Record the run URL here once it is green:
 | `notarytool submit` returns `Invalid` status | Entitlement or binary issue | Run `xcrun notarytool log <submission-id>` to see the notarization report. |
 | `gpg --detach-sign` exits non-zero / prompts | `DAT0_GPG_PASSPHRASE` set for a passphraseless key, or unset for a protected one | See **Linux GPG signing — passphrase wiring** above; the variable must match the key. |
 | `publish` job skipped on a tag push | Preceding `macos` or `linux` job failed | Fix the failing job first; re-push the tag after fixing the source. |
+| `verify-manifest` fails: the signature "does not verify against the key dat0 trusts" | `MINISIGN_SECRET_KEY` is not the pair of `crates/dat0-core/assets/minisign-public-key.txt` | Nothing was published. Set the secret to the key whose public half is committed (`docs/release-prerequisites.md` §1) and re-run the failed job. |
 | `notice` CI gate warns after a dep change | NOTICE.md regenerated on macOS, not Linux | Regenerate on Linux; commit the result (see step 2 above). |
 
 ---

@@ -1,5 +1,5 @@
 //! dat0 build/release mechanics. Run via `cargo xtask <subcommand>`.
-use anyhow::Result;
+use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
 use std::path::{Path, PathBuf};
 use xtask::{icon, linux, macos, manifest, perf, release, sign};
@@ -61,6 +61,9 @@ enum Cmd {
         #[arg(long)]
         linux_size: u64,
     },
+    /// Check the signed `target/latest.json` as the app will: its signature
+    /// verifies against the update key the app compiles in.
+    VerifyManifest,
     /// Check what a release must carry: the production update key, a real
     /// crash-report DSN, the sample's hash, the signing secrets, and a tag
     /// naming the workspace version. With `--tag`, a finding fails the run;
@@ -103,6 +106,19 @@ fn main() -> Result<()> {
             let json =
                 manifest::build_manifest(&version, &macos_sha, macos_size, &linux_sha, linux_size);
             std::fs::write("target/latest.json", json)?;
+            Ok(())
+        }
+        Cmd::VerifyManifest => {
+            let read = |path: &str| std::fs::read(path).with_context(|| format!("read {path}"));
+            let text =
+                |path: &str| std::fs::read_to_string(path).with_context(|| format!("read {path}"));
+            // The bytes as signed and as the app downloads them.
+            manifest::verify(
+                &read("target/latest.json")?,
+                &text("target/latest.json.minisig")?,
+                &text(release::UPDATE_KEY)?,
+            )?;
+            println!("verify-manifest: target/latest.json is signed by the key dat0 trusts");
             Ok(())
         }
         Cmd::ReleaseCheck { tag } => {

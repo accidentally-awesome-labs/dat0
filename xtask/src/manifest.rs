@@ -1,4 +1,7 @@
-//! Build `latest.json` manifest for auto-update.
+//! Build `latest.json` manifest for auto-update, and check its signature as
+//! the app will before it is published.
+
+use anyhow::{Context, Result, anyhow};
 
 /// Generate a JSON manifest string for the update system.
 ///
@@ -44,4 +47,23 @@ pub fn build_manifest(
 }}"#,
         version, macos_url, macos_sha, macos_size, linux_url, linux_sha, linux_size
     )
+}
+
+/// Check a signed manifest as the app will: its signature verifies against
+/// `public_key`, the one line of `crates/dat0-core/assets/minisign-public-key.txt`
+/// the app compiles in, and is not a legacy signature, which the app refuses.
+/// The app's own check is `dat0_core::update::manifest::verify_manifest`; xtask
+/// does not depend on dat0-core, so this makes the same `minisign-verify` call.
+///
+/// `release.yml`'s publish job runs it after signing and before uploading
+/// anything: a `MINISIGN_SECRET_KEY` that is not the pair of the committed key
+/// signs without complaint, and every client would then refuse the update.
+pub fn verify(manifest: &[u8], minisig: &str, public_key: &str) -> Result<()> {
+    let key = minisign_verify::PublicKey::from_base64(public_key.trim())
+        .context("decode the update public key")?;
+    let signature =
+        minisign_verify::Signature::decode(minisig).context("decode the manifest signature")?;
+    key.verify(manifest, &signature, false).map_err(|e| {
+        anyhow!("the manifest's signature does not verify against the key dat0 trusts: {e}")
+    })
 }

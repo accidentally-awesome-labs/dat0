@@ -16,6 +16,9 @@ serde = { workspace = true }
 serde_json = { workspace = true }
 # The release gate reads the workspace's manifests and `.cargo/config.toml`.
 toml = { workspace = true }
+# `verify-manifest` checks the signed update manifest with the verifier the
+# app uses (dat0-core's `minisign-verify = "0.2"`).
+minisign-verify = "0.2"
 
 [dev-dependencies]
 tempfile = { workspace = true }

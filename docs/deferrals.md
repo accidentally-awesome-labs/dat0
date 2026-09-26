@@ -114,7 +114,7 @@ that's modifying it; merge conflicts are signals worth investigating.
 | PD-038 | A data tab cannot be closed: the tab strip only activates tabs, and no command closes one | open | medium |
 | PD-039 | A `.dat0` package or a workspace folder named at launch opens in a window of its own, beside an empty scratch window | open | low |
 | PD-040 | Parts of the shell cannot be reached by keyboard: the data tabs, a column's sort and filter, the inspector's lineage, and a dialog's first control | open | medium |
-| PD-041 | The release pipeline, never run, would have shipped a Linux AppImage that opened a blank window on most hosts and would not start on Ubuntu 22.04 or Debian 12, with no check that a tag carried the production update key | closed | high |
+| PD-041 | The release pipeline, never run, would have shipped a Linux AppImage that opened a blank window on most hosts and would not start on Ubuntu 22.04 or Debian 12, with no check that a tag carried the production update key, and its first tag would have stopped at signing the update manifest | closed | high |
 
 > **Missing originating docs (noted 2026-09-25).** D-030 and D-032–D-036 cite
 > `docs/plans/2026-08-08-dat0-production-v1-plan.md`, and the migration log cites
@@ -3144,8 +3144,9 @@ that's modifying it; merge conflicts are signals worth investigating.
   on most hosts, and a tag carrying the test update key would have shipped
   builds that never see an update
 - **Affected files:** `.github/workflows/release.yml`, `xtask/src/linux.rs`,
-  `xtask/src/sign.rs`, `xtask/src/macos.rs`, `crates/dat0-ui/src/launch.rs`,
-  `crates/dat0-ui/Cargo.toml`, `docs/about-template.hbs`
+  `xtask/src/sign.rs`, `xtask/src/macos.rs`, `xtask/src/manifest.rs`,
+  `crates/dat0-ui/src/launch.rs`, `crates/dat0-ui/Cargo.toml`,
+  `docs/about-template.hbs`
 - **Symptom:** `release.yml` had never run. Built and run under Docker, its
   Linux half showed:
   - The AppImage carried WebKitGTK, and WebKitGTK starts its page and
@@ -3172,6 +3173,19 @@ that's modifying it; merge conflicts are signals worth investigating.
     open-documents event: a double-clicked package launched an empty window.
   - A dry run needed every signing secret, so packaging could not be
     exercised at all.
+
+  And by its first dry runs, and the publish job's signing steps run by
+  hand as a runner runs them:
+  - The macOS job installed only the aarch64 target: in a `{ … }` mapping
+    the comma ends the entry. The universal build failed (release run #1).
+  - The check that the binary holds both architectures could never pass:
+    its one pattern needed the space between them twice (release run #2).
+  - `rsign sign` without `-W` asks for the key's password on the terminal,
+    even for a key that has none, and a runner has no terminal. The first
+    tag would have stopped at signing the update manifest, leaving an empty
+    signature. Nothing checked that the secret key is the pair of the key
+    the app trusts, and `rsign2` was installed unpinned in the step that
+    holds the key.
 - **Fix:**
   - The AppImage carries the binary, libxdo and libxdo's two X extensions,
     and takes WebKitGTK, GTK and GLib from the host; a library the binary
@@ -3199,6 +3213,16 @@ that's modifying it; merge conflicts are signals worth investigating.
   - A dry run without secrets builds, checks and uploads both platforms,
     signing nothing; a tag always signs. The keychain no longer locks
     during notarization, and signing starts after the build.
+  - The macOS job installs both targets, and `xtask/tests/release_workflow.rs`
+    checks it installs every one `bundle` builds; the architecture check
+    looks for each on its own.
+  - The publish job signs with `rsign2` 0.6.7, pinned, and `-W`, in a step
+    that runs nothing else, then `cargo xtask verify-manifest` checks the
+    signature as the app does, against the committed key, before anything
+    is uploaded. Run with a throwaway key and no terminal, the old step
+    failed with "No such device or address"; the new one signs, dat0-core's
+    `verify_manifest` accepts the result, and a secret that is not the
+    committed key's pair stops at the check.
 - **Discovered:** 2026-09-26, step 7 of the 2026-09-25 review.
 - **Last touched:** 2026-09-26
 

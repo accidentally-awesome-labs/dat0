@@ -18,6 +18,7 @@ fn help_lists_all_subcommands() {
         "bundle-linux",
         "verify",
         "gen-manifest",
+        "verify-manifest",
         "release-check",
         "perf",
     ] {

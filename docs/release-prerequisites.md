@@ -71,7 +71,7 @@ cat crates/dat0-core/assets/minisign-public-key.txt       # must NOT contain "un
 
 Then, in **Settings → Secrets and variables → Actions**, create secret
 `MINISIGN_SECRET_KEY` with the **full contents** of `dat0-minisign.key`
-(all lines, including the `untrusted comment:` header — `rsign sign -s` reads
+(all lines, including the `untrusted comment:` header — `rsign sign -W -s` reads
 the whole file).
 
 ```bash
