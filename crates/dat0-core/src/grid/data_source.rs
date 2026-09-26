@@ -212,6 +212,16 @@ impl GridDataSource {
             .map(|f| f.name().to_string())
     }
 
+    /// Whether the rows carry `__dat0_rowid`, the identity an edit or a delete
+    /// addresses a row by. A table does; a query's results, which sit in a
+    /// view over the user's SQL, do not.
+    pub fn has_row_ids(&self) -> bool {
+        self.schema
+            .fields()
+            .iter()
+            .any(|f| f.name().as_str() == dat0_engine::ROWID_COL)
+    }
+
     /// Surrogate `__dat0_rowid` of the row at `screen_row`, or `None` when the
     /// row's page is not cached or the surrogate column is absent (PD-017 —
     /// graceful degradation, no panic).
@@ -329,6 +339,34 @@ impl GridDataSource {
         } else {
             Some(display.text)
         }
+    }
+
+    /// The typed value of the cell at (`screen_row`, source column `source`),
+    /// for a verb that writes it elsewhere, or `None` when the row's page is
+    /// not cached or no column has that source name. A NULL cell is
+    /// `Some(Scalar::Null)`, which [`Self::cell_display_for_source`] cannot
+    /// tell apart from an empty string.
+    pub fn cell_scalar_for_source(
+        &self,
+        screen_row: usize,
+        source: &str,
+    ) -> Option<dat0_engine::Scalar> {
+        let schema_ix = self.schema_index_for_source(source)?;
+        let screen_row_u64 = u64::try_from(screen_row).ok()?;
+        let key = PageKey {
+            start: (screen_row_u64 / PAGE_ROWS) * PAGE_ROWS,
+        };
+        let offset = usize::try_from(screen_row_u64 - key.start).ok()?;
+        let batch = {
+            let mut cache = self.cache.lock();
+            Arc::clone(cache.get(&key)?)
+        };
+        if offset >= batch.num_rows() {
+            return None;
+        }
+        Some(crate::grid::renderers::cell_scalar(
+            &batch, schema_ix, offset,
+        ))
     }
 
     /// Coarse [`crate::view::filter_popover::ColumnType`] of the Arrow field at

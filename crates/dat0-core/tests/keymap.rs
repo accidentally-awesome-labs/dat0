@@ -31,9 +31,9 @@ use dat0_core::keymap::{Binding, DEFAULT_KEYMAP, chord_for};
 /// - `window.new` — the obvious guess is ⌘N and nothing binds it; a hint would
 ///   lie. It wants its own slice with a reachability assertion.
 /// - `view.copy` … `view.delete_column` — grid editing runs on the grid's own
-///   raw `on_key_down` cursor grammar (`grid/keymap.rs`), which is a modal mode
-///   rather than a set of global commands and is deliberately outside
-///   `DEFAULT_KEYMAP`.
+///   keys (`grid/keymap.rs` for the cursor, `dat0-ui`'s `keys::grid_verb` for
+///   the verbs), which are a modal mode rather than a set of global commands
+///   and are deliberately outside `DEFAULT_KEYMAP`.
 /// - `sql.new_tab`, `sql.close_tab` and the P5b reuse/promotion actions — a
 ///   global chord would collide with the SQL editor's own text-editing keymap.
 /// - everything else — menu items, panel buttons, or palette-only entries

@@ -105,20 +105,23 @@ const NOT_HEADLESS: &[(&str, &str)] = &[
         "redoes a view change, which needs a real session to make; \
          tests/grid_views.rs redoes one",
     ),
+    (ids::VIEW_COPY, GRID_VERB),
+    (ids::VIEW_CUT, GRID_VERB),
+    (ids::VIEW_PASTE, GRID_VERB),
+    (ids::VIEW_FILL_DOWN, GRID_VERB),
+    (ids::VIEW_SET_NULL, GRID_VERB),
+    (ids::VIEW_SET_VALUE, GRID_VERB),
+    (ids::VIEW_DELETE_ROWS, GRID_VERB),
+    (ids::VIEW_DELETE_COLUMN, GRID_VERB),
 ];
+
+const GRID_VERB: &str = "acts on a selection over a table's rows, and a table needs a real \
+     session; tests/grid_edits.rs performs each grid verb there";
 
 /// The `UNWIRED` list as of the review that introduced it (2026-09-25).
 /// Frozen here so the list can shrink but never grow; see
 /// [`the_unwired_list_only_shrinks`].
 const UNWIRED_AT_MOST: &[&str] = &[
-    ids::VIEW_COPY,
-    ids::VIEW_CUT,
-    ids::VIEW_PASTE,
-    ids::VIEW_FILL_DOWN,
-    ids::VIEW_SET_NULL,
-    ids::VIEW_SET_VALUE,
-    ids::VIEW_DELETE_ROWS,
-    ids::VIEW_DELETE_COLUMN,
     ids::VIEW_SAVE_AS_TABLE,
     ids::VIEW_EXPORT,
     ids::LIVE_REFRESH,

@@ -300,6 +300,12 @@ fn dragging_a_header_moves_the_column_not_just_its_width() {
     let _guard = rt.enter();
     let mut h = window("reorder");
 
+    // Widen name first, so its width can be told apart from qty's.
+    h.dispatch(h.by_a11y_id("col-resize-0").unwrap(), "mousedown", at(0.0));
+    h.dispatch(h.by_a11y_id("drag-shield").unwrap(), "mousemove", at(80.0));
+    h.dispatch(h.by_a11y_id("drag-shield").unwrap(), "mouseup", at(80.0));
+    let wide = width_of(&h, "col-0");
+
     h.dispatch(
         h.by_a11y_id("col-grip-0").unwrap(),
         "dragstart",
@@ -314,4 +320,47 @@ fn dragging_a_header_moves_the_column_not_just_its_width() {
     );
     let first = h.by_a11y_id("col-0").unwrap();
     assert_eq!(h.attr(first, "aria-label").as_deref(), Some("qty"));
+    assert_eq!(width_of(&h, "col-1"), wide, "name kept its width");
+    assert_ne!(width_of(&h, "col-0"), wide, "and qty kept its own");
+
+    // Undo puts the column back, and the width goes with it again.
+    perform(&mut h, ids::VIEW_UNDO);
+    assert!(
+        pump(&mut h, |h| text(h, "cell-0-0") == "b"),
+        "{:?}",
+        text(&h, "cell-0-0")
+    );
+    assert_eq!(width_of(&h, "col-0"), wide);
+}
+
+/// A mouse event at `x`, which is all a resize gesture reads.
+fn at(x: f64) -> dioxus::html::SerializedMouseData {
+    use dioxus::html::geometry::{ClientPoint, Coordinates, ElementPoint, PagePoint, ScreenPoint};
+    use dioxus::html::input_data::MouseButton;
+    let c = Coordinates::new(
+        ScreenPoint::new(x, 0.0),
+        ClientPoint::new(x, 0.0),
+        ElementPoint::new(x, 0.0),
+        PagePoint::new(x, 0.0),
+    );
+    dioxus::html::SerializedMouseData::new(
+        Some(MouseButton::Primary),
+        MouseButton::Primary.into(),
+        c,
+        dioxus::prelude::Modifiers::empty(),
+    )
+}
+
+/// The `width: …px` a header cell is laid out at.
+fn width_of(h: &Harness, id: &str) -> String {
+    let style = h
+        .by_a11y_id(id)
+        .and_then(|k| h.attr(k, "style"))
+        .unwrap_or_default();
+    style
+        .split(';')
+        .map(str::trim)
+        .find(|d| d.starts_with("width:"))
+        .unwrap_or_default()
+        .to_string()
 }

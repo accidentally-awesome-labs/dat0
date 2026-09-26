@@ -32,6 +32,7 @@
 
 pub mod cell_editor;
 pub mod context_menu;
+pub mod edits;
 pub mod header;
 pub mod views;
 
@@ -300,12 +301,8 @@ pub fn Grid(props: GridProps) -> Element {
                 on_reorder_drop: move |to: usize| {
                     if let Some(from) = reordering.take() {
                         if from != to && from < n_cols && to < n_cols {
-                            // The width travels with its column.
-                            {
-                                let mut w = widths_sig.write();
-                                let moved = w.remove(from);
-                                w.insert(to, moved);
-                            }
+                            // The owner moves the column; its width follows
+                            // the column, not the place (`views::use_fit`).
                             props.on_reorder.call((from, to));
                         }
                     }
@@ -369,6 +366,13 @@ pub fn Grid(props: GridProps) -> Element {
                         e.prevent_default();
                         e.stop_propagation();
                         dat0_core::grid::keymap::apply_key(&mut selection.write(), k);
+                        return;
+                    }
+                    if let Some(id) = crate::keys::grid_verb(&e.key(), e.modifiers()) {
+                        e.prevent_default();
+                        e.stop_propagation();
+                        let at = selection.read().active();
+                        on_action.call((id, at));
                         return;
                     }
                     // Enter opens the editor on the active cell, the

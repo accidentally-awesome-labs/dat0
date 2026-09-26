@@ -40,6 +40,7 @@ const MAX_LINES: &[(&str, usize)] = &[
     ("filter_popover.rs", 600),
     ("grid/cell_editor.rs", 300),
     ("grid/context_menu.rs", 300),
+    ("grid/edits.rs", 600),
     ("grid/header.rs", 300),
     ("grid/mod.rs", 700),
     ("grid/views.rs", 400),

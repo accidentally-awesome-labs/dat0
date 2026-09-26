@@ -148,9 +148,6 @@ pub fn Shell() -> Element {
     // The console's tabs, its run, its failure strip and the schema the
     // editor completes against (`sql_console::host`).
     let console_host = crate::components::sql_console::host::ConsoleHost::use_new(ws, views);
-    // Which tab the widths were sized for: a sort or filter rebinds the same
-    // columns, and must not reset widths the user dragged.
-    let mut sized_for = use_signal(String::new);
 
     // One `GridDataSource` per active tab, rebuilt when the tab changes.
     // `use_resource` because building one runs a DESCRIBE against DuckDB: it is
@@ -165,8 +162,6 @@ pub fn Shell() -> Element {
     // `session`. The tab arrived, the tab strip showed it, and the work area
     // stayed on `d0-grid-loading` forever. `tests/shell_grid_binding.rs`
     // mounts the real shell over a real session and fails if it comes back.
-    let mut widths_seed = widths;
-    let mut selection_seed = selection;
     let source = use_resource(move || async move {
         let table = ws.active_tab().map(|t| t.table)?;
         // What a view change or a console run bound for this tab — its sorted,
@@ -184,25 +179,15 @@ pub fn Shell() -> Element {
             }
         };
 
-        // Size the grid's two pieces of shell-owned state to the table that
-        // just bound. `Grid` derives its visible column range from
-        // `widths.len()`, so an empty vector paints a header with no columns
-        // and no cells; `SelectionModel` clamps `move_active` against its own
-        // dimensions, so a 1x1 model pins the keyboard cursor to A1 whatever
-        // the table holds. Both were left at their mount-time placeholders.
-        if let Ok(src) = &built {
-            let cols = src.visible_column_names().len();
-            if widths_seed.peek().len() != cols || *sized_for.peek() != table {
-                widths_seed.set(vec![crate::components::grid::COL_W_DEFAULT; cols]);
-                sized_for.set(table);
-            }
-            selection_seed.set(dat0_core::grid::selection::SelectionModel::new(
-                usize::try_from(src.row_count).unwrap_or(usize::MAX).max(1),
-                cols.max(1),
-            ));
-        }
-        Some(built)
+        Some((table, built))
     });
+    // Size the grid's two pieces of shell-owned state to what it shows.
+    // `Grid` derives its visible column range from `widths.len()`, so an empty
+    // vector paints a header with no columns and no cells; `SelectionModel`
+    // clamps `move_active` against its own dimensions, so a 1x1 model pins the
+    // keyboard cursor to A1 whatever the table holds.
+    crate::components::grid::views::use_fit(views, source, widths, selection);
+    let edits = crate::components::grid::edits::Edits::new(ws, views, selection, source);
 
     // The chart's plot data. `use_resource` for the same reason the grid's
     // source is one: building it runs a query. Holding the table (not just the
@@ -287,9 +272,9 @@ pub fn Shell() -> Element {
                 ai.clone(),
                 surface_host.clone(),
                 views,
+                edits,
                 chart_spec,
                 chart_data,
-                selection,
                 perf_hud,
                 id,
             )
@@ -542,15 +527,15 @@ pub fn Shell() -> Element {
                                     on_save_as_table: move |_| {},
                                 }
                                 match source.read_unchecked().clone().flatten() {
-                                    Some(Ok(src)) => {
+                                    Some((shown, Ok(src))) => {
                                         // The bound table's own columns,
                                         // through the tab's reorders, renames
                                         // and hidden columns. This was
                                         // `Vec::new()` once, and `Grid` paints
                                         // one header cell and one body cell
                                         // per entry.
-                                        let columns = views.columns(&active_table, &src.visible_column_names());
-                                        let marks = views.marks(&active_table, &columns);
+                                        let columns = views.columns(&shown, &src.visible_column_names());
+                                        let marks = views.marks(&shown, &columns);
                                         let (by_sort, by_funnel, by_drag) = (columns.clone(), columns.clone(), columns.clone());
                                         let typed = src.clone();
                                         rsx! {
@@ -575,6 +560,10 @@ pub fn Shell() -> Element {
                                                     }
                                                 },
                                                 on_reorder: move |(from, to): (usize, usize)| views.reorder(&by_drag, from, to),
+                                                on_edit: move |(cell, text)| edits.commit(cell, text),
+                                                on_action: move |(id, _): (&'static str, _)| {
+                                                    edits.perform(id);
+                                                },
                                             }
                                             if let Some(f) = views.funnel.cloned() {
                                                 FilterPopover {
@@ -597,7 +586,7 @@ pub fn Shell() -> Element {
                                     None => rsx! {
                                         div { class: "d0-grid-loading", "data-a11y-id": "grid-loading" }
                                     },
-                                    Some(Err(e)) => rsx! {
+                                    Some((_, Err(e))) => rsx! {
                                         div {
                                             class: "d0-grid-error",
                                             "data-a11y-id": "grid-error",
@@ -957,9 +946,9 @@ fn surface_command(
     ai: crate::components::ai::AiController,
     console: crate::components::sql_console::host::ConsoleHost,
     views: crate::components::grid::views::Views,
+    edits: crate::components::grid::edits::Edits,
     chart_spec: Signal<dat0_core::charts::spec::ChartSpec>,
     chart_data: Resource<Option<dat0_core::charts::data::PlotTable>>,
-    selection: Signal<dat0_core::grid::selection::SelectionModel>,
     perf_hud: Signal<bool>,
     id: &str,
 ) -> bool {
@@ -1047,25 +1036,22 @@ fn surface_command(
         // Each is a no-op without a selection, exactly as the GPUI build was:
         // the descriptors are always registered and always listed, and "copy
         // with nothing selected" is a nothing, not an error.
-        ids::VIEW_COPY | ids::VIEW_CUT => {
-            let sel = selection.read();
-            if sel.has_selection() {
-                // The grid owns the values; the clipboard write is here so one
-                // place decides what a copy means.
-                tracing::debug!(cut = id == ids::VIEW_CUT, "grid copy");
-            }
-        }
-        // Undoing a sort or a filter changes no data, so read-only does not
-        // stand in its way.
-        ids::VIEW_UNDO => views.undo(),
-        ids::VIEW_REDO => views.redo(),
-        ids::VIEW_PASTE
+        ids::VIEW_COPY
+        | ids::VIEW_CUT
+        | ids::VIEW_PASTE
         | ids::VIEW_FILL_DOWN
         | ids::VIEW_SET_NULL
         | ids::VIEW_SET_VALUE
         | ids::VIEW_DELETE_ROWS
-        | ids::VIEW_DELETE_COLUMN
-        | ids::VIEW_SAVE_AS_TABLE => {
+        | ids::VIEW_DELETE_COLUMN => {
+            edits.perform(id);
+        }
+        // Undo steps back through the view — a sort, a filter or an edit laid
+        // over the table, never the table itself — so read-only does not stand
+        // in its way.
+        ids::VIEW_UNDO => views.undo(),
+        ids::VIEW_REDO => views.redo(),
+        ids::VIEW_SAVE_AS_TABLE => {
             if *ws.read_only.read() {
                 ws.push_banner(dat0_core::error_ux::Banner::warning(dat0_i18n::t(
                     "view.read_only",

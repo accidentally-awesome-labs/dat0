@@ -33,15 +33,7 @@ use crate::state::{Modal, Workspace};
 /// a ratchet: `tests/action_effects.rs` fails if it grows, and an id leaves it
 /// in the same change as the test that shows its effect.
 pub const UNWIRED: &[&str] = &[
-    // Grid edits: logged, never applied.
-    ids::VIEW_COPY,
-    ids::VIEW_CUT,
-    ids::VIEW_PASTE,
-    ids::VIEW_FILL_DOWN,
-    ids::VIEW_SET_NULL,
-    ids::VIEW_SET_VALUE,
-    ids::VIEW_DELETE_ROWS,
-    ids::VIEW_DELETE_COLUMN,
+    // Logged, never applied.
     ids::VIEW_SAVE_AS_TABLE,
     // Dialogs whose reply is discarded.
     ids::VIEW_EXPORT,

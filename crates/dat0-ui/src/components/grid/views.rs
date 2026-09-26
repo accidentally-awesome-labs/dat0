@@ -18,6 +18,7 @@ use std::sync::Arc;
 use dioxus::prelude::*;
 
 use dat0_core::grid::data_source::GridDataSource;
+use dat0_core::grid::selection::{CellCoord, SelectionModel};
 use dat0_core::view::column_view::reorder_payload;
 use dat0_core::view::distinct_values::fetch_top_n;
 use dat0_core::view::filter_popover::{ColumnType, Outcome};
@@ -30,6 +31,11 @@ use crate::state::Workspace;
 /// The source each tab shows, by the tab's table, with the table or view it
 /// reads.
 pub type Bound = Signal<HashMap<String, (String, Arc<GridDataSource>)>>;
+
+/// What the grid shows: the tab's table, and its source or why there is none.
+/// The table travels with the source because a tab switch changes the active
+/// tab at once, and the source only once the new one is built.
+pub type Shown = Resource<Option<(String, Result<Arc<GridDataSource>, String>)>>;
 
 /// The funnel whose popover is open.
 #[derive(Clone, PartialEq, Debug)]
@@ -213,8 +219,20 @@ impl Views {
 
     /// Change the active tab's model, and drive the change it returns.
     fn change(&self, f: impl FnOnce(&mut ViewModel) -> Option<ViewChange>) {
-        let (Some(table), Some(engine)) = (self.ws.active_tab().map(|t| t.table), engine(&self.ws))
-        else {
+        if let Some(table) = self.ws.active_tab().map(|t| t.table) {
+            self.change_on(table, f);
+        }
+    }
+
+    /// Change `table`'s model, and drive the change it returns. Named rather
+    /// than the active tab for a verb that reads rows first: the user may have
+    /// switched tabs by the time it is ready.
+    pub(super) fn change_on(
+        &self,
+        table: String,
+        f: impl FnOnce(&mut ViewModel) -> Option<ViewChange>,
+    ) {
+        let Some(engine) = engine(&self.ws) else {
             return;
         };
         let change = {
@@ -245,6 +263,68 @@ impl Views {
             }
         });
     }
+}
+
+/// Keep the grid's widths and selection fitted to what it shows.
+///
+/// A width belongs to its column, not its place: hiding a column, dragging
+/// one, or undoing either leaves every column its width, and another table
+/// starts at the default. The selection is sized to the rows and columns
+/// shown. While the same table stays up it is kept whole if the shape holds —
+/// an edit rebinds the view, and the cursor must not jump back to the first
+/// cell — and otherwise shrinks to its active cell, clamped.
+pub fn use_fit(
+    views: Views,
+    shown: Shown,
+    mut widths: Signal<Vec<f64>>,
+    mut selection: Signal<SelectionModel>,
+) {
+    // The table, and the columns `widths` is laid out for.
+    let mut fitted = use_signal(|| (String::new(), Vec::<String>::new()));
+    use_effect(move || {
+        let Some((table, Ok(src))) = shown.read().clone().flatten() else {
+            return;
+        };
+        let now: Vec<String> = views
+            .columns(&table, &src.visible_column_names())
+            .into_iter()
+            .map(|c| c.source)
+            .collect();
+        let (was_table, was) = fitted.peek().clone();
+        let same = was_table == table;
+        if !same || was != now {
+            let old = widths.peek().clone();
+            let next = now
+                .iter()
+                .map(|c| {
+                    was.iter()
+                        .position(|w| w == c)
+                        .filter(|_| same)
+                        .and_then(|i| old.get(i).copied())
+                        .unwrap_or(super::COL_W_DEFAULT)
+                })
+                .collect();
+            widths.set(next);
+        }
+
+        let rows = usize::try_from(src.row_count).unwrap_or(usize::MAX).max(1);
+        let cols = now.len().max(1);
+        let (kept, active) = {
+            let s = selection.peek();
+            (same && s.rows() == rows && s.cols() == cols, s.active())
+        };
+        if !kept {
+            let mut next = SelectionModel::new(rows, cols);
+            if same {
+                next.click(CellCoord {
+                    row: active.row.min(rows - 1),
+                    col: active.col.min(cols - 1),
+                });
+            }
+            selection.set(next);
+        }
+        fitted.set((table, now));
+    });
 }
 
 fn engine(ws: &Workspace) -> Option<Arc<DuckDBEngine>> {
