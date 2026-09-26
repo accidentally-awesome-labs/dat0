@@ -904,6 +904,24 @@ button {
 
 /* ── Overlays ──────────────────────────────────────────────────────────── */
 
+/* The perf HUD: over the shell, under a dialog's scrim, and never in the way
+   of a click or a Tab. */
+.d0-perf-hud {
+  position: fixed;
+  right: 12px;
+  bottom: 12px;
+  z-index: 90;
+  padding: 6px 10px;
+  border: 1px solid var(--d0-rule);
+  border-radius: var(--d0-r);
+  background: var(--d0-panel);
+  color: var(--d0-fg);
+  font-family: var(--d0-monospace);
+  font-size: 11px;
+  line-height: 1.5;
+  pointer-events: none;
+}
+
 .d0-scrim {
   position: fixed;
   inset: 0;

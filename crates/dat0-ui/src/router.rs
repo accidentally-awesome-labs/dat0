@@ -32,10 +32,7 @@ use crate::state::{Modal, Workspace};
 /// So every surface that offers a command asks [`is_wired`] first. The list is
 /// a ratchet: `tests/action_effects.rs` fails if it grows, and an id leaves it
 /// in the same change as the test that shows its effect.
-pub const UNWIRED: &[&str] = &[
-    // Flips a flag the shell never renders.
-    ids::PERF_HUD_TOGGLE,
-];
+pub const UNWIRED: &[&str] = &[];
 
 /// Whether `id` does something in this build. See [`UNWIRED`].
 pub fn is_wired(id: &str) -> bool {

@@ -56,6 +56,7 @@ const MAX_LINES: &[(&str, usize)] = &[
     ("name_prompt.rs", 300),
     ("onboarding.rs", 300),
     ("pane.rs", 200),
+    ("perf_hud.rs", 400),
     ("pipeline_bar.rs", 300),
     ("query_library.rs", 300),
     ("recovery.rs", 500),

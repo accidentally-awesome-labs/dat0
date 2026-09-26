@@ -137,7 +137,7 @@ const GRID_VERB: &str = "acts on a selection over a table's rows, and a table ne
 /// The `UNWIRED` list as of the review that introduced it (2026-09-25).
 /// Frozen here so the list can shrink but never grow; see
 /// [`the_unwired_list_only_shrinks`].
-const UNWIRED_AT_MOST: &[&str] = &[ids::PERF_HUD_TOGGLE];
+const UNWIRED_AT_MOST: &[&str] = &[];
 
 #[derive(Clone, PartialEq, Props)]
 struct HostProps {

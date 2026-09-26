@@ -687,6 +687,9 @@ pub fn Shell() -> Element {
             // palette is NOT a modal: it has its own gate, its own key
             // grammar, and it must not take the single dialog slot a real
             // dialog needs.
+            if perf_hud() {
+                crate::components::perf_hud::PerfHud { source }
+            }
             CommandPalette {}
             ModalHost {}
         }

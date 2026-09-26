@@ -24,6 +24,7 @@ pub mod modals;
 pub mod name_prompt;
 pub mod onboarding;
 pub mod pane;
+pub mod perf_hud;
 pub mod pipeline_bar;
 pub mod query_library;
 pub mod recovery;
