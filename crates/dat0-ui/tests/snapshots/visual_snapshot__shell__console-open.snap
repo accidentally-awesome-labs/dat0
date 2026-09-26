@@ -137,9 +137,9 @@ expression: "rendered[0].1"
 </div>
 </div>
 <div class="d0-statusbar" data-a11y-id="statusbar" role="status">
-<span class="d0-dot is-live">
+<span class="d0-dot is-busy">
 </span>
-<span>engine duckdb · native</span>
+<span data-a11y-id="status-engine">engine duckdb · starting</span>
 <span class="d0-spacer">
 </span>
 <span class="is-ok" style="color: var(--d0-ok)">egress 0 B</span>

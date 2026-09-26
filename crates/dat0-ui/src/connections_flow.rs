@@ -116,6 +116,17 @@ impl ConnectionsHost {
                 host.act(ws, ConnectionsEvent::ConnectMd, false);
             }
         });
+        // The title bar's pill says `live`, and the status bar's engine
+        // `motherduck`, while MotherDuck is connected (PD-023, step 5.8c).
+        // `Workspace::live` was never written, so the pill said `local`.
+        let state = host.state;
+        use_effect(move || {
+            let connected = matches!(state.read().md_status(), ConnectionStatus::Connected);
+            let mut live = ws.live;
+            if *live.peek() != connected {
+                live.set(connected);
+            }
+        });
         host
     }
 

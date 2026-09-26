@@ -63,7 +63,10 @@ const MAX_LINES: &[(&str, usize)] = &[
     ("inspector/host.rs", 400),
     ("inspector/mod.rs", 900),
     ("live_refresh.rs", 200),
-    ("mod.rs", 300),
+    // 300 -> 400: the status bar's module line (step 5.8c). The file was at
+    // its ceiling, and one more name in the module list is not the file
+    // doing more.
+    ("mod.rs", 400),
     ("modals.rs", 900),
     ("name_prompt.rs", 300),
     ("onboarding.rs", 300),
@@ -89,6 +92,9 @@ const MAX_LINES: &[(&str, usize)] = &[
     ("sql_console/sql_text.rs", 300),
     ("sql_console/mod.rs", 700),
     ("sql_console/tabs.rs", 400),
+    // New with the status bar's feed (step 5.8c): the bar and what each of
+    // its segments says, out of shell.rs.
+    ("status_bar.rs", 300),
     ("update_ui.rs", 400),
     ("workspace_in_use.rs", 300),
 ];

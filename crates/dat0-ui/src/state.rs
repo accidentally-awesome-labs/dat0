@@ -85,12 +85,11 @@ pub struct Status {
     /// False when the engine session failed — the dot goes red and stops
     /// pulsing.
     pub engine_ok: bool,
-    /// Configured memory budget, MB.
+    /// The process's resident set, MB, sampled every two seconds
+    /// (`chrome::use_memory`).
     pub mem_mb: u64,
     /// The visible row window, 1-based and inclusive, and the total.
     pub rows: Option<(u64, u64, u64)>,
-    /// Frames per second from the existing frame clock.
-    pub fps: u32,
     /// Bytes dat0 has sent off this machine since it started, from any window
     /// (`telemetry::egress`, kept current by `chrome::use_egress`). Zero
     /// unless a cloud connection, AI or an update check is used, and shown
@@ -107,7 +106,6 @@ impl Default for Status {
             engine_ok: true,
             mem_mb: 0,
             rows: None,
-            fps: 0,
             egress: 0,
             egress_floor: false,
         }

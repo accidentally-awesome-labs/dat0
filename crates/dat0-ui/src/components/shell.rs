@@ -185,9 +185,20 @@ pub fn Shell() -> Element {
     // A crashed run's report, offered once, in the first window.
     crate::crash_flow::use_relaunch_offer(ws);
     // What the chrome states about the process: the bytes sent off this
-    // machine, and how many windows are open.
+    // machine, its memory, and how many windows are open.
     crate::chrome::use_egress(ws);
+    crate::chrome::use_memory(ws);
     let windows = crate::chrome::use_window_count();
+    // The status bar's selection and query chip, as memos the bar reads, so
+    // a click or a run repaints the bar rather than the shell.
+    let selected = use_memo(move || selection.read().selected_cell_count());
+    let query = {
+        let console_host = console_host.clone();
+        use_memo(move || console_host.chip())
+    };
+    // The sidebar's egress line, read through a memo for the same reason:
+    // the status it lives in changes as the grid scrolls.
+    let egress = use_memo(move || crate::chrome::egress_line(&ws.status.read()));
 
     // The AI panel's controller, built once so the modal can be opened from a
     // command without rebuilding the provider draft each time, and the prompt
@@ -345,7 +356,7 @@ pub fn Shell() -> Element {
                         packages: rows.packages.clone(),
                         session_line: crate::chrome::session_line(windows(), ws.tabs.read().len()),
                         ai_line: ai_line(&ai),
-                        egress_line: crate::chrome::egress_line(&ws.status.read()),
+                        egress_line: egress(),
                         on_open: move |(section, i): (&'static str, usize)| {
                             match section {
                                 // A FILES row is one of the open tabs, in the
@@ -541,6 +552,12 @@ pub fn Shell() -> Element {
                                                     }
                                                 },
                                                 on_reorder: move |(from, to): (usize, usize)| views.reorder(&by_drag, from, to),
+                                                on_rows: move |rows| {
+                                                    let mut status = ws.status;
+                                                    if status.peek().rows != Some(rows) {
+                                                        status.write().rows = Some(rows);
+                                                    }
+                                                },
                                                 on_edit: move |(cell, text)| edits.commit(cell, text),
                                                 on_action: move |(id, _): (&'static str, _)| {
                                                     edits.perform(id);
@@ -652,7 +669,7 @@ pub fn Shell() -> Element {
                 }
             }
 
-            StatusBar { theme_id: theme.tokens().id }
+            crate::components::status_bar::StatusBar { selected, query }
 
             if drag.read().is_some() {
                 DragShield {
@@ -928,54 +945,6 @@ fn TabStrip() -> Element {
     }
 }
 
-#[component]
-fn StatusBar(theme_id: String) -> Element {
-    let ws = Workspace::use_current();
-    let s = ws.status.read().clone();
-    let _ = theme_id;
-    let chord = crate::chrome::palette_chord();
-    let commands = dat0_i18n::t("status.commands");
-    rsx! {
-        div { class: "d0-statusbar", "data-a11y-id": "statusbar", role: "status",
-            span { class: if s.engine_ok { "d0-dot is-live" } else { "d0-dot is-error" } }
-            span { "engine duckdb · native" }
-            if s.mem_mb > 0 {
-                span { "mem " span { class: "d0-num", "{s.mem_mb}" } " MB" }
-            }
-            if let Some((first, last, total)) = s.rows {
-                span {
-                    "rows "
-                    span { class: "d0-num", "{thousands(first)}–{thousands(last)}" }
-                    " / "
-                    span { class: "d0-num", "{thousands(total)}" }
-                }
-            }
-            if s.fps > 0 {
-                span { class: "d0-num", "{s.fps} fps" }
-            }
-            span { class: "d0-spacer" }
-            span { class: "is-ok", style: "color: var(--d0-ok)", "{crate::chrome::egress_line(&s)}" }
-            span { class: "d0-key",
-                span { "data-chord": "palette", "{chord}" }
-                " {commands}"
-            }
-        }
-    }
-}
-
-/// Group a count with thin separators, the way the design writes row counts.
-fn thousands(n: u64) -> String {
-    let s = n.to_string();
-    let mut out = String::with_capacity(s.len() + s.len() / 3);
-    for (i, c) in s.chars().enumerate() {
-        if i > 0 && (s.len() - i) % 3 == 0 {
-            out.push(',');
-        }
-        out.push(c);
-    }
-    out
-}
-
 /// Perform a command whose state belongs to the shell.
 ///
 /// Returns false for an id nothing here owns, which `router::route` reports as
@@ -1072,17 +1041,4 @@ fn surface_command(
         _ => return false,
     }
     true
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn row_counts_are_grouped() {
-        assert_eq!(thousands(0), "0");
-        assert_eq!(thousands(999), "999");
-        assert_eq!(thousands(1_048_576), "1,048,576");
-        assert_eq!(thousands(1_200_000_000), "1,200,000,000");
-    }
 }

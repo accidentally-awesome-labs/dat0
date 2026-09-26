@@ -97,13 +97,12 @@ expression: "rendered[0].1"
 </div>
 </div>
 <div class="d0-statusbar" data-a11y-id="statusbar" role="status">
-<span class="d0-dot is-live">
+<span class="d0-dot is-busy">
 </span>
-<span>engine duckdb · native</span>
-<span>mem <span class="d0-num">4096</span> MB</span>
-<span>rows <span class="d0-num">1–12</span> / <span class="d0-num">12</span>
+<span data-a11y-id="status-engine">engine duckdb · starting</span>
+<span data-a11y-id="status-mem">mem <span class="d0-num">4096</span> MB</span>
+<span data-a11y-id="status-rows">rows <span class="d0-num">1–12</span> / <span class="d0-num">12</span>
 </span>
-<span class="d0-num">60 fps</span>
 <span class="d0-spacer">
 </span>
 <span class="is-ok" style="color: var(--d0-ok)">egress 0 B</span>

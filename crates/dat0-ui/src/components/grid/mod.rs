@@ -98,6 +98,10 @@ pub struct GridProps {
     /// A header dragged to a new place: `(from, to)`.
     #[props(default)]
     pub on_reorder: EventHandler<(usize, usize)>,
+    /// The rows in view and the table's size, `(first, last, total)`, first
+    /// and last 1-based, told when they change: the status bar's `rows`.
+    #[props(default)]
+    pub on_rows: EventHandler<(u64, u64, u64)>,
 }
 
 impl PartialEq for GridProps {
@@ -109,6 +113,16 @@ impl PartialEq for GridProps {
             && self.read_only == other.read_only
             && self.marks == other.marks
     }
+}
+
+/// The rows in view, `(first, last, total)`, first and last 1-based; all
+/// zero for an empty table.
+fn shown_rows(rows: &std::ops::Range<usize>, total: usize) -> (u64, u64, u64) {
+    if total == 0 || rows.is_empty() {
+        return (0, 0, total as u64);
+    }
+    let last = rows.end.min(total);
+    (rows.start as u64 + 1, last as u64, total as u64)
 }
 
 /// The grid.
@@ -138,6 +152,9 @@ pub fn Grid(props: GridProps) -> Element {
     let total_h = sc.canvas_h;
 
     let range = visible_range(sc.rows_view(viewport()), total_rows, &widths);
+    let on_rows = props.on_rows;
+    let shown = shown_rows(&range.rows, total_rows);
+    use_effect(use_reactive!(|shown| on_rows.call(shown)));
 
     // The scrolling element, once the renderer has one: `None` in the headless
     // harness, which has no layout and nothing to scroll.

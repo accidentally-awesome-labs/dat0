@@ -472,7 +472,6 @@ fn seed(
                 engine_ok: true,
                 mem_mb: 4096,
                 rows: Some((1, 12, 12)),
-                fps: 60,
                 egress: 0,
                 egress_floor: false,
             });

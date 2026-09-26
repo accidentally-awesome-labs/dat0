@@ -61,6 +61,8 @@ pub struct ConsoleHost {
     /// The failed-run strip.
     pub error: Signal<Option<String>>,
     run: Signal<Option<Run>>,
+    /// How long the last run took, ms, for the status bar's query chip.
+    last_ms: Signal<Option<u64>>,
     pub carets: Carets,
     /// The grid's views, which a run's rows are handed to.
     views: Views,
@@ -69,6 +71,17 @@ pub struct ConsoleHost {
 }
 
 impl ConsoleHost {
+    /// What the status bar's query chip says: running while a run is out,
+    /// then how long the last one took.
+    pub fn chip(&self) -> crate::components::status_bar::QueryChip {
+        use crate::components::status_bar::QueryChip;
+        if self.run.read().is_some() {
+            QueryChip::Running
+        } else {
+            (self.last_ms)().map_or(QueryChip::Idle, |ms| QueryChip::Done { ms })
+        }
+    }
+
     /// This window's console state. A hook: call it once, from the shell's
     /// body.
     ///
@@ -80,6 +93,7 @@ impl ConsoleHost {
             tabs: use_signal(Tabs::new),
             error: use_signal(|| None),
             run: use_signal(|| None),
+            last_ms: use_signal(|| None),
             carets: use_signal(HashMap::new),
             views,
             schema: use_hook(dat0_core::query::completion::new_shared_snapshot),
@@ -257,6 +271,8 @@ fn finish(
         }
         None => 0,
     };
+    let mut last_ms = host.last_ms;
+    last_ms.set(Some(elapsed_ms));
     // The whole buffer, as GPUI recorded it: loading from history reopens
     // what was in front of you, not the one statement that ran.
     record_history(host, doc, outcome.is_ok(), elapsed_ms);

@@ -37,7 +37,7 @@ use dat0_ui::components::banner::BannerHost;
 use dat0_ui::components::grid::{COL_W_DEFAULT, Grid};
 use dat0_ui::components::inspector::{Inspector, InspectorState};
 use dat0_ui::components::shell::Shell;
-use dat0_ui::state::{Status, Workspace};
+use dat0_ui::state::{Status, TabView, Workspace};
 use dat0_ui::theme::Theme;
 use support::{Harness, dom::NodeKey};
 
@@ -455,6 +455,19 @@ fn ShellHost() -> Element {
             },
             "rows"
         }
+        // The rows are the rows of the tab on screen.
+        button {
+            "data-a11y-id": "open-tab",
+            onclick: move |_| {
+                ws.tabs.write().push(TabView {
+                    table: "t".into(),
+                    path: None,
+                    label: None,
+                });
+                ws.active.set(Some(0));
+            },
+            "tab"
+        }
     }
 }
 
@@ -478,9 +491,16 @@ fn the_status_bar_announces_only_the_segments_it_has_data_for() {
             "the bar is the live region a reader watches"
         );
 
+        // No session has opened here, and the engine says so. It said
+        // `native` whatever the engine was doing (PD-023, step 5.8c).
+        let starting = format!(
+            "{} · {}",
+            dat0_i18n::t("status.engine"),
+            dat0_i18n::t("status.engine.starting")
+        );
         let before = h.text_of(bar);
         assert!(
-            before.contains("engine duckdb · native"),
+            before.contains(&starting),
             "the engine segment paints before any data is loaded: got {before:?}"
         );
         assert!(
@@ -494,14 +514,20 @@ fn the_status_bar_announces_only_the_segments_it_has_data_for() {
         );
 
         h.click("drive-two-rows");
+        let offscreen = h.text_of(h.by_a11y_id("statusbar").unwrap());
+        assert!(
+            !offscreen.contains("rows"),
+            "rows with no tab on screen are a grid's that is gone: got {offscreen:?}"
+        );
 
+        h.click("open-tab");
         let after = h.text_of(h.by_a11y_id("statusbar").unwrap());
         assert!(
             after.contains("rows 1–2 / 2"),
             "the bar must report the visible window over the total: got {after:?}"
         );
         assert!(
-            after.contains("engine duckdb · native"),
+            after.contains(&starting),
             "the engine segment must survive the update: got {after:?}"
         );
         assert!(

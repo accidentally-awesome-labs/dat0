@@ -5,7 +5,8 @@
 //! Each was a constant. The status bar's egress figure was a field nothing
 //! wrote, so it read `egress 0 B` whatever dat0 had sent; the sidebar's footer
 //! said `1 window` however many were open; and ⌘K, shown in the tab strip and
-//! the status bar, was bound to nothing.
+//! the status bar, was bound to nothing. The status bar's memory figure was
+//! never written either (step 5.8c).
 
 use dioxus::prelude::*;
 
@@ -39,6 +40,31 @@ pub fn use_egress(ws: Workspace) {
         }
     });
 }
+
+/// Keep the window's memory figure the process's resident set: sampled every
+/// two seconds, and written only when it moves, so an idle status bar stays
+/// still. A host with no tokio runtime, as a headless test's can be, samples
+/// once.
+pub fn use_memory(ws: Workspace) {
+    use_future(move || async move {
+        loop {
+            if let Some(bytes) = dat0_core::platform::rss_bytes() {
+                let mb = bytes / (1024 * 1024);
+                let mut status = ws.status;
+                if status.peek().mem_mb != mb {
+                    status.write().mem_mb = mb;
+                }
+            }
+            if tokio::runtime::Handle::try_current().is_err() {
+                return;
+            }
+            tokio::time::sleep(MEMORY_EVERY).await;
+        }
+    });
+}
+
+/// How often the memory figure is sampled.
+const MEMORY_EVERY: std::time::Duration = std::time::Duration::from_secs(2);
 
 /// How many workbench windows this process has open, kept current as they
 /// open and close. One for a window mounted without a [`Boot`], as a test's

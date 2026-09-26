@@ -210,6 +210,11 @@ fn recorded(h: &mut Harness) -> String {
     text(h, "attachments")
 }
 
+/// The status bar's engine, in `state`.
+fn engine(state: &str) -> String {
+    format!("{} · {}", t("status.engine"), t(state))
+}
+
 fn status(h: &Harness) -> String {
     text(h, "connections-md-status")
 }
@@ -320,6 +325,15 @@ fn disconnecting_forgets_motherduck_in_the_session() {
     assert!(pump(&mut h, |h| has(h, "connections")));
     h.click("connections-md-connect");
     assert!(pump(&mut h, |h| connections(h) == ["cloud 1", "trips"]));
+    // The title bar's pill and the status bar's engine say so (step 5.8c).
+    assert!(
+        pump(&mut h, |h| text(h, "source-pill").contains("live")
+            && text(h, "status-engine")
+                == engine("status.engine.motherduck")),
+        "{:?} / {:?}",
+        text(&h, "source-pill"),
+        text(&h, "status-engine")
+    );
 
     h.click("connections-md-disconnect");
     assert!(
@@ -328,6 +342,13 @@ fn disconnecting_forgets_motherduck_in_the_session() {
         connections(&h)
     );
     assert_eq!(status(&h), t("connections.md.status.disconnected"));
+    assert!(
+        pump(&mut h, |h| text(h, "source-pill").contains("local")
+            && text(h, "status-engine") == engine("status.engine.native")),
+        "{:?} / {:?}",
+        text(&h, "source-pill"),
+        text(&h, "status-engine")
+    );
     assert_eq!(recorded(&mut h), "");
     assert_eq!(
         tokens.get().unwrap().as_deref(),

@@ -33,6 +33,7 @@ pub mod settings_ui;
 pub mod shell;
 pub mod sidebar;
 pub mod sql_console;
+pub mod status_bar;
 pub mod update_ui;
 pub mod workspace_in_use;
 
