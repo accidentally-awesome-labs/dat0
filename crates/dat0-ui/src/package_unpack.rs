@@ -49,15 +49,12 @@ pub async fn unpack(ws: Workspace, events: &AppEvents, package: PathBuf, folder:
         return;
     }
     let budget = dat0_core::settings::budget::configured();
-    let unpacked = async {
-        // Opening checks every entry against its checksum: off the UI thread.
-        let path = package.clone();
-        let parsed = tokio::task::spawn_blocking(move || dat0_format::Reader::open(&path))
-            .await
-            .context("reading the package")?
+    let into = root.clone();
+    let unpacked = crate::background::run(async move {
+        let parsed = dat0_format::Reader::open(&package)
             .with_context(|| format!("open {}", package.display()))?;
-        dat0_core::package::contents_to_workspace(&parsed, &root, budget).await
-    }
+        dat0_core::package::contents_to_workspace(&parsed, &into, budget).await
+    })
     .await;
     match unpacked {
         Ok(()) => {

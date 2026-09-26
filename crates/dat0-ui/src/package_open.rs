@@ -79,13 +79,17 @@ pub async fn build(ws: Workspace, package: &Path, budget: u64) -> anyhow::Result
     let state_root = dat0_core::globals::state_root().context("state root not installed")?;
     let dir = state_root.join("inspect").join(ws.window_id.to_string());
     std::fs::create_dir_all(&dir).with_context(|| format!("create {}", dir.display()))?;
-    // Opening checks every entry against its checksum: off the UI thread.
-    let path = package.to_path_buf();
-    let parsed = tokio::task::spawn_blocking(move || dat0_format::Reader::open(&path))
-        .await
-        .context("reading the package")?
-        .with_context(|| format!("open {}", package.display()))?;
-    let (engine, _) = dat0_core::package::inspect::open_readonly(&parsed, &dir, budget).await?;
+    // Opening checks every entry against its checksum, and the tables are
+    // read from Parquet extracted beside them: off the window's thread.
+    let (path, extract_to) = (package.to_path_buf(), dir.clone());
+    let (parsed, engine) = crate::background::run(async move {
+        let parsed =
+            dat0_format::Reader::open(&path).with_context(|| format!("open {}", path.display()))?;
+        let (engine, _) =
+            dat0_core::package::inspect::open_readonly(&parsed, &extract_to, budget).await?;
+        anyhow::Ok((parsed, engine))
+    })
+    .await?;
     let (tabs, saved, charts) = dat0_core::package::session_parts(&parsed);
     remember(package);
     Ok(Session::from_parts(

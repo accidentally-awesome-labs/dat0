@@ -43,11 +43,12 @@ pub async fn export(ws: Workspace, dest: PathBuf) {
         let s = session.lock();
         (s.engine.clone(), Portable::of(&s))
     };
-    let written = async {
+    let to = dest.clone();
+    let written = crate::background::run(async move {
         let contents = package::contents_from_engine(engine.as_ref(), portable).await?;
-        dat0_format::Writer::write(&contents, engine.as_ref(), &dest).await?;
+        dat0_format::Writer::write(&contents, engine.as_ref(), &to).await?;
         anyhow::Ok(())
-    }
+    })
     .await;
     match written {
         Ok(()) => ws.push_banner(Banner {
