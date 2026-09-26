@@ -61,6 +61,16 @@ pub async fn pick_folder() -> Option<PathBuf> {
         .map(|h| h.path().to_path_buf())
 }
 
+/// Pick the folder to unpack a package into. The panel can make one.
+pub async fn pick_folder_to_unpack() -> Option<PathBuf> {
+    rfd::AsyncFileDialog::new()
+        .set_title(dat0_i18n::t("package.unpack.pick"))
+        .set_can_create_directories(true)
+        .pick_folder()
+        .await
+        .map(|h| h.path().to_path_buf())
+}
+
 /// Pick the folder to save a window's work into as a workspace. The panel
 /// can make one, since a new workspace usually wants a new folder.
 pub async fn pick_folder_to_save() -> Option<PathBuf> {

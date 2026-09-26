@@ -1,10 +1,10 @@
-//! Opening a `.dat0` package, read-only (step 5.4d).
+//! Opening a `.dat0` package read-only, and unpacking one (step 5.4d).
 //!
-//! File → Open Package was disabled, the sidebar's Packages rows and the
-//! hero's recent packages opened the package as a data file, and a dropped
-//! package was refused as a file type dat0 does not know (PD-023). These tests
-//! seal a real package with dat0-core, then open it each way and mount a
-//! window on what they ask for.
+//! File → Open Package and Unpack Package were disabled, the sidebar's
+//! Packages rows and the hero's recent packages opened the package as a data
+//! file, and a dropped package was refused as a file type dat0 does not know
+//! (PD-023). These tests seal a real package with dat0-core, then open and
+//! unpack it each way and mount a window on what they ask for.
 
 mod support;
 
@@ -65,13 +65,16 @@ struct HostProps {
     /// What the `open` button opens through `package_open::open`, and the
     /// `drop` button drops on the window.
     package: Option<PathBuf>,
+    /// Where the `unpack` button unpacks `package`.
+    folder: Option<PathBuf>,
     boot: Boot,
 }
 
 /// Props never change after mount.
 impl PartialEq for HostProps {
     fn eq(&self, other: &Self) -> bool {
-        (&self.opening, &self.package) == (&other.opening, &other.package)
+        (&self.opening, &self.package, &self.folder)
+            == (&other.opening, &other.package, &other.folder)
     }
 }
 
@@ -86,6 +89,7 @@ fn Host(props: HostProps) -> Element {
     session_boot::use_session_on(ws, props.opening.clone());
     let events = use_window_bus(boot, ws, surface);
     let (opened, dropped) = (props.package.clone(), props.package.clone());
+    let unpacked = props.package.clone().zip(props.folder.clone());
     rsx! {
         div { "data-a11y-id": "window-name", "{ws.name}" }
         button {
@@ -95,6 +99,20 @@ fn Host(props: HostProps) -> Element {
                 move |_| {
                     if let Some(package) = opened.clone() {
                         dat0_ui::package_open::open(ws, &events, package);
+                    }
+                }
+            },
+        }
+        button {
+            "data-a11y-id": "unpack",
+            onclick: {
+                let events = events.clone();
+                move |_| {
+                    let events = events.clone();
+                    if let Some((package, folder)) = unpacked.clone() {
+                        spawn(async move {
+                            dat0_ui::package_unpack::unpack(ws, &events, package, folder).await
+                        });
                     }
                 }
             },
@@ -131,12 +149,22 @@ fn boot() -> (Boot, AppEventRx) {
 }
 
 fn mount(opening: Opening, package: Option<PathBuf>, boot: Boot) -> Harness {
+    mount_with(opening, package, None, boot)
+}
+
+fn mount_with(
+    opening: Opening,
+    package: Option<PathBuf>,
+    folder: Option<PathBuf>,
+    boot: Boot,
+) -> Harness {
     let _ = STATE_ROOT.as_path();
     Harness::new(
         Host,
         HostProps {
             opening,
             package,
+            folder,
             boot,
         },
     )
@@ -189,6 +217,15 @@ fn banners(h: &Harness) -> String {
 /// A package sealed from a session holding `stock`, its tab sorted by
 /// quantity, highest first, and one saved query. Returns its path, canonical.
 fn package(rt: &tokio::runtime::Runtime, name: &str) -> PathBuf {
+    package_with(rt, name, |_| {})
+}
+
+/// [`package`], with `tweak` applied to what is sealed.
+fn package_with(
+    rt: &tokio::runtime::Runtime,
+    name: &str,
+    tweak: impl FnOnce(&mut dat0_format::PackageContents),
+) -> PathBuf {
     let dir = STATE_ROOT.join(name);
     std::fs::create_dir_all(&dir).expect("mkdir");
     let out = dir.join(format!("{name}.dat0"));
@@ -227,9 +264,10 @@ fn package(rt: &tokio::runtime::Runtime, name: &str) -> PathBuf {
             saved_at: 0,
         }])
         .expect("saved query");
-        let contents = dat0_core::package::session_to_contents(&sess)
+        let mut contents = dat0_core::package::session_to_contents(&sess)
             .await
             .expect("contents");
+        tweak(&mut contents);
         dat0_format::Writer::write(&contents, sess.engine.as_ref(), &out)
             .await
             .expect("seal");
@@ -373,4 +411,112 @@ fn a_recent_package_opens_from_the_hero_and_the_sidebar() {
         [Opening::Inspect { package: path }],
         "and so does the sidebar, rather than as a file"
     );
+}
+
+/// Unpacking writes the package into the folder as a workspace, and opens it.
+/// What the folder already held stays as it was: the package's Parquet is
+/// staged inside `.dat0/`, not in the folder's own `data/`.
+#[test]
+#[serial]
+fn a_package_unpacks_into_a_workspace_and_opens_it() {
+    let rt = runtime();
+    let _guard = rt.enter();
+    let path = package(&rt, "to-unpack");
+    let folder = STATE_ROOT.join("unpacked-here");
+    std::fs::create_dir_all(folder.join("data")).unwrap();
+    let theirs = folder.join("data").join("stock.parquet");
+    std::fs::write(&theirs, b"the user's own file").unwrap();
+    let (boot, mut rx) = boot();
+    let mut h = mount_with(
+        Opening::files(Vec::new()),
+        Some(path),
+        Some(folder.clone()),
+        boot,
+    );
+    h.click("unpack");
+    let done = t("package.unpack.done.title");
+    assert!(
+        pump(&mut h, |h| banners(h).contains(&done)),
+        "{:?}",
+        banners(&h)
+    );
+    let root = std::fs::canonicalize(&folder).unwrap();
+    assert_eq!(
+        asked(&mut rx),
+        [Opening::Workspace {
+            root: root.clone(),
+            networked: false
+        }],
+        "and the workspace opens in a window of its own"
+    );
+    let dat0 = root.join(".dat0");
+    for f in ["workspace.duckdb", "manifest.json", "session.json"] {
+        assert!(dat0.join(f).is_file(), "{f}");
+    }
+    assert!(!dat0.join("unpack").exists(), "the staged Parquet is gone");
+    assert_eq!(
+        std::fs::read(&theirs).unwrap(),
+        b"the user's own file",
+        "and the folder's own data/ is untouched"
+    );
+}
+
+#[test]
+#[serial]
+fn a_package_is_not_unpacked_over_a_workspace() {
+    let rt = runtime();
+    let _guard = rt.enter();
+    let path = package(&rt, "not-over");
+    let folder = STATE_ROOT.join("already-a-workspace");
+    std::fs::create_dir_all(folder.join(".dat0")).unwrap();
+    let (boot, mut rx) = boot();
+    let mut h = mount_with(Opening::files(Vec::new()), Some(path), Some(folder), boot);
+    h.click("unpack");
+    let refused = t("package.unpack.exists");
+    assert!(
+        pump(&mut h, |h| banners(h).contains(&refused)),
+        "{:?}",
+        banners(&h)
+    );
+    assert!(asked(&mut rx).is_empty());
+}
+
+#[test]
+#[serial]
+fn a_package_that_will_not_unpack_leaves_the_folder_as_it_was() {
+    let rt = runtime();
+    let _guard = rt.enter();
+    let folder = STATE_ROOT.join("unpack-fails");
+    std::fs::create_dir_all(&folder).unwrap();
+    std::fs::write(folder.join("notes.txt"), "mine").unwrap();
+    // It verifies, but its recipe names a column its data does not have: the
+    // unpack fails once it has begun writing the workspace.
+    let broken = package_with(&rt, "unmakeable", |c| {
+        c.recipe.tables[0]
+            .schema
+            .push(dat0_format::ColumnFingerprint {
+                name: "gone".into(),
+                r#type: "INTEGER".into(),
+            });
+    });
+    let (boot, mut rx) = boot();
+    let mut h = mount_with(
+        Opening::files(Vec::new()),
+        Some(broken),
+        Some(folder.clone()),
+        boot,
+    );
+    h.click("unpack");
+    let failed = t("package.unpack.failed.title");
+    assert!(
+        pump(&mut h, |h| banners(h).contains(&failed)),
+        "{:?}",
+        banners(&h)
+    );
+    let left: Vec<_> = std::fs::read_dir(&folder)
+        .unwrap()
+        .map(|e| e.unwrap().file_name())
+        .collect();
+    assert_eq!(left, ["notes.txt"], "no half-made workspace");
+    assert!(asked(&mut rx).is_empty());
 }

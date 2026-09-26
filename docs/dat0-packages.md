@@ -49,9 +49,9 @@ dat0 or Rust.
 
 All package actions live under the **File** menu.
 
-> **In this build**, only **Open** works in the app. Export, Unpack and Replay
+> **In this build**, **Open** and **Unpack** work in the app. Export and Replay
 > are not wired back yet (PD-023 in `docs/deferrals.md`), and their menu items
-> are disabled; the CLI below does all three meanwhile.
+> are disabled; the CLI below does both meanwhile.
 
 - **File → Export .dat0 Package** — write the current workspace to a `.dat0`
   file you choose. Exporting from a **live session** captures the full
@@ -60,7 +60,8 @@ All package actions live under the **File** menu.
 - **File → Open .dat0 Package** — open a package **read-only** to inspect it (see
   below).
 - **File → Unpack .dat0 Package** — materialize a package into a fresh workspace
-  directory you can edit.
+  in a folder you choose, and open it to edit. A folder that is a workspace
+  already is refused.
 - **File → Replay .dat0 Package** — rebuild a package's derived tables against a
   fresh source file (see *Replay* below).
 
@@ -106,7 +107,9 @@ dat0 unpack <pkg.dat0> <dir>
 ```
 
 Materializes the package into a fresh `.dat0/` workspace under `<dir>`, ready to
-open in the app (or to re-export).
+open in the app (or to re-export). `<dir>` is made if it does not exist. One
+that is a workspace already is refused, and an unpack that fails leaves `<dir>`
+as it was.
 
 ### `dat0 replay` — rebuild against fresh sources
 

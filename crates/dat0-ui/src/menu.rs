@@ -45,7 +45,6 @@ pub mod menu_ids {
 /// the menu bar offers nothing that does nothing.
 pub const UNWIRED_LOCAL: &[&str] = &[
     menu_ids::EXPORT_PACKAGE,
-    menu_ids::UNPACK_PACKAGE,
     menu_ids::REPLAY_PACKAGE,
     menu_ids::CHECK_UPDATES,
 ];

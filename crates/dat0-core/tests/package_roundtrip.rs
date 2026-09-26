@@ -194,3 +194,96 @@ async fn export_then_unpack_is_state_equivalent() {
 
     reopened.engine.close().await.unwrap();
 }
+
+/// A package holding `sales` (3 rows), with `tweak` applied to what is sealed.
+async fn seal(
+    dir: &std::path::Path,
+    tweak: impl FnOnce(&mut dat0_format::PackageContents),
+) -> std::path::PathBuf {
+    let sess = Session::new(&dir.join("state"), BUDGET).await.unwrap();
+    sess.engine
+        .execute("CREATE TABLE sales AS SELECT * FROM range(3) AS r(id)")
+        .await
+        .unwrap();
+    let mut contents = package::session_to_contents(&sess).await.unwrap();
+    tweak(&mut contents);
+    let out = dir.join("p.dat0");
+    dat0_format::Writer::write(&contents, sess.engine.as_ref(), &out)
+        .await
+        .unwrap();
+    sess.engine.close().await.unwrap();
+    out
+}
+
+fn files_in(dat0: &std::path::Path) -> Vec<(String, Vec<u8>)> {
+    let mut files: Vec<_> = std::fs::read_dir(dat0)
+        .unwrap()
+        .map(|e| e.unwrap().path())
+        .filter(|p| p.is_file())
+        .map(|p| {
+            let name = p.file_name().unwrap().to_string_lossy().into_owned();
+            (name, std::fs::read(&p).unwrap())
+        })
+        .collect();
+    files.sort();
+    files
+}
+
+#[tokio::test]
+async fn unpacking_into_a_workspace_is_refused_and_leaves_it_as_it_was() {
+    let tmp = tempfile::TempDir::new().unwrap();
+    let parsed = dat0_format::Reader::open(&seal(tmp.path(), |_| {}).await).unwrap();
+    let ws = tmp.path().join("ws");
+    package::contents_to_workspace(&parsed, &ws, BUDGET)
+        .await
+        .unwrap();
+    let dat0 = ws.join(".dat0");
+    let before = files_in(&dat0);
+
+    let again = package::contents_to_workspace(&parsed, &ws, BUDGET).await;
+
+    let err = again.expect_err("a workspace is not unpacked over");
+    assert!(format!("{err:#}").contains("workspace already"), "{err:#}");
+    assert_eq!(files_in(&dat0), before, "its files as they were");
+    assert!(
+        !dat0.join("unpack").exists(),
+        "and nothing extracted into it"
+    );
+    let reopened = Session::recover_workspace(ws, BUDGET).await.unwrap();
+    let r = reopened
+        .engine
+        .execute("SELECT count(*) FROM sales")
+        .await
+        .unwrap();
+    assert_eq!(scalar_count(&r), 3);
+    reopened.engine.close().await.unwrap();
+}
+
+#[tokio::test]
+async fn a_failed_unpack_leaves_no_workspace_behind() {
+    let tmp = tempfile::TempDir::new().unwrap();
+    // It verifies, but its recipe names a column its data does not have: the
+    // unpack fails once it has begun writing the workspace.
+    let pkg = seal(tmp.path(), |c| {
+        c.recipe.tables[0]
+            .schema
+            .push(dat0_format::ColumnFingerprint {
+                name: "gone".into(),
+                r#type: "INTEGER".into(),
+            });
+    })
+    .await;
+    let parsed = dat0_format::Reader::open(&pkg).unwrap();
+    let ws = tmp.path().join("ws");
+    std::fs::create_dir_all(&ws).unwrap();
+    std::fs::write(ws.join("notes.txt"), "mine").unwrap();
+
+    let unpacked = package::contents_to_workspace(&parsed, &ws, BUDGET).await;
+
+    assert!(unpacked.is_err());
+    let left: Vec<_> = std::fs::read_dir(&ws)
+        .unwrap()
+        .map(|e| e.unwrap().file_name())
+        .collect();
+    assert_eq!(left, ["notes.txt"], "the folder as it was");
+}

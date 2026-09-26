@@ -275,9 +275,15 @@ async fn classify(
 /// UNPACK: materialize a [`ParsedPackage`] into a fresh `.dat0/` workspace under
 /// `dir`, so [`Session::recover_workspace`] can open it.
 ///
+/// Only ever a fresh one: a `dir` that is a workspace already is refused, and
+/// its own `.dat0/` left as it was. An unpack that fails takes back the
+/// `.dat0/` it made, which would otherwise be taken for a broken workspace.
+///
 /// Steps:
-/// 1. Create `<dir>/.dat0/`.
-/// 2. Extract the package's `data/*.parquet` into `<dir>/data/`.
+/// 1. Create `<dir>/.dat0/`, refusing one that exists.
+/// 2. Extract the package's `data/*.parquet` into `<dir>/.dat0/unpack/data/`,
+///    inside the workspace rather than beside the user's own files, where a
+///    `data/<table>.parquet` of theirs would be written over.
 /// 3. Open a THROWAWAY engine on `<dir>/.dat0/workspace.duckdb` and materialize
 ///    every recipe table as a concrete `CREATE TABLE … AS SELECT … FROM
 ///    read_parquet(...)` (user-facing columns only — internal surrogates are
@@ -288,19 +294,46 @@ async fn classify(
 /// 6. **CRITICAL (P7a T6):** `close()` AND fully DROP the throwaway engine
 ///    before returning, or the moved-WAL data is invisible to the caller's
 ///    reopen (silent-empty-db).
+/// 7. Remove the extracted Parquet: every table is concrete now.
 pub async fn contents_to_workspace(parsed: &ParsedPackage, dir: &Path, budget: u64) -> Result<()> {
+    std::fs::create_dir_all(dir)
+        .with_context(|| format!("contents_to_workspace: mkdir {}", dir.display()))?;
     let dat0 = crate::workspace::Home::dat0_dir_for(dir);
-    std::fs::create_dir_all(&dat0)
-        .with_context(|| format!("contents_to_workspace: mkdir {}", dat0.display()))?;
+    match std::fs::create_dir(&dat0) {
+        Ok(()) => {}
+        Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {
+            anyhow::bail!("{} is a workspace already", dir.display())
+        }
+        Err(e) => {
+            return Err(e)
+                .with_context(|| format!("contents_to_workspace: mkdir {}", dat0.display()));
+        }
+    }
+    let made = fill_workspace(parsed, &dat0, budget).await;
+    if made.is_err()
+        && let Err(e) = std::fs::remove_dir_all(&dat0)
+    {
+        tracing::warn!(error = %e, "unpack: could not remove the workspace it began");
+    }
+    made
+}
 
-    // Extract parquet payloads into <dir>/data/.
+/// Steps 2–7 of [`contents_to_workspace`], into the `.dat0/` it made.
+async fn fill_workspace(parsed: &ParsedPackage, dat0: &Path, budget: u64) -> Result<()> {
+    let staging = dat0.join("unpack");
     parsed
-        .extract_data_to(dir)
+        .extract_data_to(&staging)
         .context("contents_to_workspace: extract data")?;
 
     // Materialize the tables in a scoped block so the engine is dropped (not
     // merely closed) before `recover_workspace` reopens the same DB file.
-    materialize_tables(parsed, dir, &dat0, budget).await?;
+    materialize_tables(parsed, &staging, dat0, budget).await?;
+    // A package with no tables extracted nothing.
+    if let Err(e) = std::fs::remove_dir_all(&staging)
+        && e.kind() != std::io::ErrorKind::NotFound
+    {
+        tracing::warn!(error = %e, "unpack: could not remove the extracted Parquet");
+    }
 
     // Workspace identity manifest.
     let manifest = crate::workspace::manifest::Manifest::new(crate::time::now_epoch_secs());
@@ -309,7 +342,7 @@ pub async fn contents_to_workspace(parsed: &ParsedPackage, dir: &Path, budget: u
 
     // Reconstruct session.json (current schema) from the package views, queries,
     // and charts.
-    write_session_json(parsed, &dat0).context("contents_to_workspace: write session.json")?;
+    write_session_json(parsed, dat0).context("contents_to_workspace: write session.json")?;
 
     Ok(())
 }
