@@ -8,6 +8,7 @@ on:
       - "NOTICE.md"
       - "about.toml"
       - "docs/about-template.hbs"
+      - "scripts/notice-regen.sh"
 jobs:
   notice:
     # HARD GATE since QA2 (PD-003 closed).

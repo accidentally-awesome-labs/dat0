@@ -41,7 +41,10 @@ generated=$(mktemp)
 spliced=$(mktemp)
 trap 'rm -f "$generated" "$spliced"' EXIT
 
-cargo about generate -c about.toml docs/about-template.hbs >"$generated"
+# Some crates ship their licence with CRLF line endings, and the template
+# prints each licence's text. It is written with LF endings here, so a tool
+# that normalises line endings cannot put NOTICE.md out of step with the gate.
+cargo about generate -c about.toml docs/about-template.hbs | tr -d '\r' >"$generated"
 
 if ! awk -v gen="$generated" '
   /^<!-- BEGIN cargo-about generated -->/ {
