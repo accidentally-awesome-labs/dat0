@@ -96,7 +96,7 @@ that's modifying it; merge conflicts are signals worth investigating.
 | PD-020 | P4c T14 wired inline-editor `Enter` → commit + move-DOWN + focus-on-mount, but `Tab` → commit + move-RIGHT could NOT be wired: gpui-component `Input` (rev `0f0ab35`) consumes Tab internally for focus tab-stops and surfaces no `InputEvent::PressTab` variant (`InputEvent` is `{ Change, PressEnter, Focus, Blur }`). **Closed by Phase 6 of the GPUI→Dioxus migration (2026-08-10):** the limitation was the toolkit's, and a plain `<input>` surfaces Tab like any other key, so `dat0-ui`'s cell editor commits and steps one column right on Tab, one left on Shift-Tab, clamped at the row's ends. | closed | low |
 | PD-021 | P4c (T11 review): `error_ux::push` enqueues success/error banners into the global `PENDING` queue, but NOTHING drains it in the runtime render tree — only `#[cfg(test)]` code calls `drain_pending`. So export completion/failure feedback (`window.rs::run_export`) AND the pre-existing P4b paste-reject banner (`grid/edit_ops.rs`) are invisible to the user at runtime. **Closed by P6a T1:** `WorkspaceShell::render` now calls `error_ux::banner::merge_pending` into a per-window `banners` field and renders a host strip atop the shell. | closed | medium |
 | PD-022 | P6a (T12 review): the Inspector profile is refreshed on forward data/schema mutations (cell edit, paste, cut, delete, rename, reorder, transform-apply via `route_change`), but NOT on `undo`/`redo` or SQL-console grid-bind — those rebind via `apply_view_change`, which has no inspector hook. So undoing an edit (or rebinding a grid from the SQL console) leaves the inspector profile stale until the next forward mutation. Single well-scoped fix: hook `apply_view_change` (or an `on_rebind_complete` seam) to invalidate/re-profile the inspected table. Not a regression — the inspector did not refresh at all before P6a. | closed | low |
-| PD-023 | The Dioxus shell is not wired to `dat0-core`: 22 of 40 registered actions only logged, opened an empty dialog, or discarded the reply (none does now; the SQL console runs, the grid sorts, filters, edits, saves and exports, Live Refresh reads a file again, a closed or crashed window's work comes back, workspaces open and save, packages open read-only, unpack into a workspace, export and replay, the perf HUD shows frames, memory and pages, and SQLite files attach, since 2026-09-26). MotherDuck, AI key entry and updates are unreachable. "Logic green, screen dead" at app scale, recorded nowhere until 2026-09-25 | open | high |
+| PD-023 | The Dioxus shell is not wired to `dat0-core`: 22 of 40 registered actions only logged, opened an empty dialog, or discarded the reply (none does now; the SQL console runs, the grid sorts, filters, edits, saves and exports, Live Refresh reads a file again, a closed or crashed window's work comes back, workspaces open and save, packages open read-only, unpack into a workspace, export and replay, the perf HUD shows frames, memory and pages, SQLite files attach, and Help → Check for Updates answers, since 2026-09-26). MotherDuck and AI key entry are unreachable. "Logic green, screen dead" at app scale, recorded nowhere until 2026-09-25 | open | high |
 | PD-024 | Banners raised after a window's first frame were never shown — the shell drained the queue once per mount; a refused drop surfaced later, twice, in another window | closed | high |
 | PD-025 | The recovery panel listed the running window's own session as an orphan, and its Discard deleted it | closed | high |
 | PD-026 | The grid cannot scroll past row ~1,290,555: the canvas is rows × 26 px, uncapped, and WebKit clamps layout at ~33.5M px | closed | high |
@@ -2471,6 +2471,19 @@ that's modifying it; merge conflicts are signals worth investigating.
     table from the sidebar, opens a session again, with its file and
     without it, and saves one as a workspace. Still open: detaching a file,
     and the connections panel, which nothing opens yet.
+  - 2026-09-26, updates (`update_flow.rs`, step 5.7). Help → Check for
+    Updates was built disabled, and nothing checked at launch: the check,
+    the prompt and the installer were here with nothing calling them. The
+    check now runs off the window's thread against the release manifest,
+    verified with the key dat0 carries, and the prompt shows its answer:
+    every answer when the user asked, and at launch, when the settings allow
+    it, only a found update. A dialog already up keeps its place, and the
+    answer is a banner. Install replaces dat0 where it can and opens the
+    Releases page where it cannot. `menu::UNWIRED_LOCAL` is empty now.
+    Checked in the release build under Xvfb: the menu item opens the prompt
+    with the check's answer, here a failed connection, since the sandbox's
+    proxy is not a trusted issuer. `tests/update_flow.rs` answers the check
+    without the network, each way.
 - **Discovered:** project review, 2026-09-25 — seven read-only audits plus a
   Linux release build driven under Xvfb.
 - **Fix:** port each surface's orchestration from `95627c8` onto the

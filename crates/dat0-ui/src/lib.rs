@@ -35,6 +35,7 @@ pub mod session_sync;
 pub mod sqlite_open;
 pub mod state;
 pub mod theme;
+pub mod update_flow;
 #[cfg(feature = "visual")]
 pub mod visual;
 pub mod workspace_open;

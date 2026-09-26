@@ -64,6 +64,7 @@ pub fn App() -> Element {
     // The session opens after the first frame, on what this window was opened
     // for: the CLI's paths go to the first window only.
     crate::session_boot::use_session_on(ws, opening);
+    crate::update_flow::use_launch_check(ws);
     use_context_provider(|| boot.registry.clone());
     let events = use_window_bus(boot.clone(), ws, surface);
 
@@ -260,9 +261,8 @@ async fn handle(
     }
 }
 
-/// Menu items that are not registry actions: external links and recents. The
-/// package verbs and the update check have no arm yet; `menu::UNWIRED_LOCAL`
-/// builds them disabled.
+/// Menu items that are not registry actions: external links, recents, the
+/// package verbs and the update check.
 fn menu_local(id: &str, events: &AppEvents, ws: crate::state::Workspace) {
     use crate::menu::menu_ids;
     match id {
@@ -273,6 +273,7 @@ fn menu_local(id: &str, events: &AppEvents, ws: crate::state::Workspace) {
         menu_ids::OPEN_PACKAGE => crate::package_open::pick(ws, events),
         menu_ids::EXPORT_PACKAGE => crate::package_export::pick(ws),
         menu_ids::REPLAY_PACKAGE => crate::package_replay::pick(ws),
+        menu_ids::CHECK_UPDATES => crate::update_flow::check(ws, true),
         menu_ids::UNPACK_PACKAGE => crate::package_unpack::pick(ws, events),
         other if other.starts_with(menu_ids::RECENT_PREFIX) => {
             crate::workspace_open::open_recent(ws, events, &other[menu_ids::RECENT_PREFIX.len()..]);
