@@ -22,9 +22,11 @@ PD-023 in [`docs/deferrals.md`](docs/deferrals.md)).
 
 | Works in the current build | Being reconnected |
 |---|---|
-| Opening CSV, TSV, JSON and Parquet — file picker, drag-and-drop, command line — into a virtualized grid | Running SQL from the console; sort, filter, cell edits, undo and export |
-| The SQL editor itself: tabs, highlighting, function completion | Opening `.dat0` packages and workspaces, the demo workspace, SQLite and MotherDuck |
-| `dat0 inspect` / `unpack` / `replay` / `diff` / `export` for `.dat0` packages | Charts, the inspector, AI assist, updates, crash reporting |
+| Opening CSV, TSV, JSON, Parquet and SQLite — file picker, drag-and-drop, command line — into a virtualized grid | MotherDuck |
+| The SQL console: running a query into the grid, history, saved queries, completion | Charts and the inspector |
+| Sort, filter, cell edits, undo, export and Live Refresh | AI assist |
+| Workspaces — open, save, recent — and the demo workspace; a closed or crashed window's work comes back | Updates, crash reporting |
+| `.dat0` packages: open read-only, unpack, export and replay, in the app and with `dat0 inspect` / `unpack` / `replay` / `diff` / `export` | |
 
 ## Quick start
 
@@ -55,10 +57,10 @@ toolchain and the system libraries listed in [CONTRIBUTING.md](CONTRIBUTING.md))
    finish the tour.
 2. **Try the demo workspace.** Click **[ ▶ Open demo.dat0 ]** on the hero to open a
    curated Chinook dataset — multi-table SQL, a saved chart, and a pre-filled query
-   ready to run. _Not working in the current build — see [Status](#status)._
-3. **Or drop your own file.** Drag a CSV, TSV, JSON or Parquet file onto the drop
-   zone. No import wizard, no waiting. (SQLite arrives with the connections work
-   above.)
+   ready to run.
+3. **Or drop your own file.** Drag a CSV, TSV, JSON, Parquet or SQLite file onto
+   the drop zone. No import wizard, no waiting. A SQLite file is attached
+   read-only, with its tables listed under CONNECTIONS.
 
 <!--
   Screenshot owed: enriched first-run hero capture.
