@@ -282,7 +282,7 @@ Record the run URL here once it is green:
 
 | Date | Run URL | Result |
 |---|---|---|
-| — | — | not yet run |
+| 2026-09-26 | [release run #3](https://github.com/accidentally-awesome-labs/dat0/actions/runs/36262576705), `0ebe25b` | Dry run without secrets, green. `gate` listed the four owner-only findings as warnings: the test update key, no crash-report DSN, the NYC taxi sample's placeholder hash, the nine signing secrets. macOS: a universal binary (`lipo`: `x86_64 arm64`) that prints `dat0 0.1.0 (0ebe25b)`, an Info.plist that lints, and a disk image of the app signed ad hoc, made by create-dmg. Linux: the AppImage, built on Ubuntu 22.04, drew its page on Ubuntu 22.04, Debian 12 and 24.04. Signing, notarization and `publish` were not exercised. |
 
 ---
 

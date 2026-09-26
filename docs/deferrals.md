@@ -3198,7 +3198,8 @@ that's modifying it; merge conflicts are signals worth investigating.
     starts it on Ubuntu 22.04, Debian 12 and 24.04, each given WebKitGTK
     and nothing else, and fails unless WebKit's helpers stay up and the
     screenshot is not blank. Run under Docker, it passed for the new
-    AppImage on 24.04 and 25.10 and failed as described for the old one.
+    AppImage on 24.04 and 25.10 and failed as described for the old one;
+    in the release workflow it passed on all three systems, runs #1 to #3.
   - appimagetool and the AppImage runtime are pinned by release and
     SHA-256; linuxdeploy is gone.
   - `cargo xtask release-check` runs first on every run: a tag stops when
@@ -3229,6 +3230,10 @@ that's modifying it; merge conflicts are signals worth investigating.
   - Every asset, the manifest and its signature among them, goes up in the
     one `gh release create`, which keeps the release a draft until all are
     attached and deletes it if one fails.
+  - Release run #3, a dry run without secrets, was green end to end: the
+    gate's four owner-only findings as warnings, the universal macOS build
+    and its disk image, and the AppImage on Ubuntu 22.04, Debian 12 and
+    24.04 (`docs/release-runbook.md`, "Last verified dry run").
 - **Discovered:** 2026-09-26, step 7 of the 2026-09-25 review.
 - **Last touched:** 2026-09-26
 
