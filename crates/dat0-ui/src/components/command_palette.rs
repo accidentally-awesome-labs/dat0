@@ -205,7 +205,16 @@ fn PaletteBody() -> Element {
                         "aria-label": dat0_i18n::t("palette.search"),
                         placeholder: dat0_i18n::t("palette.placeholder"),
                         value: "{query}",
-                        autofocus: true,
+                        onmounted: move |e: Event<MountedData>| {
+                            // Not `autofocus`: a document honours that once, so
+                            // only the first surface to open took the keyboard.
+                            // `set_focus` resolves to `null` on desktop, so its
+                            // typed result is an error even when focus moved
+                            // (see `sql_console::Tool`).
+                            spawn(async move {
+                                let _ = e.set_focus(true).await;
+                            });
+                        },
                         oninput: move |e| {
                             query.set(e.value());
                             // Reset rather than clamp: after a narrowing

@@ -184,20 +184,19 @@ fn every_gesture_that_ends_an_edit_is_wired() {
 }
 
 /// The GPUI editor carried a `focus_handle()` so it could take the caret on
-/// mount; the accessor's stability was all a headless test could check. Here
-/// the guarantee is one attribute, and it is the guarantee itself: an editor
-/// that opens without focus makes the user click into the box they just asked
-/// for.
+/// mount. An editor that opens without focus makes the user click into the
+/// box they just asked for. It took the caret with the `autofocus` attribute,
+/// which a document honours once, so a second edit opened without it; it now
+/// takes the caret from its own mount. The headless harness has no focus, so
+/// this checks the editor listens for its mount, and `examples/focus_probe.rs`
+/// checks in a real window that the caret lands, every time.
 #[test]
 fn the_editor_takes_the_caret_on_arrival() {
     for ct in [ColumnType::String, ColumnType::Bool] {
         let h = editor(ct, "true");
-        assert_eq!(
-            h.attr(h.by_a11y_id("cell-editor").unwrap(), "autofocus")
-                .as_deref(),
-            Some("true"),
-            "{ct:?}"
-        );
+        let editor = h.by_a11y_id("cell-editor").unwrap();
+        assert!(h.has_listener(editor, "mounted"), "{ct:?}");
+        assert_eq!(h.attr(editor, "autofocus"), None, "{ct:?}");
     }
 }
 

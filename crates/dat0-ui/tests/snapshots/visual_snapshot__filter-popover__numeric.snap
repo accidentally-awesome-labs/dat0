@@ -5,7 +5,7 @@ expression: "rendered[0].1"
 <div class="d0-scene" data-scene="filter-popover/numeric" style="width: 1440px; height: 900px; overflow: hidden">
 <div class="d0-menu-dismiss" data-a11y-id="filter-popover-dismiss">
 </div>
-<div class="d0-popover" data-a11y-id="filter-popover" role="dialog" aria-label="Filter column: revenue" tabindex="0" autofocus=true style="left: 620px; top: 120px;">
+<div class="d0-popover" data-a11y-id="filter-popover" role="dialog" aria-label="Filter column: revenue" tabindex="0" style="left: 620px; top: 120px;">
 <span class="d0-label">revenue</span>
 <select class="d0-field" data-a11y-id="filter-op" aria-label="Operator">
 <option value="0">= Equals</option>

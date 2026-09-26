@@ -634,6 +634,7 @@ jobs:
           --example shell_probe --example window_probe
           --example modal_trap_probe --example settings_window_probe
           --example console_probe --example visual_probe --example grid_probe
+          --example focus_probe
       - name: Run the probes
         run: xvfb-run -a -s "-screen 0 1920x1200x24" .github/scripts/windowed-probes.sh
 

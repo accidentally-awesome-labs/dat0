@@ -239,7 +239,15 @@ pub fn FilterPopover(props: FilterPopoverProps) -> Element {
             role: AccessRole::Dialog.aria(),
             "aria-label": "{title}",
             tabindex: "0",
-            autofocus: true,
+            // Not `autofocus`: a document honours that once, so only the
+            // first surface to open took the keyboard. `set_focus` resolves
+            // to `null` on desktop, so its typed result is an error even when
+            // focus moved (see `sql_console::Tool`).
+            onmounted: move |e: Event<MountedData>| {
+                spawn(async move {
+                    let _ = e.set_focus(true).await;
+                });
+            },
             style: "left: {x}px; top: {y}px;",
             onkeydown: move |e| {
                 if e.key() == Key::Escape {

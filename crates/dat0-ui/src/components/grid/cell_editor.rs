@@ -146,7 +146,15 @@ pub fn CellEditor(props: CellEditorProps) -> Element {
                 "data-a11y-id": "cell-editor",
                 role: "combobox",
                 "aria-label": dat0_i18n::t("grid.edit_cell"),
-                autofocus: true,
+                // Not `autofocus`: a document honours that once, so only the
+                // first surface to open took the keyboard. `set_focus` resolves
+                // to `null` on desktop, so its typed result is an error even when
+                // focus moved (see `sql_console::Tool`).
+                onmounted: move |e: Event<MountedData>| {
+                    spawn(async move {
+                        let _ = e.set_focus(true).await;
+                    });
+                },
                 style: "{style}",
                 // Picking an option is the confirm gesture, the way
                 // `SelectEvent::Confirm` was: commit and walk down.
@@ -170,7 +178,15 @@ pub fn CellEditor(props: CellEditorProps) -> Element {
             "aria-label": dat0_i18n::t("grid.edit_cell"),
             "aria-invalid": "{invalid_attr}",
             value: "{value}",
-            autofocus: true,
+            // Not `autofocus`: a document honours that once, so only the
+            // first surface to open took the keyboard. `set_focus` resolves
+            // to `null` on desktop, so its typed result is an error even when
+            // focus moved (see `sql_console::Tool`).
+            onmounted: move |e: Event<MountedData>| {
+                spawn(async move {
+                    let _ = e.set_focus(true).await;
+                });
+            },
             style: "{style}",
             oninput: move |e| {
                 value.set(e.value());

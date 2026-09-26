@@ -5,7 +5,7 @@ expression: "rendered[0].1"
 <div class="d0-scene" data-scene="context-menu/default" style="width: 1440px; height: 900px; overflow: hidden">
 <div class="d0-menu-dismiss" data-a11y-id="context-menu-dismiss">
 </div>
-<div class="d0-menu" data-a11y-id="context-menu" role="menu" tabindex="0" autofocus=true style="left: 420px; top: 260px;">
+<div class="d0-menu" data-a11y-id="context-menu" role="menu" tabindex="0" style="left: 420px; top: 260px;">
 <div class="d0-menu-entry">
 <button class="d0-menu-item is-active" data-a11y-id="menu-view.copy" role="menuitem" aria-label="Copy" aria-disabled="false" tabindex="-1">Copy</button>
 </div>

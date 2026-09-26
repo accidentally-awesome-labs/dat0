@@ -128,7 +128,15 @@ pub fn ContextMenu(props: ContextMenuProps) -> Element {
             "data-a11y-id": "context-menu",
             role: "menu",
             tabindex: "0",
-            autofocus: true,
+            // Not `autofocus`: a document honours that once, so only the
+            // first surface to open took the keyboard. `set_focus` resolves
+            // to `null` on desktop, so its typed result is an error even when
+            // focus moved (see `sql_console::Tool`).
+            onmounted: move |e: Event<MountedData>| {
+                spawn(async move {
+                    let _ = e.set_focus(true).await;
+                });
+            },
             style: "left: {x}px; top: {y}px;",
             onkeydown: move |e| {
                 e.stop_propagation();

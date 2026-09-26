@@ -327,6 +327,12 @@ if (scrim && scrim.parentElement) {
   for (const n of scrim.parentElement.children) {
     if (n !== scrim) { n.inert = true; n.setAttribute("aria-hidden", "true"); }
   }
+  // The control a dialog marks takes the keyboard, after the return target is
+  // recorded: focused from its own mount, it got there first, and the dialog
+  // handed the keyboard back to itself on close. Not while focus is already
+  // inside, so a re-run never takes it from where the user put it.
+  const first = scrim.querySelector("[data-autofocus]");
+  if (first && !scrim.contains(document.activeElement)) first.focus();
 }
 "#;
 

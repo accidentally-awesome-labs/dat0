@@ -105,6 +105,7 @@ that's modifying it; merge conflicts are signals worth investigating.
 | PD-029 | Package replay trusted the recipe: its SQL ran with the engine's full access, and table names were used as file names unchecked | closed | high |
 | PD-030 | Opening a second file with the same stem (another folder's `data.csv`) replaced the first file's table, so the first tab showed the second file's rows | closed | high |
 | PD-031 | A table's origin lives only in the engine's memory: a session opened again from disk knows its tables but not where they came from, so a package made from it cannot replay its derived tables | open | medium |
+| PD-032 | Only the first surface to open in a window took the keyboard: a second command palette, cell edit, name prompt, filter popover or context menu opened unfocused, and what was typed went to the grid | closed | high |
 
 > **Missing originating docs (noted 2026-09-25).** D-030 and D-032–D-036 cite
 > `docs/plans/2026-08-08-dat0-production-v1-plan.md`, and the migration log cites
@@ -2699,6 +2700,34 @@ that's modifying it; merge conflicts are signals worth investigating.
   `__dat0_meta_origins` table written with each origin change and read at
   `init` — so they travel with the file, whichever home it is in.
 - **Discovered:** 2026-09-26, wiring recovery (PD-023, step 5.7b).
+- **Last touched:** 2026-09-26
+
+### PD-032 — Only the first surface to open in a window took the keyboard
+
+- **Status:** closed — 2026-09-26
+- **Severity:** high — the command palette, the product's keyboard entry
+  point, took typing once per window
+- **Affected files:** `crates/dat0-ui/src/components/command_palette.rs`,
+  `name_prompt.rs`, `filter_popover.rs`, `grid/cell_editor.rs`,
+  `grid/context_menu.rs`
+- **Symptom:** each of these took the keyboard with the `autofocus`
+  attribute, which a document honours once. The first to open in a window
+  got focus; every later one, the same palette included, opened unfocused.
+  A second palette ignored what was typed and Enter ran nothing, a second
+  cell edit took no typing, and the context menu's arrow keys never reached
+  it. The headless tests asserted the attribute, which is present either
+  way. Found checking the perf HUD in the release build under Xvfb, with the
+  palette opened twice.
+- **Fix:** each takes the keyboard from its own `onmounted`, as the SQL
+  console's controls already did (the console documents the same trap). The
+  name prompt's field is focused by the modal host instead, once it has
+  recorded where to hand the keyboard back (`modals::CAPTURE_JS`): focused
+  from its own mount it got there first, and a dismissed prompt handed the
+  keyboard to nowhere, which `modal_trap_probe` caught.
+  `examples/focus_probe.rs`, a new windowed probe in CI, opens all six
+  surfaces twice and asks the document where the keyboard is. Before the
+  fix: the palette's first opening only, and none of the others.
+- **Discovered:** 2026-09-26, PD-023 step 5.8.
 - **Last touched:** 2026-09-26
 
 ## How to add an entry
