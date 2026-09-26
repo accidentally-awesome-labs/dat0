@@ -290,6 +290,7 @@ pub fn Shell() -> Element {
     let catalog = shell_catalog(&ws);
     let packages = catalog.packages.clone();
     let rows = sidebar::sections(&catalog, &collapsed.read());
+    let connection_rows = rows.connections.clone();
     let active_table = ws.active_tab().map(|t| t.table).unwrap_or_default();
     let (pipeline, pipeline_at) = views.stack(&active_table);
 
@@ -419,7 +420,35 @@ pub fn Shell() -> Element {
                                         crate::package_open::open(ws, &open_events, p.path.clone());
                                     }
                                 }
-                                // CONNECTIONS rows arrive with the engine feed.
+                                // A database's row folds it; a table's opens
+                                // it, under the database it follows.
+                                crate::state::SECTION_CONNECTIONS => {
+                                    use dat0_core::catalog::nav::RowKind;
+                                    match connection_rows.get(i).map(|r| &r.kind) {
+                                        Some(RowKind::Parent { alias, .. }) => {
+                                            let mut set = collapsed.write();
+                                            if !set.remove(alias) {
+                                                set.insert(alias.clone());
+                                            }
+                                        }
+                                        Some(RowKind::Leaf { name, .. }) => {
+                                            let alias = connection_rows[..i].iter().rev().find_map(
+                                                |r| match &r.kind {
+                                                    RowKind::Parent { alias, .. } => Some(alias.clone()),
+                                                    _ => None,
+                                                },
+                                            );
+                                            let session = ws.session.peek().ready().cloned();
+                                            if let (Some(alias), Some(session)) = (alias, session) {
+                                                let table = name.clone();
+                                                spawn(crate::sqlite_open::open_table(
+                                                    ws, session, alias, table,
+                                                ));
+                                            }
+                                        }
+                                        _ => {}
+                                    }
+                                }
                                 _ => {}
                             }
                         },
@@ -803,7 +832,16 @@ fn shell_catalog(ws: &Workspace) -> dat0_core::catalog::CatalogTree {
                 children: Vec::new(),
             })
             .collect(),
-        connections: Vec::new(),
+        connections: ws
+            .attached
+            .read()
+            .iter()
+            .map(|a| dat0_core::catalog::CatalogNode {
+                name: a.alias.clone(),
+                schema: String::new(),
+                children: a.tables.clone(),
+            })
+            .collect(),
         packages: dat0_core::catalog::packages_from_recents(),
     }
 }

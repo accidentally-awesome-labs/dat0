@@ -176,6 +176,12 @@ pub fn failure_banner(message: &str) -> dat0_core::error_ux::Banner {
 /// them cleared the queue.
 pub(crate) async fn land(ws: Workspace, slot: SessionSlot) {
     let mut ws = ws;
+    // Before the slot is published: restoring the tabs reads their tables,
+    // and a tab over a SQLite file's table reads nothing until the file is
+    // attached again.
+    if let Some(session) = slot.ready() {
+        crate::sqlite_open::reattach(ws, session).await;
+    }
     let failure = slot.failure().map(str::to_string);
     ws.session.set(Arc::new(slot));
     ws.status.write().engine_ok = failure.is_none();
@@ -363,6 +369,17 @@ pub async fn open_paths(ws: Workspace, paths: Vec<PathBuf>) {
             return;
         }
     };
+
+    // A SQLite file is attached, not read in (`sqlite_open`).
+    let (sqlite, paths): (Vec<PathBuf>, Vec<PathBuf>) = paths
+        .into_iter()
+        .partition(|p| dat0_core::connections::sqlite::is_sqlite(p));
+    for path in sqlite {
+        crate::sqlite_open::open(ws, session.clone(), path).await;
+    }
+    if paths.is_empty() {
+        return;
+    }
 
     for outcome in handle_drop(paths, session).await {
         match outcome {

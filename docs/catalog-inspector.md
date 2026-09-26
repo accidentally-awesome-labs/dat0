@@ -28,10 +28,12 @@ The Catalog groups every table in the current workspace by where it came from:
 Each section header shows a live count, e.g. `Tables (4)`. **Click a node** to
 open that table in the main grid; selecting it also drives the Inspector.
 
-Attached databases are enumerated per table: after you connect MotherDuck or
-attach a SQLite file, that catalog's tables/views appear under **Sources** and
-carry their attached origin (this closed the long-standing attach-enumeration
-remainder of D-012).
+Attached databases are listed under **CONNECTIONS**, one row per database with
+its tables below it: open or drop a SQLite file and it is attached, read-only,
+under a name made of the file's. A table's row opens it in a tab (a view of the
+session's own over the attached table); the database's row folds its tables.
+The session remembers the file and attaches it again when it is opened again.
+MotherDuck is not connected in this build (PD-023).
 
 ## Inspector
 

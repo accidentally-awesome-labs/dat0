@@ -35,6 +35,18 @@ pub const RIGHT_WIDTH: u32 = 320;
 /// The design's default console height (S4).
 pub const BOTTOM_HEIGHT: u32 = 260;
 
+/// A database attached to the window's session: a SQLite file, listed under
+/// CONNECTIONS with its tables.
+#[derive(Clone, PartialEq, Debug)]
+pub struct Attached {
+    /// The name it is attached under.
+    pub alias: String,
+    /// The file.
+    pub path: PathBuf,
+    /// Its tables, by name.
+    pub tables: Vec<String>,
+}
+
 /// One workspace tab.
 #[derive(Clone, PartialEq, Debug)]
 pub struct TabView {
@@ -257,6 +269,10 @@ pub struct Workspace {
     /// two drops land as two tabs in the order they were made, with the last
     /// one active, exactly as if the session had been ready all along.
     pub pending_open: Signal<Vec<PathBuf>>,
+    /// The databases attached to the session, with their tables, for the
+    /// sidebar's CONNECTIONS. Written where one is attached: opening a file
+    /// (`sqlite_open::open`) and a session landing (`sqlite_open::reattach`).
+    pub attached: Signal<Vec<Attached>>,
     /// This window's stable id, minted before the session so it exists in
     /// every slot state.
     pub window_id: uuid::Uuid,
@@ -319,6 +335,7 @@ impl Workspace {
             drag_over: Signal::new(false),
             session: Signal::new(Arc::new(SessionSlot::Booting)),
             pending_open: Signal::new(Vec::new()),
+            attached: Signal::new(Vec::new()),
             window_id,
         };
         use_context_provider(|| ws)

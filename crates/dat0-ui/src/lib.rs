@@ -32,6 +32,7 @@ pub mod protocol;
 pub mod router;
 pub mod session_boot;
 pub mod session_sync;
+pub mod sqlite_open;
 pub mod state;
 pub mod theme;
 #[cfg(feature = "visual")]

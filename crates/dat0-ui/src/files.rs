@@ -22,7 +22,7 @@ use dioxus::html::HasFileData as _;
 /// picker that offers a file the app then refuses is a worse experience than
 /// one that does not list it.
 const DATA_EXTENSIONS: &[&str] = &[
-    "csv", "tsv", "txt", "parquet", "pq", "json", "ndjson", "jsonl",
+    "csv", "tsv", "txt", "parquet", "pq", "json", "ndjson", "jsonl", "sqlite", "sqlite3", "db",
 ];
 
 /// Pick one data file to open.
@@ -130,10 +130,11 @@ mod tests {
     use super::*;
 
     #[test]
-    fn the_picker_does_not_offer_a_file_the_app_would_refuse() {
-        // `handle_drop` banners `.sqlite` rather than importing it; listing it
-        // here would be an invitation to that banner.
-        assert!(!DATA_EXTENSIONS.contains(&"sqlite"));
-        assert!(DATA_EXTENSIONS.contains(&"parquet"));
+    fn the_picker_offers_what_the_app_opens() {
+        // A SQLite file is attached (`sqlite_open`); it used to be refused,
+        // and was left out here so as not to invite that banner.
+        for ext in ["csv", "parquet", "sqlite", "db"] {
+            assert!(DATA_EXTENSIONS.contains(&ext), "{ext}");
+        }
     }
 }

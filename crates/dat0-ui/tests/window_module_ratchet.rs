@@ -256,7 +256,12 @@ fn ratchet_report_covers_over_under_missing_and_untabled() {
 /// and that queue is how a refusal in one window was shown in another. A
 /// window's banners are written by more than one module, so they are window
 /// state, not one surface's.
-const MAX_WORKSPACE_FIELDS: usize = 14;
+///
+/// 14 → 15 for `attached` (step 5.4e): the databases attached to the session,
+/// written where a file is attached (`sqlite_open::open`) and where a session
+/// lands (`session_boot::land` re-attaches), and read by the sidebar. Written
+/// by more than one module, so window state, as `banners` is.
+const MAX_WORKSPACE_FIELDS: usize = 15;
 
 /// Slack on the field ratchet's under-arm.
 ///
