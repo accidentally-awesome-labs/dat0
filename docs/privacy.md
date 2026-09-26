@@ -1,6 +1,6 @@
 # dat0 Privacy Policy
 
-> **Last updated:** 2026-06-23
+> **Last updated:** 2026-09-26
 >
 > This document describes exactly what dat0 captures, what it sends, and what it
 > never sends. It is the reference for the **Settings → Telemetry** section.
@@ -9,21 +9,22 @@
 
 ## 1. Local capture (always on)
 
-dat0 writes structured logs to a rotating file on your own machine. These logs are
-**purely local** — they are never transmitted anywhere unless you explicitly opt in
-to crash submission (see §2).
+dat0 writes structured logs to `dat0.log` in its cache folder on your own machine
+(`~/Library/Caches/dat0/logs` on macOS, `~/.cache/dat0/logs` on Linux;
+**Settings → Advanced → Open logs folder** opens it). At launch, a log past 10 MB is
+set aside as `dat0.log.1` and a new one begun. These logs are **purely local**:
+nothing sends them anywhere, crash reports included (§2).
 
-The logging pipeline redacts absolute file-system paths before they are written:
+Crash reports redact absolute file-system paths before they leave the process:
 
 - macOS paths (`/Users/<name>/…`)
 - Linux paths (`/home/<name>/…`)
 - Windows paths (`C:\<name>\…`)
 
-…are all replaced with `<redacted>`. The redaction is applied in the `before_send`
-hook in `crates/dat0-core/src/telemetry/redaction.rs` before any crash event leaves
-the process. Local log output is written by a standard tracing subscriber and is
-**not** separately redacted — treat your local log files as potentially containing
-absolute paths.
+…are all replaced with `<redacted>`, in the `before_send` hook in
+`crates/dat0-core/src/telemetry/redaction.rs`. The local log is written by a
+standard tracing subscriber and is **not** redacted — treat your local log files as
+potentially containing absolute paths.
 
 ---
 

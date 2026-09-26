@@ -636,8 +636,13 @@ fn Advanced(store: Store) -> Element {
                 "data-a11y-id": "adv-open-logs",
                 role: AccessRole::Button.aria(),
                 "aria-label": dat0_i18n::t("settings.advanced.open_logs"),
+                // The folder the log is written to, made if it is not there
+                // yet; it opened the cache directory, where there was none
+                // (step 5.11f).
                 onclick: move |_| {
-                    if let Ok(d) = dat0_core::platform::cache_dir() {
+                    if let Ok(d) = dat0_core::boot::log_dir()
+                        && std::fs::create_dir_all(&d).is_ok()
+                    {
                         open_url(&d.to_string_lossy());
                     }
                 },
