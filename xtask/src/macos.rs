@@ -3,7 +3,12 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 
 /// Hand-written Info.plist (no plist-crate dep). `.dat0` is declared both as a
-/// handled document type and as an exported UTI (dev.dat0.package).
+/// handled document type and as an exported UTI (app.dat0.package).
+///
+/// The identifiers are reverse-DNS of dat0.app, the project's domain. They are
+/// set before the first release on purpose: macOS keys keychain access and
+/// file permissions to the bundle identifier, so changing it later would have
+/// every user grant them again.
 pub fn info_plist(version: &str, git_sha: &str) -> String {
     format!(
         r#"<?xml version="1.0" encoding="UTF-8"?>
@@ -12,7 +17,7 @@ pub fn info_plist(version: &str, git_sha: &str) -> String {
 <dict>
   <key>CFBundleName</key><string>dat0</string>
   <key>CFBundleDisplayName</key><string>dat0</string>
-  <key>CFBundleIdentifier</key><string>dev.dat0.app</string>
+  <key>CFBundleIdentifier</key><string>app.dat0</string>
   <key>CFBundleExecutable</key><string>dat0</string>
   <key>CFBundleIconFile</key><string>dat0.icns</string>
   <key>CFBundleShortVersionString</key><string>{version}</string>
@@ -25,11 +30,11 @@ pub fn info_plist(version: &str, git_sha: &str) -> String {
     <key>CFBundleTypeName</key><string>dat0 Package</string>
     <key>CFBundleTypeRole</key><string>Editor</string>
     <key>LSHandlerRank</key><string>Owner</string>
-    <key>LSItemContentTypes</key><array><string>dev.dat0.package</string></array>
+    <key>LSItemContentTypes</key><array><string>app.dat0.package</string></array>
   </dict></array>
   <key>UTExportedTypeDeclarations</key>
   <array><dict>
-    <key>UTTypeIdentifier</key><string>dev.dat0.package</string>
+    <key>UTTypeIdentifier</key><string>app.dat0.package</string>
     <key>UTTypeDescription</key><string>dat0 Package</string>
     <key>UTTypeConformsTo</key><array><string>public.data</string></array>
     <key>UTTypeTagSpecification</key>
