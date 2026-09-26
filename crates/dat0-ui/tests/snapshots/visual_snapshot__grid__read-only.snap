@@ -10,9 +10,9 @@ expression: html
 <div class="d0-grip" data-a11y-id="col-grip-0" style="width: 6px;" draggable=true>
 </div>
 <span style="flex: 1 1 auto; overflow: hidden; text-overflow: ellipsis;">id</span>
-<span data-a11y-id="col-sort-0" style="width: 20px; text-align: center;">
+<span class="d0-sort" data-a11y-id="col-sort-0" style="width: 20px; text-align: center;">
 </span>
-<span data-a11y-id="col-funnel-0" style="width: 20px; text-align: center;">
+<span class="d0-funnel" data-a11y-id="col-funnel-0" style="width: 20px; text-align: center;">
 </span>
 <div class="d0-col-resize" data-a11y-id="col-resize-0">
 </div>
@@ -21,9 +21,9 @@ expression: html
 <div class="d0-grip" data-a11y-id="col-grip-1" style="width: 6px;" draggable=true>
 </div>
 <span style="flex: 1 1 auto; overflow: hidden; text-overflow: ellipsis;">region</span>
-<span data-a11y-id="col-sort-1" style="width: 20px; text-align: center;">
+<span class="d0-sort" data-a11y-id="col-sort-1" style="width: 20px; text-align: center;">
 </span>
-<span data-a11y-id="col-funnel-1" style="width: 20px; text-align: center;">
+<span class="d0-funnel" data-a11y-id="col-funnel-1" style="width: 20px; text-align: center;">
 </span>
 <div class="d0-col-resize" data-a11y-id="col-resize-1">
 </div>
@@ -32,9 +32,9 @@ expression: html
 <div class="d0-grip" data-a11y-id="col-grip-2" style="width: 6px;" draggable=true>
 </div>
 <span style="flex: 1 1 auto; overflow: hidden; text-overflow: ellipsis;">revenue</span>
-<span data-a11y-id="col-sort-2" style="width: 20px; text-align: center;">
+<span class="d0-sort" data-a11y-id="col-sort-2" style="width: 20px; text-align: center;">
 </span>
-<span data-a11y-id="col-funnel-2" style="width: 20px; text-align: center;">
+<span class="d0-funnel" data-a11y-id="col-funnel-2" style="width: 20px; text-align: center;">
 </span>
 <div class="d0-col-resize" data-a11y-id="col-resize-2">
 </div>
@@ -43,9 +43,9 @@ expression: html
 <div class="d0-grip" data-a11y-id="col-grip-3" style="width: 6px;" draggable=true>
 </div>
 <span style="flex: 1 1 auto; overflow: hidden; text-overflow: ellipsis;">active</span>
-<span data-a11y-id="col-sort-3" style="width: 20px; text-align: center;">
+<span class="d0-sort" data-a11y-id="col-sort-3" style="width: 20px; text-align: center;">
 </span>
-<span data-a11y-id="col-funnel-3" style="width: 20px; text-align: center;">
+<span class="d0-funnel" data-a11y-id="col-funnel-3" style="width: 20px; text-align: center;">
 </span>
 <div class="d0-col-resize" data-a11y-id="col-resize-3">
 </div>

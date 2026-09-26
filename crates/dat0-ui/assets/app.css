@@ -790,6 +790,30 @@ button {
   background: var(--d0-accent);
 }
 
+/* The sort and funnel zones. Their glyphs appear on hover, and stay once they
+   mean something: an active sort writes its arrow into the zone, and a
+   filtered column's funnel is lit. */
+.d0-sort,
+.d0-funnel {
+  cursor: pointer;
+  color: var(--d0-accent);
+}
+.d0-sort:empty::before {
+  content: "↕";
+  opacity: 0;
+}
+.d0-funnel::before {
+  content: "▾";
+  opacity: 0;
+}
+.d0-colheader:hover .d0-sort:empty::before,
+.d0-colheader:hover .d0-funnel::before {
+  opacity: 0.6;
+}
+.d0-funnel.is-on::before {
+  opacity: 1;
+}
+
 /* Takes every pointer move and the release while a drag is live, so the
    gesture keeps working once the pointer leaves the element that started it. */
 .d0-drag-shield {

@@ -136,6 +136,7 @@ pub fn FilterPopover(props: FilterPopoverProps) -> Element {
     let can_apply = state.read().can_apply();
     let (x, y) = props.at;
     let on_outcome = props.on_outcome;
+    let clear_column = props.column.clone();
     let ops_for_change = ops.clone();
 
     // Built outside the markup because each arm is a different set of widgets and
@@ -324,7 +325,10 @@ pub fn FilterPopover(props: FilterPopoverProps) -> Element {
                         // filter to retract; the caller needs that to choose
                         // between removing an op and doing nothing.
                         let pre_populated = state.read().clear_filter();
-                        on_outcome.call(Outcome::Clear { pre_populated });
+                        on_outcome.call(Outcome::Clear {
+                            column: clear_column.clone(),
+                            pre_populated,
+                        });
                     },
                     {dat0_i18n::t("filter.clear")}
                 }

@@ -176,6 +176,19 @@ impl ViewModel {
         self.regenerate_view()
     }
 
+    /// Remove the filter on `column`, and only that: the column's funnel Clear.
+    /// One undo step. A column with no filter changes nothing.
+    pub fn clear_filter(&mut self, column: &str) -> ViewChange {
+        match self
+            .present
+            .iter()
+            .rposition(|op| matches!(op, Transformation::Filter { column: c, .. } if c == column))
+        {
+            Some(i) => self.remove_at(i),
+            None => self.regenerate_view(),
+        }
+    }
+
     /// PipelineBar scrubber: keep the first `k` ops (0..=len), as one undo step.
     pub fn jump_to(&mut self, k: usize) -> ViewChange {
         let k = k.min(self.present.len());
@@ -384,24 +397,29 @@ impl ViewModel {
 /// Pure outcome→[`ViewChange`] decision for the filter popover (T0 / PD-016).
 ///
 /// This is the single source of truth for routing a popover [`Outcome`] into
-/// the ViewModel. Both `WorkspaceShell::route_filter_outcome` (which then drives
-/// the GPUI engine round-trip on the returned `Some(change)`) and the
-/// `click_wiring` integration test call this function, so the test exercises
-/// production routing rather than a duplicate match.
+/// the ViewModel. The grid (`dat0-ui`'s `grid::views`, which then drives the
+/// engine round-trip on the returned `Some(change)`) and the `click_wiring`
+/// integration test call this function, so the test exercises production
+/// routing rather than a duplicate match.
 ///
 /// - `Apply(t)` → [`ViewModel::set_filter`] (column-aware upsert: replaces an
 ///   existing filter on the same column, else appends — correct for both the
 ///   new-filter and edit-existing flows).
-/// - `Clear { pre_populated: true }` → [`ViewModel::clear`].
+/// - `Clear { pre_populated: true }` → [`ViewModel::clear_filter`] on its column.
 /// - `Clear { pre_populated: false }` / `Cancel` → no ViewChange.
 pub fn route_outcome(vm: &mut ViewModel, outcome: Outcome) -> Option<ViewChange> {
     match outcome {
         Outcome::Apply(t) => Some(vm.set_filter(t)),
+        // The column's filter, not the whole stack: this was `vm.clear()`, so
+        // clearing one funnel also dropped every sort, every other filter and
+        // every pending cell edit.
         Outcome::Clear {
+            column,
             pre_populated: true,
-        } => Some(vm.clear()),
+        } => Some(vm.clear_filter(&column)),
         Outcome::Clear {
             pre_populated: false,
+            ..
         }
         | Outcome::Cancel => None,
     }

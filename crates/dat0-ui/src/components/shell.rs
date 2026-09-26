@@ -16,6 +16,7 @@ use crate::components::charts::{ChartLoad, ChartRequest, Charts};
 use crate::components::command_palette::CommandPalette;
 use crate::components::dock::{DragShield, Edge, SplitDrag, Splitter};
 use crate::components::empty_state::EmptyState;
+use crate::components::filter_popover::FilterPopover;
 use crate::components::inspector::{Inspector, InspectorState};
 use crate::components::modals::ModalHost;
 use crate::components::pane::Pane;
@@ -140,10 +141,16 @@ pub fn Shell() -> Element {
     let selection = use_signal(|| dat0_core::grid::selection::SelectionModel::new(1, 1));
     let widths = use_signal(Vec::<f64>::new);
 
+    // Each tab's sort, filters and undo history, and the source each tab is
+    // bound to (`grid::views`).
+    let views = crate::components::grid::views::Views::use_new(ws);
+    let bound = views.bound;
     // The console's tabs, its run, its failure strip and the schema the
     // editor completes against (`sql_console::host`).
-    let console_host = crate::components::sql_console::host::ConsoleHost::use_new(ws);
-    let prepared = console_host.prepared;
+    let console_host = crate::components::sql_console::host::ConsoleHost::use_new(ws, views);
+    // Which tab the widths were sized for: a sort or filter rebinds the same
+    // columns, and must not reset widths the user dragged.
+    let mut sized_for = use_signal(String::new);
 
     // One `GridDataSource` per active tab, rebuilt when the tab changes.
     // `use_resource` because building one runs a DESCRIBE against DuckDB: it is
@@ -162,13 +169,15 @@ pub fn Shell() -> Element {
     let mut selection_seed = selection;
     let source = use_resource(move || async move {
         let table = ws.active_tab().map(|t| t.table)?;
-        // A console run counts its rows itself, under its own cancel guard,
-        // and hands the finished source over rather than have it counted twice.
-        let built = match prepared.read().clone().filter(|(t, _)| *t == table) {
-            Some((_, src)) => Ok(src),
+        // What a view change or a console run bound for this tab — its sorted,
+        // filtered view, counted once, under the run's cancel guard — rather
+        // than the bare table counted again.
+        let bound = bound.read().get(&table).map(|(_, src)| src.clone());
+        let built = match bound {
+            Some(src) => Ok(src),
             None => {
                 let engine = ws.session.read().ready().map(|s| s.lock().engine.clone())?;
-                dat0_core::grid::data_source::GridDataSource::new(engine, table)
+                dat0_core::grid::data_source::GridDataSource::new(engine, table.clone())
                     .await
                     .map(std::sync::Arc::new)
                     .map_err(|e| format!("{e:#}"))
@@ -183,7 +192,10 @@ pub fn Shell() -> Element {
         // the table holds. Both were left at their mount-time placeholders.
         if let Ok(src) = &built {
             let cols = src.visible_column_names().len();
-            widths_seed.set(vec![crate::components::grid::COL_W_DEFAULT; cols]);
+            if widths_seed.peek().len() != cols || *sized_for.peek() != table {
+                widths_seed.set(vec![crate::components::grid::COL_W_DEFAULT; cols]);
+                sized_for.set(table);
+            }
             selection_seed.set(dat0_core::grid::selection::SelectionModel::new(
                 usize::try_from(src.row_count).unwrap_or(usize::MAX).max(1),
                 cols.max(1),
@@ -274,6 +286,7 @@ pub fn Shell() -> Element {
                 ws,
                 ai.clone(),
                 surface_host.clone(),
+                views,
                 chart_spec,
                 chart_data,
                 selection,
@@ -286,6 +299,8 @@ pub fn Shell() -> Element {
     let catalog = shell_catalog(&ws);
     let packages = catalog.packages.clone();
     let rows = sidebar::sections(&catalog, &collapsed.read());
+    let active_table = ws.active_tab().map(|t| t.table).unwrap_or_default();
+    let (pipeline, pipeline_at) = views.stack(&active_table);
 
     rsx! {
         div {
@@ -514,34 +529,30 @@ pub fn Shell() -> Element {
                                 }
                             } else {
                                 PipelineBar {
-                                    stack: Vec::new(),
-                                    cursor: 0,
+                                    stack: pipeline,
+                                    cursor: pipeline_at,
                                     source: ws.active_tab().and_then(|t| {
                                         t.path
                                             .as_ref()
                                             .and_then(|p| p.file_name())
                                             .map(|n| n.to_string_lossy().into_owned())
                                     }),
-                                    on_jump: move |_| {},
-                                    on_remove: move |_| {},
+                                    on_jump: move |k| views.jump(k),
+                                    on_remove: move |i| views.remove(i),
                                     on_save_as_table: move |_| {},
                                 }
                                 match source.read_unchecked().clone().flatten() {
                                     Some(Ok(src)) => {
-                                        // The bound table's own columns. This
-                                        // was `Vec::new()`, and `Grid` paints
+                                        // The bound table's own columns,
+                                        // through the tab's reorders, renames
+                                        // and hidden columns. This was
+                                        // `Vec::new()` once, and `Grid` paints
                                         // one header cell and one body cell
-                                        // per entry — so the work area
-                                        // rendered an empty frame over a
-                                        // table full of data.
-                                        let columns: Vec<_> = src
-                                            .visible_column_names()
-                                            .into_iter()
-                                            .map(|n| dat0_engine::transform::ProjectionColumn {
-                                                source: n.clone(),
-                                                display: n,
-                                            })
-                                            .collect();
+                                        // per entry.
+                                        let columns = views.columns(&active_table, &src.visible_column_names());
+                                        let marks = views.marks(&active_table, &columns);
+                                        let (by_sort, by_funnel, by_drag) = (columns.clone(), columns.clone(), columns.clone());
+                                        let typed = src.clone();
                                         rsx! {
                                             Grid {
                                                 source: src,
@@ -549,6 +560,33 @@ pub fn Shell() -> Element {
                                                 columns,
                                                 widths,
                                                 read_only: *ws.read_only.read(),
+                                                marks,
+                                                on_sort: move |(i, extend): (usize, bool)| {
+                                                    if let Some(c) = by_sort.get(i) {
+                                                        views.sort(&c.source, extend);
+                                                    }
+                                                },
+                                                on_funnel: move |(i, x, y): (usize, f64, f64)| {
+                                                    if let Some(c) = by_funnel.get(i) {
+                                                        let ty = typed
+                                                            .column_type_for_source(&c.source)
+                                                            .unwrap_or(dat0_core::view::filter_popover::ColumnType::String);
+                                                        views.open_funnel(c.source.clone(), ty, (x, y));
+                                                    }
+                                                },
+                                                on_reorder: move |(from, to): (usize, usize)| views.reorder(&by_drag, from, to),
+                                            }
+                                            if let Some(f) = views.funnel.cloned() {
+                                                FilterPopover {
+                                                    key: "{f.column}",
+                                                    column: f.column,
+                                                    column_type: f.column_type,
+                                                    existing: f.existing,
+                                                    at: f.at,
+                                                    candidates: f.candidates,
+                                                    total_distinct: f.total_distinct,
+                                                    on_outcome: move |o| views.funnel_outcome(o),
+                                                }
                                             }
                                         }
                                     }
@@ -918,6 +956,7 @@ fn surface_command(
     ws: Workspace,
     ai: crate::components::ai::AiController,
     console: crate::components::sql_console::host::ConsoleHost,
+    views: crate::components::grid::views::Views,
     chart_spec: Signal<dat0_core::charts::spec::ChartSpec>,
     chart_data: Resource<Option<dat0_core::charts::data::PlotTable>>,
     selection: Signal<dat0_core::grid::selection::SelectionModel>,
@@ -1016,14 +1055,16 @@ fn surface_command(
                 tracing::debug!(cut = id == ids::VIEW_CUT, "grid copy");
             }
         }
+        // Undoing a sort or a filter changes no data, so read-only does not
+        // stand in its way.
+        ids::VIEW_UNDO => views.undo(),
+        ids::VIEW_REDO => views.redo(),
         ids::VIEW_PASTE
         | ids::VIEW_FILL_DOWN
         | ids::VIEW_SET_NULL
         | ids::VIEW_SET_VALUE
         | ids::VIEW_DELETE_ROWS
         | ids::VIEW_DELETE_COLUMN
-        | ids::VIEW_UNDO
-        | ids::VIEW_REDO
         | ids::VIEW_SAVE_AS_TABLE => {
             if *ws.read_only.read() {
                 ws.push_banner(dat0_core::error_ux::Banner::warning(dat0_i18n::t(

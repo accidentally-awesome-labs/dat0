@@ -160,6 +160,7 @@ async fn funnel_clear_prepopulated_rebinds_to_base() {
     let cleared = route_outcome(
         &mut vm,
         Outcome::Clear {
+            column: "amount".into(),
             pre_populated: true,
         },
     )
@@ -181,10 +182,56 @@ async fn funnel_cancel_and_unpopulated_clear_are_noops() {
         route_outcome(
             &mut vm,
             Outcome::Clear {
+                column: "amount".into(),
                 pre_populated: false
             }
         )
         .is_none()
+    );
+}
+
+/// Clearing one column's funnel removes that column's filter and nothing else.
+/// It used to call `vm.clear()`, which dropped the sort, the other filters and
+/// any pending cell edits along with it.
+#[tokio::test]
+async fn funnel_clear_removes_only_its_own_column() {
+    let tmp = TempDir::new().unwrap();
+    let (_engine, base_table) = test_engine_with_orders(&tmp).await;
+    let mut vm = ViewModel::new("tab1".into(), base_table);
+
+    let _ = vm.set_sort(vec![dat0_engine::SortKey {
+        column: "id".into(),
+        direction: dat0_engine::SortDirection::Desc,
+    }]);
+    let _ = route_outcome(&mut vm, Outcome::Apply(filter_amount_gte(50)));
+    let _ = vm.apply(dat0_engine::Transformation::Filter {
+        column: "id".into(),
+        op: dat0_engine::FilterOp::Gt,
+        value: dat0_engine::FilterValue::Scalar {
+            value: dat0_engine::Scalar::Int(1),
+        },
+    });
+    assert_eq!(vm.active().len(), 3);
+
+    let change = route_outcome(
+        &mut vm,
+        Outcome::Clear {
+            column: "amount".into(),
+            pre_populated: true,
+        },
+    )
+    .expect("clearing an existing filter changes the view");
+    assert_eq!(vm.active().len(), 2, "the sort and the other filter stay");
+    assert!(vm.find_filter_for("amount").is_none());
+    assert!(vm.find_filter_for("id").is_some());
+    let sql = change.sql.expect("still a view: two ops remain");
+    assert!(sql.contains("ORDER BY") && !sql.contains("50"), "{sql}");
+
+    assert!(vm.can_undo(), "one undo step");
+    let _ = vm.undo();
+    assert!(
+        vm.find_filter_for("amount").is_some(),
+        "and undo brings it back"
     );
 }
 

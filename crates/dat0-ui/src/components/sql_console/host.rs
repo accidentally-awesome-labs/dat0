@@ -34,6 +34,7 @@ use dat0_engine::{
 use super::ConsoleIntent;
 use super::sql_text::{interrupted, message, statement, view_body};
 use super::tabs::Tabs;
+use crate::components::grid::views::Views;
 use crate::components::modals::{ModalOutcome, ModalReply};
 use crate::components::query_library::first_line;
 use crate::state::{Modal, TabView, Workspace};
@@ -41,9 +42,6 @@ use crate::state::{Modal, TabView, Workspace};
 /// Where each query tab's caret was last reported: tab id to (line, column),
 /// 1-based, as CodeMirror counts them.
 pub type Carets = Signal<HashMap<String, (usize, usize)>>;
-
-/// A grid source a run has already built, and the table it reads.
-pub type Prepared = Signal<Option<(String, Arc<GridDataSource>)>>;
 
 /// The run in flight.
 pub struct Run {
@@ -64,7 +62,8 @@ pub struct ConsoleHost {
     pub error: Signal<Option<String>>,
     run: Signal<Option<Run>>,
     pub carets: Carets,
-    pub prepared: Prepared,
+    /// The grid's views, which a run's rows are handed to.
+    views: Views,
     /// What the editor completes against.
     pub schema: SharedSnapshot,
 }
@@ -75,14 +74,14 @@ impl ConsoleHost {
     ///
     /// The completion schema follows the window's tables — refreshed when the
     /// session lands, when a tab opens or closes, and after every run.
-    pub fn use_new(ws: Workspace) -> Self {
+    pub fn use_new(ws: Workspace, views: Views) -> Self {
         let host = Self {
             ws,
             tabs: use_signal(Tabs::new),
             error: use_signal(|| None),
             run: use_signal(|| None),
             carets: use_signal(HashMap::new),
-            prepared: use_signal(|| None),
+            views,
             schema: use_hook(dat0_core::query::completion::new_shared_snapshot),
         };
         let refresh = host.clone();
@@ -289,8 +288,8 @@ fn finish(
 
 /// Show a run's rows: the query tab's result tab, made active.
 fn show_rows(host: &ConsoleHost, view: String, title: String, source: Arc<GridDataSource>) {
-    let (mut prepared, mut ws) = (host.prepared, host.ws);
-    prepared.set(Some((view.clone(), source)));
+    let mut ws = host.ws;
+    host.views.replaced(view.clone(), source);
     let existing = ws.tabs.peek().iter().position(|t| t.table == view);
     let at = match existing {
         Some(i) => {

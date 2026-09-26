@@ -96,7 +96,7 @@ that's modifying it; merge conflicts are signals worth investigating.
 | PD-020 | P4c T14 wired inline-editor `Enter` → commit + move-DOWN + focus-on-mount, but `Tab` → commit + move-RIGHT could NOT be wired: gpui-component `Input` (rev `0f0ab35`) consumes Tab internally for focus tab-stops and surfaces no `InputEvent::PressTab` variant (`InputEvent` is `{ Change, PressEnter, Focus, Blur }`). **Closed by Phase 6 of the GPUI→Dioxus migration (2026-08-10):** the limitation was the toolkit's, and a plain `<input>` surfaces Tab like any other key, so `dat0-ui`'s cell editor commits and steps one column right on Tab, one left on Shift-Tab, clamped at the row's ends. | closed | low |
 | PD-021 | P4c (T11 review): `error_ux::push` enqueues success/error banners into the global `PENDING` queue, but NOTHING drains it in the runtime render tree — only `#[cfg(test)]` code calls `drain_pending`. So export completion/failure feedback (`window.rs::run_export`) AND the pre-existing P4b paste-reject banner (`grid/edit_ops.rs`) are invisible to the user at runtime. **Closed by P6a T1:** `WorkspaceShell::render` now calls `error_ux::banner::merge_pending` into a per-window `banners` field and renders a host strip atop the shell. | closed | medium |
 | PD-022 | P6a (T12 review): the Inspector profile is refreshed on forward data/schema mutations (cell edit, paste, cut, delete, rename, reorder, transform-apply via `route_change`), but NOT on `undo`/`redo` or SQL-console grid-bind — those rebind via `apply_view_change`, which has no inspector hook. So undoing an edit (or rebinding a grid from the SQL console) leaves the inspector profile stale until the next forward mutation. Single well-scoped fix: hook `apply_view_change` (or an `on_rebind_complete` seam) to invalidate/re-profile the inspected table. Not a regression — the inspector did not refresh at all before P6a. | closed | low |
-| PD-023 | The Dioxus shell is not wired to `dat0-core`: 22 of 40 registered actions only logged, opened an empty dialog, or discarded the reply (16 still do; the SQL console runs since 2026-09-26). Sort, filter, edit, clipboard, undo, export, packages, workspaces, MotherDuck, AI key entry, updates, recovery and live refresh are unreachable. "Logic green, screen dead" at app scale, recorded nowhere until 2026-09-25 | open | high |
+| PD-023 | The Dioxus shell is not wired to `dat0-core`: 22 of 40 registered actions only logged, opened an empty dialog, or discarded the reply (14 still do; the SQL console runs, and the grid sorts and filters, since 2026-09-26). Edit, clipboard, export, packages, workspaces, MotherDuck, AI key entry, updates, recovery and live refresh are unreachable. "Logic green, screen dead" at app scale, recorded nowhere until 2026-09-25 | open | high |
 | PD-024 | Banners raised after a window's first frame were never shown — the shell drained the queue once per mount; a refused drop surfaced later, twice, in another window | closed | high |
 | PD-025 | The recovery panel listed the running window's own session as an orphan, and its Discard deleted it | closed | high |
 | PD-026 | The grid cannot scroll past row ~1,290,555: the canvas is rows × 26 px, uncapped, and WebKit clamps layout at ~33.5M px | open | high |
@@ -2269,6 +2269,18 @@ that's modifying it; merge conflicts are signals worth investigating.
     tab, or a query run again in place — kept checking the old source's
     cache, so the new table showed placeholders until a scroll
     (`tests/shell_grid_binding.rs`).
+  - 2026-09-26, the grid's view (`components/grid/views.rs`). The sort zone
+    cycles a column through ascending, descending and off (Shift adds it to
+    the sort); the funnel opens the filter popover, fed the column's most
+    common values; the pipeline bar shows the stack and jumps or removes a
+    step; Undo and Redo move through it; dragging a header moves the column,
+    not just its width. Each tab keeps its own view across tab switches. Two
+    ids left `UNWIRED` (16 → 14), and `tests/grid_views.rs` drives each
+    gesture against a real session.
+  - Found on the way: a funnel's Clear called `ViewModel::clear`, which
+    dropped the whole stack — every sort, every other filter, every pending
+    cell edit — rather than that column's filter. It now removes only its own
+    filter (`ViewModel::clear_filter`, `tests/click_wiring.rs`).
 - **Discovered:** project review, 2026-09-25 — seven read-only audits plus a
   Linux release build driven under Xvfb.
 - **Fix:** port each surface's orchestration from `95627c8` onto the

@@ -95,6 +95,16 @@ const NOT_HEADLESS: &[(&str, &str)] = &[
         "interrupts a running query, and a run needs a real session; \
          tests/console_run.rs cancels one",
     ),
+    (
+        ids::VIEW_UNDO,
+        "undoes a view change, which needs a real session to make; \
+         tests/grid_views.rs undoes one",
+    ),
+    (
+        ids::VIEW_REDO,
+        "redoes a view change, which needs a real session to make; \
+         tests/grid_views.rs redoes one",
+    ),
 ];
 
 /// The `UNWIRED` list as of the review that introduced it (2026-09-25).
@@ -109,8 +119,6 @@ const UNWIRED_AT_MOST: &[&str] = &[
     ids::VIEW_SET_VALUE,
     ids::VIEW_DELETE_ROWS,
     ids::VIEW_DELETE_COLUMN,
-    ids::VIEW_UNDO,
-    ids::VIEW_REDO,
     ids::VIEW_SAVE_AS_TABLE,
     ids::VIEW_EXPORT,
     ids::LIVE_REFRESH,

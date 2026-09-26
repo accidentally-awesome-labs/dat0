@@ -42,8 +42,6 @@ pub const UNWIRED: &[&str] = &[
     ids::VIEW_SET_VALUE,
     ids::VIEW_DELETE_ROWS,
     ids::VIEW_DELETE_COLUMN,
-    ids::VIEW_UNDO,
-    ids::VIEW_REDO,
     ids::VIEW_SAVE_AS_TABLE,
     // Dialogs whose reply is discarded.
     ids::VIEW_EXPORT,

@@ -33,6 +33,7 @@
 pub mod cell_editor;
 pub mod context_menu;
 pub mod header;
+pub mod views;
 
 use std::sync::Arc;
 
@@ -159,6 +160,18 @@ pub struct GridProps {
     /// A context-menu pick: `(action id, the right-clicked cell)`.
     #[props(default)]
     pub on_action: EventHandler<(&'static str, CellCoord)>,
+    /// Each column's sort and filter state, for the header.
+    #[props(default)]
+    pub marks: Vec<views::Mark>,
+    /// A sort-zone click, with Shift: `(column, extend)`.
+    #[props(default)]
+    pub on_sort: EventHandler<(usize, bool)>,
+    /// A funnel click: `(column, client x, client y)`.
+    #[props(default)]
+    pub on_funnel: EventHandler<(usize, f64, f64)>,
+    /// A header dragged to a new place: `(from, to)`.
+    #[props(default)]
+    pub on_reorder: EventHandler<(usize, usize)>,
 }
 
 impl PartialEq for GridProps {
@@ -168,6 +181,7 @@ impl PartialEq for GridProps {
             && self.columns == other.columns
             && self.widths == other.widths
             && self.read_only == other.read_only
+            && self.marks == other.marks
     }
 }
 
@@ -286,12 +300,19 @@ pub fn Grid(props: GridProps) -> Element {
                 on_reorder_drop: move |to: usize| {
                     if let Some(from) = reordering.take() {
                         if from != to && from < n_cols && to < n_cols {
-                            let mut w = widths_sig.write();
-                            let moved = w.remove(from);
-                            w.insert(to, moved);
+                            // The width travels with its column.
+                            {
+                                let mut w = widths_sig.write();
+                                let moved = w.remove(from);
+                                w.insert(to, moved);
+                            }
+                            props.on_reorder.call((from, to));
                         }
                     }
                 },
+                marks: props.marks.clone(),
+                on_sort: props.on_sort,
+                on_funnel: props.on_funnel,
             }
 
             // While a pointer gesture is live, a full-window shield takes every
