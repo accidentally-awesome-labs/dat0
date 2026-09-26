@@ -479,3 +479,33 @@ fn the_launcher_is_as_wide_as_the_sidebar_it_aligns_with() {
          repeating the number"
     );
 }
+
+#[test]
+#[serial]
+fn a_narrow_window_draws_no_sidebar_and_gives_the_grid_its_width() {
+    // The stylesheet hid the sidebar at 1080 px and below, and the shell's
+    // inline columns, which outrank it, kept its track: the splitter took the
+    // sidebar's 238 px, the work area 0 px, and the grid was gone (step
+    // 5.11g).
+    with_settled_config(|| {
+        let mut h = mount(vec![tab("t0", None)], Some(0));
+        let window = h.by_a11y_id("window").expect("the window root");
+        let resize = |h: &mut Harness, w: f64| {
+            let size = dioxus::html::geometry::PixelsSize::new(w, 800.0);
+            h.dispatch(
+                window,
+                "resize",
+                dioxus::html::SerializedResizeData::new(size, size),
+            );
+        };
+        let one_column = "class=\"d0-shell\" style=\"grid-template-columns: minmax(0, 1fr)\"";
+
+        resize(&mut h, 1000.0);
+        assert!(h.by_a11y_id("sidebar").is_none(), "no sidebar at 1000 px");
+        assert!(h.html().contains(one_column), "one column, the work area's");
+
+        resize(&mut h, 1400.0);
+        assert!(h.by_a11y_id("sidebar").is_some(), "the sidebar is back");
+        assert!(!h.html().contains(one_column));
+    });
+}

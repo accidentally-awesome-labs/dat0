@@ -30,6 +30,9 @@ use crate::components::workspace_in_use::InUse;
 
 /// The design's default sidebar width (S1).
 pub const SIDEBAR_WIDTH: u32 = 238;
+/// At this window width and below the sidebar is not drawn: the narrow rule
+/// `app.css` applies at `max-width: 1080px`.
+pub const NARROW_WINDOW: f64 = 1080.0;
 /// The design's default right-column width (S5).
 pub const RIGHT_WIDTH: u32 = 320;
 /// The design's default console height (S4).
@@ -366,7 +369,11 @@ impl Workspace {
     /// is in band on the way out and on the way back in.
     pub fn sidebar_px(&self, window_w: f64) -> u32 {
         let l = self.layout.read();
-        if l.sidebar_open {
+        // The stylesheet hid the sidebar at 1080 px and below while the
+        // shell's inline columns kept its track: the splitter took the
+        // sidebar's 238 px, the work area the splitter's 0 px, and the grid
+        // was gone from any narrower window (step 5.11g).
+        if l.sidebar_open && window_w > NARROW_WINDOW {
             mounted(l.sidebar_size, SIDEBAR_WIDTH, window_w)
         } else {
             0
