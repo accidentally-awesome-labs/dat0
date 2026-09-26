@@ -73,6 +73,7 @@ const SETUP: &[(&str, Setup)] = &[
     (ids::SESSION_RETRY, Setup::FailedSession),
     (ids::IMPORT_CANCEL, Setup::ActiveImport),
     (ids::ONBOARDING_TAKE_TOUR, Setup::NoModal),
+    (ids::REPORT_BUG, Setup::NoModal),
 ];
 
 /// Offered commands whose effect needs something the headless harness does

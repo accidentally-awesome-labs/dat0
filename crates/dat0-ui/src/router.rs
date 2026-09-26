@@ -148,6 +148,7 @@ pub fn route(ws: Workspace, events: &AppEvents, surface: SurfaceSlot, id: &str) 
 
         // ── Modals ─────────────────────────────────────────────────────────
         ids::ONBOARDING_TAKE_TOUR => ws.modal.set(Some(Modal::Onboarding)),
+        ids::REPORT_BUG => crate::crash_flow::report_bug(ws),
         ids::SETTINGS_OPEN => {
             // Its own OS window, not the modal slot: settings is a nine-section
             // surface a user keeps open beside the workbench, and the slot

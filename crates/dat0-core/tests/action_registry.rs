@@ -97,11 +97,13 @@ fn builtins_register_the_expected_count() {
     //   "hide it" becomes a command for the first time; ⌘B) = 40.
     // + one from the 2026-09-25 review (inspector.toggle — View → Toggle
     //   Inspector was a menu-local id with no handler) = 41.
+    // + one from PD-023 step 5.7d (help.report_bug — Help → Report a Bug…,
+    //   the crash report panel with nothing staged, which nothing opened) = 42.
     //
     // The name deliberately carries no number: it said "thirty_four" while
     // asserting 35, and a count in a test name rots on the next slice that adds
     // an action. The ledger above is the real record.
-    assert_eq!(reg.count(), 41);
+    assert_eq!(reg.count(), 42);
     let titles: Vec<String> = reg.iter().map(|d| d.title).collect();
     assert!(titles.contains(&"New Window".to_string()));
     assert!(titles.contains(&"Open Settings".to_string()));

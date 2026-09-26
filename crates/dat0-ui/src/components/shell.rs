@@ -182,6 +182,8 @@ pub fn Shell() -> Element {
     let inspector = InspectorHost::use_new(ws, views, charts);
     // MotherDuck and the attached files, and the panel that manages them.
     let connections = crate::connections_flow::ConnectionsHost::use_new(ws);
+    // A crashed run's report, offered once, in the first window.
+    crate::crash_flow::use_relaunch_offer(ws);
 
     // The AI panel's controller, built once so the modal can be opened from a
     // command without rebuilding the provider draft each time, and the prompt

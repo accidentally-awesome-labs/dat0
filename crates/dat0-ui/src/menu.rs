@@ -256,6 +256,7 @@ pub fn build() -> Menu {
     let help = Submenu::new(dat0_i18n::t("menu.help"), true);
     let _ = help.append_items(&[
         &item(ids::ONBOARDING_TAKE_TOUR, "menu.help.take_tour"),
+        &item(ids::REPORT_BUG, "menu.help.report_bug"),
         &plain(menu_ids::CHECK_UPDATES, "menu.help.check_updates"),
         &PredefinedMenuItem::separator(),
         &plain(menu_ids::DOCS, "menu.help.docs"),
@@ -305,6 +306,7 @@ pub fn emitted_ids() -> Vec<String> {
         ids::SQL_CANCEL,
         ids::AI_PANEL_OPEN,
         ids::ONBOARDING_TAKE_TOUR,
+        ids::REPORT_BUG,
         ids::SIDEBAR_TOGGLE,
         ids::INSPECTOR_TOGGLE,
         menu_ids::OPEN_PACKAGE,
@@ -393,6 +395,7 @@ pub fn label_keys() -> Vec<&'static str> {
         // Help
         "menu.help",
         "menu.help.take_tour",
+        "menu.help.report_bug",
         "menu.help.check_updates",
         "menu.help.docs",
         "menu.help.github",

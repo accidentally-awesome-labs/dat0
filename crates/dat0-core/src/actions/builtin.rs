@@ -102,6 +102,9 @@ pub mod ids {
     // MX1: toggle the per-window frame-interval HUD. Palette-only by design —
     // a chord would spend one of the few free ones on a diagnostic.
     pub const PERF_HUD_TOGGLE: &str = "perf.hud.toggle";
+    // Help → Report a Bug…: the crash report panel with nothing staged
+    // (PD-023, step 5.7d). No chord: it is a menu item and a palette row.
+    pub const REPORT_BUG: &str = "help.report_bug";
 }
 
 /// The dispatch body every descriptor uses: name the action, let the shell
@@ -169,6 +172,11 @@ pub fn register_all(reg: &ActionRegistry) -> Result<(), RegisterError> {
         (
             ids::PERF_HUD_TOGGLE,
             dat0_i18n::t("action.perf_hud"),
+            Navigation,
+        ),
+        (
+            ids::REPORT_BUG,
+            dat0_i18n::t("menu.help.report_bug"),
             Navigation,
         ),
     ] {

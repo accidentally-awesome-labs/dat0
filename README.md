@@ -22,7 +22,7 @@ PD-023 in [`docs/deferrals.md`](docs/deferrals.md)).
 
 | Works in the current build | Being reconnected |
 |---|---|
-| Opening CSV, TSV, JSON, Parquet and SQLite — file picker, drag-and-drop, command line — into a virtualized grid | Crash reporting |
+| Opening CSV, TSV, JSON, Parquet and SQLite — file picker, drag-and-drop, command line — into a virtualized grid | ⌘K, the status bar's egress and window count, and a theme kept across launches |
 | MotherDuck, with your token: the account's databases listed and their tables opened | |
 | The SQL console: running a query into the grid, history, saved queries, completion | |
 | AI assist, with your own key: SQL written from a question, and a statement explained, from the schema alone | |
@@ -31,6 +31,7 @@ PD-023 in [`docs/deferrals.md`](docs/deferrals.md)).
 | The inspector: a profile of the active tab's table, its columns' small charts, and its lineage | |
 | Workspaces — open, save, recent — and the demo workspace; a closed or crashed window's work comes back | |
 | Help → Check for Updates, against the signed release manifest (no release is published yet) | |
+| Crash reports, opt-in: offered at the launch after a crash, and Help → Report a Bug | |
 | `.dat0` packages: open read-only, unpack, export and replay, in the app and with `dat0 inspect` / `unpack` / `replay` / `diff` / `export` | |
 
 ## Quick start

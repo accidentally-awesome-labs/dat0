@@ -45,6 +45,7 @@ const UNBOUND: &[&str] = &[
     "chart.export.svg",
     "chart.visualize",
     "file.open",
+    "help.report_bug",
     "import.cancel",
     // A View-menu item and the inspector's own header button.
     "inspector.toggle",
