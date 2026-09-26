@@ -146,12 +146,48 @@ pub fn run_app(
     // resolves. See the module docs.
     let _guard = runtime.enter();
 
+    // macOS hands a double-clicked `.dat0`, or a file dropped on the Dock
+    // icon, to the process as an event rather than on the command line.
+    let documents = boot.clone();
+    let cfg = config().with_custom_event_handler(move |event, _| {
+        if let Some(paths) = opened_paths(event) {
+            open_documents(&documents, paths);
+        }
+    });
     dioxus::LaunchBuilder::desktop()
-        .with_cfg(config())
+        .with_cfg(cfg)
         .with_context(boot)
         .launch(crate::components::App);
 
     Ok(())
+}
+
+/// The files a macOS open-documents event names: a `.dat0` double-clicked in
+/// Finder, a file dropped on the Dock icon, `open -a dat0 <file>`. `None` for
+/// any other event, and for one naming no local file.
+pub fn opened_paths<T>(event: &dioxus::desktop::tao::event::Event<'_, T>) -> Option<Vec<PathBuf>> {
+    let dioxus::desktop::tao::event::Event::Opened { urls } = event else {
+        return None;
+    };
+    let paths: Vec<PathBuf> = urls.iter().filter_map(|u| u.to_file_path().ok()).collect();
+    (!paths.is_empty()).then_some(paths)
+}
+
+/// Hand an open-documents event's files to a window. When a double-click
+/// launches dat0, macOS sends the event before the first window exists, so
+/// that window opens them, as it would the command line's paths; later, they
+/// open in a window of their own, as a second launch's do. The bundle has
+/// always claimed `.dat0`, and until this a double-click launched dat0 on an
+/// empty window.
+pub fn open_documents(boot: &Boot, paths: Vec<PathBuf>) {
+    let mut first = boot.opening.lock();
+    if let Some(Opening::Scratch { paths: pending }) = first.as_mut() {
+        pending.extend(paths);
+        return;
+    }
+    drop(first);
+    boot.events
+        .send(AppEvent::OpenWindow(Opening::files(paths)));
 }
 
 /// Everything the root component needs that cannot be recreated inside it.
@@ -631,6 +667,50 @@ mod tests {
             .expect("the waiting window was woken")
             .unwrap();
         assert!(matches!(got, Some(AppEvent::OpenWindow(_))), "{got:?}");
+    }
+
+    fn an_open_documents_event(urls: &[&str]) -> dioxus::desktop::tao::event::Event<'static, ()> {
+        dioxus::desktop::tao::event::Event::Opened {
+            urls: urls.iter().map(|u| u.parse().unwrap()).collect(),
+        }
+    }
+
+    #[test]
+    fn an_open_documents_event_names_its_local_files() {
+        let event = an_open_documents_event(&["file:///tmp/sales.dat0", "https://dat0.dev/x"]);
+        assert_eq!(
+            opened_paths(&event),
+            Some(vec![PathBuf::from("/tmp/sales.dat0")])
+        );
+        // One naming no local file, and any other event, ask nothing.
+        assert_eq!(
+            opened_paths(&an_open_documents_event(&["https://dat0.dev/x"])),
+            None
+        );
+        let other = dioxus::desktop::tao::event::Event::<()>::MainEventsCleared;
+        assert_eq!(opened_paths(&other), None);
+    }
+
+    /// Step 7: a double-click that launches dat0 opens the file in its first
+    /// window; one while dat0 runs opens it in a window of its own.
+    #[tokio::test]
+    async fn a_double_clicked_file_opens_in_the_first_window_or_a_new_one() {
+        let boot = test_boot();
+        let mut rx = boot.rx.lock().take().unwrap();
+        open_documents(&boot, vec![PathBuf::from("/tmp/sales.dat0")]);
+        let Opening::Scratch { paths } = boot.take_opening() else {
+            panic!("the first window opens the file as it would the command line's");
+        };
+        assert_eq!(paths, [PathBuf::from("/tmp/sales.dat0")]);
+        assert!(rx.try_recv().is_err(), "and no second window is asked for");
+
+        open_documents(&boot, vec![PathBuf::from("/tmp/q3.dat0")]);
+        match rx.try_recv() {
+            Ok(AppEvent::OpenWindow(Opening::Scratch { paths })) => {
+                assert_eq!(paths, [PathBuf::from("/tmp/q3.dat0")]);
+            }
+            other => panic!("a running dat0 opens it in a new window, got {other:?}"),
+        }
     }
 
     fn window() -> (uuid::Uuid, AppEvents, dat0_core::events::AppEventRx) {
