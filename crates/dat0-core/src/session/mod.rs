@@ -374,7 +374,7 @@ impl Session {
             }
         };
 
-        let engine = build_engine(&home, engine_budget_bytes).await?;
+        let engine = build_engine_when_free(&home, engine_budget_bytes).await?;
 
         let sess = Self {
             window_id,
@@ -448,7 +448,7 @@ impl Session {
             }
         };
 
-        let engine = build_engine(&home, engine_budget_bytes).await?;
+        let engine = build_engine_when_free(&home, engine_budget_bytes).await?;
 
         let sess = Self {
             window_id,
@@ -556,6 +556,9 @@ impl Session {
         lock: crate::workspace::lock::WorkspaceLock,
         budget_bytes: u64,
     ) -> Result<()> {
+        // Where each table came from is held in the engine's memory only
+        // (PD-031): the engine on the moved file is told what this one knew.
+        let origins = self.engine.origins();
         self.engine.close().await.ok();
         let dat0 = Home::dat0_dir_for(&root);
         let home = Home::Workspace {
@@ -581,18 +584,69 @@ impl Session {
         // the workspace data on disk is intact (the caller reopens from disk),
         // but this Session is left holding the throwaway engine — see the doc
         // note above: on error the Session is indeterminate and must not be reused.
-        let engine = match build_engine(&home, budget_bytes).await {
+        let engine = match build_engine_when_free(&home, budget_bytes).await {
             Ok(e) => e,
             Err(e) => {
                 let _ = std::fs::remove_dir_all(&throwaway_dir);
                 return Err(e);
             }
         };
+        for (name, origin) in origins {
+            engine.restore_origin(&name, origin);
+        }
         self.home = home;
         self.engine = Arc::new(engine); // throwaway dropped here
         let _ = std::fs::remove_dir_all(&throwaway_dir);
         self.lock = Some(lock);
         self.persist()?;
+        Ok(())
+    }
+
+    /// Move this scratch session into a new workspace in `target`: its
+    /// database and session file go to `target/.dat0/`, the engine reopens
+    /// there under the workspace's lock, and the scratch directory goes.
+    ///
+    /// The engine must be this session's alone. The move renames the file it
+    /// has open, and [`Session::adopt_workspace`] can open the moved file only
+    /// once the old engine is dropped; an engine held elsewhere makes the
+    /// reopen fail rather than join it (`EngineError::AlreadyOpen`).
+    ///
+    /// A refusal — already a workspace, a folder that is one, a checkpoint
+    /// that fails — leaves the session as it was. Any later error leaves it
+    /// unusable, its engine closed, and the caller reopens what is on disk:
+    /// the scratch directory when nothing moved, the workspace when the
+    /// database did.
+    pub async fn promote_to(&mut self, target: &Path, budget_bytes: u64) -> Result<()> {
+        if self.is_workspace() {
+            bail!("this session is already a workspace");
+        }
+        let dat0 = Home::dat0_dir_for(target);
+        if dat0.exists() {
+            bail!(
+                "target folder is already a dat0 workspace: {}",
+                dat0.display()
+            );
+        }
+        let scratch = self.home.root_dir().to_path_buf();
+        // The log's changes go into the database file first, so what moves is
+        // the file whole, and a checkpoint that fails — a full disk — fails
+        // before anything has moved.
+        self.engine
+            .execute("CHECKPOINT")
+            .await
+            .context("promote: checkpoint the scratch database")?;
+        self.engine.close().await.ok();
+        let promoted = crate::workspace::promote::promote_files(
+            target,
+            &scratch,
+            crate::time::now_epoch_secs(),
+        )?;
+        self.adopt_workspace(promoted.root.clone(), promoted.lock, budget_bytes)
+            .await?;
+        if let Err(e) = std::fs::remove_dir_all(&promoted.old_scratch_dir) {
+            // What is left holds no database: the next launch sweeps it.
+            tracing::warn!(error = %e, "promote: could not remove the scratch directory");
+        }
         Ok(())
     }
 
@@ -835,6 +889,30 @@ impl Session {
 /// The DB file path comes from `home.db_path()` (per spec §3 scratch layout /
 /// §workspace layout). Only `init()` is async; `DuckDBEngine::new` is
 /// synchronous.
+/// [`build_engine`], once no engine of this process still has the file open.
+///
+/// For a database whose engine was just dropped — its window closed moments
+/// ago, or the file moved from under it: a worker of that engine's may still
+/// be finishing a query whose task went away, and it holds the file until the
+/// query ends.
+async fn build_engine_when_free(home: &Home, budget_bytes: u64) -> Result<DuckDBEngine> {
+    const WAIT: std::time::Duration = std::time::Duration::from_secs(10);
+    let deadline = std::time::Instant::now() + WAIT;
+    loop {
+        match build_engine(home, budget_bytes).await {
+            Err(e)
+                if matches!(
+                    e.downcast_ref::<dat0_engine::EngineError>(),
+                    Some(dat0_engine::EngineError::AlreadyOpen(_))
+                ) && std::time::Instant::now() < deadline =>
+            {
+                tokio::time::sleep(std::time::Duration::from_millis(25)).await;
+            }
+            built => return built,
+        }
+    }
+}
+
 async fn build_engine(home: &Home, budget_bytes: u64) -> Result<DuckDBEngine> {
     let db_path = home.db_path();
     let budget = MemoryBudget {
@@ -1063,6 +1141,83 @@ mod tests {
         assert_eq!(back.active_tab().unwrap().table_name, "b");
         assert_eq!(back.tabs()[1].transform_stack, vec![sorted]);
         assert_eq!(back.tabs()[1].undo_cursor, 1);
+    }
+
+    #[tokio::test]
+    async fn promote_to_moves_the_session_into_a_workspace_and_keeps_its_tabs() {
+        let root = tempfile::tempdir().expect("tempdir");
+        let target = root.path().join("project");
+        std::fs::create_dir_all(&target).unwrap();
+        let mut sess = Session::new(&root.path().join("state"), TEST_BUDGET)
+            .await
+            .unwrap();
+        sess.engine
+            .create_table(
+                "kept",
+                "SELECT * FROM range(42) t(v)",
+                dat0_engine::DerivedOrigin::Sql("seed".into()),
+            )
+            .await
+            .unwrap();
+        sess.add_tab(Tab {
+            table_name: "kept".into(),
+            source_path: None,
+            transform_stack: Vec::new(),
+            undo_cursor: 0,
+            extra: Default::default(),
+        })
+        .unwrap();
+        let scratch = sess.home.root_dir().to_path_buf();
+
+        sess.promote_to(&target, TEST_BUDGET).await.unwrap();
+        assert!(sess.is_workspace());
+        assert!(!scratch.exists(), "the scratch directory is gone");
+        assert_eq!(sess.tabs()[0].table_name, "kept");
+        let r = sess
+            .engine
+            .execute("SELECT count(*)::VARCHAR FROM kept")
+            .await
+            .unwrap();
+        let n = r.batches[0]
+            .column(0)
+            .as_any()
+            .downcast_ref::<duckdb::arrow::array::StringArray>()
+            .map(|a| a.value(0).to_string());
+        assert_eq!(n.as_deref(), Some("42"), "the engine reads the moved rows");
+        assert!(
+            !Home::dat0_dir_for(&target)
+                .join("workspace.duckdb.wal")
+                .exists(),
+            "and no log is left beside it"
+        );
+        assert!(
+            matches!(
+                sess.engine.table_origin("kept"),
+                Some(dat0_engine::TableOrigin::Derived(_))
+            ),
+            "and the engine there knows where the table came from: {:?}",
+            sess.engine.table_origin("kept")
+        );
+
+        let again = sess.promote_to(&target, TEST_BUDGET).await;
+        assert!(again.is_err(), "a workspace is not promoted twice");
+    }
+
+    #[tokio::test]
+    async fn promote_to_a_workspace_folder_is_refused_and_the_session_goes_on() {
+        let root = tempfile::tempdir().expect("tempdir");
+        let target = root.path().join("taken");
+        std::fs::create_dir_all(Home::dat0_dir_for(&target)).unwrap();
+        let mut sess = Session::new(&root.path().join("state"), TEST_BUDGET)
+            .await
+            .unwrap();
+
+        assert!(sess.promote_to(&target, TEST_BUDGET).await.is_err());
+        assert!(!sess.is_workspace());
+        sess.engine
+            .execute("SELECT 1")
+            .await
+            .expect("the engine is still open");
     }
 
     #[tokio::test]

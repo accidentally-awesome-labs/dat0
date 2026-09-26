@@ -33,8 +33,6 @@ use crate::state::{Modal, Workspace};
 /// a ratchet: `tests/action_effects.rs` fails if it grows, and an id leaves it
 /// in the same change as the test that shows its effect.
 pub const UNWIRED: &[&str] = &[
-    // Save Workspace only logs the path it was given.
-    ids::WORKSPACE_SAVE,
     // Flips a flag the shell never renders.
     ids::PERF_HUD_TOGGLE,
 ];
@@ -136,6 +134,17 @@ pub fn route(ws: Workspace, events: &AppEvents, surface: SurfaceSlot, id: &str) 
             spawn(async move {
                 if let Some(folder) = crate::files::pick_folder().await {
                     crate::workspace_open::open(ws, &events, folder);
+                }
+            });
+        }
+        ids::WORKSPACE_SAVE => {
+            if !crate::launch::has_desktop() {
+                tracing::debug!("workspace.save: no window system, nothing to show");
+                return true;
+            }
+            spawn(async move {
+                if let Some(folder) = crate::files::pick_folder_to_save().await {
+                    crate::workspace_save::save(ws, folder).await;
                 }
             });
         }

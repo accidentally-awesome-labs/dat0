@@ -284,13 +284,17 @@ impl Workspace {
             Opening::Scratch { .. } | Opening::Workspace { .. } => None,
         };
         let name = match opening {
-            Opening::Workspace { root, .. } => root
-                .file_name()
-                .map(|n| n.to_string_lossy().into_owned())
-                .unwrap_or_else(|| root.display().to_string()),
+            Opening::Workspace { root, .. } => Self::name_for(root),
             Opening::Scratch { .. } | Opening::Recover { .. } => "scratch".into(),
         };
         Self::provide_with(id.unwrap_or_else(uuid::Uuid::now_v7), name)
+    }
+
+    /// What the titlebar calls the workspace in `root`: its folder.
+    pub fn name_for(root: &std::path::Path) -> String {
+        root.file_name()
+            .map(|n| n.to_string_lossy().into_owned())
+            .unwrap_or_else(|| root.display().to_string())
     }
 
     fn provide_with(window_id: uuid::Uuid, name: String) -> Self {

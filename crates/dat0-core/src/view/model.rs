@@ -299,6 +299,18 @@ impl ViewModel {
         self.regenerate_view()
     }
 
+    /// The same view, built again: for an engine that has none of the old
+    /// one's views — the window's session moved to a workspace, and its
+    /// engine with it. Unlike [`Self::reset_to_replayed`] the history stays,
+    /// because the rows under it are the same rows.
+    ///
+    /// The old view is not named for dropping: it lived in the old engine.
+    pub fn rebind(&mut self) -> ViewChange {
+        self.active_view = None;
+        self.active_view_sql = None;
+        self.regenerate_view()
+    }
+
     // --- Sort query helpers ---
 
     /// Return the current Sort op (if any) as an [`ActiveSort`] for the header
@@ -468,6 +480,34 @@ mod tests {
         );
         assert!(!change.is_display_only());
         assert_eq!(vm.stack().len(), 1);
+    }
+
+    #[test]
+    fn rebind_builds_the_view_again_and_keeps_the_history() {
+        let mut vm = ViewModel::new("orders".into(), "\"main\".\"orders\"".into());
+        let first = vm.apply(qty_gt_zero());
+        let before = vm.active_view().map(str::to_string);
+        let change = vm.rebind();
+        assert!(change.sql.is_some(), "the view is created again");
+        assert_eq!(
+            change.previous_active_view, None,
+            "the old one is not the new engine's"
+        );
+        assert_ne!(
+            vm.active_view().map(str::to_string),
+            before,
+            "under a new name"
+        );
+        assert_eq!(change.sql, first.sql, "reading what it read");
+        assert!(vm.can_undo(), "and Undo still steps back");
+        assert_eq!(vm.stack().len(), 1);
+
+        let mut bare = ViewModel::new("orders".into(), "\"main\".\"orders\"".into());
+        assert_eq!(
+            bare.rebind().new_active_view,
+            None,
+            "no steps: the table itself"
+        );
     }
 
     #[test]

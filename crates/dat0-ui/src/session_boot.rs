@@ -174,7 +174,7 @@ pub fn failure_banner(message: &str) -> dat0_core::error_ux::Banner {
 /// One function, so the cold boot and the retry cannot disagree about what a
 /// failure looks like — under GPUI they were two code paths and only one of
 /// them cleared the queue.
-async fn land(ws: Workspace, slot: SessionSlot) {
+pub(crate) async fn land(ws: Workspace, slot: SessionSlot) {
     let mut ws = ws;
     let failure = slot.failure().map(str::to_string);
     ws.session.set(Arc::new(slot));
@@ -285,7 +285,7 @@ async fn build(ws: Workspace, opening: &Opening) -> SessionSlot {
 /// on another machine opening it is warned. A lock that cannot be written — a
 /// read-only share — leaves the workspace open under its local lock alone, and
 /// says so.
-fn claim_lock(ws: Workspace, session: &mut Session) {
+pub(crate) fn claim_lock(ws: Workspace, session: &mut Session) {
     let Some(lock_json) = session.home.lock_json_path() else {
         return;
     };
@@ -302,7 +302,7 @@ fn claim_lock(ws: Workspace, session: &mut Session) {
 }
 
 /// Put the workspace at the top of the recent list.
-fn remember(root: &std::path::Path) {
+pub(crate) fn remember(root: &std::path::Path) {
     let Some(recents) = dat0_core::globals::recents() else {
         return;
     };

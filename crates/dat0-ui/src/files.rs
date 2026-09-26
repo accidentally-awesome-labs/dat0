@@ -61,6 +61,17 @@ pub async fn pick_folder() -> Option<PathBuf> {
         .map(|h| h.path().to_path_buf())
 }
 
+/// Pick the folder to save a window's work into as a workspace. The panel
+/// can make one, since a new workspace usually wants a new folder.
+pub async fn pick_folder_to_save() -> Option<PathBuf> {
+    rfd::AsyncFileDialog::new()
+        .set_title(dat0_i18n::t("workspace.save.pick"))
+        .set_can_create_directories(true)
+        .pick_folder()
+        .await
+        .map(|h| h.path().to_path_buf())
+}
+
 /// Choose a path to write, seeded with a suggested file name.
 ///
 /// The suggestion carries the extension, which is what makes the platform

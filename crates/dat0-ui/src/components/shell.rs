@@ -1077,17 +1077,6 @@ fn surface_command(
             ai.hydrate();
             ws.modal.set(Some(Modal::Ai { controller: ai }));
         }
-        ids::WORKSPACE_SAVE => {
-            if !crate::launch::has_desktop() {
-                return true;
-            }
-            spawn(async move {
-                let Some(path) = crate::files::pick_save_path("workspace.dat0").await else {
-                    return;
-                };
-                tracing::info!(?path, "workspace save requested");
-            });
-        }
         ids::PERF_HUD_TOGGLE => {
             let mut perf_hud = perf_hud;
             let on = *perf_hud.peek();

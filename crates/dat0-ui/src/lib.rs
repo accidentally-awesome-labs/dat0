@@ -32,3 +32,4 @@ pub mod theme;
 #[cfg(feature = "visual")]
 pub mod visual;
 pub mod workspace_open;
+pub mod workspace_save;

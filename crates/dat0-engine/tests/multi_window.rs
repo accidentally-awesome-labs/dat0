@@ -163,3 +163,82 @@ async fn a_database_open_in_this_process_is_not_opened_twice() {
     let reopened = DuckDBEngine::new(db, budget_512mb()).expect("once the first is gone");
     reopened.init().await.unwrap();
 }
+
+/// Save Workspace moves a scratch database into a workspace folder. An engine
+/// still holding it holds the moved file, so one opening the new name is
+/// refused until the old one is gone — then it sees what the old one wrote.
+#[cfg(unix)]
+#[tokio::test]
+async fn a_moved_database_still_counts_as_open() {
+    let dir = tempfile::tempdir().unwrap();
+    let (before, after) = (
+        dir.path().join("scratch.duckdb"),
+        dir.path().join("w.duckdb"),
+    );
+    let first = DuckDBEngine::new(before.clone(), budget_512mb()).unwrap();
+    first.init().await.unwrap();
+    first
+        .create_table("t", "SELECT 7 AS v", DerivedOrigin::Sql("seed".into()))
+        .await
+        .unwrap();
+    first.close().await.unwrap();
+    std::fs::rename(&before, &after).unwrap();
+
+    assert!(
+        matches!(
+            DuckDBEngine::new(after.clone(), budget_512mb()),
+            Err(dat0_engine::EngineError::AlreadyOpen(_))
+        ),
+        "the moved file is still open"
+    );
+    drop(first);
+    let second = DuckDBEngine::new(after, budget_512mb()).expect("once the first is gone");
+    second.init().await.unwrap();
+    assert_eq!(
+        scalar(&second, "SELECT v::VARCHAR FROM t").await,
+        "7",
+        "and it sees what the first wrote"
+    );
+}
+
+/// A query's worker holds the connection until its query ends, which can be
+/// after the engine is gone: the task that asked was dropped, and a blocking
+/// worker cannot be. The file counts as open until the connection closes.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_query_still_running_keeps_the_file_open() {
+    let dir = tempfile::tempdir().unwrap();
+    let db = dir.path().join("w.duckdb");
+    let engine = DuckDBEngine::new(db.clone(), budget_512mb()).unwrap();
+    engine.init().await.unwrap();
+    // Many batches: the worker waits to send the second until the first is
+    // taken, holding the connection all the while.
+    let mut rows = engine
+        .execute_streaming("SELECT i FROM range(1000000) t(i)")
+        .await
+        .unwrap();
+    rows.next().await.expect("a first batch").unwrap();
+    drop(engine);
+
+    assert!(
+        matches!(
+            DuckDBEngine::new(db.clone(), budget_512mb()),
+            Err(dat0_engine::EngineError::AlreadyOpen(_))
+        ),
+        "the worker still has the file open"
+    );
+    drop(rows);
+    // The worker finds nobody listening at its next send, and ends.
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+    let reopened = loop {
+        match DuckDBEngine::new(db.clone(), budget_512mb()) {
+            Ok(e) => break e,
+            Err(dat0_engine::EngineError::AlreadyOpen(_))
+                if std::time::Instant::now() < deadline =>
+            {
+                tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+            }
+            Err(e) => panic!("the file should come free once the query ends: {e}"),
+        }
+    };
+    reopened.init().await.unwrap();
+}

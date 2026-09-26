@@ -96,7 +96,7 @@ that's modifying it; merge conflicts are signals worth investigating.
 | PD-020 | P4c T14 wired inline-editor `Enter` → commit + move-DOWN + focus-on-mount, but `Tab` → commit + move-RIGHT could NOT be wired: gpui-component `Input` (rev `0f0ab35`) consumes Tab internally for focus tab-stops and surfaces no `InputEvent::PressTab` variant (`InputEvent` is `{ Change, PressEnter, Focus, Blur }`). **Closed by Phase 6 of the GPUI→Dioxus migration (2026-08-10):** the limitation was the toolkit's, and a plain `<input>` surfaces Tab like any other key, so `dat0-ui`'s cell editor commits and steps one column right on Tab, one left on Shift-Tab, clamped at the row's ends. | closed | low |
 | PD-021 | P4c (T11 review): `error_ux::push` enqueues success/error banners into the global `PENDING` queue, but NOTHING drains it in the runtime render tree — only `#[cfg(test)]` code calls `drain_pending`. So export completion/failure feedback (`window.rs::run_export`) AND the pre-existing P4b paste-reject banner (`grid/edit_ops.rs`) are invisible to the user at runtime. **Closed by P6a T1:** `WorkspaceShell::render` now calls `error_ux::banner::merge_pending` into a per-window `banners` field and renders a host strip atop the shell. | closed | medium |
 | PD-022 | P6a (T12 review): the Inspector profile is refreshed on forward data/schema mutations (cell edit, paste, cut, delete, rename, reorder, transform-apply via `route_change`), but NOT on `undo`/`redo` or SQL-console grid-bind — those rebind via `apply_view_change`, which has no inspector hook. So undoing an edit (or rebinding a grid from the SQL console) leaves the inspector profile stale until the next forward mutation. Single well-scoped fix: hook `apply_view_change` (or an `on_rebind_complete` seam) to invalidate/re-profile the inspected table. Not a regression — the inspector did not refresh at all before P6a. | closed | low |
-| PD-023 | The Dioxus shell is not wired to `dat0-core`: 22 of 40 registered actions only logged, opened an empty dialog, or discarded the reply (2 still do; the SQL console runs, the grid sorts, filters, edits, saves and exports, Live Refresh reads a file again, a closed or crashed window's work comes back, and workspaces open, since 2026-09-26). Packages, Save Workspace, MotherDuck, AI key entry and updates are unreachable. "Logic green, screen dead" at app scale, recorded nowhere until 2026-09-25 | open | high |
+| PD-023 | The Dioxus shell is not wired to `dat0-core`: 22 of 40 registered actions only logged, opened an empty dialog, or discarded the reply (1 still does; the SQL console runs, the grid sorts, filters, edits, saves and exports, Live Refresh reads a file again, a closed or crashed window's work comes back, and workspaces open and save, since 2026-09-26). Packages, MotherDuck, AI key entry and updates are unreachable. "Logic green, screen dead" at app scale, recorded nowhere until 2026-09-25 | open | high |
 | PD-024 | Banners raised after a window's first frame were never shown — the shell drained the queue once per mount; a refused drop surfaced later, twice, in another window | closed | high |
 | PD-025 | The recovery panel listed the running window's own session as an orphan, and its Discard deleted it | closed | high |
 | PD-026 | The grid cannot scroll past row ~1,290,555: the canvas is rows × 26 px, uncapped, and WebKit clamps layout at ~33.5M px | closed | high |
@@ -2347,8 +2347,8 @@ that's modifying it; merge conflicts are signals worth investigating.
     left, and opens it from the panel.
   - Still open in recovery: a graceful close keeps a window's directory as a
     crash does, and the next launch removes it or offers it; the design's
-    "Promote to Workspace?" prompt on close comes with Save Workspace. A
-    table's origin other than a tab's file is not kept (PD-031).
+    "Promote to Workspace?" prompt on close is still to come. A table's
+    origin other than a tab's file is not kept (PD-031).
   - 2026-09-26, Open Workspace (`workspace_open.rs`, step 5.4b). Open
     Workspace, File → Open Recent, the hero's recent list, the demo and the
     recovery panel's Resume posted the folder as a file to open, and the drop
@@ -2365,10 +2365,32 @@ that's modifying it; merge conflicts are signals worth investigating.
     resume. Opened workspaces are remembered as recent. `UNWIRED` 3 → 2.
     `tests/workspace_open.rs` makes workspaces with dat0-core and opens each
     kind.
-  - Still open for workspaces: Save Workspace (step 5.4c). Open Recent lists
-    the recent workspaces as they were at launch, since its items are
-    resolved by position; a workspace opened since is listed from the next
-    launch.
+  - 2026-09-26, Save Workspace (`workspace_save.rs`, step 5.4c). It asked for
+    a file name and logged it. It now asks for a folder, which the picker can
+    make, and moves the window's session into the folder's `.dat0/`: the
+    database, with its log written into it first, then the session file, then
+    the manifest. The window goes on as the workspace: named for the folder,
+    under its lock, remembered as recent, and brought forward when the folder
+    is opened again. Its grids are built again on the new engine with their
+    views, and each table keeps where it came from. A console run's rows were
+    a view in the old engine only, so their tabs close; the SQL stays. The
+    move renames the file the engine has open, so everything holding the
+    engine lets go first; a query still running after five seconds leaves the
+    session as it was, and the save says so. A folder that is a workspace
+    already, a window that is one and a read-only window are refused; a move
+    that fails part-way reopens what is on disk, its tables' origins with it.
+    The engine now knows a database file by its identity on disk as well as
+    its name, and keeps it claimed until its connection closes, which a
+    query's worker can hold after the engine is gone: a second engine on the
+    moved file is refused rather than shown an empty database. `UNWIRED`
+    2 → 1. `tests/workspace_save.rs` saves a window and opens the workspace
+    again, and saves into a workspace, twice, from a read-only window, while
+    the engine is held, and into a plain file, which fails part-way.
+  - Still open for workspaces: the GPUI build's nudge, which offered Save
+    Workspace once a scratch window held three view steps or a saved query,
+    is not shown. Open Recent lists the recent workspaces as they were at
+    launch, since its items are resolved by position; a workspace opened or
+    saved since is listed from the next launch.
 - **Discovered:** project review, 2026-09-25 — seven read-only audits plus a
   Linux release build driven under Xvfb.
 - **Fix:** port each surface's orchestration from `95627c8` onto the
@@ -2615,11 +2637,13 @@ that's modifying it; merge conflicts are signals worth investigating.
   origins: `get_tables` reports the engine's "unknown", `Derived(Sql(""))`.
   Since step 5.7b a reopened window records each tab's file again
   (`DuckDBEngine::restore_origin`), which is what Live Refresh and the
-  same-name rule (PD-030) need. Nothing restores the rest: a table made by
-  SQL or saved from a view loses its derivation, and one with no tab loses
-  its file, so `package::classify` exports them as plain base tables and a
-  package made from a reopened session cannot replay them. The GPUI build
-  had the same gap.
+  same-name rule (PD-030) need; since step 5.4c Save Workspace hands every
+  origin to the engine it opens on the moved file. Nothing restores the rest
+  when a database is opened from disk: a table made by SQL or saved from a
+  view loses its derivation, and one with no tab loses its file, so
+  `package::classify` exports them as plain base tables and a package made
+  from a reopened session cannot replay them. The GPUI build had the same
+  gap.
 - **Fix:** keep origins in the database beside the tables — a
   `__dat0_meta_origins` table written with each origin change and read at
   `init` — so they travel with the file, whichever home it is in.

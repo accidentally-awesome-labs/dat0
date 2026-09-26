@@ -13,7 +13,7 @@ use crate::error::EngineError;
 use crate::types::{EngineStatus, MemoryBudget, QueryLane, QueryToken, TableOrigin};
 
 pub struct DuckDBEngine {
-    pub(crate) conn: Arc<Mutex<duckdb::Connection>>,
+    pub(crate) conn: Arc<Mutex<Conn>>,
     pub(crate) interrupt: Arc<duckdb::InterruptHandle>,
     pub(crate) budget: MemoryBudget,
     pub(crate) scratch_path: PathBuf,
@@ -47,8 +47,32 @@ pub struct DuckDBEngine {
     /// clock (`crates/dat0-app/tests/view_supersede.rs`); nothing in production
     /// reads it.
     pub(crate) interrupts_fired: Arc<AtomicU64>,
-    /// This engine's claim on its database file; released when it drops.
+}
+
+/// The engine's connection and its claim on the database file.
+///
+/// The claim goes with the connection rather than the engine because a
+/// query's worker holds the connection too, and finishes its query when the
+/// task that asked has been dropped: the file is open until the connection
+/// closes, however long ago the engine went.
+pub(crate) struct Conn {
+    // Declared first, so it closes before the claim is released.
+    conn: duckdb::Connection,
     _held: Held,
+}
+
+impl std::ops::Deref for Conn {
+    type Target = duckdb::Connection;
+
+    fn deref(&self) -> &duckdb::Connection {
+        &self.conn
+    }
+}
+
+impl std::ops::DerefMut for Conn {
+    fn deref_mut(&mut self) -> &mut duckdb::Connection {
+        &mut self.conn
+    }
 }
 
 /// The database files an engine in this process holds open.
@@ -58,38 +82,87 @@ pub struct DuckDBEngine {
 /// write the one file and its WAL. dat0 opens a database again in the normal
 /// course of things — a session recovered moments after its window closed,
 /// while a task may still hold the old engine — so the refusal lives here.
-static OPEN: std::sync::LazyLock<parking_lot::Mutex<std::collections::HashSet<PathBuf>>> =
+///
+/// A file is known by its resolved path and, once it exists, by its identity
+/// on disk: Save Workspace moves a scratch database into a workspace, and an
+/// engine left holding it must not be joined by one opening the new name.
+static OPEN: std::sync::LazyLock<parking_lot::Mutex<std::collections::HashSet<FileKey>>> =
     std::sync::LazyLock::new(Default::default);
 
-/// One engine's claim on a database file in [`OPEN`].
-struct Held(Option<PathBuf>);
+/// How [`OPEN`] knows a database file.
+#[derive(Clone, PartialEq, Eq, Hash)]
+enum FileKey {
+    /// Its path, with the directory resolved: the file may not exist yet.
+    Path(PathBuf),
+    /// Device and inode: the file under whatever name it has now.
+    #[cfg(unix)]
+    Inode(u64, u64),
+}
 
-impl Held {
-    /// Claim `path`, or say who has it. An in-memory database is nobody's.
-    fn claim(path: &std::path::Path) -> Result<Self> {
-        if path.as_os_str().is_empty() || path == std::path::Path::new(":memory:") {
-            return Ok(Self(None));
-        }
-        // The same file by any name: the directory resolved, since the file
-        // itself may not exist yet.
-        let key = match (path.parent(), path.file_name()) {
+impl FileKey {
+    fn path(path: &std::path::Path) -> Self {
+        Self::Path(match (path.parent(), path.file_name()) {
             (Some(dir), Some(name)) if !dir.as_os_str().is_empty() => dir
                 .canonicalize()
                 .map(|d| d.join(name))
                 .unwrap_or_else(|_| path.to_path_buf()),
             _ => std::path::absolute(path).unwrap_or_else(|_| path.to_path_buf()),
-        };
-        if !OPEN.lock().insert(key.clone()) {
-            return Err(EngineError::AlreadyOpen(key));
+        })
+    }
+
+    /// The file's identity, when it exists and the platform has one.
+    fn inode(path: &std::path::Path) -> Option<Self> {
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::MetadataExt as _;
+            let meta = std::fs::metadata(path).ok()?;
+            Some(Self::Inode(meta.dev(), meta.ino()))
         }
-        Ok(Self(Some(key)))
+        #[cfg(not(unix))]
+        {
+            let _ = path;
+            None
+        }
+    }
+}
+
+/// One engine's claim on a database file in [`OPEN`].
+struct Held(Vec<FileKey>);
+
+impl Held {
+    /// Claim `path`, or say who has it. An in-memory database is nobody's.
+    fn claim(path: &std::path::Path) -> Result<Self> {
+        if path.as_os_str().is_empty() || path == std::path::Path::new(":memory:") {
+            return Ok(Self(Vec::new()));
+        }
+        let keys: Vec<FileKey> = std::iter::once(FileKey::path(path))
+            .chain(FileKey::inode(path))
+            .collect();
+        let mut open = OPEN.lock();
+        if keys.iter().any(|k| open.contains(k)) {
+            let FileKey::Path(named) = &keys[0] else {
+                unreachable!("the first key is the path")
+            };
+            return Err(EngineError::AlreadyOpen(named.clone()));
+        }
+        open.extend(keys.iter().cloned());
+        Ok(Self(keys))
+    }
+
+    /// Claim the file by its identity too, now that opening it has made it.
+    fn claim_created(&mut self, path: &std::path::Path) {
+        if let Some(key) = FileKey::inode(path).filter(|k| !self.0.contains(k)) {
+            OPEN.lock().insert(key.clone());
+            self.0.push(key);
+        }
     }
 }
 
 impl Drop for Held {
     fn drop(&mut self) {
-        if let Some(key) = self.0.take() {
-            OPEN.lock().remove(&key);
+        let mut open = OPEN.lock();
+        for key in self.0.drain(..) {
+            open.remove(&key);
         }
     }
 }
@@ -98,12 +171,13 @@ impl DuckDBEngine {
     /// Construct an engine bound to `scratch_path` (a DuckDB file). Status begins
     /// `Initializing`; call `init()` to transition to `Ready`.
     pub fn new(scratch_path: PathBuf, budget: MemoryBudget) -> Result<Self> {
-        let held = Held::claim(&scratch_path)?;
+        let mut held = Held::claim(&scratch_path)?;
         let conn = duckdb::Connection::open(&scratch_path)?;
+        held.claim_created(&scratch_path);
         // duckdb-rs 1.4.x: `interrupt_handle()` returns `Arc<InterruptHandle>` directly.
         let interrupt = conn.interrupt_handle();
         Ok(Self {
-            conn: Arc::new(Mutex::new(conn)),
+            conn: Arc::new(Mutex::new(Conn { conn, _held: held })),
             interrupt,
             budget,
             scratch_path,
@@ -112,7 +186,6 @@ impl DuckDBEngine {
             inflight: Arc::new(parking_lot::Mutex::new(None)),
             next_token: Arc::new(AtomicU64::new(1)),
             interrupts_fired: Arc::new(AtomicU64::new(0)),
-            _held: held,
         })
     }
 
@@ -1051,6 +1124,13 @@ impl DuckDBEngine {
     /// table's name held by an unknown table, and imported beside it.
     pub fn restore_origin(&self, name: &str, origin: TableOrigin) {
         self.table_origins.write().insert(name.to_string(), origin);
+    }
+
+    /// Every table's recorded origin, for an engine opened on the same
+    /// database under another name — Save Workspace moves it — to be given
+    /// with [`Self::restore_origin`].
+    pub fn origins(&self) -> HashMap<String, TableOrigin> {
+        self.table_origins.read().clone()
     }
 }
 

@@ -12,7 +12,9 @@
 //! names its next view the moment it changes, before the engine has created
 //! it.
 
+use std::cell::Cell;
 use std::collections::HashMap;
+use std::rc::Rc;
 use std::sync::Arc;
 
 use dioxus::prelude::*;
@@ -71,12 +73,14 @@ pub struct Views {
 impl Views {
     /// This window's views. A hook: call it once, from the shell's body.
     pub fn use_new(ws: Workspace) -> Self {
-        Self {
+        let views = Self {
             ws,
             models: use_signal(HashMap::new),
             bound: use_signal(HashMap::new),
             funnel: use_signal(|| None),
-        }
+        };
+        use_follow_session(views);
+        views
     }
 
     /// `table`'s columns as the header shows them: its base columns through the
@@ -224,6 +228,20 @@ impl Views {
         bound.write().insert(table.clone(), (table, source));
     }
 
+    /// Build every tab's view again, in the engine the window has now. A
+    /// console run's rows were a view in the old one alone, so their models
+    /// go.
+    fn rebind_all(&self) {
+        let mut models = self.models;
+        models
+            .write()
+            .retain(|table, _| !table.starts_with("__dat0"));
+        let tables: Vec<String> = models.peek().keys().cloned().collect();
+        for table in tables {
+            self.change_on(table, |vm| Some(vm.rebind()));
+        }
+    }
+
     /// Change the active tab's model, and drive the change it returns.
     fn change(&self, f: impl FnOnce(&mut ViewModel) -> Option<ViewChange>) {
         if let Some(table) = self.ws.active_tab().map(|t| t.table) {
@@ -270,6 +288,34 @@ impl Views {
             }
         });
     }
+}
+
+/// Keep the grids on the engine the window has.
+///
+/// A view is a TEMP view, so it lives in one engine's connection. While the
+/// window has no session — Save Workspace is moving it — nothing is bound, so
+/// no grid holds the engine the move must release. When a session lands after
+/// that, each tab's view is built in it again, from the steps its model kept.
+fn use_follow_session(views: Views) {
+    // Whether a session was ready, and whether it has gone since.
+    let (had, lapsed) = use_hook(|| (Rc::new(Cell::new(false)), Rc::new(Cell::new(false))));
+    use_effect(move || {
+        if views.ws.session.read().ready().is_none() {
+            lapsed.set(had.get());
+            let (mut bound, mut funnel) = (views.bound, views.funnel);
+            if !bound.peek().is_empty() {
+                bound.write().clear();
+            }
+            if funnel.peek().is_some() {
+                funnel.set(None);
+            }
+            return;
+        }
+        had.set(true);
+        if lapsed.replace(false) {
+            views.rebind_all();
+        }
+    });
 }
 
 /// Keep the grid's widths and selection fitted to what it shows.
