@@ -23,6 +23,7 @@ pub mod crash_flow;
 pub mod files;
 #[cfg(feature = "gallery")]
 pub mod gallery;
+pub mod import_flow;
 pub mod keys;
 pub mod launch;
 pub mod menu;

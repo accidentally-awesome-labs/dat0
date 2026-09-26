@@ -22,7 +22,7 @@ PD-023 in [`docs/deferrals.md`](docs/deferrals.md)).
 
 | Works in the current build | Being reconnected |
 |---|---|
-| Opening CSV, TSV, JSON, Parquet and SQLite — file picker, drag-and-drop, command line — into a virtualized grid | A CSV whose delimiter or encoding the sniff cannot settle: the import wizard it needs |
+| Opening CSV, TSV, JSON, Parquet and SQLite — file picker, drag-and-drop, command line — into a virtualized grid, and the import wizard for a CSV whose delimiter or encoding needs asking | A workspace folder dropped onto a window or named on the command line (File → Open Workspace… opens one) |
 | MotherDuck, with your token: the account's databases listed and their tables opened | |
 | The SQL console: running a query into the grid, history, saved queries, completion | |
 | AI assist, with your own key: SQL written from a question, and a statement explained, from the schema alone | |
@@ -65,8 +65,9 @@ toolchain and the system libraries listed in [CONTRIBUTING.md](CONTRIBUTING.md))
    curated Chinook dataset — multi-table SQL, a saved chart, and a pre-filled query
    ready to run.
 3. **Or drop your own file.** Drag a CSV, TSV, JSON, Parquet or SQLite file onto
-   the drop zone. No import wizard, no waiting. A SQLite file is attached
-   read-only, with its tables listed under CONNECTIONS.
+   the drop zone. Most files open at once; a CSV whose delimiter or encoding
+   dat0 cannot settle opens in a short import wizard first. A SQLite file is
+   attached read-only, with its tables listed under CONNECTIONS.
 
 <!--
   Screenshot owed: enriched first-run hero capture.

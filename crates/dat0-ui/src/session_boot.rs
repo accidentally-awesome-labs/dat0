@@ -381,7 +381,7 @@ pub async fn open_paths(ws: Workspace, paths: Vec<PathBuf>) {
         return;
     }
 
-    for outcome in handle_drop(paths, session).await {
+    for outcome in handle_drop(paths, session.clone()).await {
         match outcome {
             DropOutcome::Registered {
                 table_name,
@@ -416,10 +416,13 @@ pub async fn open_paths(ws: Workspace, paths: Vec<PathBuf>) {
                     error,
                 ));
             }
-            other => {
-                // The import wizard's ambiguous-sniff outcome. Routed by the
-                // wizard surface, which owns the mapping UI.
-                tracing::info!(?other, "drop needs the import wizard");
+            // A CSV the sniff could not settle: the wizard asks for its
+            // dialect and columns (step 5.10). It was logged and let go.
+            DropOutcome::OpenWizard { path, sniff } => {
+                crate::import_flow::offer(ws, session.clone(), path, sniff);
+            }
+            DropOutcome::Cancelled { path } => {
+                tracing::info!(?path, "import cancelled");
             }
         }
     }

@@ -96,7 +96,7 @@ that's modifying it; merge conflicts are signals worth investigating.
 | PD-020 | P4c T14 wired inline-editor `Enter` → commit + move-DOWN + focus-on-mount, but `Tab` → commit + move-RIGHT could NOT be wired: gpui-component `Input` (rev `0f0ab35`) consumes Tab internally for focus tab-stops and surfaces no `InputEvent::PressTab` variant (`InputEvent` is `{ Change, PressEnter, Focus, Blur }`). **Closed by Phase 6 of the GPUI→Dioxus migration (2026-08-10):** the limitation was the toolkit's, and a plain `<input>` surfaces Tab like any other key, so `dat0-ui`'s cell editor commits and steps one column right on Tab, one left on Shift-Tab, clamped at the row's ends. | closed | low |
 | PD-021 | P4c (T11 review): `error_ux::push` enqueues success/error banners into the global `PENDING` queue, but NOTHING drains it in the runtime render tree — only `#[cfg(test)]` code calls `drain_pending`. So export completion/failure feedback (`window.rs::run_export`) AND the pre-existing P4b paste-reject banner (`grid/edit_ops.rs`) are invisible to the user at runtime. **Closed by P6a T1:** `WorkspaceShell::render` now calls `error_ux::banner::merge_pending` into a per-window `banners` field and renders a host strip atop the shell. | closed | medium |
 | PD-022 | P6a (T12 review): the Inspector profile is refreshed on forward data/schema mutations (cell edit, paste, cut, delete, rename, reorder, transform-apply via `route_change`), but NOT on `undo`/`redo` or SQL-console grid-bind — those rebind via `apply_view_change`, which has no inspector hook. So undoing an edit (or rebinding a grid from the SQL console) leaves the inspector profile stale until the next forward mutation. Single well-scoped fix: hook `apply_view_change` (or an `on_rebind_complete` seam) to invalidate/re-profile the inspected table. Not a regression — the inspector did not refresh at all before P6a. | closed | low |
-| PD-023 | The Dioxus shell is not wired to `dat0-core`: 22 of 40 registered actions only logged, opened an empty dialog, or discarded the reply (none does now; the SQL console runs, the grid sorts, filters, edits, saves and exports, Live Refresh reads a file again, a closed or crashed window's work comes back, workspaces open and save, packages open read-only, unpack into a workspace, export and replay, the perf HUD shows frames, memory and pages, SQLite files attach, Help → Check for Updates answers, the chart draws the active tab and saves, the inspector profiles it, AI takes a key and writes and explains SQL in the console, MotherDuck connects, a crashed run's report is offered at the next launch, ⌘K opens the palette, the status bar's egress and the footer's window count are measured, a theme chosen is kept across launches, and the status bar and title bar say what the window is doing, since 2026-09-26). Still open: a CSV whose dialect the sniff cannot settle never opens, because the import wizard it needs is not wired. "Logic green, screen dead" at app scale, recorded nowhere until 2026-09-25 | open | high |
+| PD-023 | The Dioxus shell is not wired to `dat0-core`: 22 of 40 registered actions only logged, opened an empty dialog, or discarded the reply (none does now; the SQL console runs, the grid sorts, filters, edits, saves and exports, Live Refresh reads a file again, a closed or crashed window's work comes back, workspaces open and save, packages open read-only, unpack into a workspace, export and replay, the perf HUD shows frames, memory and pages, SQLite files attach, Help → Check for Updates answers, the chart draws the active tab and saves, the inspector profiles it, AI takes a key and writes and explains SQL in the console, MotherDuck connects, a crashed run's report is offered at the next launch, ⌘K opens the palette, the status bar's egress and the footer's window count are measured, a theme chosen is kept across launches, the status bar and title bar say what the window is doing, and a CSV the sniff cannot settle opens in the import wizard, since 2026-09-26). Still open: a workspace folder dropped onto a window or named on the command line is refused as a file dat0 cannot read. "Logic green, screen dead" at app scale, recorded nowhere until 2026-09-25 | open | high |
 | PD-024 | Banners raised after a window's first frame were never shown — the shell drained the queue once per mount; a refused drop surfaced later, twice, in another window | closed | high |
 | PD-025 | The recovery panel listed the running window's own session as an orphan, and its Discard deleted it | closed | high |
 | PD-026 | The grid cannot scroll past row ~1,290,555: the canvas is rows × 26 px, uncapped, and WebKit clamps layout at ~33.5M px | closed | high |
@@ -2607,6 +2607,23 @@ that's modifying it; merge conflicts are signals worth investigating.
     it. `tests/status_bar.rs` runs a query into the grid and selects cells
     over a real session, and `tests/connections_flow.rs` connects MotherDuck
     and disconnects it.
+  - 2026-09-26, the import wizard (`import_flow.rs`, step 5.10). A CSV whose
+    delimiter two sniffs disagree on, or whose first 8 KB is not UTF-8, came
+    back from the drop as `OpenWizard`, and the window logged it and let it
+    go: the file never opened, and nothing said why. The wizard was built,
+    with its validation, and nothing opened it, in this build or the GPUI
+    one. Such a file now opens in the wizard, seeded with what DuckDB reads
+    under the sniff's delimiter; its columns follow the dialect as it is
+    edited; and Import reads the file as it is told, into a table of the
+    session's own in a tab, with the columns left out dropped and the rest
+    renamed. A file that is not UTF-8 is told so in the wizard, rather than
+    nowhere (D-010). A dialog already up keeps its place, and a banner says
+    to open the file again. `tests/import_wizard_flow.rs` opens a Latin-1
+    file as a drop would, and reads a semicolon file without its header,
+    one column renamed and one left out.
+  - Still open in the wizard: Live Refresh reads such a file again with
+    automatic detection, since the dialect chosen is not kept with the
+    table.
 - **Discovered:** project review, 2026-09-25 — seven read-only audits plus a
   Linux release build driven under Xvfb.
 - **Fix:** port each surface's orchestration from `95627c8` onto the
