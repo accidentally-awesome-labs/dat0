@@ -183,26 +183,11 @@ pub fn Shell() -> Element {
     let inspector = InspectorHost::use_new(ws, views, charts);
 
     // The AI panel's controller, built once so the modal can be opened from a
-    // command without rebuilding the provider draft each time.
-    let ai = crate::components::ai::AiController::use_new(crate::components::ai::AiDeps {
-        store: std::sync::Arc::new(dat0_core::settings::store::SettingsStore::with_path(
-            dat0_core::platform::config_dir()
-                .unwrap_or_default()
-                .join("settings.toml"),
-        )),
-        // A keychain that will not open is not a reason to refuse the window:
-        // the panel degrades to "no key stored", which is the truth.
-        keys: match dat0_core::ai::key_store::KeychainKeyStore::new() {
-            Ok(k) => {
-                std::sync::Arc::new(k) as std::sync::Arc<dyn dat0_core::ai::key_store::KeyStore>
-            }
-            Err(e) => {
-                tracing::warn!("keychain unavailable: {e:#}");
-                std::sync::Arc::new(dat0_core::ai::key_store::MemoryKeyStore::default())
-            }
-        },
-        probe: std::sync::Arc::new(crate::components::ai::LiveProbe),
-    });
+    // command without rebuilding the provider draft each time, and the prompt
+    // its Save key and Save model ask for.
+    let ai_deps = crate::ai_flow::use_deps();
+    let ai = crate::components::ai::AiController::use_new(ai_deps.ai.clone());
+    crate::ai_flow::use_entry(ws, ai.clone(), ai_deps.volatile);
 
     // The frame HUD. Shell state, not workspace state: nothing outside this
     // subtree reads it, and hoisting it would widen `Workspace` for one toggle.

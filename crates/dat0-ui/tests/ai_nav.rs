@@ -2,8 +2,9 @@
 //!
 //! Ported from `dat0-app`'s `tests/ai_nav.rs`, whose subject was a dock in the
 //! left panel. The dock is gone (S1); the panel now lives in the shell's single
-//! modal slot, reached from the sidebar's CONNECTIONS section and from
-//! Settings' "AI" pane. What that test actually *proved* survives the move:
+//! modal slot, reached from the AI Panel command (the palette and the menu
+//! bar) and from Settings' "AI" pane. What that test actually *proved*
+//! survives the move:
 //!
 //! * every control the panel offers is a real, reachable, operable button,
 //!   painted in a fixed order, carrying the field ids the rest of the app
@@ -484,7 +485,7 @@ fn slot() -> Harness {
 #[test]
 fn the_panel_is_reached_through_the_single_modal_slot() {
     // S1 deleted the left dock the panel used to live in. It is a modal now,
-    // opened from the sidebar's CONNECTIONS section and from Settings' AI pane.
+    // opened by the AI Panel command and from Settings' AI pane.
     let h = slot();
     assert!(
         h.by_a11y_id("ai-panel").is_some(),

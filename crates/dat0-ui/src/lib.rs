@@ -13,6 +13,7 @@
 //!   tests query by. Unlike the GPUI build, these ship in release.
 
 pub mod a11y;
+pub mod ai_flow;
 pub mod background;
 pub mod clipboard;
 pub mod components;

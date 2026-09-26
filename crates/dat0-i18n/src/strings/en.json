@@ -18,6 +18,7 @@
   "ai.key.set": "Key set",
   "ai.key.set_button": "Save key",
   "ai.key.unset": "No key",
+  "ai.key.volatile": "The keychain could not be opened, so this key lasts only until dat0 quits",
   "ai.model": "Model",
   "ai.model.prompt": "Model name (e.g. gpt-4o)",
   "ai.model.set_button": "Save model",
