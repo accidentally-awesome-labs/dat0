@@ -78,12 +78,17 @@ pub fn main() -> anyhow::Result<()> {
     // is found.
     {
         let scratch = state_dir.join("scratch");
+        let inspect = state_dir.join("inspect");
         let scan = std::thread::Builder::new()
             .name("dat0-recovery-scan".into())
             .spawn(move || {
                 let swept = dat0_core::recovery_scan::sweep_scratch(&scratch);
                 if swept > 0 {
                     tracing::info!(swept, "removed scratch sessions with nothing to recover");
+                }
+                let swept = dat0_core::recovery_scan::sweep_inspect(&inspect);
+                if swept > 0 {
+                    tracing::info!(swept, "removed packages closed windows had extracted");
                 }
                 let recents = dat0_core::globals::recents_snapshot();
                 let _ = dat0_core::recovery_scan::recovery_scan_emit(&scratch, &recents);

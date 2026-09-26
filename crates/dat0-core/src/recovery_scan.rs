@@ -111,6 +111,31 @@ pub fn sweep_scratch(scratch_root: &Path) -> usize {
     removed
 }
 
+/// Remove what closed Inspect windows extracted under `inspect_root`, and
+/// return how many were removed. An inspect directory holds a copy of a
+/// package the user still has, so nothing in one is worth keeping once its
+/// window is gone; one whose window is open is left.
+pub fn sweep_inspect(inspect_root: &Path) -> usize {
+    let Ok(entries) = std::fs::read_dir(inspect_root) else {
+        return 0;
+    };
+    let mut removed = 0;
+    for dir in entries.flatten().map(|e| e.path()) {
+        let named_for_a_window = dir
+            .file_name()
+            .and_then(|n| n.to_str())
+            .is_some_and(|n| uuid::Uuid::parse_str(n).is_ok());
+        if !dir.is_dir() || !named_for_a_window || crate::globals::is_live_scratch_dir(&dir) {
+            continue;
+        }
+        match std::fs::remove_dir_all(&dir) {
+            Ok(()) => removed += 1,
+            Err(e) => tracing::warn!(dir = %dir.display(), error = %e, "sweep: could not remove"),
+        }
+    }
+    removed
+}
+
 /// Emit the boot recovery banner, or nothing when there is nothing to recover.
 ///
 /// The count is `orphan scratch dirs + incomplete workspaces`. The banner is
@@ -291,5 +316,29 @@ mod tests {
         assert!(recoverable_scratch(&scratch).is_empty(), "its own window's");
         crate::globals::unregister_live_window(id);
         assert_eq!(recoverable_scratch(&scratch), [dir], "once it closes");
+    }
+
+    #[test]
+    fn what_a_closed_inspect_window_extracted_is_removed() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let inspect = tmp.path().join("inspect");
+        let closed = inspect.join(uuid::Uuid::now_v7().to_string());
+        let open_id = uuid::Uuid::now_v7();
+        let open = inspect.join(open_id.to_string());
+        let not_a_window = inspect.join("keep-me");
+        for d in [&closed, &open, &not_a_window] {
+            fs::create_dir_all(d.join("data")).unwrap();
+            fs::write(d.join("inspect.duckdb"), b"db").unwrap();
+        }
+        crate::globals::register_live_window(open_id);
+
+        assert_eq!(sweep_inspect(&inspect), 1);
+        crate::globals::unregister_live_window(open_id);
+        assert!(!closed.exists(), "a closed window's copy goes");
+        assert!(open.exists(), "an open window's stays");
+        assert!(
+            not_a_window.exists(),
+            "and what no window made is not touched"
+        );
     }
 }

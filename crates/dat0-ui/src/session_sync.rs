@@ -53,7 +53,7 @@ pub fn use_session_sync(ws: Workspace, views: Views, console: Signal<Tabs>) {
     let reopened = use_hook(|| {
         matches!(
             try_consume_context::<Opening>(),
-            Some(Opening::Recover { .. } | Opening::Workspace { .. })
+            Some(Opening::Recover { .. } | Opening::Workspace { .. } | Opening::Inspect { .. })
         )
     });
     // Recording waits until the session has been read in: the first record

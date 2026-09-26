@@ -185,6 +185,7 @@ fn the_scrapers_see_what_they_should() {
     // file would pass on empty sets.
     assert!(handled_locally(menu::menu_ids::DOCS));
     assert!(handled_locally("recents.open.3"));
-    assert!(!handled_locally(menu::menu_ids::OPEN_PACKAGE));
+    assert!(handled_locally(menu::menu_ids::OPEN_PACKAGE));
+    assert!(!handled_locally(menu::menu_ids::EXPORT_PACKAGE));
     assert!(paths(body(MENU_SRC, "pub fn build() -> Menu {"), "ids").len() > 10);
 }

@@ -49,6 +49,10 @@ dat0 or Rust.
 
 All package actions live under the **File** menu.
 
+> **In this build**, only **Open** works in the app. Export, Unpack and Replay
+> are not wired back yet (PD-023 in `docs/deferrals.md`), and their menu items
+> are disabled; the CLI below does all three meanwhile.
+
 - **File → Export .dat0 Package** — write the current workspace to a `.dat0`
   file you choose. Exporting from a **live session** captures the full
   recipe, including derived tables and their lineage (see the known limitation

@@ -264,6 +264,7 @@ async fn build(ws: Workspace, opening: &Opening) -> SessionSlot {
             Session::new_with_id(state_root, budget, ws.window_id).await
         }
         Opening::Recover { dir } => Session::recover(dir.clone(), budget).await,
+        Opening::Inspect { package } => crate::package_open::build(ws, package, budget).await,
         Opening::Workspace { root, networked } => Session::recover_workspace(root.clone(), budget)
             .await
             .map(|mut s| {
@@ -324,6 +325,16 @@ pub(crate) fn remember(root: &std::path::Path) {
 /// "drop" cannot drift — this is the one function that turns a path into a tab.
 pub async fn open_paths(ws: Workspace, paths: Vec<PathBuf>) {
     let mut ws = ws;
+    // A package opens read-only in a window of its own, never as a table.
+    let (packages, paths): (Vec<PathBuf>, Vec<PathBuf>) = paths
+        .into_iter()
+        .partition(|p| crate::package_open::is_package(p));
+    for package in packages {
+        crate::package_open::open_here(ws, package);
+    }
+    if paths.is_empty() {
+        return;
+    }
     // Scoped: the read guard must be gone before the queue is written.
     let (where_to, ready) = {
         let slot = ws.session.read();

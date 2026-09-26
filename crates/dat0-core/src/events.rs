@@ -37,6 +37,9 @@ pub enum Opening {
     /// and session. `networked`: the folder is on a sync drive, so the window
     /// records itself in the workspace's cross-machine lock as well.
     Workspace { root: PathBuf, networked: bool },
+    /// The `.dat0` package at `package`, read-only: its tables, its tabs with
+    /// their views, its saved queries and charts, as it was sealed.
+    Inspect { package: PathBuf },
 }
 
 impl Opening {

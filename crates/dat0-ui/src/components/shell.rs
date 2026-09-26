@@ -416,8 +416,7 @@ pub fn Shell() -> Element {
                                 // activation path.
                                 crate::state::SECTION_PACKAGES => {
                                     if let Some(p) = packages.get(i) {
-                                        open_events
-                                            .send(dat0_core::events::AppEvent::OpenWindow(dat0_core::events::Opening::files(vec![p.path.clone()])));
+                                        crate::package_open::open(ws, &open_events, p.path.clone());
                                     }
                                 }
                                 // CONNECTIONS rows arrive with the engine feed.
@@ -488,25 +487,22 @@ pub fn Shell() -> Element {
 
                             if ws.tabs.read().is_empty() {
                                 EmptyState {
-                                    recents: dat0_core::globals::recents_snapshot()
-                                        .into_iter()
-                                        .map(|path| dat0_core::recents::RecentEntry::Workspace {
-                                            path,
-                                        })
-                                        .collect(),
+                                    recents: dat0_core::globals::recent_entries(),
                                     first_run_done: first_run_done(),
                                     booting: ws.session.read().is_booting(),
                                     on_open_sample: move |kind| open_sample(ws, kind),
-                                    // Recent workspaces: a folder is opened as one,
-                                    // never handed to the file drop.
+                                    // A recent workspace opens as one, and a recent
+                                    // package read-only; neither is handed to the
+                                    // file drop.
                                     on_open_recent: {
                                         let events = demo_events.clone();
-                                        move |e: dat0_core::recents::RecentEntry| {
-                                            crate::workspace_open::open(
-                                                ws,
-                                                &events,
-                                                e.path().to_path_buf(),
-                                            );
+                                        move |e: dat0_core::recents::RecentEntry| match e {
+                                            dat0_core::recents::RecentEntry::Package { path } => {
+                                                crate::package_open::open(ws, &events, path)
+                                            }
+                                            dat0_core::recents::RecentEntry::Workspace { path } => {
+                                                crate::workspace_open::open(ws, &events, path)
+                                            }
                                         }
                                     },
                                     on_open_file: move |_| {

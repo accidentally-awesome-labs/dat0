@@ -96,7 +96,7 @@ that's modifying it; merge conflicts are signals worth investigating.
 | PD-020 | P4c T14 wired inline-editor `Enter` → commit + move-DOWN + focus-on-mount, but `Tab` → commit + move-RIGHT could NOT be wired: gpui-component `Input` (rev `0f0ab35`) consumes Tab internally for focus tab-stops and surfaces no `InputEvent::PressTab` variant (`InputEvent` is `{ Change, PressEnter, Focus, Blur }`). **Closed by Phase 6 of the GPUI→Dioxus migration (2026-08-10):** the limitation was the toolkit's, and a plain `<input>` surfaces Tab like any other key, so `dat0-ui`'s cell editor commits and steps one column right on Tab, one left on Shift-Tab, clamped at the row's ends. | closed | low |
 | PD-021 | P4c (T11 review): `error_ux::push` enqueues success/error banners into the global `PENDING` queue, but NOTHING drains it in the runtime render tree — only `#[cfg(test)]` code calls `drain_pending`. So export completion/failure feedback (`window.rs::run_export`) AND the pre-existing P4b paste-reject banner (`grid/edit_ops.rs`) are invisible to the user at runtime. **Closed by P6a T1:** `WorkspaceShell::render` now calls `error_ux::banner::merge_pending` into a per-window `banners` field and renders a host strip atop the shell. | closed | medium |
 | PD-022 | P6a (T12 review): the Inspector profile is refreshed on forward data/schema mutations (cell edit, paste, cut, delete, rename, reorder, transform-apply via `route_change`), but NOT on `undo`/`redo` or SQL-console grid-bind — those rebind via `apply_view_change`, which has no inspector hook. So undoing an edit (or rebinding a grid from the SQL console) leaves the inspector profile stale until the next forward mutation. Single well-scoped fix: hook `apply_view_change` (or an `on_rebind_complete` seam) to invalidate/re-profile the inspected table. Not a regression — the inspector did not refresh at all before P6a. | closed | low |
-| PD-023 | The Dioxus shell is not wired to `dat0-core`: 22 of 40 registered actions only logged, opened an empty dialog, or discarded the reply (1 still does; the SQL console runs, the grid sorts, filters, edits, saves and exports, Live Refresh reads a file again, a closed or crashed window's work comes back, and workspaces open and save, since 2026-09-26). Packages, MotherDuck, AI key entry and updates are unreachable. "Logic green, screen dead" at app scale, recorded nowhere until 2026-09-25 | open | high |
+| PD-023 | The Dioxus shell is not wired to `dat0-core`: 22 of 40 registered actions only logged, opened an empty dialog, or discarded the reply (1 still does; the SQL console runs, the grid sorts, filters, edits, saves and exports, Live Refresh reads a file again, a closed or crashed window's work comes back, workspaces open and save, and packages open read-only, since 2026-09-26). Exporting, unpacking and replaying a package, MotherDuck, AI key entry and updates are unreachable. "Logic green, screen dead" at app scale, recorded nowhere until 2026-09-25 | open | high |
 | PD-024 | Banners raised after a window's first frame were never shown — the shell drained the queue once per mount; a refused drop surfaced later, twice, in another window | closed | high |
 | PD-025 | The recovery panel listed the running window's own session as an orphan, and its Discard deleted it | closed | high |
 | PD-026 | The grid cannot scroll past row ~1,290,555: the canvas is rows × 26 px, uncapped, and WebKit clamps layout at ~33.5M px | closed | high |
@@ -921,10 +921,11 @@ that's modifying it; merge conflicts are signals worth investigating.
   - **No "read-only" badge** in the Inspect window chrome — the window refuses
     edits, but nothing in the title/header visibly signals that it's a read-only
     package view (the user discovers it only when an edit is refused).
-  - **Inspect scratch dir not GC'd on close** — the Inspect window materializes
-    the package under `<state>/inspect/<uuid>/` and keeps it for the window's
-    lifetime, but the directory is **not** pruned when the window closes
-    (candidate: prune on launch like the orphan-scratch scan does for sessions).
+  - ~~**Inspect scratch dir not GC'd on close**~~ — resolved 2026-09-26
+    (PD-023, step 5.4d): what a closed Inspect window extracted under
+    `<state>/inspect/<window id>/` is removed at the next launch
+    (`recovery_scan::sweep_inspect`), as the orphan-scratch sweep does for
+    sessions.
   - **GUI Replay binds the first source only** — the in-app Replay flow binds the
     picked file to the package's **first** source; multi-source replay stays on
     the `dat0 replay --source logical=path` CLI (which accepts repeated
@@ -937,7 +938,7 @@ that's modifying it; merge conflicts are signals worth investigating.
   block the verb. Each is small and independent.
 - **Originating doc:** P8 T9; `crates/dat0-app/src/package/inspect.rs`.
 - **User-facing doc:** `docs/dat0-packages.md` § "In the app".
-- **Last touched:** 2026-06-13.
+- **Last touched:** 2026-09-26.
 
 ---
 
@@ -2393,6 +2394,20 @@ that's modifying it; merge conflicts are signals worth investigating.
   - Still open for workspaces: Open Recent lists the recent workspaces as
     they were at launch, since its items are resolved by position; a
     workspace opened or saved since is listed from the next launch.
+  - 2026-09-26, Open Package (`package_open.rs`, step 5.4d). File → Open
+    Package was disabled, the sidebar's Packages rows and the hero's recent
+    packages opened the package as a data file, and a dropped package was
+    refused as an unknown file type. Each now opens it in a window of its
+    own, read-only (`Opening::Inspect`), named for the file: its tables read
+    from its Parquet, its tabs with their views, its saved queries and
+    charts. Its tables were TEMP views, which the catalog does not list, so
+    an inspected package showed no tables and brought back no tabs; they are
+    views in the window's own throwaway database now. The hero lists recent
+    packages beside recent workspaces. What a closed window extracted is
+    removed at the next launch (`recovery_scan::sweep_inspect`).
+    `tests/package_open.rs` seals a package with dat0-core and opens it each
+    way.
+  - Still open for packages: Export, Unpack and Replay Package.
 - **Discovered:** project review, 2026-09-25 — seven read-only audits plus a
   Linux release build driven under Xvfb.
 - **Fix:** port each surface's orchestration from `95627c8` onto the

@@ -44,7 +44,6 @@ pub mod menu_ids {
 /// (PD-023). Built disabled, like the [`crate::router::UNWIRED`] actions, so
 /// the menu bar offers nothing that does nothing.
 pub const UNWIRED_LOCAL: &[&str] = &[
-    menu_ids::OPEN_PACKAGE,
     menu_ids::EXPORT_PACKAGE,
     menu_ids::UNPACK_PACKAGE,
     menu_ids::REPLAY_PACKAGE,

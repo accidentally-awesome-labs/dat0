@@ -21,6 +21,7 @@ pub mod gallery;
 pub mod keys;
 pub mod launch;
 pub mod menu;
+pub mod package_open;
 #[cfg(feature = "perf-harness")]
 pub mod perf;
 pub mod protocol;

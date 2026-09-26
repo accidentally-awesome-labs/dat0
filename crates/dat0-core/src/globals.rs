@@ -114,6 +114,14 @@ pub fn recents_snapshot() -> Vec<PathBuf> {
         .unwrap_or_default()
 }
 
+/// Every recent entry, workspaces and packages, newest first: what the hero
+/// lists. Empty when the store is not installed or its lock is poisoned.
+pub fn recent_entries() -> Vec<RecentEntry> {
+    recents()
+        .and_then(|r| r.lock().ok().map(|g| g.list().to_vec()))
+        .unwrap_or_default()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

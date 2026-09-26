@@ -68,7 +68,14 @@ pub async fn open_readonly(
             "SELECT * FROM read_parquet('{}')",
             parquet_str.replace('\'', "''")
         );
-        if let Err(e) = engine.create_or_replace_view(&t.name, &sql).await {
+        // A persistent view in this throwaway database, as a registered
+        // file's is: the catalog hides TEMP views, and a window lists its
+        // tables, and restores its tabs, from the catalog.
+        let create = format!(
+            "CREATE OR REPLACE VIEW {} AS {sql}",
+            dat0_engine::quote_ident(&t.name)
+        );
+        if let Err(e) = engine.execute(&create).await {
             engine.close().await.ok();
             return Err(e).with_context(|| {
                 format!("open_readonly: register read_parquet view for {}", t.name)

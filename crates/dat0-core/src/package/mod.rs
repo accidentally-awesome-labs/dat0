@@ -433,10 +433,10 @@ fn derivation_to_origin(derivation: &Derivation) -> DerivedOrigin {
     }
 }
 
-/// Build + write `<dat0>/session.json` (current schema) from the package's
-/// portable views (→ tabs), queries (→ saved queries), and charts (→ saved
-/// charts), matching the on-disk shape [`Session::persist`] writes.
-fn write_session_json(parsed: &ParsedPackage, dat0: &Path) -> Result<()> {
+/// What a package carries of a session: its views as tabs, its queries as
+/// saved queries, its charts as saved charts. Unpacking writes them to the
+/// workspace's `session.json`; inspecting opens a window on them.
+pub fn session_parts(parsed: &ParsedPackage) -> (Vec<Tab>, Vec<SavedQuery>, Vec<SavedChart>) {
     let tabs: Vec<Tab> = parsed
         .views
         .views
@@ -449,8 +449,6 @@ fn write_session_json(parsed: &ParsedPackage, dat0: &Path) -> Result<()> {
             extra: Default::default(),
         })
         .collect();
-
-    let active_tab = if tabs.is_empty() { None } else { Some(0) };
 
     let saved_queries: Vec<SavedQuery> = parsed
         .queries
@@ -478,6 +476,15 @@ fn write_session_json(parsed: &ParsedPackage, dat0: &Path) -> Result<()> {
         })
         .collect();
 
+    (tabs, saved_queries, charts)
+}
+
+/// Build + write `<dat0>/session.json` (current schema) from the package's
+/// portable views (→ tabs), queries (→ saved queries), and charts (→ saved
+/// charts), matching the on-disk shape [`Session::persist`] writes.
+fn write_session_json(parsed: &ParsedPackage, dat0: &Path) -> Result<()> {
+    let (tabs, saved_queries, charts) = session_parts(parsed);
+    let active_tab = if tabs.is_empty() { None } else { Some(0) };
     let state = SessionState {
         schema_version: SESSION_SCHEMA_VERSION,
         tabs,

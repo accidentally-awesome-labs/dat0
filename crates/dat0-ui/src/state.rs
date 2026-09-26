@@ -265,7 +265,7 @@ pub struct Workspace {
 impl Workspace {
     /// Create and provide the workspace to the tree below.
     pub fn provide() -> Self {
-        Self::provide_with(uuid::Uuid::now_v7(), "scratch".into())
+        Self::provide_with(uuid::Uuid::now_v7(), "scratch".into(), false)
     }
 
     /// The workspace of a window opened on `opening`. A recovered session
@@ -281,13 +281,20 @@ impl Workspace {
                 .file_name()
                 .and_then(|n| n.to_str())
                 .and_then(|n| uuid::Uuid::parse_str(n).ok()),
-            Opening::Scratch { .. } | Opening::Workspace { .. } => None,
+            Opening::Scratch { .. } | Opening::Workspace { .. } | Opening::Inspect { .. } => None,
         };
         let name = match opening {
             Opening::Workspace { root, .. } => Self::name_for(root),
+            // A package is named for its file, without the extension.
+            Opening::Inspect { package } => package
+                .file_stem()
+                .map(|n| n.to_string_lossy().into_owned())
+                .unwrap_or_else(|| package.display().to_string()),
             Opening::Scratch { .. } | Opening::Recover { .. } => "scratch".into(),
         };
-        Self::provide_with(id.unwrap_or_else(uuid::Uuid::now_v7), name)
+        // A package is shown as it was sealed.
+        let read_only = matches!(opening, Opening::Inspect { .. });
+        Self::provide_with(id.unwrap_or_else(uuid::Uuid::now_v7), name, read_only)
     }
 
     /// What the titlebar calls the workspace in `root`: its folder.
@@ -297,12 +304,12 @@ impl Workspace {
             .unwrap_or_else(|| root.display().to_string())
     }
 
-    fn provide_with(window_id: uuid::Uuid, name: String) -> Self {
+    fn provide_with(window_id: uuid::Uuid, name: String, read_only: bool) -> Self {
         let ws = Self {
             name: Signal::new(name),
             tabs: Signal::new(Vec::new()),
             active: Signal::new(None),
-            read_only: Signal::new(false),
+            read_only: Signal::new(read_only),
             live: Signal::new(false),
             layout: Signal::new(DockLayout::default()),
             status: Signal::new(Status::default()),
