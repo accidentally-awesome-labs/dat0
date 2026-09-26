@@ -235,6 +235,13 @@ fn a_sqlite_file_opens_its_first_table_and_lists_the_rest() {
 fn the_chinook_sample_opens_and_its_tables_open_from_the_sidebar() {
     let rt = runtime();
     let _guard = rt.enter();
+    // The hero offers the samples only while nothing is recent, and a
+    // workspace saved by another test here is remembered in the same store.
+    let _ = STATE_ROOT.as_path();
+    if let Some(recents) = dat0_core::globals::recents() {
+        *recents.lock().expect("recents") =
+            dat0_core::recents::Recents::with_path(STATE_ROOT.join("no-recents.json"));
+    }
     let mut h = mount(Opening::files(Vec::new()), None);
     assert!(pump(&mut h, |h| h
         .by_a11y_id("hero-sample-chinook")
