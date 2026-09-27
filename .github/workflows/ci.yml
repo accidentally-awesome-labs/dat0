@@ -201,7 +201,7 @@ jobs:
       # story. Skipped on self-hosted (operator manages disk there).
       - name: Free disk space (hosted Linux only)
         if: runner.os == 'Linux' && runner.environment == 'github-hosted'
-        uses: jlumbroso/free-disk-space@v1.3.1
+        uses: jlumbroso/free-disk-space@v2.0.0
         with:
           tool-cache: true
           android: true
@@ -555,7 +555,7 @@ jobs:
         with:
           cache-targets: false
       - name: Free disk space
-        uses: jlumbroso/free-disk-space@v1.3.1
+        uses: jlumbroso/free-disk-space@v2.0.0
         with:
           tool-cache: true
           android: true
