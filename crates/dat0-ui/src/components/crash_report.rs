@@ -6,11 +6,17 @@
 //! allowed to drift:
 //!
 //! * **Send**    → submit (`submit_staged` for a prior-run crash,
-//!   `submit_report` for a user-initiated bug report) → `clear_staged` → close.
+//!   `submit_report` for a user-initiated bug report) → `clear_staged` → a
+//!   banner saying whether it went → close.
 //! * **Dismiss** → `clear_staged` → close. **Nothing is transmitted.**
 //!
 //! Both exits clear the staged payload, so a report the user declined can
 //! never be picked up and sent by a later launch.
+//!
+//! Submitting sends only while crash reports are on in the settings, read
+//! when Send is pressed. Report a Bug can be chosen while they are off, and
+//! Send used to close on a report that went nowhere, saying nothing: the
+//! panel now says they are off, and offers no Send (step 5.11a).
 //!
 //! # Why the panel may not even appear
 //!
@@ -22,13 +28,15 @@ use std::path::{Path, PathBuf};
 
 use dioxus::prelude::*;
 
+use dat0_core::error_ux::Banner;
 use dat0_core::telemetry::crash::{self, StagedCrash};
 use dat0_core::telemetry::report_logic::{
     RelaunchAction, ReportKind, dialog_body_key, dialog_title_key, resolve_relaunch_action,
 };
-use dat0_core::telemetry::{submit_report, submit_staged};
+use dat0_core::telemetry::{Submission, submission_allowed, submit_report, submit_staged};
 
 use crate::a11y::AccessRole;
+use crate::state::Workspace;
 
 /// Dismissable: closing the scrim is the Dismiss path, which is safe — it
 /// clears staging and sends nothing. The host must route a scrim dismiss
@@ -82,9 +90,21 @@ pub struct CrashReportProps {
 #[component]
 pub fn CrashReport(props: CrashReportProps) -> Element {
     let mut note = use_signal(String::new);
+    // A crash is offered only while reports are on (`on_relaunch`); a bug
+    // report can be asked for while they are off, and then there is nothing
+    // to send. Send asks again either way: Settings is a window of its own,
+    // and can turn them off while this is up.
+    let off = use_hook(|| props.staged.is_none() && !submission_allowed());
+    // The window's banners, to say whether a report went.
+    let ws = try_use_context::<Workspace>();
 
     let staged = props.staged.clone();
-    let body = dat0_i18n::t(dialog_body_key(&kind_of(staged.as_ref())));
+    let body = if off {
+        dat0_i18n::t("report.dialog.off")
+    } else {
+        dat0_i18n::t(dialog_body_key(&kind_of(staged.as_ref())))
+    };
+    let dismiss_label = dat0_i18n::t(if off { "common.close" } else { "common.cancel" });
 
     let send = {
         let staged = staged.clone();
@@ -92,8 +112,11 @@ pub fn CrashReport(props: CrashReportProps) -> Element {
         move |_| {
             let text = note.peek().clone();
             let note_opt = (!text.trim().is_empty()).then_some(text);
-            submit(staged.as_ref(), note_opt.as_deref());
+            let went = submit(staged.as_ref(), note_opt.as_deref());
             crash::clear_staged(&dir);
+            if let Some(ws) = ws {
+                ws.push_banner(outcome(went));
+            }
             props.on_close.call(());
         }
     };
@@ -117,14 +140,16 @@ pub fn CrashReport(props: CrashReportProps) -> Element {
                 "{body}"
             }
 
-            textarea {
-                class: "d0-field d0-report-note",
-                "data-a11y-id": "report-note",
-                "aria-label": dat0_i18n::t("report.dialog.note_placeholder"),
-                placeholder: dat0_i18n::t("report.dialog.note_placeholder"),
-                rows: "4",
-                value: "{note}",
-                oninput: move |e| note.set(e.value()),
+            if !off {
+                textarea {
+                    class: "d0-field d0-report-note",
+                    "data-a11y-id": "report-note",
+                    "aria-label": dat0_i18n::t("report.dialog.note_placeholder"),
+                    placeholder: dat0_i18n::t("report.dialog.note_placeholder"),
+                    rows: "4",
+                    value: "{note}",
+                    oninput: move |e| note.set(e.value()),
+                }
             }
 
             div { class: "d0-report-actions",
@@ -132,17 +157,19 @@ pub fn CrashReport(props: CrashReportProps) -> Element {
                     class: "d0-btn is-ghost",
                     "data-a11y-id": "report-dismiss",
                     role: AccessRole::Button.aria(),
-                    "aria-label": dat0_i18n::t("common.cancel"),
+                    "aria-label": "{dismiss_label}",
                     onclick: dismiss,
-                    {dat0_i18n::t("common.cancel")}
+                    "{dismiss_label}"
                 }
-                button {
-                    class: "d0-btn is-primary",
-                    "data-a11y-id": "report-send",
-                    role: AccessRole::Button.aria(),
-                    "aria-label": dat0_i18n::t("report.dialog.send"),
-                    onclick: send,
-                    {dat0_i18n::t("report.dialog.send")}
+                if !off {
+                    button {
+                        class: "d0-btn is-primary",
+                        "data-a11y-id": "report-send",
+                        role: AccessRole::Button.aria(),
+                        "aria-label": dat0_i18n::t("report.dialog.send"),
+                        onclick: send,
+                        {dat0_i18n::t("report.dialog.send")}
+                    }
                 }
             }
         }
@@ -158,16 +185,27 @@ pub fn dismiss(data_dir: &Path) {
     crash::clear_staged(data_dir);
 }
 
-/// Transmit the report.
+/// Transmit the report, if crash reports are on now.
 ///
 /// Deliberately synchronous, matching the GPUI build: `submit_*` ends in
 /// `sentry::flush(5s)`, and moving it to a background thread would let the
 /// process exit mid-flush — losing exactly the report the user just chose to
 /// send. The accepted cost is that Send can block for up to five seconds.
-fn submit(staged: Option<&StagedCrash>, note: Option<&str>) {
+fn submit(staged: Option<&StagedCrash>, note: Option<&str>) -> Submission {
     match staged {
         Some(s) => submit_staged(s, note),
         None => submit_report(note.unwrap_or("")),
+    }
+}
+
+/// The banner that says what became of a report the user chose to send.
+fn outcome(went: Submission) -> Banner {
+    match went {
+        Submission::Sent => Banner::info(dat0_i18n::t("report.sent")),
+        Submission::Off => Banner::warning_with_body(
+            dat0_i18n::t("report.not_sent"),
+            dat0_i18n::t("report.not_sent.body"),
+        ),
     }
 }
 
@@ -229,6 +267,14 @@ mod tests {
 
         assert!(on_relaunch(dir, true).is_none());
         assert!(on_relaunch(dir, false).is_none());
+    }
+
+    #[test]
+    fn the_banner_says_whether_the_report_went() {
+        assert_eq!(outcome(Submission::Sent).title, dat0_i18n::t("report.sent"));
+        let off = outcome(Submission::Off);
+        assert_eq!(off.title, dat0_i18n::t("report.not_sent"));
+        assert_eq!(off.body, dat0_i18n::t("report.not_sent.body"));
     }
 
     #[test]

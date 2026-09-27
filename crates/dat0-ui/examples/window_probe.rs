@@ -18,20 +18,13 @@
 use dioxus::prelude::*;
 
 use dat0_core::actions::registry::ActionRegistry;
-use dat0_core::events::{AppEvent, AppEvents};
+use dat0_core::events::{AppEvent, Opening};
 use dat0_ui::launch::Boot;
 
 fn main() {
-    let (events, rx) = AppEvents::channel();
     let registry = ActionRegistry::new();
     dat0_core::actions::builtin::register_all(&registry).expect("built-ins register");
-
-    let boot = Boot {
-        events,
-        rx: std::sync::Arc::new(parking_lot::Mutex::new(Some(rx))),
-        registry,
-        cli_paths: std::sync::Arc::new(parking_lot::Mutex::new(Vec::new())),
-    };
+    let boot = Boot::new(registry, Vec::new());
 
     dioxus::LaunchBuilder::desktop()
         .with_cfg(dat0_ui::launch::config())
@@ -46,6 +39,9 @@ const settle = () => new Promise((r) => setTimeout(r, 4));
 for (let i = 0; i < 500; i++) {
   if (document.querySelector('[data-a11y-id="statusbar"]')) {
     dioxus.send(true);
+    // Held open until Rust has read it: a finished script's unread messages
+    // are dropped with its query slot (`EvalError::Finished`).
+    await dioxus.recv();
     break;
   }
   await settle();
@@ -61,19 +57,23 @@ fn Probe() -> Element {
         spawn(async move {
             // The first window mounted its own shell.
             let mut first = document::eval(WAIT_FOR_SHELL);
-            if first.recv::<bool>().await.is_err() {
+            let mounted = first.recv::<bool>().await;
+            let _ = first.send(true);
+            if mounted.is_err() {
                 fail("the first window never mounted a shell");
             }
 
             let before = dioxus::desktop::window().window.id();
 
             // Exactly what the UDS handler and the `window.new` action send.
-            boot.events.send(AppEvent::OpenWindow { paths: Vec::new() });
+            boot.events
+                .send(AppEvent::OpenWindow(Opening::files(Vec::new())));
 
             // The root drains the bus and calls `launch::open_window`. Give it
             // time on a throttled timer, then confirm a *different* window
             // exists and is not the one we started in.
-            let second = dat0_ui::launch::open_window(boot.clone(), Vec::new()).await;
+            let second =
+                dat0_ui::launch::open_window(boot.clone(), Opening::files(Vec::new())).await;
             match second {
                 Some(id) if id != before => {
                     println!("--- dat0 window probe ---");

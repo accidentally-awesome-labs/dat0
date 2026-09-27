@@ -124,7 +124,10 @@ pub fn ensure_bundled_extracted(
     let samples_dir = state_root.join("samples");
     std::fs::create_dir_all(&samples_dir)?;
     let dest = samples_dir.join(filename);
-    if !dest.exists() {
+    // Written again when it is not the build's own: an earlier build's copy,
+    // or one cut short. The Iris sample changed shape (step 5.11f), and a copy
+    // kept only because it existed would open the old one for good.
+    if std::fs::read(&dest).ok().as_deref() != Some(bytes) {
         std::fs::write(&dest, bytes)?;
     }
     Ok(dest)
@@ -186,7 +189,7 @@ pub async fn fetch_remote(
 
     let mut h = Sha256::new();
     h.update(&bytes);
-    let got_sha = format!("{:x}", h.finalize());
+    let got_sha = hex::encode(h.finalize());
     let expected_norm = expected_sha_hex.to_lowercase();
     if got_sha != expected_norm {
         return Err(anyhow!(
@@ -227,6 +230,38 @@ pub fn fetch_failed_banner(url: &str, err: &anyhow::Error) -> crate::error_ux::B
 mod tests {
     use super::*;
     use tempfile::tempdir;
+
+    /// The Iris sample was scikit-learn's layout: its first line, a count and
+    /// the class names, became the column names, and the species were coded
+    /// 0 to 2 (step 5.11f).
+    #[test]
+    fn the_iris_sample_names_its_columns_and_its_species() {
+        let text = std::str::from_utf8(IRIS_CSV).expect("utf-8");
+        let mut lines = text.lines();
+        assert_eq!(
+            lines.next(),
+            Some("sepal_length,sepal_width,petal_length,petal_width,species")
+        );
+        let rows: Vec<&str> = lines.collect();
+        assert_eq!(rows.len(), 150);
+        for species in ["setosa", "versicolor", "virginica"] {
+            let n = rows
+                .iter()
+                .filter(|r| r.ends_with(&format!(",{species}")))
+                .count();
+            assert_eq!(n, 50, "{species}");
+        }
+    }
+
+    #[test]
+    fn a_copy_that_is_not_the_build_s_own_is_written_again() {
+        let dir = tempfile::tempdir().unwrap();
+        let old = dir.path().join("samples").join("iris.csv");
+        std::fs::create_dir_all(old.parent().unwrap()).unwrap();
+        std::fs::write(&old, b"150,4,setosa,versicolor,virginica\n").unwrap();
+        let p = ensure_bundled_extracted(dir.path(), IRIS_CSV, "iris.csv").unwrap();
+        assert_eq!(std::fs::read(&p).unwrap(), IRIS_CSV);
+    }
 
     #[test]
     fn bundled_blobs_non_empty() {

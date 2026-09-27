@@ -45,6 +45,7 @@ futures = { workspace = true }
 async-trait = { workspace = true }
 reqwest = { workspace = true }
 sha2 = { workspace = true }
+hex = { workspace = true }
 zip = { workspace = true }
 url = "2"
 regex = { workspace = true }

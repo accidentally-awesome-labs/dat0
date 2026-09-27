@@ -1,20 +1,18 @@
 //! Edit / clipboard / bulk-operation action descriptors.
 //!
-//! | id                   | shell handler                          |
-//! |----------------------|----------------------------------------|
-//! | `view.copy`          | `copy_selection`                       |
-//! | `view.cut`           | `cut_selection`                        |
-//! | `view.paste`         | `paste_clipboard`                      |
-//! | `view.fill_down`     | `fill_down`                            |
-//! | `view.set_null`      | `set_null_selection`                   |
-//! | `view.set_value`     | `set_value_selection`                  |
-//! | `view.delete_rows`   | `delete_selected_rows`                 |
-//! | `view.delete_column` | `delete_column`                        |
+//! Each acts on the grid's selection, through `dat0-ui`'s
+//! `components::grid::edits`:
 //!
-//! `view.set_value` and `view.delete_column` need an argument the palette
-//! cannot supply (a scalar, a column index). The context menu calls the shell
-//! directly for those; the descriptors exist for discoverability, and the
-//! shell's router treats an argument-less invocation as a no-op.
+//! | id                   | effect                                           |
+//! |----------------------|--------------------------------------------------|
+//! | `view.copy`          | the selection, as TSV, to the clipboard          |
+//! | `view.cut`           | copy, then set the selection to NULL             |
+//! | `view.paste`         | the clipboard's block, at the active cell        |
+//! | `view.fill_down`     | each column's top selected value, downward       |
+//! | `view.set_null`      | the selection to NULL                            |
+//! | `view.set_value`     | asks for a value, then sets the selection to it  |
+//! | `view.delete_rows`   | every row holding a selected cell                |
+//! | `view.delete_column` | hides every column holding a selected cell       |
 
 use super::builtin::{descriptor, ids};
 use super::registry::{ActionGroup, ActionRegistry, RegisterError};

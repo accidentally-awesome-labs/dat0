@@ -1,7 +1,10 @@
-//! GPUI file-drop handler: detect format → register_file_as_table → tab append.
+//! File-drop handler: detect format → register_file_as_table → tab append.
 //!
-//! Unsupported extension (and `.sqlite`) → Banner + drop. Engine error
-//! → Banner with err message + drop. Success → Tab + active.
+//! Every path yields one [`DropOutcome`], and the outcome is the contract: the
+//! caller — the window the file was dropped on — raises the banner for an
+//! unsupported file or an engine error, in its own words and in its own
+//! window. Raising one here as well is how a refused drop used to produce two
+//! banners saying the same thing. Success → Tab + active.
 
 use dat0_engine::{FileFormat, QueryEngine, RegisterOpts};
 use parking_lot::Mutex;
@@ -56,8 +59,6 @@ async fn handle_one(path: PathBuf, session: &Mutex<Session>) -> DropOutcome {
                 .extension()
                 .and_then(|s| s.to_str())
                 .map(|s| s.to_string());
-            let label = ext.clone().unwrap_or_else(|| "(no extension)".to_string());
-            banner::push_warning(format!("Unsupported file type: {label}"));
             return DropOutcome::Unsupported {
                 path,
                 extension: ext,
@@ -145,15 +146,26 @@ async fn handle_one(path: PathBuf, session: &Mutex<Session>) -> DropOutcome {
 
     match info_result {
         Ok(info) => {
-            let mut s = session.lock();
-            s.add_tab(Tab {
+            let persisted = session.lock().add_tab(Tab {
                 table_name: info.name.clone(),
                 source_path: Some(path.clone()),
                 transform_stack: Vec::new(),
                 undo_cursor: 0,
                 extra: Default::default(),
-            })
-            .expect("session::add_tab: persist tab state");
+            });
+            // `add_tab` records the tab in memory before it writes
+            // `session.json`, so a failed write (a full disk, a read-only
+            // state directory) leaves the file open and usable — only crash
+            // recovery will not know about it. That was an `.expect`, and the
+            // release profile aborts on panic: one full disk took the whole
+            // app down on a file drop. Say what was lost instead.
+            if let Err(e) = persisted {
+                tracing::warn!(?path, "opened, but could not persist the session: {e:#}");
+                banner::push(banner::Banner::warning_with_body(
+                    dat0_i18n::t("session.persist_failed"),
+                    format!("{e:#}"),
+                ));
+            }
             DropOutcome::Registered {
                 table_name: info.name,
                 source_path: path,
@@ -161,7 +173,6 @@ async fn handle_one(path: PathBuf, session: &Mutex<Session>) -> DropOutcome {
         }
         Err(e) => {
             let msg = format!("{}: {e}", path.display());
-            banner::push_warning(msg.clone());
             DropOutcome::EngineError { path, error: msg }
         }
     }
@@ -180,7 +191,7 @@ mod tests {
     /// prevents concurrent tests from leaking banners into each other's drain.
     #[tokio::test]
     #[serial]
-    async fn unsupported_ext_emits_banner_no_tab() {
+    async fn unsupported_ext_returns_the_outcome_and_leaves_the_banner_to_the_caller() {
         let _ = drain_pending(); // clear any banners from prior tests
         let tmp = TempDir::new().unwrap();
         let sess = Session::new(tmp.path(), BUDGET).await.unwrap();
@@ -199,17 +210,18 @@ mod tests {
         );
         assert!(arc.lock().tabs().is_empty(), "no tab should be added");
 
-        let banners = drain_pending();
-        assert_eq!(banners.len(), 1);
+        // The window that received the drop raises the banner (it is the only
+        // code that knows which window that is). A second one from here is
+        // the duplicate a refused drop used to show.
         assert!(
-            banners[0].title.contains("Unsupported"),
-            "banner title should mention 'Unsupported'"
+            drain_pending().is_empty(),
+            "handle_drop must not raise its own banner for an outcome it returns"
         );
     }
 
     #[tokio::test]
     #[serial]
-    async fn sqlite_ext_emits_banner_no_tab() {
+    async fn sqlite_ext_is_refused_without_a_tab() {
         let _ = drain_pending();
         let tmp = TempDir::new().unwrap();
         let sess = Session::new(tmp.path(), BUDGET).await.unwrap();

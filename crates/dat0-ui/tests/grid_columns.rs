@@ -8,6 +8,10 @@
 //!
 //! The gestures are driven through the drag shield rather than a JS
 //! `document` listener, which is exactly why they are testable here at all.
+//!
+//! A drop asks the grid's owner to move the column (`on_reorder`) and moves
+//! nothing itself: the owner's view reorders the column, and its width
+//! follows the column there (`grid::views::use_fit`, `tests/grid_views.rs`).
 
 mod support;
 
@@ -72,16 +76,23 @@ fn Host(props: HostProps) -> Element {
     let cols = props.columns.len();
     let selection = use_signal(|| SelectionModel::new(2, cols));
     let widths = use_signal(|| vec![COL_W_DEFAULT; cols]);
+    let mut moves = use_signal(Vec::<(usize, usize)>::new);
     rsx! {
         Grid {
             source: props.source.clone(),
             selection,
             columns: props.columns.clone(),
             widths,
+            on_reorder: move |m| moves.write().push(m),
         }
         // Readback: the harness sees text, not Rust state.
         div { "data-a11y-id": "widths", "{widths.read():?}" }
+        div { "data-a11y-id": "moves", "{moves.read():?}" }
     }
+}
+
+fn moves(h: &Harness) -> String {
+    h.text_of(h.by_a11y_id("moves").unwrap())
 }
 
 /// A mouse event at `x`, which is all a resize gesture reads.
@@ -213,9 +224,8 @@ async fn a_resize_does_not_start_a_cell_selection() {
 }
 
 #[tokio::test]
-async fn dropping_a_grip_on_another_column_moves_it() {
+async fn dropping_a_grip_on_another_column_asks_for_the_move() {
     let (mut h, _tmp) = mount().await;
-    // Make the columns distinguishable by width, then move column 0 to slot 2.
     h.dispatch(h.by_a11y_id("col-resize-0").unwrap(), "mousedown", at(0.0));
     h.dispatch(h.by_a11y_id("drag-shield").unwrap(), "mousemove", at(80.0));
     h.dispatch(h.by_a11y_id("drag-shield").unwrap(), "mouseup", at(80.0));
@@ -228,10 +238,12 @@ async fn dropping_a_grip_on_another_column_moves_it() {
     );
     h.dispatch(h.by_a11y_id("col-grip-2").unwrap(), "drop", drag_data());
 
+    assert_eq!(moves(&h), "[(0, 2)]", "column 0 to slot 2, asked once");
     assert_eq!(
         widths(&h),
-        vec![100.0, 100.0, 180.0],
-        "the moved column takes its width with it"
+        vec![180.0, 100.0, 100.0],
+        "the grid moves no width on its own: moving one without its column \
+         is the drift this used to have"
     );
 }
 
@@ -251,6 +263,7 @@ async fn dropping_a_column_on_itself_changes_nothing() {
     h.dispatch(h.by_a11y_id("col-grip-1").unwrap(), "drop", drag_data());
 
     assert_eq!(widths(&h), before);
+    assert_eq!(moves(&h), "[]");
 }
 
 #[tokio::test]
@@ -261,6 +274,7 @@ async fn a_drop_without_a_dragstart_is_ignored() {
     let before = widths(&h);
     h.dispatch(h.by_a11y_id("col-grip-2").unwrap(), "drop", drag_data());
     assert_eq!(widths(&h), before);
+    assert_eq!(moves(&h), "[]");
 }
 
 #[tokio::test]

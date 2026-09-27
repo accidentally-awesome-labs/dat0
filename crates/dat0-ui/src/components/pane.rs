@@ -18,9 +18,12 @@ pub struct PaneProps {
     pub id: String,
     /// Header title.
     pub title: String,
-    /// Right-aligned header meta: `⌘⏎ run`, `{column} · {type}`, the chart kind.
+    /// Right-aligned header meta: `run`, `{column} · {type}`, the chart kind.
     #[props(default)]
     pub meta: String,
+    /// A chord shown before the meta, as this platform's keymap has it.
+    #[props(default)]
+    pub chord: Option<String>,
     /// Whether the body is showing.
     pub open: bool,
     /// The header was clicked.
@@ -48,7 +51,13 @@ pub fn Pane(props: PaneProps) -> Element {
                 span { class: "d0-chevron", "▾" }
                 span { class: "d0-label", "{props.id}" }
                 span { class: "d0-head-title", "{props.title}" }
-                span { class: "d0-pane-meta d0-label", "{props.meta}" }
+                span { class: "d0-pane-meta d0-label",
+                    if let Some(chord) = &props.chord {
+                        span { "data-chord": "{props.id}", "{chord}" }
+                        " "
+                    }
+                    "{props.meta}"
+                }
             }
 
             div { class: "d0-pane-body", "data-a11y-id": "pane-body-{props.id}",

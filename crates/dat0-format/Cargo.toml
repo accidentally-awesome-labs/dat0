@@ -14,6 +14,7 @@ serde = { workspace = true }
 serde_json = { workspace = true }
 zip = { workspace = true }
 sha2 = { workspace = true }        # used by the Writer (T2) / Reader (T3) for sha256 checksums
+hex = { workspace = true }
 # `serde` feature required: model types derive Serialize/Deserialize over uuid::Uuid.
 # Additive over the workspace pin's `v7` feature (uuid features are additive).
 uuid = { workspace = true, features = ["serde"] }

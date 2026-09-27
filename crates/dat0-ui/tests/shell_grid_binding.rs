@@ -215,3 +215,48 @@ fn a_file_opened_after_boot_also_binds() {
         "and it must paint cells, not just a frame"
     );
 }
+
+fn write_rows(dir: &Path, name: &str, body: &str) -> PathBuf {
+    std::fs::create_dir_all(dir).expect("mkdir");
+    let p = dir.join(name);
+    std::fs::write(&p, body).expect("write csv");
+    p
+}
+
+fn text(h: &Harness, id: &str) -> String {
+    h.by_a11y_id(id).map(|k| h.text_of(k)).unwrap_or_default()
+}
+
+/// Switching tabs hands the mounted grid another table's source, and the grid
+/// must page that one in. Its fetch used to run only when the viewport moved,
+/// so the second table showed placeholders until the user scrolled.
+#[test]
+#[serial]
+fn switching_tabs_paints_the_other_tables_rows() {
+    let rt = runtime();
+    let _guard = rt.enter();
+    let dir = state_root().join("switch");
+    let first = write_rows(&dir, "first.csv", "a,b\n1,2\n");
+    let second = write_rows(&dir, "second.csv", "a,b\n7,8\n");
+
+    let mut h = Harness::new(
+        Host,
+        HostProps {
+            cli_paths: vec![first, second],
+            ..Default::default()
+        },
+    );
+    // The last file opened is the active tab.
+    assert!(
+        pump(&mut h, |h| text(h, "cell-0-0") == "7"),
+        "the second file never painted: {:?}",
+        text(&h, "cell-0-0")
+    );
+
+    h.click("tab-0");
+    assert!(
+        pump(&mut h, |h| text(h, "cell-0-0") == "1"),
+        "switching tabs left the first table's cells on {:?}",
+        text(&h, "cell-0-0")
+    );
+}

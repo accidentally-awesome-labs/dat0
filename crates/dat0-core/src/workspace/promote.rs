@@ -97,6 +97,29 @@ pub fn detect_incomplete(dat0_dir: &Path) -> bool {
         && (!dat0_dir.join("manifest.json").exists() || !dat0_dir.join("workspace.duckdb").exists())
 }
 
+/// Finish a promotion [`promote_files`] did not: write the manifest it writes
+/// last, when everything before it landed.
+///
+/// A database without a manifest is the one interruption that can be carried
+/// forward — the files moved and the record of the move did not. Without the
+/// database there is nothing here to open: the move itself never happened,
+/// and the session is still in its scratch directory, which the recovery
+/// panel lists as an orphan of its own.
+pub fn finish_incomplete(dat0_dir: &Path, now_rfc3339: String) -> Result<()> {
+    if !dat0_dir.join("workspace.duckdb").is_file() {
+        bail!(
+            "{} holds no database: the save stopped before moving it",
+            dat0_dir.display()
+        );
+    }
+    let manifest = dat0_dir.join("manifest.json");
+    if !manifest.exists() {
+        manifest::write(&manifest, &Manifest::new(now_rfc3339))
+            .context("finish promotion: write manifest")?;
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -137,6 +160,23 @@ mod tests {
         assert!(err.to_string().contains("already a dat0 workspace"));
         assert!(scratch.join("scratch.duckdb").exists());
     }
+    #[test]
+    fn finishing_writes_the_missing_manifest_and_refuses_a_missing_database() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let dat0 = tmp.path().join(".dat0");
+        std::fs::create_dir_all(&dat0).unwrap();
+        assert!(
+            finish_incomplete(&dat0, "t".into()).is_err(),
+            "no database moved: nothing to finish"
+        );
+        assert!(!dat0.join("manifest.json").exists());
+
+        std::fs::write(dat0.join("workspace.duckdb"), b"x").unwrap();
+        finish_incomplete(&dat0, "2026-09-26T00:00:00Z".into()).unwrap();
+        assert!(dat0.join("manifest.json").exists());
+        assert!(!detect_incomplete(&dat0), "and it is a workspace now");
+    }
+
     #[test]
     fn detect_incomplete_flags_missing_manifest() {
         let tmp = tempfile::TempDir::new().unwrap();

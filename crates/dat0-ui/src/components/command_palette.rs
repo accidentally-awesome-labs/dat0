@@ -35,7 +35,7 @@ use std::rc::Rc;
 use dioxus::html::geometry::PixelsVector2D;
 use dioxus::prelude::*;
 
-use dat0_core::actions::registry::{ActionGroup, ActionRegistry};
+use dat0_core::actions::registry::{ActionDescriptor, ActionGroup, ActionRegistry};
 use dat0_core::command_palette::visible_items;
 use dat0_core::events::AppEvents;
 use dat0_core::keymap::chord_for;
@@ -205,7 +205,16 @@ fn PaletteBody() -> Element {
                         "aria-label": dat0_i18n::t("palette.search"),
                         placeholder: dat0_i18n::t("palette.placeholder"),
                         value: "{query}",
-                        autofocus: true,
+                        onmounted: move |e: Event<MountedData>| {
+                            // Not `autofocus`: a document honours that once, so
+                            // only the first surface to open took the keyboard.
+                            // `set_focus` resolves to `null` on desktop, so its
+                            // typed result is an error even when focus moved
+                            // (see `sql_console::Tool`).
+                            spawn(async move {
+                                let _ = e.set_focus(true).await;
+                            });
+                        },
                         oninput: move |e| {
                             query.set(e.value());
                             // Reset rather than clamp: after a narrowing
@@ -353,9 +362,27 @@ fn run_action(mut ws: Workspace, reg: &ActionRegistry, events: &AppEvents, id: &
     reg.dispatch(id, events);
 }
 
-/// Project the registry's ranked descriptors into rows.
-fn rows(reg: &ActionRegistry, query: &str) -> Vec<Row> {
+/// The ids the palette offers for `query`, in display order: the registry's
+/// ranked descriptors less the ones that do nothing in this build.
+///
+/// Public so `tests/action_effects.rs` checks exactly what a user is shown.
+pub fn offered(reg: &ActionRegistry, query: &str) -> Vec<String> {
+    offered_descriptors(reg, query)
+        .into_iter()
+        .map(|d| d.id.as_str().to_string())
+        .collect()
+}
+
+fn offered_descriptors(reg: &ActionRegistry, query: &str) -> Vec<ActionDescriptor> {
     visible_items(reg, query)
+        .into_iter()
+        .filter(|d| crate::router::is_wired(d.id.as_str()))
+        .collect()
+}
+
+/// Project the offered descriptors into rows.
+fn rows(reg: &ActionRegistry, query: &str) -> Vec<Row> {
+    offered_descriptors(reg, query)
         .into_iter()
         .map(|d| Row {
             glyph: glyph(d.group),

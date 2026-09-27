@@ -56,7 +56,7 @@ jobs:
       # (P3b CI saga). Harmless if the job is ever re-pinned to self-hosted.
       CARGO_BUILD_JOBS: 2
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
       # Hosted ubuntu-latest ships ~14 GB free; fixture generation (1 GB CSV +
       # 500 MB Parquet + 100 MB SQLite) plus the release duckdb-bundled build
       # overruns it. Free ~30 GB (P3b CI-saga mitigation). Skipped if this job
@@ -93,7 +93,7 @@ jobs:
         run: cargo build --release -p dat0-engine -p dat0-fixtures
       - name: Cache fixtures
         id: cache-fixtures
-        uses: actions/cache@v5
+        uses: actions/cache@v6
         with:
           path: tests/fixtures/large/
           key: fixtures-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('crates/dat0-fixtures/**') }}-seed-42
@@ -143,7 +143,7 @@ jobs:
     env:
       CARGO_BUILD_JOBS: 2
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
       - name: Free disk space (hosted Linux only)
         uses: jlumbroso/free-disk-space@v1.3.1
         with:
@@ -159,7 +159,7 @@ jobs:
         run: cargo bench -p dat0-engine --bench view_regen 2>&1 | tee /tmp/p4a_view_regen_linux.log
       - name: Upload bench log
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: p4a-view-regen-linux
           path: /tmp/p4a_view_regen_linux.log

@@ -378,9 +378,8 @@ pub enum Outcome {
     Cancel,
     /// User pressed Clear.
     ///
-    /// `pre_populated` is `true` when there was an existing filter to remove
-    /// (i.e., the upper layer should call `vm.replace_at_cursor` / remove the
-    /// filter from the stack). `false` means the popover was opened on a fresh
-    /// column — nothing to clean up at the ViewModel level.
-    Clear { pre_populated: bool },
+    /// `pre_populated` is `true` when there was an existing filter on `column`
+    /// to remove. `false` means the popover was opened on a fresh column —
+    /// nothing to clean up at the ViewModel level.
+    Clear { column: String, pre_populated: bool },
 }

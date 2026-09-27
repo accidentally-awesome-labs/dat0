@@ -8,7 +8,7 @@ The full text is available at: <https://www.contributor-covenant.org/version/2/1
 
 Concerns about behavior in any dat0 project space (GitHub repos, Discord, mailing lists, events) can be reported to:
 
-**conduct@dat0.dev**
+**conduct@dat0.app**
 
 Reports are read promptly and handled with discretion.
 

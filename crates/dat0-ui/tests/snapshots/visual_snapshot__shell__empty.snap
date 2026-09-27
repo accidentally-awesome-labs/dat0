@@ -23,7 +23,7 @@ expression: "rendered[0].1"
 <div class="d0-search-slot" data-a11y-id="command-slot">
 <button class="d0-search-gutter" data-a11y-id="command-launcher" role="button" aria-label="Open the command palette" tabindex="0">
 <span>search tables, queries…</span>
-<span class="d0-key">⌘K</span>
+<span class="d0-key" data-chord="palette">CHORD</span>
 </button>
 </div>
 <div class="d0-tab-filler">
@@ -55,7 +55,7 @@ expression: "rendered[0].1"
 <div class="d0-sidebar-foot">
 <span>session · 1 window · 0 tabs</span>
 <span>ai none</span>
-<span class="is-ok">egress 0 B</span>
+<span class="is-ok" data-a11y-id="sidebar-egress">egress 0 B</span>
 </div>
 </div>
 <div class="d0-splitter is-col" data-a11y-id="sidebar-splitter" role="separator" aria-orientation="vertical">
@@ -67,7 +67,7 @@ expression: "rendered[0].1"
 <div class="d0-hero-headline">
 <h1 class="d0-h1" data-a11y-id="hero-title" role="note" aria-label="Your data outgrew the spreadsheet.">Your data outgrew the spreadsheet.</h1>
 <p class="d0-h2 is-muted">It never outgrew your laptop.</p>
-<p class="d0-lead is-muted">Open a 12 GB Parquet like a 5 MB CSV, join it to live Postgres in one SELECT, and seal the whole analysis — data, queries, lineage — into a single file anyone can replay, inspect, or diff.</p>
+<p class="d0-lead is-muted">Open a 12 GB Parquet like a 5 MB CSV, query it alongside SQLite or MotherDuck in one SELECT, and seal the whole analysis — data, queries, lineage — into a single file anyone can replay, inspect, or diff.</p>
 </div>
 <div class="d0-hero-cols">
 <div class="d0-hero-drop" data-a11y-id="hero-drop">
@@ -76,7 +76,7 @@ expression: "rendered[0].1"
 </span>
 <span class="d0-skel is-secondary" style="width: 220px;">
 </span>
-<span class="d0-mono is-ok">nothing imported · 0 bytes left this machine</span>
+<span class="d0-mono is-ok" data-a11y-id="hero-privacy">nothing imported · 0 bytes left this machine</span>
 </div>
 <div class="d0-hero-right">
 <div class="d0-hero-list" data-a11y-id="hero-samples">
@@ -103,13 +103,14 @@ expression: "rendered[0].1"
 </div>
 </div>
 <div class="d0-statusbar" data-a11y-id="statusbar" role="status">
-<span class="d0-dot is-live">
+<span class="d0-dot is-busy">
 </span>
-<span>engine duckdb · native</span>
+<span data-a11y-id="status-engine">engine duckdb · starting</span>
 <span class="d0-spacer">
 </span>
-<span class="is-ok" style="color: var(--d0-ok)">egress 0 B</span>
-<span class="d0-key">⌘K commands</span>
+<span class="d0-egress is-ok" data-a11y-id="status-egress">egress 0 B</span>
+<span class="d0-key">
+<span data-chord="palette">CHORD</span> commands</span>
 </div>
 </div>
 </div>

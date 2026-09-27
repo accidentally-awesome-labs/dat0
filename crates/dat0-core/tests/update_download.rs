@@ -4,7 +4,7 @@ use sha2::{Digest, Sha256};
 #[test]
 fn downloads_and_verifies_sha256() {
     let body = b"hello dat0 update payload";
-    let hash = format!("{:x}", Sha256::digest(body));
+    let hash = hex::encode(Sha256::digest(body));
     let mut s = mockito::Server::new();
     let _m = s.mock("GET", "/art").with_body(body.as_slice()).create();
     let tmp = tempfile::tempdir().unwrap();

@@ -183,6 +183,15 @@ pub trait QueryEngine: Send + Sync {
     async fn attach(&self, dsn: &str, alias: &str, opts: AttachOpts) -> Result<()>;
     async fn detach(&self, alias: &str) -> Result<()>;
 
+    /// The tables and views of the database attached as `alias`, by name,
+    /// sorted. [`get_tables`](Self::get_tables) lists this engine's own
+    /// database alone: an attached database's tables are not the session's,
+    /// and a bare name does not reach them.
+    async fn attached_tables(&self, alias: &str) -> Result<Vec<String>> {
+        let _ = alias;
+        Ok(Vec::new())
+    }
+
     /// Ensure `table` carries the `__dat0_rowid` surrogate (idempotent). Injected
     /// at import; back-filled lazily for pre-P4b tables. See design §5.
     ///
@@ -201,4 +210,25 @@ pub trait QueryEngine: Send + Sync {
     ///   (`ALTER TABLE` only applies to base tables).
     /// - `EngineError::EnginePoisoned` — if the connection mutex was poisoned.
     async fn ensure_rowid(&self, table: &str) -> Result<()>;
+
+    /// `Ok` when `sql` is exactly one query — a SELECT, set operation, VALUES
+    /// or FROM-first query — by DuckDB's own parser. For SQL that did not come
+    /// from the user, before it runs: see `confine.rs`.
+    ///
+    /// # Errors
+    /// - `EngineError::NotASingleQuery` — several statements, a statement that
+    ///   is not a query, empty input, or a parse error.
+    /// - `EngineError::EngineClosed` — if the engine has been closed.
+    async fn check_single_query(&self, sql: &str) -> Result<()>;
+
+    /// Permanently deny this engine all file, network and extension access
+    /// outside `dir`, and lock its configuration so nothing it runs later can
+    /// undo that. Tables already loaded stay queryable. There is no way back:
+    /// use it on an engine opened for one untrusted job, never on a session's.
+    ///
+    /// # Errors
+    /// - `EngineError::InvalidPath` — if `dir` is not valid UTF-8.
+    /// - `EngineError::DuckDb` — if DuckDB refuses a setting.
+    /// - `EngineError::EngineClosed` — if the engine has been closed.
+    async fn confine_to(&self, dir: &std::path::Path) -> Result<()>;
 }

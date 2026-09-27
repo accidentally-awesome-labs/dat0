@@ -1,8 +1,11 @@
 //! Chart export to files. SVG = the render_svg string. PNG = a BitMapBackend that
 //! writes the file directly (plotters `bitmap_encoder`).
+//!
+//! The `_with` forms draw in a given palette, so a file exported from the app
+//! has the colours the pane showed; the plain forms keep plotters' own.
 
 use crate::charts::data::PlotTable;
-use crate::charts::render::{draw, render_svg};
+use crate::charts::render::{Palette, draw_with, render_svg_with};
 use crate::charts::spec::ChartSpec;
 use plotters::prelude::*;
 use std::path::Path;
@@ -13,7 +16,7 @@ pub fn export_svg(
     size: (u32, u32),
     path: &Path,
 ) -> std::io::Result<()> {
-    std::fs::write(path, render_svg(spec, data, size))
+    export_svg_with(spec, data, size, &Palette::legacy(), path)
 }
 
 pub fn export_png(
@@ -22,9 +25,31 @@ pub fn export_png(
     size: (u32, u32),
     path: &Path,
 ) -> Result<(), Box<dyn std::error::Error>> {
+    export_png_with(spec, data, size, &Palette::legacy(), path)
+}
+
+/// [`export_svg`], drawn in `palette`.
+pub fn export_svg_with(
+    spec: &ChartSpec,
+    data: &PlotTable,
+    size: (u32, u32),
+    palette: &Palette,
+    path: &Path,
+) -> std::io::Result<()> {
+    std::fs::write(path, render_svg_with(spec, data, size, palette))
+}
+
+/// [`export_png`], drawn in `palette`.
+pub fn export_png_with(
+    spec: &ChartSpec,
+    data: &PlotTable,
+    size: (u32, u32),
+    palette: &Palette,
+    path: &Path,
+) -> Result<(), Box<dyn std::error::Error>> {
     {
         let root = BitMapBackend::new(path, size).into_drawing_area();
-        draw(&root, spec, data)?;
+        draw_with(&root, spec, data, palette)?;
         root.present()?;
     }
     Ok(())
@@ -82,5 +107,30 @@ mod tests {
         export_svg(&spec, &t, (640, 400), &p).unwrap();
         let s = std::fs::read_to_string(&p).unwrap();
         assert!(s.contains("<svg"));
+    }
+
+    #[test]
+    fn an_export_in_a_palette_is_drawn_in_it() {
+        let (spec, t) = fixture();
+        let dir = tempfile::tempdir().unwrap();
+        let pal = Palette::from_css("#123456", "#fedcba", &["#0a0b0c"]);
+
+        let svg = dir.path().join("c.svg");
+        export_svg_with(&spec, &t, (640, 400), &pal, &svg).unwrap();
+        let s = std::fs::read_to_string(&svg).unwrap().to_ascii_lowercase();
+        assert!(s.contains("#123456"), "the background");
+        assert!(s.contains("#0a0b0c"), "the line");
+
+        let png = dir.path().join("c.png");
+        export_png_with(&spec, &t, (640, 400), &pal, &png).unwrap();
+        let bytes = std::fs::read(&png).unwrap();
+        assert_eq!(&bytes[0..4], &[0x89, b'P', b'N', b'G']);
+        let plain = dir.path().join("plain.png");
+        export_png(&spec, &t, (640, 400), &plain).unwrap();
+        assert_ne!(
+            bytes,
+            std::fs::read(&plain).unwrap(),
+            "not plotters' own colours"
+        );
     }
 }

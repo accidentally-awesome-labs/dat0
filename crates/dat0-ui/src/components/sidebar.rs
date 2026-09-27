@@ -146,6 +146,9 @@ pub struct SidebarProps {
     pub ai_line: String,
     /// Footer line 3: egress, always shown so zero is visible.
     pub egress_line: String,
+    /// Whether nothing has left this machine, which is when line 3 is green.
+    #[props(default = true)]
+    pub nothing_sent: bool,
     /// A row was clicked or activated, by section name and index.
     pub on_open: EventHandler<(&'static str, usize)>,
     /// An attach parent's collapse was toggled, by alias. The collapsed set
@@ -277,7 +280,11 @@ pub fn Sidebar(props: SidebarProps) -> Element {
             div { class: "d0-sidebar-foot",
                 span { "{props.session_line}" }
                 span { "{props.ai_line}" }
-                span { class: "is-ok", "{props.egress_line}" }
+                span {
+                    class: if props.nothing_sent { "is-ok" } else { "d0-egress" },
+                    "data-a11y-id": "sidebar-egress",
+                    "{props.egress_line}"
+                }
             }
 
         }

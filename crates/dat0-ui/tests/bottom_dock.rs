@@ -333,8 +333,11 @@ fn the_console_pane_is_headed_by_its_frozen_id_and_its_run_chord() {
             text.contains(&dat0_i18n::t("sql.editor")),
             "the title is the console's own: {text:?}"
         );
+        // The platform's chord, from the keymap: `⌘⏎` on macOS, `Ctrl+⏎`
+        // elsewhere (step 5.11e).
+        let run = format!("{} run", dat0_ui::chrome::run_chord());
         assert!(
-            text.contains("⌘⏎ run"),
+            text.contains(&run),
             "and the meta carries the run chord, which is the console's only \
              header affordance: {text:?}"
         );

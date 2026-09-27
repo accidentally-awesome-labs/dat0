@@ -253,8 +253,12 @@ async fn create_table_records_both_origins() {
 }
 
 /// P6a T4 (closes D-012): attaching a database enumerates its tables/views into
-/// the origin registry as `TableOrigin::Attached { alias, source }`, surfaced via
-/// `get_tables()`; `detach` prunes them.
+/// the origin registry as `TableOrigin::Attached { alias, source }`, and
+/// `detach` prunes them. The attached tables are listed by `attached_tables`,
+/// not `get_tables`: they are not the session's, and a bare name does not reach
+/// them. A view of the session's own over one is listed, and once the database
+/// is detached that view cannot be read, so it is left out rather than failing
+/// the listing.
 ///
 /// Uses the real sqlite_scanner attach mechanism (a deterministic on-disk SQLite
 /// fixture `simple.sqlite`, which holds a table `items` with 3 rows) — the same
@@ -280,36 +284,40 @@ async fn attach_records_per_table_attached_origin() {
         .await
         .unwrap();
 
-    // The attached table is enumerated in get_tables() WITH its columns and
-    // carries an Attached origin tagged with the attach alias (= catalog name).
-    let tables = engine.get_tables().await.unwrap();
-    let items = tables
-        .iter()
-        .find(|t| t.name == "items")
-        .expect("attached table enumerated in get_tables");
-    assert!(
-        !items.columns.is_empty(),
-        "attached table must describe its columns cross-database"
-    );
-    match &items.origin {
+    assert_eq!(engine.attached_tables("sq").await.unwrap(), ["items"]);
+    match engine
+        .table_origin("items")
+        .expect("an origin for the attached table")
+    {
         TableOrigin::Attached { alias, source } => {
             assert_eq!(alias, "sq");
             assert!(source.contains("simple.sqlite"), "source dsn: {source}");
         }
         other => panic!("expected Attached origin, got {other:?}"),
     }
-
-    // detach prunes the attached entries from both the catalog and the origin map.
-    engine.detach("sq").await.unwrap();
-    let after = engine.get_tables().await.unwrap();
-    assert!(
-        !after.iter().any(|t| t.name == "items"),
-        "detach removes attached entries from get_tables"
+    engine
+        .execute("CREATE VIEW items_here AS SELECT * FROM sq.items")
+        .await
+        .unwrap();
+    let tables = engine.get_tables().await.unwrap();
+    let names: Vec<&str> = tables.iter().map(|t| t.name.as_str()).collect();
+    assert_eq!(
+        names,
+        ["items_here"],
+        "the session's own view, not sq's table"
     );
+    assert_eq!(tables[0].columns.len(), 2, "described across the databases");
+
+    // detach prunes the attached entries from the origin map, and the view
+    // that read them is left out of the listing, which still succeeds.
+    engine.detach("sq").await.unwrap();
     assert!(
         engine.table_origin("items").is_none(),
         "detach removes attached entries from the origin map"
     );
+    assert!(engine.attached_tables("sq").await.unwrap().is_empty());
+    let after = engine.get_tables().await.expect("the listing survives");
+    assert!(after.is_empty(), "{after:?}");
 
     engine.close().await.unwrap();
 }

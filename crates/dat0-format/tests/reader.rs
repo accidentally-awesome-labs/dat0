@@ -120,8 +120,8 @@ fn reader_tolerates_a_package_without_charts_json() {
     checksums.insert(
         "recipe.json".to_string(),
         format!(
-            "sha256:{:x}",
-            <sha2::Sha256 as sha2::Digest>::digest(&recipe_bytes)
+            "sha256:{}",
+            hex::encode(<sha2::Sha256 as sha2::Digest>::digest(&recipe_bytes))
         ),
     );
     let manifest = PackageManifest {

@@ -28,7 +28,7 @@ jobs:
       GLITCHTIP_API_TOKEN: ${{ secrets.GLITCHTIP_API_TOKEN }}
       GLITCHTIP_PROJECT_SLUG: ${{ secrets.GLITCHTIP_PROJECT_SLUG }}
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
       - name: Skip if secrets absent
         id: gate
         run: |

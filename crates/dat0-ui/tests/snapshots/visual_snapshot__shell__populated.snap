@@ -23,7 +23,7 @@ expression: "rendered[0].1"
 <div class="d0-search-slot" data-a11y-id="command-slot">
 <button class="d0-search-gutter" data-a11y-id="command-launcher" role="button" aria-label="Open the command palette" tabindex="0">
 <span>search tables, queries…</span>
-<span class="d0-key">⌘K</span>
+<span class="d0-key" data-chord="palette">CHORD</span>
 </button>
 </div>
 <button class="d0-tab is-active" data-a11y-id="tab-0" role="tab" aria-selected="true" tabindex="-1">
@@ -82,7 +82,7 @@ expression: "rendered[0].1"
 <div class="d0-sidebar-foot">
 <span>session · 1 window · 3 tabs</span>
 <span>ai none</span>
-<span class="is-ok">egress 0 B</span>
+<span class="is-ok" data-a11y-id="sidebar-egress">egress 0 B</span>
 </div>
 </div>
 <div class="d0-splitter is-col" data-a11y-id="sidebar-splitter" role="separator" aria-orientation="vertical">
@@ -97,17 +97,17 @@ expression: "rendered[0].1"
 </div>
 </div>
 <div class="d0-statusbar" data-a11y-id="statusbar" role="status">
-<span class="d0-dot is-live">
+<span class="d0-dot is-busy">
 </span>
-<span>engine duckdb · native</span>
-<span>mem <span class="d0-num">4096</span> MB</span>
-<span>rows <span class="d0-num">1–12</span> / <span class="d0-num">12</span>
+<span data-a11y-id="status-engine">engine duckdb · starting</span>
+<span data-a11y-id="status-mem">mem <span class="d0-num">4096</span> MB</span>
+<span data-a11y-id="status-rows">rows <span class="d0-num">1–12</span> / <span class="d0-num">12</span>
 </span>
-<span class="d0-num">60 fps</span>
 <span class="d0-spacer">
 </span>
-<span class="is-ok" style="color: var(--d0-ok)">egress 0 B</span>
-<span class="d0-key">⌘K commands</span>
+<span class="d0-egress is-ok" data-a11y-id="status-egress">egress 0 B</span>
+<span class="d0-key">
+<span data-chord="palette">CHORD</span> commands</span>
 </div>
 </div>
 </div>

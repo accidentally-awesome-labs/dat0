@@ -30,11 +30,13 @@ use dat0_core::inspector::lineage::{ChainStep, EdgeKind, LineageChain, NodeKind}
 use dat0_core::inspector::model::ColumnExtra;
 use dat0_core::inspector::projection::{ProjectionContext, RenderCard, project_cards};
 use dat0_core::inspector::{InspectorModel, ProfileTargetMode};
-use dat0_engine::{ColumnProfile, TableProfile};
+use dat0_engine::{ColumnProfile, ROWID_COL, TableProfile};
 
 use crate::a11y::AccessRole;
 use crate::components::pane::Pane;
 use crate::state::Workspace;
+
+pub mod host;
 
 /// The deepest indent a lineage row may draw, in steps of
 /// [`LINEAGE_INDENT_PX`]. Ported verbatim from `panel.rs`'s `depth.min(6)`.
@@ -81,8 +83,22 @@ impl InspectorState {
     }
 
     /// Is a profile already cached for the current target and epoch?
+    ///
+    /// Read without subscribing, like [`Self::target`] and [`Self::mode`]:
+    /// the loader that asks writes the profile it answers, and a read that
+    /// subscribed would start it again on its own write.
     pub fn has_profile(&self) -> bool {
-        self.model.read().cached().is_some()
+        self.model.peek().cached().is_some()
+    }
+
+    /// The table the Inspector points at.
+    pub fn target(&self) -> Option<String> {
+        self.model.peek().target_table.clone()
+    }
+
+    /// Whole table or current view.
+    pub fn mode(&self) -> ProfileTargetMode {
+        self.model.peek().mode
     }
 
     /// Claim the next load id. Every later write must present it.
@@ -179,8 +195,8 @@ pub struct InspectorProps {
     /// the app two disagreeing notions of "the current column".
     #[props(default)]
     pub focus_column: Option<String>,
-    /// A lineage node was clicked. Charts reopen through `open_saved_chart`,
-    /// everything else opens a table tab — the shell routes on the kind.
+    /// A lineage node was clicked. A chart reopens as it was saved, a table
+    /// comes up in its tab (`host::open`).
     #[props(default)]
     pub on_open: EventHandler<(NodeKind, String)>,
     /// The mode toggle flipped; re-profile the target.
@@ -219,8 +235,13 @@ pub fn Inspector(props: InspectorProps) -> Element {
 
     // Overview line: `name — N rows · M cols` warm, `name — Profiling…` while a
     // load is in flight, the empty-state string with no target at all.
+    // The row id an editable table carries is no one's column: it has no card
+    // (`project_cards`), and it is not counted either.
     let overview = match (&target, profile) {
-        (Some(name), Some(p)) => format!("{} — {} rows · {} cols", name, p.rows, p.columns.len()),
+        (Some(name), Some(p)) => {
+            let cols = p.columns.iter().filter(|c| c.name != ROWID_COL).count();
+            format!("{} — {} rows · {} cols", name, p.rows, cols)
+        }
         (Some(name), None) => format!("{} — {}", name, dat0_i18n::t("inspector.loading")),
         (None, _) => dat0_i18n::t("inspector.empty"),
     };

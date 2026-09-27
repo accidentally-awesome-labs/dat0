@@ -58,6 +58,10 @@ pub struct CellEditorProps {
     #[props(default = ColumnType::String)]
     pub column_type: ColumnType,
     pub on_done: EventHandler<EditOutcome>,
+    /// How far the grid draws its rows above `row × ROW_H`: nonzero once a
+    /// table outgrows the canvas (`grid::scroll`).
+    #[props(default)]
+    pub shift: f64,
 }
 
 #[component]
@@ -71,7 +75,7 @@ pub fn CellEditor(props: CellEditorProps) -> Element {
         .get(props.cell.col)
         .copied()
         .unwrap_or(COL_W_DEFAULT);
-    let top = props.cell.row as f64 * ROW_H;
+    let top = props.cell.row as f64 * ROW_H - props.shift;
     let style = format!("left: {left}px; top: {top}px; width: {width}px;");
 
     let on_done = props.on_done;
@@ -142,7 +146,15 @@ pub fn CellEditor(props: CellEditorProps) -> Element {
                 "data-a11y-id": "cell-editor",
                 role: "combobox",
                 "aria-label": dat0_i18n::t("grid.edit_cell"),
-                autofocus: true,
+                // Not `autofocus`: a document honours that once, so only the
+                // first surface to open took the keyboard. `set_focus` resolves
+                // to `null` on desktop, so its typed result is an error even when
+                // focus moved (see `sql_console::Tool`).
+                onmounted: move |e: Event<MountedData>| {
+                    spawn(async move {
+                        let _ = e.set_focus(true).await;
+                    });
+                },
                 style: "{style}",
                 // Picking an option is the confirm gesture, the way
                 // `SelectEvent::Confirm` was: commit and walk down.
@@ -166,7 +178,15 @@ pub fn CellEditor(props: CellEditorProps) -> Element {
             "aria-label": dat0_i18n::t("grid.edit_cell"),
             "aria-invalid": "{invalid_attr}",
             value: "{value}",
-            autofocus: true,
+            // Not `autofocus`: a document honours that once, so only the
+            // first surface to open took the keyboard. `set_focus` resolves
+            // to `null` on desktop, so its typed result is an error even when
+            // focus moved (see `sql_console::Tool`).
+            onmounted: move |e: Event<MountedData>| {
+                spawn(async move {
+                    let _ = e.set_focus(true).await;
+                });
+            },
             style: "{style}",
             oninput: move |e| {
                 value.set(e.value());

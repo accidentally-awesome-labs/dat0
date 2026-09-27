@@ -20,6 +20,11 @@
 
 use std::path::PathBuf;
 
+// Only the fixture generator returns a `Result`, and it is compiled only with
+// the feature — so under a plain `cargo test -p dat0-core`, which builds this
+// module for its unit tests, an unconditional import is unused and
+// `-D warnings` fails.
+#[cfg(feature = "perf-harness")]
 use anyhow::{Context, Result};
 
 use super::{DriveState, FrameClock};

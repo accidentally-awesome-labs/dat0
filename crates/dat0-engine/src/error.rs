@@ -51,9 +51,20 @@ pub enum EngineError {
     #[error("Engine is closed or closing; new operations rejected")]
     EngineClosed,
 
+    /// Another engine in this process holds the database open. DuckDB's file
+    /// lock is per process, so it does not refuse a second engine itself.
+    #[error("the database {} is already open in dat0", .0.display())]
+    AlreadyOpen(PathBuf),
+
     #[error("Engine connection mutex poisoned (prior panic in worker thread)")]
     EnginePoisoned,
 
     #[error("Engine is in Failed state: {0}")]
     EngineFailed(String),
+
+    /// SQL that must be exactly one query was not: several statements,
+    /// something other than a query, or not parseable at all. See
+    /// [`crate::QueryEngine::check_single_query`].
+    #[error("Not a single query: {0}")]
+    NotASingleQuery(String),
 }

@@ -31,9 +31,9 @@ use dat0_core::keymap::{Binding, DEFAULT_KEYMAP, chord_for};
 /// - `window.new` — the obvious guess is ⌘N and nothing binds it; a hint would
 ///   lie. It wants its own slice with a reachability assertion.
 /// - `view.copy` … `view.delete_column` — grid editing runs on the grid's own
-///   raw `on_key_down` cursor grammar (`grid/keymap.rs`), which is a modal mode
-///   rather than a set of global commands and is deliberately outside
-///   `DEFAULT_KEYMAP`.
+///   keys (`grid/keymap.rs` for the cursor, `dat0-ui`'s `keys::grid_verb` for
+///   the verbs), which are a modal mode rather than a set of global commands
+///   and are deliberately outside `DEFAULT_KEYMAP`.
 /// - `sql.new_tab`, `sql.close_tab` and the P5b reuse/promotion actions — a
 ///   global chord would collide with the SQL editor's own text-editing keymap.
 /// - everything else — menu items, panel buttons, or palette-only entries
@@ -45,7 +45,10 @@ const UNBOUND: &[&str] = &[
     "chart.export.svg",
     "chart.visualize",
     "file.open",
+    "help.report_bug",
     "import.cancel",
+    // A View-menu item and the inspector's own header button.
+    "inspector.toggle",
     "live.refresh",
     "onboarding.take_tour",
     "perf.hud.toggle",
@@ -149,24 +152,18 @@ fn every_action_id_is_bound_or_explicitly_unbound() {
     );
 }
 
-/// The macOS-only rows are exactly the window-management chords, and every
-/// other row has a chord on both platforms. Guards the `other: None` doc claim
-/// from drifting into "someone forgot to fill this in".
+/// The one macOS-only row is Minimize, and every other row has a chord on
+/// both platforms. Guards the `other: None` doc claim from drifting into
+/// "someone forgot to fill this in". Quit and Close Window were macOS-only
+/// too, while the menu bar off macOS had no items for them (step 5.11d).
 #[test]
-fn only_the_window_management_chords_are_macos_only() {
+fn only_minimize_is_macos_only() {
     let macos_only: Vec<&str> = DEFAULT_KEYMAP
         .iter()
         .filter(|b: &&Binding| b.other.is_none())
         .filter_map(|b| b.action)
         .collect();
-    assert_eq!(
-        macos_only,
-        vec![
-            "dat0_menu::Quit",
-            "dat0_menu::CloseWindow",
-            "dat0_menu::Minimize",
-        ]
-    );
+    assert_eq!(macos_only, vec!["dat0_menu::Minimize"]);
 }
 
 /// (2) No two rows share a chord within a context. A duplicate is a binding
@@ -200,10 +197,12 @@ fn no_duplicate_chord_within_a_context() {
     }
     assert_eq!(
         DEFAULT_KEYMAP.len(),
-        17,
-        "the SH4 migration moved 16 bindings verbatim and the GPUI→Dioxus \
-         migration added ⌘B for the catalog sidebar (S1), which this shell \
-         does not implement; changing the count is a behaviour change and \
-         wants its own review"
+        19,
+        "the SH4 migration moved 16 bindings verbatim, the GPUI→Dioxus \
+         migration added ⌘B for the catalog sidebar (S1), PD-023 step 5.8b \
+         added ⌘K for the palette, the chord the chrome shows, beside ⌘⇧P, \
+         and step 5.11d added Full Screen, whose menu item is dat0's own off \
+         macOS; changing the count is a behaviour change and wants its own \
+         review"
     );
 }

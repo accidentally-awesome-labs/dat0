@@ -9,9 +9,31 @@ Open any data file or database, edit and transform with full lineage, share the 
 
 ## Three product pillars
 
-1. **File-native at scale** — Drop a multi-GB Parquet, work like it's a 5 MB CSV. Native DuckDB + GPU-accelerated virtualized grid. No cloud upload, no infrastructure.
+1. **File-native at scale** — Drop a multi-GB Parquet, work like it's a 5 MB CSV. Native DuckDB + a virtualized grid. No cloud upload, no infrastructure.
 2. **Reproducible packaging** — A `.dat0` file bundles data + transforms + queries + UI session + lineage in one attachable artifact. Email it. Replay it on new source data. Diff two of them.
 3. **Compute portability** — Same workbench works against a local file, a local database, or an attached MotherDuck workspace.
+
+## Status
+
+**Pre-release.** No binary has been published yet. The engine, the `.dat0`
+package format and the command line are complete and tested, and the desktop
+UI, rebuilt on Dioxus, is connected to them again (PD-023 in
+[`docs/deferrals.md`](docs/deferrals.md)). What it still lacks is listed
+beside what works, each gap with its entry in that file.
+
+| Works in the current build | Known gaps |
+|---|---|
+| Opening CSV, TSV, JSON, Parquet and SQLite — file picker, drag-and-drop, command line — into a virtualized grid, and the import wizard for a CSV whose delimiter or encoding needs asking | A data tab cannot be closed (PD-038). A package or workspace named at launch also leaves an empty window (PD-039) |
+| MotherDuck, with your token: the account's databases listed and their tables opened | |
+| The SQL console: running a query into the grid, history, saved queries, completion | PRAGMA and EXPLAIN run but show no rows (PD-033) |
+| AI assist, with your own key: SQL written from a question, and a statement explained, from the schema alone | |
+| Sort, filter, cell edits, undo, export and Live Refresh | Sort and filter need a mouse, as do the data tabs and the lineage (PD-040). One edit takes at most 10,000 cells (PD-034). Live Refresh forgets the import wizard's dialect (PD-037) |
+| Charts of the active tab, drawn from its filters and edits, saved, and exported as PNG or SVG | |
+| The inspector: a profile of the active tab's table, its columns' small charts, and its lineage | |
+| Workspaces — open, save, recent — and the demo workspace; a closed or crashed window's work comes back | File → Open Recent lists what was recent at launch (PD-036). Closing a scratch window does not offer to save it (PD-035) |
+| Help → Check for Updates, against the signed release manifest (no release is published yet) | |
+| Crash reports, opt-in: offered at the launch after a crash, and Help → Report a Bug | |
+| `.dat0` packages: open read-only, unpack, export and replay, in the app and with `dat0 inspect` / `unpack` / `replay` / `diff` / `export` | |
 
 ## Quick start
 
@@ -21,17 +43,23 @@ Open any data file or database, edit and transform with full lineage, share the 
 
 ### Install
 
-Download the latest signed binary for your platform from
-[**GitHub Releases**](https://github.com/accidentally-awesome-labs/dat0/releases):
+There is no release yet. Signed builds will be published on
+[**GitHub Releases**](https://github.com/accidentally-awesome-labs/dat0/releases)
+from the first beta:
 
 | Platform | Artifact |
 |----------|----------|
 | macOS (arm64 + x86_64) | `dat0-<version>-universal.dmg` — mount, drag to Applications |
 | Linux x86_64 | `dat0-<version>-x86_64.AppImage` — `chmod +x`, then run |
-| Linux aarch64 | `dat0-<version>-aarch64.AppImage` — `chmod +x`, then run |
 
-Or build from source: `cargo build --release` (requires Rust stable and the system
-libraries listed in [CONTRIBUTING.md](CONTRIBUTING.md)).
+The AppImage runs on Ubuntu 22.04, Debian 12 and newer (glibc 2.35 or later)
+and uses the system's WebKitGTK 4.1, as the macOS build uses the system's
+WebKit: install `libwebkit2gtk-4.1-0` (Debian, Ubuntu) or `webkit2gtk4.1`
+(Fedora) if it is not there. Linux aarch64 is planned but not yet built by the
+release pipeline.
+
+Until then, build from source: `cargo build --release` (requires the pinned Rust
+toolchain and the system libraries listed in [CONTRIBUTING.md](CONTRIBUTING.md)).
 
 ### First run
 
@@ -40,9 +68,11 @@ libraries listed in [CONTRIBUTING.md](CONTRIBUTING.md)).
    finish the tour.
 2. **Try the demo workspace.** Click **[ ▶ Open demo.dat0 ]** on the hero to open a
    curated Chinook dataset — multi-table SQL, a saved chart, and a pre-filled query
-   ready to run. No setup required.
-3. **Or drop your own file.** Drag a CSV, Parquet, JSON, or SQLite file onto the
-   drop zone. No import wizard, no waiting.
+   ready to run.
+3. **Or drop your own file.** Drag a CSV, TSV, JSON, Parquet or SQLite file onto
+   the drop zone. Most files open at once; a CSV whose delimiter or encoding
+   dat0 cannot settle opens in a short import wizard first. A SQLite file is
+   attached read-only, with its tables listed under CONNECTIONS.
 
 <!--
   Screenshot owed: enriched first-run hero capture.
@@ -61,6 +91,8 @@ libraries listed in [CONTRIBUTING.md](CONTRIBUTING.md)).
 
 ### What you get
 
+The v1 feature set — see [Status](#status) for what the current build does today.
+
 - **Native-fast grid** — sort, filter, and inspect millions of rows at 60 fps. No
   cloud upload, no infrastructure.
 - **SQL + charts** — full DuckDB SQL with autocomplete, an NL→SQL AI assist chip,
@@ -71,14 +103,18 @@ libraries listed in [CONTRIBUTING.md](CONTRIBUTING.md)).
 
 ---
 
-## Tech stack (from design spec §3)
+## Tech stack
+
+The design spec's §3 still names the original GPUI renderer; the UI moved to
+Dioxus in August 2026 (see
+[the migration log](docs/internal/2026-08-09-gpui-to-dioxus-migration-log.md)).
 
 - **Language:** Rust 2024
 - **UI:** Dioxus 0.7 (desktop), rendering into a wry/WebKit webview
 - **Engine:** DuckDB native via the `duckdb` crate
 - **Wire format:** Apache Arrow (record batches, in-process)
 - **Async:** tokio
-- **Targets:** macOS arm64 + x86_64; Linux x86_64 + aarch64
+- **Targets:** macOS arm64 + x86_64; Linux x86_64 (aarch64 planned)
 
 ## What dat0 deliberately is not
 

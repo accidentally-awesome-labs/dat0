@@ -485,6 +485,9 @@ button {
 .d0-statusbar .d0-spacer {
   margin-left: auto;
 }
+.d0-statusbar .is-ok {
+  color: var(--d0-ok);
+}
 .d0-statusbar .d0-key {
   background: var(--d0-chrome-raised);
   border-color: var(--d0-chrome-border-2);
@@ -790,6 +793,30 @@ button {
   background: var(--d0-accent);
 }
 
+/* The sort and funnel zones. Their glyphs appear on hover, and stay once they
+   mean something: an active sort writes its arrow into the zone, and a
+   filtered column's funnel is lit. */
+.d0-sort,
+.d0-funnel {
+  cursor: pointer;
+  color: var(--d0-accent);
+}
+.d0-sort:empty::before {
+  content: "↕";
+  opacity: 0;
+}
+.d0-funnel::before {
+  content: "▾";
+  opacity: 0;
+}
+.d0-colheader:hover .d0-sort:empty::before,
+.d0-colheader:hover .d0-funnel::before {
+  opacity: 0.6;
+}
+.d0-funnel.is-on::before {
+  opacity: 1;
+}
+
 /* Takes every pointer move and the release while a drag is live, so the
    gesture keeps working once the pointer leaves the element that started it. */
 .d0-drag-shield {
@@ -879,6 +906,24 @@ button {
 }
 
 /* ── Overlays ──────────────────────────────────────────────────────────── */
+
+/* The perf HUD: over the shell, under a dialog's scrim, and never in the way
+   of a click or a Tab. */
+.d0-perf-hud {
+  position: fixed;
+  right: 12px;
+  bottom: 12px;
+  z-index: 90;
+  padding: 6px 10px;
+  border: 1px solid var(--d0-rule);
+  border-radius: var(--d0-r);
+  background: var(--d0-panel);
+  color: var(--d0-fg);
+  font-family: var(--d0-monospace);
+  font-size: 11px;
+  line-height: 1.5;
+  pointer-events: none;
+}
 
 .d0-scrim {
   position: fixed;

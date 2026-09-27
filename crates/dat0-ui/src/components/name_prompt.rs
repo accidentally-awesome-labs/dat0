@@ -133,8 +133,12 @@ pub fn NamePrompt(props: NamePromptProps) -> Element {
                 placeholder,
                 value: "{value}",
                 // The GPUI prompt focused the field in `new` so a keyboard
-                // user could type immediately; this is that.
-                autofocus: true,
+                // user could type immediately; this is that. The modal host
+                // focuses it (`modals::CAPTURE_JS`) once it has recorded where
+                // to hand the keyboard back. Not `autofocus`: a document
+                // honours that once, so only the first surface to open took
+                // the keyboard (PD-032).
+                "data-autofocus": "true",
                 oninput: move |e| {
                     touched.set(true);
                     value.set(e.value());

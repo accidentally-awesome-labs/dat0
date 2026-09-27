@@ -1,10 +1,10 @@
 //! `dat0 --version` and `dat0 --help` must exit 0 and print, without a window.
 //!
-//! `release.yml`'s Linux job smoke-tests the AppImage by running
-//! `./squashfs-root/AppRun --version` inside a bare `ubuntu:24.04` container
-//! ("Verify on clean Ubuntu"). That container has no X11, no Wayland and no
-//! GPU, so anything that reaches window creation fails there for reasons that
-//! say nothing about the bundle.
+//! `release.yml`'s Linux job smoke-tests the AppImage
+//! (`scripts/appimage-smoke.sh`) by running `./squashfs-root/AppRun --version`
+//! in a fresh container before it starts a display. There is no X11, no
+//! Wayland and no GPU at that point, so anything that reaches window creation
+//! fails there for reasons that say nothing about the bundle.
 //!
 //! Out-of-process on purpose: the property is "the PROCESS exits 0 having
 //! printed a version and started no window", which an in-process call to

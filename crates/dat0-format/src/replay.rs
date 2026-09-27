@@ -144,22 +144,35 @@ impl ReplayEngine {
     /// `new_sources` maps each source's `logical_name` to the new file path.
     /// Every source in the package MUST have a replacement.
     ///
+    /// The recipe's SQL came with the package, not from the person replaying
+    /// it, so `engine` must be one opened for this replay alone, and `workdir`
+    /// the directory it lives in: once the sources are loaded, the engine is
+    /// confined to `workdir` for good (`QueryEngine::confine_to`), and every
+    /// derived step must be a single query. Write the result with
+    /// [`crate::Writer::write_using`] and the same `workdir`.
+    ///
     /// Steps:
     /// 1. **Rebind sources** — register each new file, rename the imported
     ///    table to the base [`RecipeTable`]'s name (so derived SQL resolves),
     ///    and [`compat_check`] the new schema against the recorded fingerprint.
-    /// 2. **Re-exec derived tables** in topological (Kahn) order.
-    /// 3. **Rebuild** a [`PackageContents`] with refreshed schemas + row counts.
+    /// 2. **Confine** the engine to `workdir`.
+    /// 3. **Re-exec derived tables** in topological (Kahn) order, each after a
+    ///    single-query check.
+    /// 4. **Rebuild** a [`PackageContents`] with refreshed schemas + row counts.
     ///
     /// # Errors
     /// - [`FormatError::SchemaIncompatible`] — a source has no replacement, or
     ///   a new source's schema is structurally incompatible, or the recipe DAG
     ///   has a cycle.
-    /// - [`FormatError::Engine`] — any engine operation failed.
+    /// - [`FormatError::RecipeStepRefused`] — a derived step is not a single
+    ///   query.
+    /// - [`FormatError::Engine`] — any engine operation failed, including a
+    ///   step that reached outside `workdir`.
     pub async fn replay(
         parsed: &ParsedPackage,
         new_sources: &HashMap<String, PathBuf>,
         engine: &dyn QueryEngine,
+        workdir: &std::path::Path,
     ) -> Result<PackageContents> {
         // --- 1. Rebind sources -> base tables. ---
         for source in &parsed.sources.sources {
@@ -203,7 +216,11 @@ impl ReplayEngine {
             compat_check(&source.schema_fingerprint, &provided)?;
         }
 
-        // --- 2. Re-exec derived tables in topological order. ---
+        // --- 2. Confine. Everything the recipe itself runs happens after this,
+        //        with the user's sources already loaded as tables.
+        engine.confine_to(workdir).await?;
+
+        // --- 3. Re-exec derived tables in topological order. ---
         for table in topo_order_derived(&parsed.recipe.tables)? {
             // A `Derived` table MUST carry a derivation (Reader does not enforce
             // this invariant, so a hand-corrupted package gets a clean error here
@@ -228,6 +245,15 @@ impl ReplayEngine {
                     )
                 }
             };
+            engine.check_single_query(&sql).await.map_err(|e| match e {
+                dat0_engine::EngineError::NotASingleQuery(reason) => {
+                    FormatError::RecipeStepRefused {
+                        table: table.name.clone(),
+                        reason,
+                    }
+                }
+                other => FormatError::Engine(other),
+            })?;
             // Drop any stale table of this name first so the recreate is
             // idempotent. `drop_table` is a bare `DROP TABLE` (no IF EXISTS), so
             // only drop when it actually exists (a fresh replay engine has none).
@@ -237,7 +263,7 @@ impl ReplayEngine {
             engine.create_table(&table.name, &sql, origin).await?;
         }
 
-        // --- 3. Rebuild PackageContents with refreshed schemas + counts. ---
+        // --- 4. Rebuild PackageContents with refreshed schemas + counts. ---
         let mut recipe = parsed.recipe.clone();
         for t in &mut recipe.tables {
             let cols = engine.describe_table(&t.name, None).await?;

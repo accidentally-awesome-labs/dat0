@@ -22,7 +22,7 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 use dat0_core::app_lock::{AppLock, OpenWindowMessage};
-use dat0_core::events::{AppEvent, AppEvents};
+use dat0_core::events::{AppEvent, AppEvents, Opening};
 use futures::StreamExt;
 use serial_test::serial;
 
@@ -72,7 +72,7 @@ async fn a_forwarded_launch_becomes_exactly_one_open_window_event() {
     let handle = tokio::spawn(async move {
         let _ = lock
             .serve(move |msg: OpenWindowMessage| {
-                events.send(AppEvent::OpenWindow { paths: msg.paths });
+                events.send(AppEvent::OpenWindow(Opening::files(msg.paths)));
             })
             .await;
     });
@@ -92,9 +92,9 @@ async fn a_forwarded_launch_becomes_exactly_one_open_window_event() {
         .expect("an open-window event must arrive")
         .expect("the bus must still be open");
     match ev {
-        AppEvent::OpenWindow { paths } => assert_eq!(
-            paths,
-            vec![wanted],
+        AppEvent::OpenWindow(opening) => assert_eq!(
+            opening,
+            Opening::files(vec![wanted]),
             "the forwarded paths must survive the round trip"
         ),
         other => panic!("expected OpenWindow, got {other:?}"),

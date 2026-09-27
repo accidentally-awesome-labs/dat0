@@ -30,10 +30,25 @@ use crate::components::workspace_in_use::InUse;
 
 /// The design's default sidebar width (S1).
 pub const SIDEBAR_WIDTH: u32 = 238;
+/// At this window width and below the sidebar is not drawn: the narrow rule
+/// `app.css` applies at `max-width: 1080px`.
+pub const NARROW_WINDOW: f64 = 1080.0;
 /// The design's default right-column width (S5).
 pub const RIGHT_WIDTH: u32 = 320;
 /// The design's default console height (S4).
 pub const BOTTOM_HEIGHT: u32 = 260;
+
+/// A database attached to the window's session: a SQLite file, listed under
+/// CONNECTIONS with its tables.
+#[derive(Clone, PartialEq, Debug)]
+pub struct Attached {
+    /// The name it is attached under.
+    pub alias: String,
+    /// The file.
+    pub path: PathBuf,
+    /// Its tables, by name.
+    pub tables: Vec<String>,
+}
 
 /// One workspace tab.
 #[derive(Clone, PartialEq, Debug)]
@@ -42,11 +57,19 @@ pub struct TabView {
     pub table: String,
     /// Source file, when the tab came from one. Drives the S8 swatch.
     pub path: Option<PathBuf>,
+    /// A name to show instead of the file's or the table's. A console run's
+    /// rows sit in a view named `__dat0_qr_…`, and the tab is named for the
+    /// query tab they came from.
+    pub label: Option<String>,
 }
 
 impl TabView {
-    /// The tab's display title: the file's stem when it has one, else the table.
+    /// The tab's display title: its label, else the file's name, else the
+    /// table.
     pub fn title(&self) -> &str {
+        if let Some(label) = &self.label {
+            return label;
+        }
         self.path
             .as_ref()
             .and_then(|p| p.file_name())
@@ -65,15 +88,19 @@ pub struct Status {
     /// False when the engine session failed — the dot goes red and stops
     /// pulsing.
     pub engine_ok: bool,
-    /// Configured memory budget, MB.
+    /// The process's resident set, MB, sampled every two seconds
+    /// (`chrome::use_memory`).
     pub mem_mb: u64,
     /// The visible row window, 1-based and inclusive, and the total.
     pub rows: Option<(u64, u64, u64)>,
-    /// Frames per second from the existing frame clock.
-    pub fps: u32,
-    /// Bytes sent off-device this session. Zero unless a cloud connection or
-    /// the AI panel is in use, and shown always so that is visible.
+    /// Bytes dat0 has sent off this machine since it started, from any window
+    /// (`telemetry::egress`, kept current by `chrome::use_egress`). Zero
+    /// unless a cloud connection, AI or an update check is used, and shown
+    /// always so that is visible.
     pub egress: u64,
+    /// A channel dat0 cannot meter is open (the MotherDuck extension's own
+    /// connection), so `egress` is a floor. Shown as a `+`.
+    pub egress_floor: bool,
 }
 
 impl Default for Status {
@@ -82,8 +109,8 @@ impl Default for Status {
             engine_ok: true,
             mem_mb: 0,
             rows: None,
-            fps: 0,
             egress: 0,
+            egress_floor: false,
         }
     }
 }
@@ -216,6 +243,14 @@ pub struct Workspace {
     pub status: Signal<Status>,
     /// The single modal slot.
     pub modal: Signal<Option<Modal>>,
+    /// Banners shown in this window's pane stack.
+    ///
+    /// Per window, so a failure caused by something this window did is shown
+    /// here — not in whichever window happens to drain the process-global
+    /// queue first. Code holding a `Workspace` pushes with
+    /// [`Workspace::push_banner`]; code that has none (core, boot) uses
+    /// `error_ux::push`, which the shell drains on every push.
+    pub banners: Signal<Vec<dat0_core::error_ux::Banner>>,
     /// Whether the command palette is open.
     pub palette: Signal<bool>,
     /// A file drag is over the window.
@@ -241,6 +276,10 @@ pub struct Workspace {
     /// two drops land as two tabs in the order they were made, with the last
     /// one active, exactly as if the session had been ready all along.
     pub pending_open: Signal<Vec<PathBuf>>,
+    /// The databases attached to the session, with their tables, for the
+    /// sidebar's CONNECTIONS. Written where one is attached: opening a file
+    /// (`sqlite_open::open`) and a session landing (`sqlite_open::reattach`).
+    pub attached: Signal<Vec<Attached>>,
     /// This window's stable id, minted before the session so it exists in
     /// every slot state.
     pub window_id: uuid::Uuid,
@@ -249,20 +288,62 @@ pub struct Workspace {
 impl Workspace {
     /// Create and provide the workspace to the tree below.
     pub fn provide() -> Self {
+        Self::provide_with(uuid::Uuid::now_v7(), "scratch".into(), false)
+    }
+
+    /// The workspace of a window opened on `opening`. A recovered session
+    /// keeps the id its directory is named for, so the directory counts as
+    /// open for as long as this window is — and is neither offered for
+    /// recovery again nor swept.
+    ///
+    /// A workspace window is named for its folder in the titlebar.
+    pub fn provide_for(opening: &dat0_core::events::Opening) -> Self {
+        use dat0_core::events::Opening;
+        let id = match opening {
+            Opening::Recover { dir } => dir
+                .file_name()
+                .and_then(|n| n.to_str())
+                .and_then(|n| uuid::Uuid::parse_str(n).ok()),
+            Opening::Scratch { .. } | Opening::Workspace { .. } | Opening::Inspect { .. } => None,
+        };
+        let name = match opening {
+            Opening::Workspace { root, .. } => Self::name_for(root),
+            // A package is named for its file, without the extension.
+            Opening::Inspect { package } => package
+                .file_stem()
+                .map(|n| n.to_string_lossy().into_owned())
+                .unwrap_or_else(|| package.display().to_string()),
+            Opening::Scratch { .. } | Opening::Recover { .. } => "scratch".into(),
+        };
+        // A package is shown as it was sealed.
+        let read_only = matches!(opening, Opening::Inspect { .. });
+        Self::provide_with(id.unwrap_or_else(uuid::Uuid::now_v7), name, read_only)
+    }
+
+    /// What the titlebar calls the workspace in `root`: its folder.
+    pub fn name_for(root: &std::path::Path) -> String {
+        root.file_name()
+            .map(|n| n.to_string_lossy().into_owned())
+            .unwrap_or_else(|| root.display().to_string())
+    }
+
+    fn provide_with(window_id: uuid::Uuid, name: String, read_only: bool) -> Self {
         let ws = Self {
-            name: Signal::new("scratch".into()),
+            name: Signal::new(name),
             tabs: Signal::new(Vec::new()),
             active: Signal::new(None),
-            read_only: Signal::new(false),
+            read_only: Signal::new(read_only),
             live: Signal::new(false),
             layout: Signal::new(DockLayout::default()),
             status: Signal::new(Status::default()),
             modal: Signal::new(None),
+            banners: Signal::new(Vec::new()),
             palette: Signal::new(false),
             drag_over: Signal::new(false),
             session: Signal::new(Arc::new(SessionSlot::Booting)),
             pending_open: Signal::new(Vec::new()),
-            window_id: uuid::Uuid::now_v7(),
+            attached: Signal::new(Vec::new()),
+            window_id,
         };
         use_context_provider(|| ws)
     }
@@ -270,6 +351,12 @@ impl Workspace {
     /// Read the workspace provided above.
     pub fn use_current() -> Self {
         use_context()
+    }
+
+    /// Show `banner` in this window.
+    pub fn push_banner(&self, banner: dat0_core::error_ux::Banner) {
+        let mut banners = self.banners;
+        banners.write().push(banner);
     }
 
     /// The sidebar's width in pixels, or 0 when collapsed.
@@ -282,7 +369,11 @@ impl Workspace {
     /// is in band on the way out and on the way back in.
     pub fn sidebar_px(&self, window_w: f64) -> u32 {
         let l = self.layout.read();
-        if l.sidebar_open {
+        // The stylesheet hid the sidebar at 1080 px and below while the
+        // shell's inline columns kept its track: the splitter took the
+        // sidebar's 238 px, the work area the splitter's 0 px, and the grid
+        // was gone from any narrower window (step 5.11g).
+        if l.sidebar_open && window_w > NARROW_WINDOW {
             mounted(l.sidebar_size, SIDEBAR_WIDTH, window_w)
         } else {
             0
@@ -336,6 +427,22 @@ impl Workspace {
         let i = (*self.active.read())?;
         self.tabs.read().get(i).cloned()
     }
+
+    /// Bring up `table`'s tab, opening one for it when it has none. `path`
+    /// is the file a new tab reads again on a Live Refresh.
+    pub fn show_tab(&self, table: String, path: Option<PathBuf>) {
+        let (mut tabs, mut active) = (self.tabs, self.active);
+        let open = tabs.peek().iter().position(|t| t.table == table);
+        let at = open.unwrap_or_else(|| {
+            tabs.write().push(TabView {
+                table,
+                path,
+                label: None,
+            });
+            tabs.peek().len() - 1
+        });
+        active.set(Some(at));
+    }
 }
 
 /// A persisted dock size resolved into the pixels to mount with.
@@ -370,14 +477,22 @@ mod tests {
         let from_file = TabView {
             table: "t_1".into(),
             path: Some(PathBuf::from("/data/sales.csv")),
+            label: None,
         };
         assert_eq!(from_file.title(), "sales.csv");
 
         let from_query = TabView {
             table: "results".into(),
             path: None,
+            label: None,
         };
         assert_eq!(from_query.title(), "results");
+
+        let labelled = TabView {
+            label: Some("Query 1".into()),
+            ..from_file
+        };
+        assert_eq!(labelled.title(), "Query 1", "a label wins over the file");
     }
 
     #[test]

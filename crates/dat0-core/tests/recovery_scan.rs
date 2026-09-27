@@ -16,16 +16,21 @@ use dat0_core::recovery_scan::recovery_scan_emit;
 use serial_test::serial;
 use tempfile::tempdir;
 
-/// Seed `n` orphan scratch dirs, each holding a `session.json`.
+/// Seed `n` orphan scratch dirs, each holding a `session.json` with a tab no
+/// file backs — something that exists only there.
 ///
-/// Directory names need not be UUIDs: an orphan is *any* subdir containing a
-/// `session.json`, and readable names keep the failure output legible.
+/// Directory names need not be UUIDs: an orphan is *any* subdir containing
+/// such a `session.json`, and readable names keep the failure output legible.
 fn seed_orphans(scratch_root: &std::path::Path, n: usize) {
     fs::create_dir_all(scratch_root).unwrap();
     for i in 0..n {
         let dir = scratch_root.join(format!("session-{i:02}"));
         fs::create_dir(&dir).unwrap();
-        fs::write(dir.join("session.json"), r#"{"tabs":[],"active_tab":null}"#).unwrap();
+        fs::write(
+            dir.join("session.json"),
+            r#"{"tabs":[{"table_name":"summary","source_path":null}],"active_tab":0}"#,
+        )
+        .unwrap();
     }
 }
 
@@ -146,4 +151,20 @@ fn a_scratch_dir_without_a_session_is_not_counted() {
         banner.title
     );
     let _ = drain_pending();
+}
+
+/// A window that only looked at files leaves a session holding nothing the
+/// files do not. It is not offered: the boot sweep removes it instead.
+#[test]
+#[serial]
+fn a_session_holding_nothing_to_recover_is_not_counted() {
+    let _ = drain_pending();
+    let tmp = tempdir().unwrap();
+    let scratch_root = tmp.path().join("scratch");
+    let dir = scratch_root.join("looked");
+    fs::create_dir_all(&dir).unwrap();
+    fs::write(dir.join("session.json"), r#"{"tabs":[],"active_tab":null}"#).unwrap();
+
+    assert!(recovery_scan_emit(&scratch_root, &[]).is_none());
+    assert!(drain_pending().is_empty());
 }

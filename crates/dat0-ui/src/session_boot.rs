@@ -22,6 +22,7 @@ use std::time::Duration;
 use dioxus::prelude::*;
 use parking_lot::Mutex;
 
+use dat0_core::events::Opening;
 use dat0_core::file_drop::{DropOutcome, handle_drop};
 use dat0_core::session::Session;
 use dat0_core::session::dock_layout::DockLayout;
@@ -173,15 +174,21 @@ pub fn failure_banner(message: &str) -> dat0_core::error_ux::Banner {
 /// One function, so the cold boot and the retry cannot disagree about what a
 /// failure looks like — under GPUI they were two code paths and only one of
 /// them cleared the queue.
-async fn land(ws: Workspace, slot: SessionSlot) {
+pub(crate) async fn land(ws: Workspace, slot: SessionSlot) {
     let mut ws = ws;
+    // Before the slot is published: restoring the tabs reads their tables,
+    // and a tab over a SQLite file's table reads nothing until the file is
+    // attached again.
+    if let Some(session) = slot.ready() {
+        crate::sqlite_open::reattach(ws, session).await;
+    }
     let failure = slot.failure().map(str::to_string);
     ws.session.set(Arc::new(slot));
     ws.status.write().engine_ok = failure.is_none();
 
     if let Some(message) = failure {
         ws.pending_open.write().clear();
-        dat0_core::error_ux::push(failure_banner(&message));
+        ws.push_banner(failure_banner(&message));
         return;
     }
 
@@ -194,48 +201,128 @@ async fn land(ws: Workspace, slot: SessionSlot) {
     }
 }
 
-/// Open this window's session, then drain anything queued while it booted.
-///
-/// Mount-once: `use_future` runs one task for the component's life.
+/// Open a fresh scratch session with `cli_paths` in it. See [`use_session_on`].
 pub fn use_session(ws: Workspace, cli_paths: Vec<PathBuf>) {
+    use_session_on(ws, Opening::files(cli_paths));
+}
+
+/// Open this window's session on `opening`, then drain anything queued while
+/// it booted.
+///
+/// Mount-once: `use_future` runs one task for the component's life. The
+/// opening stays in context, so a retry after a failure rebuilds the session
+/// this window was opened for rather than a blank one.
+pub fn use_session_on(ws: Workspace, opening: Opening) {
     let mut ws = ws;
+    let opening = use_context_provider(|| opening);
+    use_context_provider(crate::workspace_save::Suggested::default);
     // Hangs off the same hook so a window cannot get a session without also
     // getting its layout: they are one lifecycle, not two.
     use_layout_persistence(ws);
+    // Live from mount, before its scratch directory exists, so the recovery
+    // panel can never list a directory that is still being created — and
+    // until the window closes, after which that directory is an orphan like
+    // any other.
+    let window_id = ws.window_id;
+    use_hook(move || dat0_core::globals::register_live_window(window_id));
+    use_drop(move || dat0_core::globals::unregister_live_window(window_id));
+    // A workspace's window holds its folder from mount, so opening the folder
+    // again while this one boots brings this window forward rather than
+    // opening a second.
+    use_hook({
+        let opening = opening.clone();
+        move || {
+            if let (Opening::Workspace { root, .. }, Some(boot)) =
+                (&opening, try_consume_context::<crate::launch::Boot>())
+            {
+                boot.windows.holds(window_id, root.clone());
+            }
+        }
+    });
     use_future(move || {
-        let paths = cli_paths.clone();
+        let opening = opening.clone();
         async move {
             // The launch arguments are simply the first entries in the queue.
             // Treating them as a separate channel is what let the GPUI build
             // open the CLI files and swallow a drop made while it did.
-            if !paths.is_empty() {
-                ws.pending_open.write().extend(paths);
+            if let Opening::Scratch { paths } = &opening {
+                ws.pending_open.write().extend(paths.iter().cloned());
             }
+            let slot = build(ws, &opening).await;
+            land(ws, slot).await;
+        }
+    });
+}
 
+/// The session `opening` asks for: a new one, or the one a closed or crashed
+/// window left behind.
+async fn build(ws: Workspace, opening: &Opening) -> SessionSlot {
+    let budget = dat0_core::settings::budget::configured();
+    let built = match opening {
+        Opening::Scratch { .. } => {
             let Some(state_root) = dat0_core::globals::state_root() else {
                 // The state root is installed by `launch::main` before any
                 // window exists. Missing means the process was started some
                 // other way, and a session opened against a guessed directory
                 // is worse than a visible failure.
-                land(
-                    ws,
-                    SessionSlot::Failed("state root not installed".to_string()),
-                )
-                .await;
-                return;
+                return SessionSlot::Failed("state root not installed".to_string());
             };
-            let budget = dat0_core::settings::budget::configured();
-            let id = ws.window_id;
-
-            let slot = match Session::new_with_id(state_root, budget, id).await {
-                Ok(s) => SessionSlot::Ready(Arc::new(Mutex::new(s))),
-                // `{e:#}` renders the whole anyhow chain — `Session::new`'s
-                // context lines are the only diagnosis a user gets here.
-                Err(e) => SessionSlot::Failed(format!("{e:#}")),
-            };
-            land(ws, slot).await;
+            Session::new_with_id(state_root, budget, ws.window_id).await
         }
-    });
+        Opening::Recover { dir } => Session::recover(dir.clone(), budget).await,
+        Opening::Inspect { package } => crate::package_open::build(ws, package, budget).await,
+        Opening::Workspace { root, networked } => Session::recover_workspace(root.clone(), budget)
+            .await
+            .map(|mut s| {
+                if *networked {
+                    claim_lock(ws, &mut s);
+                }
+                remember(root);
+                s
+            }),
+    };
+    match built {
+        Ok(s) => SessionSlot::Ready(Arc::new(Mutex::new(s))),
+        // `{e:#}` renders the whole anyhow chain — `Session::new`'s context
+        // lines are the only diagnosis a user gets here.
+        Err(e) => SessionSlot::Failed(format!("{e:#}")),
+    }
+}
+
+/// Record this window in a networked workspace's cross-machine lock, so a dat0
+/// on another machine opening it is warned. A lock that cannot be written — a
+/// read-only share — leaves the workspace open under its local lock alone, and
+/// says so.
+pub(crate) fn claim_lock(ws: Workspace, session: &mut Session) {
+    let Some(lock_json) = session.home.lock_json_path() else {
+        return;
+    };
+    match dat0_core::workspace::lock_manifest::claim(&lock_json, dat0_core::time::now_epoch_secs())
+    {
+        Ok(guard) => session.set_manifest_lock(guard),
+        Err(e) => {
+            tracing::warn!(error = %format!("{e:#}"), "lock.json claim failed; local lock only");
+            ws.push_banner(dat0_core::error_ux::Banner::warning(dat0_i18n::t(
+                "workspace.in_use.claim_failed.title",
+            )));
+        }
+    }
+}
+
+/// Put the workspace at the top of the recent list.
+pub(crate) fn remember(root: &std::path::Path) {
+    let Some(recents) = dat0_core::globals::recents() else {
+        return;
+    };
+    let Ok(mut recents) = recents.lock() else {
+        return;
+    };
+    let entry = dat0_core::recents::RecentEntry::Workspace {
+        path: root.to_path_buf(),
+    };
+    if let Err(e) = recents.push(entry) {
+        tracing::warn!(error = %format!("{e:#}"), "could not record the recent workspace");
+    }
 }
 
 /// Register `paths` as tables and append a tab for each.
@@ -244,6 +331,25 @@ pub fn use_session(ws: Workspace, cli_paths: Vec<PathBuf>) {
 /// "drop" cannot drift — this is the one function that turns a path into a tab.
 pub async fn open_paths(ws: Workspace, paths: Vec<PathBuf>) {
     let mut ws = ws;
+    // A package opens read-only in a window of its own, never as a table.
+    let (packages, paths): (Vec<PathBuf>, Vec<PathBuf>) = paths
+        .into_iter()
+        .partition(|p| crate::package_open::is_package(p));
+    for package in packages {
+        crate::package_open::open_here(ws, package);
+    }
+    // A folder is a workspace, opened in a window of its own as Open
+    // Workspace… opens one, and a folder that holds none says so. It was
+    // read as a file with no extension, and refused as a type dat0 cannot
+    // read (PD-023, step 5.11b).
+    let (folders, paths): (Vec<PathBuf>, Vec<PathBuf>) =
+        paths.into_iter().partition(|p| p.is_dir());
+    for folder in folders {
+        crate::workspace_open::open_here(ws, folder);
+    }
+    if paths.is_empty() {
+        return;
+    }
     // Scoped: the read guard must be gone before the queue is written.
     let (where_to, ready) = {
         let slot = ws.session.read();
@@ -273,7 +379,18 @@ pub async fn open_paths(ws: Workspace, paths: Vec<PathBuf>) {
         }
     };
 
-    for outcome in handle_drop(paths, session).await {
+    // A SQLite file is attached, not read in (`sqlite_open`).
+    let (sqlite, paths): (Vec<PathBuf>, Vec<PathBuf>) = paths
+        .into_iter()
+        .partition(|p| dat0_core::connections::sqlite::is_sqlite(p));
+    for path in sqlite {
+        crate::sqlite_open::open(ws, session.clone(), path).await;
+    }
+    if paths.is_empty() {
+        return;
+    }
+
+    for outcome in handle_drop(paths, session.clone()).await {
         match outcome {
             DropOutcome::Registered {
                 table_name,
@@ -282,6 +399,7 @@ pub async fn open_paths(ws: Workspace, paths: Vec<PathBuf>) {
                 ws.tabs.write().push(TabView {
                     table: table_name,
                     path: Some(source_path),
+                    label: None,
                 });
                 let last = ws.tabs.read().len() - 1;
                 ws.active.set(Some(last));
@@ -289,21 +407,31 @@ pub async fn open_paths(ws: Workspace, paths: Vec<PathBuf>) {
             DropOutcome::Unsupported { path, extension } => {
                 let what = extension.unwrap_or_default();
                 tracing::info!(?path, extension = %what, "unsupported file dropped");
-                dat0_core::error_ux::push(dat0_core::error_ux::Banner::warning(dat0_i18n::t(
-                    "drop.unsupported",
-                )));
+                // Name the file: when several are dropped at once, "that
+                // file type" is only actionable if it says which file.
+                let name = path
+                    .file_name()
+                    .map(|n| n.to_string_lossy().into_owned())
+                    .unwrap_or_else(|| path.display().to_string());
+                ws.push_banner(dat0_core::error_ux::Banner::warning_with_body(
+                    dat0_i18n::t("drop.unsupported"),
+                    name,
+                ));
             }
             DropOutcome::EngineError { path, error } => {
                 tracing::warn!(?path, %error, "register failed");
-                dat0_core::error_ux::push(dat0_core::error_ux::Banner::error(
+                ws.push_banner(dat0_core::error_ux::Banner::error(
                     dat0_i18n::t("drop.register_failed"),
                     error,
                 ));
             }
-            other => {
-                // The import wizard's ambiguous-sniff outcome. Routed by the
-                // wizard surface, which owns the mapping UI.
-                tracing::info!(?other, "drop needs the import wizard");
+            // A CSV the sniff could not settle: the wizard asks for its
+            // dialect and columns (step 5.10). It was logged and let go.
+            DropOutcome::OpenWizard { path, sniff } => {
+                crate::import_flow::offer(ws, session.clone(), path, sniff);
+            }
+            DropOutcome::Cancelled { path } => {
+                tracing::info!(?path, "import cancelled");
             }
         }
     }
@@ -319,23 +447,30 @@ pub fn retry(ws: Workspace) {
     if ws.session.read().failure().is_none() {
         return;
     }
+    // What the window was opened for. Its files were dropped with the
+    // failure, so a scratch retry starts empty.
+    let opening = match try_consume_context::<Opening>() {
+        Some(Opening::Scratch { .. }) | None => Opening::files(Vec::new()),
+        Some(other) => other,
+    };
     ws.session.set(Arc::new(SessionSlot::Booting));
+    clear_failure(ws);
     spawn(async move {
-        let Some(state_root) = dat0_core::globals::state_root() else {
-            land(
-                ws,
-                SessionSlot::Failed("state root not installed".to_string()),
-            )
-            .await;
-            return;
-        };
-        let budget = dat0_core::settings::budget::configured();
-        let slot = match Session::new_with_id(state_root, budget, ws.window_id).await {
-            Ok(s) => SessionSlot::Ready(Arc::new(Mutex::new(s))),
-            Err(e) => SessionSlot::Failed(format!("{e:#}")),
-        };
+        let slot = build(ws, &opening).await;
         land(ws, slot).await;
     });
+}
+
+/// Take down the failure banner a retry answers, as the retry starts: the
+/// retry's own outcome replaces it. It cannot be dismissed, and it stayed up
+/// after a retry opened the session, offering a Retry that did nothing; a
+/// retry that failed again put a second beside it (step 5.11c).
+fn clear_failure(ws: Workspace) {
+    let mut banners = ws.banners;
+    let retry = dat0_core::actions::builtin::ids::SESSION_RETRY;
+    banners
+        .write()
+        .retain(|b| b.primary.as_ref().is_none_or(|a| a.action_id != retry));
 }
 
 #[cfg(test)]

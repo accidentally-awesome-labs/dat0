@@ -120,8 +120,22 @@ impl Banner {
     }
 }
 
-/// Boot-time stash for banners produced before any window exists.
+/// Process-global queue for banners raised with no window in hand: at boot,
+/// before any window exists, and from core code that has no handle on the
+/// window it is working for. A window drains it on every [`push`] — see
+/// [`subscribe`]. Code that does have a window pushes to that window directly,
+/// so its banner cannot surface in another one.
 static PENDING: Lazy<Mutex<Vec<Banner>>> = Lazy::new(|| Mutex::new(Vec::new()));
+
+/// Bumped on every [`push`].
+///
+/// The queue alone is not enough: a window that only drains when something
+/// else re-renders it finds a banner late or never. The Dioxus shell did
+/// exactly that — its drain lived in a `use_effect` that read no signal, so it
+/// ran once per mount and every banner raised after the first frame stayed in
+/// the queue until some *other* window mounted and showed it there.
+static GENERATION: Lazy<tokio::sync::watch::Sender<u64>> =
+    Lazy::new(|| tokio::sync::watch::channel(0).0);
 
 pub fn push(banner: Banner) {
     match PENDING.lock() {
@@ -132,6 +146,17 @@ pub fn push(banner: Banner) {
             q.push(banner);
         }
     }
+    // After the lock is released, so a woken window can take it at once.
+    GENERATION.send_modify(|g| *g = g.wrapping_add(1));
+}
+
+/// A receiver that changes whenever [`push`] queues a banner.
+///
+/// A window awaits `changed()` on it and calls [`drain_pending`] on each wake.
+/// Subscribe *before* the first drain: a push that lands between the two then
+/// wakes the loop once more, rather than slipping past both.
+pub fn subscribe() -> tokio::sync::watch::Receiver<u64> {
+    GENERATION.subscribe()
 }
 
 /// Convenience for migrating call sites that just want a warning with a
@@ -152,7 +177,9 @@ pub fn drain_pending() -> Vec<Banner> {
 }
 
 /// Move any globally-stashed banners into a per-window live list (PD-021).
-/// Called once per shell render so boot-time + background `push`es surface.
+///
+/// Call it from a loop driven by [`subscribe`], not from a render or an
+/// effect: neither re-runs because the queue changed.
 pub fn merge_pending(live: &mut Vec<Banner>) {
     live.append(&mut drain_pending());
 }
@@ -176,6 +203,31 @@ mod tests {
         assert_eq!(drained[0].title, "first");
         assert_eq!(drained[1].title, "second");
         assert!(drain_pending().is_empty());
+    }
+
+    #[test]
+    #[serial]
+    fn a_push_wakes_every_subscriber() {
+        let _ = drain_pending();
+        let mut first = subscribe();
+        let second = subscribe();
+        assert!(!first.has_changed().unwrap(), "nothing pushed yet");
+
+        push(Banner::warning("raised after the window mounted"));
+
+        // Both windows must be told; which of them drains is a race they
+        // settle between themselves, but neither may sleep through it.
+        assert!(
+            first.has_changed().unwrap(),
+            "a push must wake a subscriber"
+        );
+        assert!(second.has_changed().unwrap(), "and every subscriber");
+        first.borrow_and_update();
+        assert!(
+            !first.has_changed().unwrap(),
+            "seen once, quiet until the next push"
+        );
+        let _ = drain_pending();
     }
 
     #[test]

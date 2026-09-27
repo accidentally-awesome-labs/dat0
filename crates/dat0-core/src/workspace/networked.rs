@@ -17,6 +17,36 @@ const SYNC_FRAGMENTS: &[&str] = &[
     ".var/syncthing",
 ];
 
+/// The workspace settings the networked decision reads, from `settings.toml`.
+///
+/// A missing file is the defaults. A config directory that cannot be found, or
+/// a settings file that cannot be read, is treated as "every workspace is
+/// networked": over-detection costs a lock record nobody needed, and
+/// under-detection lets two machines edit one workspace unwarned (design D2).
+pub fn settings() -> WorkspaceSettings {
+    let networked_safe = || WorkspaceSettings {
+        treat_all_as_networked: true,
+        ..WorkspaceSettings::default()
+    };
+    let Ok(dir) = crate::platform::config_dir() else {
+        tracing::warn!("config dir unavailable; treating workspaces as networked");
+        return networked_safe();
+    };
+    settings_at(&dir.join("settings.toml")).unwrap_or_else(|| {
+        tracing::warn!("settings unreadable; treating workspaces as networked");
+        networked_safe()
+    })
+}
+
+/// The workspace settings in the file at `path`, or `None` when it cannot be
+/// read. A missing file is the defaults.
+fn settings_at(path: &Path) -> Option<WorkspaceSettings> {
+    crate::settings::store::SettingsStore::with_path(path.to_path_buf())
+        .load_or_default()
+        .ok()
+        .map(|s| s.workspace)
+}
+
 /// True when `path` should use the cross-machine lock manifest.
 pub fn is_networked(path: &Path, settings: &WorkspaceSettings) -> bool {
     if settings.treat_all_as_networked {
@@ -71,6 +101,19 @@ mod tests {
         let s = settings(false, &["/Volumes/share"]);
         assert!(is_networked(Path::new("/Volumes/share/proj"), &s));
         assert!(!is_networked(Path::new("/Volumes/other/proj"), &s));
+    }
+
+    #[test]
+    fn unreadable_settings_err_toward_networked_and_a_missing_file_does_not() {
+        let dir = tempfile::tempdir().unwrap();
+        let missing = dir.path().join("settings.toml");
+        assert_eq!(
+            settings_at(&missing),
+            Some(WorkspaceSettings::default()),
+            "no file is the defaults"
+        );
+        std::fs::write(&missing, "workspace = [not toml").unwrap();
+        assert_eq!(settings_at(&missing), None, "a broken file is unknown");
     }
 
     #[test]

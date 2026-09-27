@@ -176,3 +176,33 @@ fn selected_cell_count_is_arithmetic_not_per_cell() {
     s.select_all();
     assert_eq!(s.selected_cell_count(), 20_000_000);
 }
+
+#[test]
+fn bounds_cover_every_range_whichever_way_it_was_dragged() {
+    let mut s = SelectionModel::new(20, 10);
+    assert_eq!(s.bounds(), None, "nothing selected");
+    // Dragged up and to the left: the range's corners arrive reversed.
+    s.click(CellCoord { row: 6, col: 4 });
+    s.extend_to(CellCoord { row: 3, col: 2 });
+    s.add_click(CellCoord { row: 9, col: 1 });
+    let b = s.bounds().expect("a selection");
+    assert_eq!((b.r0, b.c0, b.r1, b.c1), (3, 1, 9, 4));
+}
+
+#[test]
+fn selected_rows_merge_overlapping_ranges_and_count_without_walking() {
+    let mut s = SelectionModel::new(20, 10);
+    s.click(CellCoord { row: 2, col: 0 });
+    s.extend_to(CellCoord { row: 4, col: 3 }); // rows 2..=4
+    s.add_click(CellCoord { row: 4, col: 7 }); // row 4 again
+    s.add_click(CellCoord { row: 5, col: 9 }); // touches: 2..=5
+    s.add_click(CellCoord { row: 11, col: 0 });
+    assert_eq!(s.selected_rows(), vec![2, 3, 4, 5, 11]);
+    assert_eq!(s.selected_row_count(), 5);
+    assert_eq!(s.selected_cols(), vec![0, 1, 2, 3, 7, 9]);
+
+    // A select-all's rows are counted, not listed.
+    let mut all = SelectionModel::new(1_000_000, 20);
+    all.select_all();
+    assert_eq!(all.selected_row_count(), 1_000_000);
+}

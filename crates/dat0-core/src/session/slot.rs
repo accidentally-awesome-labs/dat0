@@ -26,7 +26,7 @@ use crate::session::Session;
 /// `Failed` carries a rendered message because `Session::new` returns
 /// `anyhow::Error`, which has no variant to match on — it is deliberately NOT
 /// routed through `error_ux::engine::banner_for`, whose whole contract is an
-/// exhaustive match over `EngineError`'s sixteen variants.
+/// exhaustive match over `EngineError`'s variants.
 pub enum SessionSlot {
     /// DuckDB is opening on the tokio runtime. Terminal only in the sense that
     /// exactly one of the other two states follows it.

@@ -476,6 +476,7 @@ pub struct ImportWizardProps {
 #[component]
 pub fn ImportWizard(props: ImportWizardProps) -> Element {
     let mut model = props.model;
+    use_described_columns(model);
     let m = model.read().clone();
     let step = m.step;
     let issues = m.issues(step);
@@ -585,6 +586,53 @@ pub fn ImportWizard(props: ImportWizardProps) -> Element {
             }
         }
     }
+}
+
+/// Keep the Columns step on what the file reads as under the dialect in the
+/// fields: DuckDB describes it again, off the window's thread, when the
+/// delimiter, the quote or the header changes (step 5.10). The opener
+/// describes it first. A dialect with issues is not described (its issues
+/// say why), and neither is anything on a host with no tokio runtime, as a
+/// headless test's can be.
+fn use_described_columns(mut model: Signal<WizardModel>) {
+    let dialect = use_memo(move || {
+        let m = model.read();
+        (
+            m.path.clone(),
+            m.delimiter.clone(),
+            m.quote.clone(),
+            m.has_header,
+        )
+    });
+    let mut described = use_signal(|| None::<(PathBuf, String, String, bool)>);
+    use_effect(move || {
+        let wanted = dialect();
+        let first = described.peek().is_none();
+        if first || described.peek().as_ref() == Some(&wanted) {
+            described.set(Some(wanted));
+            return;
+        }
+        described.set(Some(wanted.clone()));
+        let settled = model.peek().issues(Step::Dialect).is_empty();
+        if !settled || tokio::runtime::Handle::try_current().is_err() {
+            return;
+        }
+        spawn(async move {
+            let (path, delim, quote, header) = wanted.clone();
+            let read =
+                tokio::task::spawn_blocking(move || describe_csv(&path, &delim, &quote, header));
+            // A dialect that does not read keeps the columns there are.
+            if let Ok(Ok(columns)) = read.await {
+                // Still the dialect in the fields: a later edit wins.
+                if *dialect.peek() == wanted {
+                    model.write().columns = columns
+                        .into_iter()
+                        .map(|(name, ty)| ColumnDraft::new(name, ty))
+                        .collect();
+                }
+            }
+        });
+    });
 }
 
 #[component]

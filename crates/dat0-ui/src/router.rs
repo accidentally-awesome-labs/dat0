@@ -17,9 +17,42 @@ use std::rc::Rc;
 use dioxus::prelude::*;
 
 use dat0_core::actions::builtin::ids;
-use dat0_core::events::{AppEvent, AppEvents};
+use dat0_core::events::{AppEvent, AppEvents, Opening};
 
 use crate::state::{Modal, Workspace};
+
+/// Registered actions that do nothing in this build.
+///
+/// Each has a descriptor, so the palette, the menu bar, the grid's context
+/// menu and the keymap all know it, but its handler only logs, opens a dialog
+/// whose reply is thrown away, or hands its input to a path that refuses it
+/// (PD-023). Offering them is the failure this router exists to prevent, one
+/// level down: the id is claimed and nothing happens.
+///
+/// So every surface that offers a command asks [`is_wired`] first. The list is
+/// a ratchet: `tests/action_effects.rs` fails if it grows, and an id leaves it
+/// in the same change as the test that shows its effect.
+pub const UNWIRED: &[&str] = &[];
+
+/// Whether `id` does something in this build. See [`UNWIRED`].
+pub fn is_wired(id: &str) -> bool {
+    !UNWIRED.contains(&id)
+}
+
+/// Commands that act outside the window's content, and so run while a dialog
+/// is up in it: a new window, the theme every window shares, and Settings,
+/// which is a window of its own.
+const OVER_A_DIALOG: &[&str] = &[ids::WINDOW_NEW, ids::THEME_TOGGLE, ids::SETTINGS_OPEN];
+
+/// Whether `id` runs in a window with a dialog up.
+///
+/// A dialog owns its window while it is up. A command that would open another
+/// over it, or change what lies under it, is not run, and the window is raised
+/// so the dialog is seen (step 5.11c): ⌘E used to put Export in place of an
+/// open dialog, and the dialog it replaced was never answered.
+pub fn runs_over_a_dialog(id: &str) -> bool {
+    OVER_A_DIALOG.contains(&id)
+}
 
 /// A shell-installed handler for the actions whose state the shell owns.
 ///
@@ -61,10 +94,19 @@ pub type SurfaceSlot = Signal<Option<Surface>>;
 /// exists to make impossible to ship silently.
 pub fn route(ws: Workspace, events: &AppEvents, surface: SurfaceSlot, id: &str) -> bool {
     let mut ws = ws;
+    if ws.modal.peek().is_some() && !runs_over_a_dialog(id) {
+        tracing::debug!(action = %id, "a dialog is up; the command is not run");
+        crate::launch::raise();
+        return true;
+    }
     match id {
         // ── Window and shell ───────────────────────────────────────────────
-        ids::WINDOW_NEW => events.send(AppEvent::OpenWindow { paths: Vec::new() }),
+        ids::WINDOW_NEW => events.send(AppEvent::OpenWindow(Opening::files(Vec::new()))),
         ids::SIDEBAR_TOGGLE => ws.toggle_sidebar(),
+        ids::INSPECTOR_TOGGLE => {
+            let open = ws.layout.read().inspector_visible;
+            ws.layout.write().inspector_visible = !open;
+        }
         ids::CONSOLE_TOGGLE => {
             let open = ws.layout.read().console_open;
             ws.layout.write().console_open = !open;
@@ -77,13 +119,14 @@ pub fn route(ws: Workspace, events: &AppEvents, surface: SurfaceSlot, id: &str) 
             // Cycles light → dark → light. High contrast is deliberately not
             // in the cycle: it is an accessibility choice made once in
             // settings, not something to land on by pressing a key twice.
-            let mut theme = crate::theme::Theme::use_current();
+            let theme = crate::theme::Theme::current();
             let next = if theme.tokens().id == "light" {
                 "dark"
             } else {
                 "light"
             };
-            theme.set(next);
+            // Every window, and the next launch too.
+            crate::theme::choose(next);
         }
         ids::RECENTS_SHOW => ws.palette.set(true),
 
@@ -108,15 +151,25 @@ pub fn route(ws: Workspace, events: &AppEvents, surface: SurfaceSlot, id: &str) 
             let events = events.clone();
             spawn(async move {
                 if let Some(folder) = crate::files::pick_folder().await {
-                    events.send(AppEvent::OpenWindow {
-                        paths: vec![folder],
-                    });
+                    crate::workspace_open::open(ws, &events, folder);
+                }
+            });
+        }
+        ids::WORKSPACE_SAVE => {
+            if !crate::launch::has_desktop() {
+                tracing::debug!("workspace.save: no window system, nothing to show");
+                return true;
+            }
+            spawn(async move {
+                if let Some(folder) = crate::files::pick_folder_to_save().await {
+                    crate::workspace_save::save(ws, folder).await;
                 }
             });
         }
 
         // ── Modals ─────────────────────────────────────────────────────────
         ids::ONBOARDING_TAKE_TOUR => ws.modal.set(Some(Modal::Onboarding)),
+        ids::REPORT_BUG => crate::crash_flow::report_bug(ws),
         ids::SETTINGS_OPEN => {
             // Its own OS window, not the modal slot: settings is a nine-section
             // surface a user keeps open beside the workbench, and the slot
@@ -125,7 +178,10 @@ pub fn route(ws: Workspace, events: &AppEvents, surface: SurfaceSlot, id: &str) 
                 tracing::debug!("settings.open: no window system, nothing to open");
                 return true;
             }
-            let events = events.clone();
+            // The settings window belongs to no workbench window, so its
+            // controls post on the process bus and reach whichever window was
+            // focused last by then — not this one, which may have closed.
+            let events = crate::launch::process_bus().unwrap_or_else(|| events.clone());
             spawn(async move {
                 crate::components::settings_ui::open_settings_window(events).await;
             });
@@ -133,13 +189,45 @@ pub fn route(ws: Workspace, events: &AppEvents, surface: SurfaceSlot, id: &str) 
 
         // ── Session ────────────────────────────────────────────────────────
         ids::SESSION_RETRY => crate::session_boot::retry(ws),
+        // What windows that are gone left behind. Open brings a session back
+        // in a window of its own, with its tabs, their views and its SQL. The
+        // new window belongs to no workbench window, so it is asked for on the
+        // process bus, and still opens if this one closes first. Resume
+        // finishes a Save Workspace that was cut short, found among the recent
+        // workspaces, and opens the workspace.
+        ids::RECOVERY_REVIEW => {
+            use crate::components::modals::ModalOutcome;
+            let scratch_root = dat0_core::globals::state_root()
+                .map(|p| p.join("scratch"))
+                .unwrap_or_default();
+            let recent_roots = dat0_core::globals::recents_snapshot();
+            // Nothing left behind: say so. The panel draws nothing for an
+            // empty list, and the dialog around it stayed up, empty (step
+            // 5.11c).
+            if crate::components::recovery::collect_rows(&scratch_root, &recent_roots).is_empty() {
+                ws.push_banner(dat0_core::error_ux::Banner::info(dat0_i18n::t(
+                    "recovery.nothing",
+                )));
+                return true;
+            }
+            let process = crate::launch::process_bus().unwrap_or_else(|| events.clone());
+            let events = events.clone();
+            ws.modal.set(Some(Modal::Recovery {
+                scratch_root,
+                recent_roots,
+                reply: crate::components::modals::ModalReply::new(move |outcome| match outcome {
+                    ModalOutcome::RecoveryOpen(dir) => {
+                        process.send(AppEvent::OpenWindow(Opening::Recover { dir }))
+                    }
+                    ModalOutcome::RecoveryResume(root) => {
+                        crate::workspace_open::resume(ws, &events, root)
+                    }
+                    _ => {}
+                }),
+            }));
+        }
 
         // ── Modals the shell can open from workspace state alone ───────────
-        ids::LIVE_REFRESH => ws.modal.set(Some(Modal::LiveRefresh {
-            dropped_edits: 0,
-            dropped_deletes: 0,
-            reply: crate::components::modals::ModalReply::new(|_| {}),
-        })),
         ids::IMPORT_CANCEL => {
             // Idempotent by design: cancelling an import that already finished
             // is a no-op, not an error, because the user cannot know which.

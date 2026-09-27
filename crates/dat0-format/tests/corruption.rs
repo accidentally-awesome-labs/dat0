@@ -43,7 +43,10 @@ fn build_zip(path: &Path, entries: &[(String, Vec<u8>)]) {
 }
 
 fn sha(bytes: &[u8]) -> String {
-    format!("sha256:{:x}", <sha2::Sha256 as sha2::Digest>::digest(bytes))
+    format!(
+        "sha256:{}",
+        hex::encode(<sha2::Sha256 as sha2::Digest>::digest(bytes))
+    )
 }
 
 fn entry(name: &str, bytes: Vec<u8>) -> (String, Vec<u8>) {
@@ -296,4 +299,80 @@ fn absolute_entry_paths_are_rejected_too() {
         matches!(err, FormatError::UnsafeEntryPath { .. }),
         "expected FormatError::UnsafeEntryPath, got: {err:?}"
     );
+}
+
+// ── 6. Table names that are not file names ──────────────────────────────────
+
+/// A package whose recipe holds one table called `name`, stored at `data`.
+///
+/// The recipe is the only thing wrong with it: the entry the table points at
+/// need not even exist, because the name is refused before anything is read.
+fn with_table(path: &Path, name: &str, data: &str) {
+    let recipe = Recipe {
+        tables: vec![RecipeTable {
+            id: "t_x".into(),
+            name: name.into(),
+            kind: TableKind::Base,
+            schema: vec![],
+            row_count: 0,
+            data: data.into(),
+            source_ref: None,
+            derivation: None,
+        }],
+    };
+    let mut side = sidecars();
+    side[0] = entry("recipe.json", serde_json::to_vec_pretty(&recipe).unwrap());
+    let mut checksums = BTreeMap::new();
+    for (name, bytes) in &side {
+        checksums.insert(name.clone(), sha(bytes));
+    }
+    let mut entries = vec![entry(
+        "manifest.json",
+        manifest_bytes(FORMAT_VERSION, checksums),
+    )];
+    entries.extend(side);
+    build_zip(path, &entries);
+}
+
+#[test]
+fn a_table_name_that_is_not_a_file_name_is_rejected() {
+    // Unpacking, replaying and re-writing a package each build a path from a
+    // table's name, so the reader refuses any name that would not stay put.
+    let tmp = tempfile::tempdir().unwrap();
+    for name in ["..", ".", "", "a/b", "a\\b", "up/../../x", "nul\0byte"] {
+        let p = tmp.path().join("bad-name.dat0");
+        with_table(&p, name, &data_entry(name));
+        match Reader::open(&p) {
+            Err(FormatError::UnsafeTableName { name: got }) => assert_eq!(got, name),
+            other => panic!("{name:?}: expected FormatError::UnsafeTableName, got {other:?}"),
+        }
+    }
+}
+
+#[test]
+fn a_data_entry_that_does_not_match_its_table_is_rejected() {
+    // The writer always stores table `x` at `data/x.parquet`; anything else was
+    // edited in, and would point the reader at some other file.
+    let tmp = tempfile::tempdir().unwrap();
+    let p = tmp.path().join("mismatch.dat0");
+    with_table(&p, "sales", "data/../../elsewhere.parquet");
+    assert!(
+        matches!(
+            Reader::open(&p),
+            Err(FormatError::UnsafeTableName { ref name }) if name == "sales"
+        ),
+        "a data entry that is not data/<name>.parquet must be refused"
+    );
+}
+
+#[test]
+fn an_ordinary_table_name_still_opens() {
+    // The guard's other half: names with spaces, dots and unicode are tables
+    // people make, and must keep working.
+    let tmp = tempfile::tempdir().unwrap();
+    for name in ["sales", "Q1 sales.v2", "ventes_2026", "ñandú", "a:b"] {
+        let p = tmp.path().join("ok-name.dat0");
+        with_table(&p, name, &data_entry(name));
+        assert!(Reader::open(&p).is_ok(), "{name:?} should open");
+    }
 }

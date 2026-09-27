@@ -23,7 +23,7 @@ expression: html
 </span>
 </div>
 <div class="d0-pipeline-tail">
-<button class="d0-chip" data-a11y-id="pipeline-save-table" role="button" aria-label="Save as Table…">Save as Table…</button>
+<button class="d0-chip" data-a11y-id="pipeline-save-table" role="button" aria-label="Save View as Table…">Save View as Table…</button>
 <button class="d0-chevron is-collapsed" data-a11y-id="pipeline-toggle" role="button" aria-expanded="false" aria-label="Expand">▾</button>
 </div>
 </div>

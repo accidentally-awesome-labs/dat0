@@ -30,11 +30,17 @@ Actions** store. Never commit any of these values to source control.
 | `GPG_PRIVATE_KEY` | ASCII-armored GPG private key used to sign `dat0.AppImage`. Export with `gpg --armor --export-secret-keys <fingerprint>`. | Paste the full `-----BEGIN PGP PRIVATE KEY BLOCK-----` block. |
 | `GPG_PASSPHRASE` | Passphrase protecting the GPG private key (if set). | See the **Linux GPG signing — passphrase wiring** note below. |
 | `DAT0_SIGN_IDENTITY` | The full `Developer ID Application: …` string as it appears in `security find-identity -v -p codesigning`. | Copy verbatim, including the parenthetical Team ID suffix. |
+| `MINISIGN_SECRET_KEY` | The production update-signing key; the publish job signs `latest.json` with it. | `docs/release-prerequisites.md` §1. |
+| `GLITCHTIP_DSN_PUBLIC` | The crash-report DSN both release builds compile in. | See **CI secrets** under GlitchTip below. |
 
 The notary tool (`xcrun notarytool`) receives its credentials at runtime via
-environment variables set in the CI **"Bundle + sign + notarize"** step:
-`AC_KEY_ID`, `AC_ISSUER_ID`, and `AC_API_KEY_PATH` (the path `/tmp/ac_api_key.p8`
-to the decoded key file written by the preceding "Notary API key file" step).
+environment variables set in the CI **"Sign + notarize"** step:
+`AC_KEY_ID`, `AC_ISSUER_ID`, and `AC_API_KEY_PATH` (the path
+`$RUNNER_TEMP/ac_api_key.p8` to the decoded key file written by the preceding
+"Notary API key file" step).
+
+`release.yml`'s first job, `gate`, is told whether each of these is set, never
+its value, and `cargo xtask release-check` stops a tag that lacks one.
 
 ### macOS entitlements (important)
 
@@ -122,8 +128,15 @@ output is not byte-identical across macOS and Linux; the CI gate runs on Linux,
 so the committed NOTICE must match what Linux generates):
 
 ```bash
-cargo about generate -c about.toml docs/about-template.hbs > NOTICE.md
+scripts/notice-regen.sh
 ```
+
+It rewrites only the block between the `cargo-about generated` markers, and
+refuses to run with any cargo-about but the version it pins (the one the gate
+uses). Do not redirect `cargo about generate` into `NOTICE.md`: that replaces
+the hand-written notice, icon, font and vendored-JavaScript sections with the
+bare crate list. On macOS, take the regenerated `NOTICE.md` from the failed
+`notice` check's artifacts instead.
 
 If no dependency changed since the last regeneration, skip this step — the
 existing `NOTICE.md` is already in sync (confirmed by the CI `notice` job).
@@ -147,9 +160,16 @@ gh run list --workflow=release.yml --limit 5
 gh run watch <run-id>
 ```
 
-Jobs run in order: `macos` → `linux` (both parallel) → `publish` (tag-only).
-If any job fails, check its log for the failing step. Common failure modes are
-documented in the troubleshooting section below.
+Jobs run in order: `gate` → `macos` and `linux` (in parallel) → `publish`
+(tag-only). `gate` runs `cargo xtask release-check --tag <tag>` and stops the
+release before anything is built when the tag does not name the workspace
+version, the updater still trusts the test key, the crash-report DSN or a
+signing secret is missing, or the NYC taxi sample's hash is a placeholder.
+Run `cargo xtask release-check` before tagging to see the same list.
+`publish` signs `latest.json` and checks the signature as the app will
+(`cargo xtask verify-manifest`, against the committed public key) before it
+uploads anything. If any job fails, check its log for the failing step.
+Common failure modes are documented in the troubleshooting section below.
 
 ### 5. Run the perf gate on the release host
 
@@ -234,8 +254,13 @@ gh workflow run release.yml
 ```
 
 All jobs run normally but the `publish` job is skipped (gated on
-`github.ref_type == 'tag'`). Artifacts are uploaded and available for download
-from the Actions run summary. Use this for:
+`github.ref_type == 'tag'`), and `gate` lists its findings as warnings instead
+of stopping. So a dry run never signs the update manifest; its steps are
+checked offline instead (`xtask/tests/release_workflow.rs`,
+`xtask/tests/manifest_verify.rs`). Artifacts are uploaded and available for
+download from the Actions run summary. It needs no secrets: without them,
+macOS makes a disk image of the app signed ad hoc and Linux an unsigned
+AppImage, and both are still built, checked and smoke-tested. Use this for:
 
 - First-time pipeline validation (esp. the GPG passphrase wiring check above).
 - Testing cert/key rotation after a renewal.
@@ -245,7 +270,9 @@ Record the run URL in the release notes or in the team chat for traceability.
 
 ### Last verified dry run
 
-**NOT YET RUN — requires RL1 secrets** (`docs/release-prerequisites.md`).
+**NOT YET RUN with the RL1 secrets** (`docs/release-prerequisites.md`). A
+dry run without them exercises everything but signing, notarization and
+manifest signing.
 
 ```bash
 gh workflow run release.yml && gh run watch
@@ -255,7 +282,7 @@ Record the run URL here once it is green:
 
 | Date | Run URL | Result |
 |---|---|---|
-| — | — | not yet run |
+| 2026-09-26 | [release run #3](https://github.com/accidentally-awesome-labs/dat0/actions/runs/36262576705), `0ebe25b` | Dry run without secrets, green. `gate` listed the four owner-only findings as warnings: the test update key, no crash-report DSN, the NYC taxi sample's placeholder hash, the nine signing secrets. macOS: a universal binary (`lipo`: `x86_64 arm64`) that prints `dat0 0.1.0 (0ebe25b)`, an Info.plist that lints, and a disk image of the app signed ad hoc, made by create-dmg. Linux: the AppImage, built on Ubuntu 22.04, drew its page on Ubuntu 22.04, Debian 12 and 24.04. Signing, notarization and `publish` were not exercised. |
 
 ---
 
@@ -268,6 +295,7 @@ Record the run URL here once it is green:
 | `notarytool submit` returns `Invalid` status | Entitlement or binary issue | Run `xcrun notarytool log <submission-id>` to see the notarization report. |
 | `gpg --detach-sign` exits non-zero / prompts | `DAT0_GPG_PASSPHRASE` set for a passphraseless key, or unset for a protected one | See **Linux GPG signing — passphrase wiring** above; the variable must match the key. |
 | `publish` job skipped on a tag push | Preceding `macos` or `linux` job failed | Fix the failing job first; re-push the tag after fixing the source. |
+| `verify-manifest` fails: the signature "does not verify against the key dat0 trusts" | `MINISIGN_SECRET_KEY` is not the pair of `crates/dat0-core/assets/minisign-public-key.txt` | Nothing was published. Set the secret to the key whose public half is committed (`docs/release-prerequisites.md` §1) and re-run the failed job. |
 | `notice` CI gate warns after a dep change | NOTICE.md regenerated on macOS, not Linux | Regenerate on Linux; commit the result (see step 2 above). |
 
 ---

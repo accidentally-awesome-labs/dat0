@@ -118,16 +118,22 @@ fn the_prompt_field_takes_the_keyboard_the_moment_it_opens() {
     // GPUI got this from `InputState::new`, which focused itself, and
     // `prompt_focused_on_open` asserted it: a prompt that opens unfocused makes
     // a keyboard user Tab into their own dialog before they can type its one
-    // required value. `autofocus` is the markup that replaces the constructor.
+    // required value. The modal host focuses the field it marks, once it has
+    // recorded where to hand the keyboard back (`modals::CAPTURE_JS`): the
+    // `autofocus` attribute is honoured once per document, so a second prompt
+    // opened unfocused (PD-032). Headless there is no focus to read, so this
+    // checks the mark; `examples/focus_probe.rs` and `modal_trap_probe.rs`
+    // check in a real window that the keyboard lands and comes back.
     let h = prompt("");
     let field = h
         .by_a11y_id("name-prompt-field")
         .expect("the field renders");
-    assert_eq!(h.attr(field, "autofocus").as_deref(), Some("true"));
+    assert_eq!(h.attr(field, "data-autofocus").as_deref(), Some("true"));
+    assert_eq!(h.attr(field, "autofocus"), None);
 
-    // And it is the first thing in the panel, so the autofocus and the trap's
-    // first stop are the same control rather than two different answers to
-    // "where does the keyboard start".
+    // And it is the first thing in the panel, so the control that takes the
+    // keyboard and the trap's first stop are the same one rather than two
+    // different answers to "where does the keyboard start".
     let ids: Vec<String> = h
         .dom()
         .walk()

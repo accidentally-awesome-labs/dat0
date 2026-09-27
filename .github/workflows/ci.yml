@@ -46,7 +46,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@1.97.0
         with: { components: rustfmt }
       # Registry + git + target caching. `fmt` compiles nothing, but the
@@ -61,7 +61,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@1.97.0
         with: { components: clippy }
       # `--all-targets` on Linux now compiles the webview stack's `-sys` build
@@ -180,8 +180,19 @@ jobs:
       # and still rebuilding release DuckDB. That is the P5c runner death the
       # reclaim exists to prevent. See the bench steps at the end of this job.
       CARGO_PROFILE_DEV_DEBUG: 0
+      # Whether this run can hold the live-service secrets (MotherDuck,
+      # OpenRouter). Dependabot runs and pull requests from forks never get
+      # Actions secrets, so for them the live steps below are skipped, with a
+      # notice, instead of failing on a missing secret. Every other run — a
+      # branch in this repo, a push to main — still hard-fails without them.
+      #
+      # Before this, every Dependabot PR went red on "Require MotherDuck
+      # token" after Build and Test had passed: an update could only merge by
+      # overriding a required check, so none did. The live tests still run on
+      # the push to main that lands the update.
+      LIVE_SECRETS: ${{ github.actor != 'dependabot[bot]' && !github.event.pull_request.head.repo.fork }}
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
       # GitHub-hosted ubuntu-latest ships ~14 GB free disk by default;
       # dat0's debug-profile cargo test --workspace blows past that
       # (duckdb + arrow + sentry rlib chain). Free ~30 GB by
@@ -346,9 +357,17 @@ jobs:
         run: ./.github/scripts/disk-report.sh after-test "${{ matrix.target.triple }}"
       # P5c (D3): MotherDuck integration is a REQUIRED gate. The token is a
       # repo secret (Settings → Secrets and variables → Actions → MOTHERDUCK_TOKEN).
-      # Fork PRs receive no secrets and will fail this step — acceptable for a
-      # solo repo (design §7).
+      # Dependabot and fork PRs receive no secrets; for them this step and the
+      # three after it are skipped (`LIVE_SECRETS`, job env) and the next step
+      # says so.
+      - name: Live-service tests skipped (no secrets for this run)
+        if: env.LIVE_SECRETS != 'true'
+        env:
+          RUN_BY: ${{ github.event.pull_request.head.repo.fork && 'a pull request from a fork' || github.actor }}
+        run: |
+          echo "::notice::Skipped the MotherDuck and OpenRouter live tests: this run ($RUN_BY) gets no Actions secrets. They run on the push to main."
       - name: Require MotherDuck token
+        if: env.LIVE_SECRETS == 'true'
         env:
           MOTHERDUCK_TOKEN: ${{ secrets.MOTHERDUCK_TOKEN }}
         run: |
@@ -357,6 +376,7 @@ jobs:
             exit 1
           fi
       - name: MotherDuck integration tests
+        if: env.LIVE_SECRETS == 'true'
         env:
           MOTHERDUCK_TOKEN: ${{ secrets.MOTHERDUCK_TOKEN }}
           CARGO_BUILD_JOBS: ${{ (runner.os == 'Linux' && runner.environment == 'github-hosted') && '2' || 'default' }}
@@ -364,6 +384,7 @@ jobs:
       # P9c-1: OpenRouter AI round-trip is a REQUIRED gate (mirrors MD pattern).
       # Secret: Settings → Secrets and variables → Actions → OPENROUTER_API_KEY.
       - name: Require OpenRouter API key
+        if: env.LIVE_SECRETS == 'true'
         env:
           OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
         run: |
@@ -372,6 +393,7 @@ jobs:
             exit 1
           fi
       - name: OpenRouter AI integration tests
+        if: env.LIVE_SECRETS == 'true'
         # SOFT GATE (advisory, non-blocking). The live OpenRouter API is a flaky
         # third-party dependency: it intermittently returns empty responses
         # (`no choices[0].message.content` / `expected >=1 delta`), which reddened
@@ -433,6 +455,11 @@ jobs:
       # `target/{debug,release}` and never reuses `target/<triple>`. Dropping
       # that tree (unused from here on; MotherDuck tests already ran) frees
       # both prior DuckDB builds first.
+      #
+      # `cargo xtask perf` does that build itself. Until it did, nothing built
+      # the binaries it runs, and this step failed on "missing
+      # target/release/examples/perf_harness" every time, out of sight behind
+      # `continue-on-error`.
       - name: Reclaim disk before perf harness (macOS, push to main)
         if: runner.os == 'macOS' && github.event_name != 'pull_request'
         run: |
@@ -456,7 +483,7 @@ jobs:
       - name: Upload perf artifact
         if: runner.os == 'macOS' && github.event_name != 'pull_request'
         continue-on-error: true
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: perf-check-${{ github.sha }}
           path: perf-check.jsonl
@@ -481,7 +508,7 @@ jobs:
     runs-on: macos-14
     timeout-minutes: 60
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@1.97.0
       - uses: Swatinem/rust-cache@v2
         with:
@@ -492,7 +519,7 @@ jobs:
         run: cargo xtask perf --check | tee perf-gate.jsonl
       - name: Upload perf artifact
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: perf-gate-${{ github.sha }}
           path: perf-gate.jsonl
@@ -521,7 +548,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 90
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@1.97.0
         with: { components: llvm-tools-preview }
       - uses: Swatinem/rust-cache@v2
@@ -566,11 +593,50 @@ jobs:
         run: cargo llvm-cov nextest --workspace --lcov --output-path lcov.info
       - name: Upload lcov
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: lcov-${{ github.sha }}
           path: lcov.info
           retention-days: 14
+
+  # ────────────────────────────────────────────────────────────────────────
+  # The real-window probes, on Linux under a virtual display.
+  #
+  # docs/ci.md used to say these could not run in CI because hosted runners
+  # have no display. On Linux Xvfb is one: WebKitGTK renders into it, and each
+  # probe takes seconds. They are the only tests that see the shell a user
+  # sees — layout, focus, the SQL editor, a second window — which is the
+  # failure class every headless gate missed (PD-023), and nothing else here
+  # drives the Linux build at all.
+  #
+  # Release, like the build a user runs; its own job, so a probe failure reads
+  # as one and the build-and-test disk budget is untouched.
+  windowed-probes:
+    name: Windowed probes (Linux, Xvfb)
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@1.97.0
+      - name: Linux deps (webview + keychain + charts) and a virtual display
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libsecret-1-dev dbus-x11 \
+            libpango1.0-dev libxkbcommon-dev libxkbcommon-x11-dev \
+            libfontconfig1-dev libssl-dev \
+            libwebkit2gtk-4.1-dev libsoup-3.0-dev libxdo-dev \
+            xvfb
+      - uses: Swatinem/rust-cache@v2
+      - name: Build the probes
+        run: >-
+          cargo build --release -p dat0-ui
+          --example shell_probe --example window_probe
+          --example modal_trap_probe --example settings_window_probe
+          --example console_probe --example visual_probe --example grid_probe
+          --example focus_probe
+      - name: Run the probes
+        run: xvfb-run -a -s "-screen 0 1920x1200x24" .github/scripts/windowed-probes.sh
 
   # Supply chain IS a gate (no continue-on-error). Complements notice.yml:
   # notice.yml asks "is NOTICE.md in sync"; this asks "is the dependency graph
@@ -581,7 +647,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
       - uses: EmbarkStudios/cargo-deny-action@v2
         with:
           command: check
@@ -590,7 +656,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
       - run: ./scripts/i18n-check.sh
 
   no-standalone-arrow:
@@ -598,7 +664,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
       - name: Verify no `arrow = ` workspace/crate dep
         run: |
           if grep -rE '^arrow\s*=' Cargo.toml crates/*/Cargo.toml; then
@@ -612,7 +678,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@stable
       - name: Verify no gpui/dioxus in the dat0-core dependency tree
         run: |
@@ -631,7 +697,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
       - name: Verify no `__debug_query_scalar` references
         run: |
           if grep -rE '__debug_query_scalar' crates/ 2>/dev/null; then

@@ -12,7 +12,7 @@ expression: html
 <div class="d0-modal-body" data-a11y-id="modal-body">
 <div class="d0-prompt" data-a11y-id="name-prompt">
 <label class="d0-label" for="name-prompt-field" data-a11y-id="name-prompt-title">Save</label>
-<input id="name-prompt-field" class="d0-field" data-a11y-id="name-prompt-field" type="text" role="textbox" aria-label="Save" aria-invalid="false" placeholder="name" value="" autofocus=true/>
+<input id="name-prompt-field" class="d0-field" data-a11y-id="name-prompt-field" type="text" role="textbox" aria-label="Save" aria-invalid="false" placeholder="name" value="" data-autofocus="true"/>
 <div class="d0-form-actions">
 <button class="d0-btn is-primary" data-a11y-id="name-prompt-ok" role="button" aria-label="Save" disabled=true>Save</button>
 <button class="d0-btn is-ghost" data-a11y-id="name-prompt-cancel" role="button" aria-label="Cancel">Cancel</button>

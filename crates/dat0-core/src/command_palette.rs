@@ -31,11 +31,12 @@ use crate::actions::registry::{ActionDescriptor, ActionRegistry};
 /// Registered but never shown in the palette. Each entry is dead for a reason a
 /// no-arg invocation cannot fix:
 ///
-/// - `view.set_value` needs a `Scalar` and `view.delete_column` needs a
-///   `col_ix`; the grid's context menu passes both through the coordinate it
-///   right-clicked. A fuzzy search box has neither, and always will not.
 /// - `recents.show` opens the palette, and a palette row that reopens the
 ///   palette is a mirror facing a mirror.
+///
+/// `view.set_value` and `view.delete_column` used to be here, for want of a
+/// value and a column index. The Dioxus grid asks for the value and deletes
+/// the selected columns, so a palette row now has all either needs.
 ///
 /// `file.open`, `theme.toggle` and `sample_data.retry_taxi` used to be here
 /// too, hidden because the shell had nowhere to route them and an entry that
@@ -43,7 +44,7 @@ use crate::actions::registry::{ActionDescriptor, ActionRegistry};
 /// Dioxus shell's router claims all three, and `dat0-ui`'s `action_routing`
 /// gate now fails the build if any listed command stops being claimed — so the
 /// condition this list was written under no longer holds for them.
-pub const HIDDEN: &[&str; 3] = &["recents.show", "view.set_value", "view.delete_column"];
+pub const HIDDEN: &[&str; 1] = &["recents.show"];
 
 /// Filter actions by a fuzzy subsequence match against the title.
 /// Case-insensitive; preserves registry-iteration order.

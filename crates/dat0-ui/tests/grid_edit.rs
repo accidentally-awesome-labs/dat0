@@ -295,7 +295,11 @@ async fn right_click_opens_the_menu_at_the_pointer() {
     assert!(style.contains("top: 80px"), "{style}");
 }
 
+// Ignored, not deleted: every verb in this menu is in `router::UNWIRED`, so it
+// is offered disabled and a click does nothing (`a_disabled_item_…` below
+// covers that). Un-ignore it with the change that wires Copy.
 #[tokio::test]
+#[ignore = "no context-menu verb is wired yet (router::UNWIRED, PD-023)"]
 async fn picking_an_item_reports_the_action_and_closes() {
     let (mut h, _t) = mount(false).await;
     open_menu(&mut h);

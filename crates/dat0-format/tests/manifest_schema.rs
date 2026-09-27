@@ -1,5 +1,5 @@
 //! The published JSON Schema (docs/schemas/dat0-manifest-v1.schema.json) must
-//! validate a real serialized `PackageManifest`. Uses the `jsonschema` 0.36 API:
+//! validate a real serialized `PackageManifest`. Uses the `jsonschema` 0.49 API:
 //! `validator_for(&schema)` -> `Validator`, then `Validator::is_valid(&instance)`.
 
 #[test]

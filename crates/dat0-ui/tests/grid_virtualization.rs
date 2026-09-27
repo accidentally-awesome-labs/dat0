@@ -21,14 +21,20 @@ use dat0_core::grid::data_source::GridDataSource;
 use dat0_core::grid::selection::SelectionModel;
 use dat0_engine::transform::ProjectionColumn;
 use dat0_engine::{DerivedOrigin, DuckDBEngine, MemoryBudget, QueryEngine};
+use dat0_ui::components::grid::scroll::MAX_CANVAS_H;
 use dat0_ui::components::grid::{COL_W_DEFAULT, Grid, ROW_H};
-use support::Harness;
+use support::{Harness, primary};
 
 const ROWS: u64 = 1_000_000;
 
 /// A million rows, generated inside DuckDB rather than imported: `range()` is
 /// instant and the point here is the row *count*, not the ingest path.
 async fn million_rows() -> (Arc<GridDataSource>, Vec<ProjectionColumn>, TempDir) {
+    table_of(ROWS).await
+}
+
+/// `rows` rows, the same way.
+async fn table_of(rows: u64) -> (Arc<GridDataSource>, Vec<ProjectionColumn>, TempDir) {
     let tmp = TempDir::new().unwrap();
     let engine = DuckDBEngine::new(
         tmp.path().join("scratch.duckdb"),
@@ -40,7 +46,7 @@ async fn million_rows() -> (Arc<GridDataSource>, Vec<ProjectionColumn>, TempDir)
     engine.init().await.unwrap();
 
     let sql =
-        format!("SELECT i AS id, 'row ' || i AS label, i * 1.5 AS score FROM range({ROWS}) t(i)");
+        format!("SELECT i AS id, 'row ' || i AS label, i * 1.5 AS score FROM range({rows}) t(i)");
     engine
         .create_table("big", &sql, DerivedOrigin::Sql(sql.clone()))
         .await
@@ -76,7 +82,8 @@ impl PartialEq for HostProps {
 #[component]
 fn Host(props: HostProps) -> Element {
     let cols = props.columns.len();
-    let selection = use_signal(|| SelectionModel::new(ROWS as usize, cols));
+    let rows = props.source.row_count as usize;
+    let selection = use_signal(|| SelectionModel::new(rows, cols));
     let widths = use_signal(|| vec![COL_W_DEFAULT; cols]);
     rsx! {
         Grid {
@@ -198,4 +205,70 @@ async fn a_row_beyond_the_window_is_not_in_the_dom() {
 
     assert!(h.by_a11y_id("row-500000").is_none());
     assert!(h.by_a11y_id("row-999999").is_none());
+}
+
+/// PD-026: a canvas `rows × 26px` tall passed WebKit's layout clamp at row
+/// ~1,290,555, and every row after it was out of reach. Past the cap the
+/// canvas stops growing, and scrolled to its bottom it shows the last row.
+#[tokio::test]
+async fn a_table_past_the_cap_scrolls_to_its_last_row() {
+    const TWO_MILLION: u64 = 2_000_000;
+    let (source, columns, _tmp) = table_of(TWO_MILLION).await;
+    let mut h = Harness::new(Host, HostProps { source, columns });
+
+    let canvas = h
+        .dom()
+        .walk()
+        .into_iter()
+        .find(|k| {
+            h.dom()
+                .get(*k)
+                .attr("class")
+                .is_some_and(|c| c.contains("d0-grid-canvas"))
+        })
+        .expect("the canvas exists");
+    let style = h.attr(canvas, "style").unwrap_or_default();
+    assert!(
+        style.contains(&format!("height: {MAX_CANVAS_H}px")),
+        "the canvas stops at the cap: {style}"
+    );
+
+    let mut bottom = scroll(MAX_CANVAS_H - 600.0);
+    bottom.scroll_height = MAX_CANVAS_H as i32;
+    h.dispatch(h.by_a11y_id("grid-viewport").unwrap(), "scroll", bottom);
+    let last = h
+        .by_a11y_id(&format!("row-{}", TWO_MILLION - 1))
+        .expect("the last row is mounted at the bottom of the canvas");
+    let top: f64 = h
+        .attr(last, "style")
+        .and_then(|s| {
+            s.split(';')
+                .find_map(|d| d.trim().strip_prefix("top:").map(str::to_string))
+        })
+        .and_then(|v| v.trim().trim_end_matches("px").parse().ok())
+        .expect("a row carries its top");
+    assert!(
+        top >= MAX_CANVAS_H - 600.0 && top + ROW_H <= MAX_CANVAS_H + 0.5,
+        "drawn at {top}, inside the view at the canvas's bottom"
+    );
+}
+
+/// Ctrl+End moved the cursor to the last row and left the view where it was.
+#[tokio::test]
+async fn a_keyboard_jump_brings_its_row_into_view() {
+    let (source, columns, _tmp) = table_of(2_000_000).await;
+    let mut h = Harness::new(Host, HostProps { source, columns });
+    let vp = h.by_a11y_id("grid-viewport").unwrap();
+    h.dispatch(vp, "scroll", scroll(0.0));
+
+    h.key(vp, Key::ArrowDown, primary());
+    assert!(
+        h.by_a11y_id("row-1999999").is_some(),
+        "the jump's row is rendered"
+    );
+    assert!(h.by_a11y_id("row-0").is_none(), "and the top is not");
+
+    let vp = h.by_a11y_id("grid-viewport").unwrap();
+    h.key(vp, Key::ArrowUp, primary());
+    assert!(h.by_a11y_id("row-0").is_some(), "back at the top");
 }

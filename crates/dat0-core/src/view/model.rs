@@ -176,6 +176,19 @@ impl ViewModel {
         self.regenerate_view()
     }
 
+    /// Remove the filter on `column`, and only that: the column's funnel Clear.
+    /// One undo step. A column with no filter changes nothing.
+    pub fn clear_filter(&mut self, column: &str) -> ViewChange {
+        match self
+            .present
+            .iter()
+            .rposition(|op| matches!(op, Transformation::Filter { column: c, .. } if c == column))
+        {
+            Some(i) => self.remove_at(i),
+            None => self.regenerate_view(),
+        }
+    }
+
     /// PipelineBar scrubber: keep the first `k` ops (0..=len), as one undo step.
     pub fn jump_to(&mut self, k: usize) -> ViewChange {
         let k = k.min(self.present.len());
@@ -286,6 +299,18 @@ impl ViewModel {
         self.regenerate_view()
     }
 
+    /// The same view, built again: for an engine that has none of the old
+    /// one's views — the window's session moved to a workspace, and its
+    /// engine with it. Unlike [`Self::reset_to_replayed`] the history stays,
+    /// because the rows under it are the same rows.
+    ///
+    /// The old view is not named for dropping: it lived in the old engine.
+    pub fn rebind(&mut self) -> ViewChange {
+        self.active_view = None;
+        self.active_view_sql = None;
+        self.regenerate_view()
+    }
+
     // --- Sort query helpers ---
 
     /// Return the current Sort op (if any) as an [`ActiveSort`] for the header
@@ -384,24 +409,29 @@ impl ViewModel {
 /// Pure outcome→[`ViewChange`] decision for the filter popover (T0 / PD-016).
 ///
 /// This is the single source of truth for routing a popover [`Outcome`] into
-/// the ViewModel. Both `WorkspaceShell::route_filter_outcome` (which then drives
-/// the GPUI engine round-trip on the returned `Some(change)`) and the
-/// `click_wiring` integration test call this function, so the test exercises
-/// production routing rather than a duplicate match.
+/// the ViewModel. The grid (`dat0-ui`'s `grid::views`, which then drives the
+/// engine round-trip on the returned `Some(change)`) and the `click_wiring`
+/// integration test call this function, so the test exercises production
+/// routing rather than a duplicate match.
 ///
 /// - `Apply(t)` → [`ViewModel::set_filter`] (column-aware upsert: replaces an
 ///   existing filter on the same column, else appends — correct for both the
 ///   new-filter and edit-existing flows).
-/// - `Clear { pre_populated: true }` → [`ViewModel::clear`].
+/// - `Clear { pre_populated: true }` → [`ViewModel::clear_filter`] on its column.
 /// - `Clear { pre_populated: false }` / `Cancel` → no ViewChange.
 pub fn route_outcome(vm: &mut ViewModel, outcome: Outcome) -> Option<ViewChange> {
     match outcome {
         Outcome::Apply(t) => Some(vm.set_filter(t)),
+        // The column's filter, not the whole stack: this was `vm.clear()`, so
+        // clearing one funnel also dropped every sort, every other filter and
+        // every pending cell edit.
         Outcome::Clear {
+            column,
             pre_populated: true,
-        } => Some(vm.clear()),
+        } => Some(vm.clear_filter(&column)),
         Outcome::Clear {
             pre_populated: false,
+            ..
         }
         | Outcome::Cancel => None,
     }
@@ -450,6 +480,34 @@ mod tests {
         );
         assert!(!change.is_display_only());
         assert_eq!(vm.stack().len(), 1);
+    }
+
+    #[test]
+    fn rebind_builds_the_view_again_and_keeps_the_history() {
+        let mut vm = ViewModel::new("orders".into(), "\"main\".\"orders\"".into());
+        let first = vm.apply(qty_gt_zero());
+        let before = vm.active_view().map(str::to_string);
+        let change = vm.rebind();
+        assert!(change.sql.is_some(), "the view is created again");
+        assert_eq!(
+            change.previous_active_view, None,
+            "the old one is not the new engine's"
+        );
+        assert_ne!(
+            vm.active_view().map(str::to_string),
+            before,
+            "under a new name"
+        );
+        assert_eq!(change.sql, first.sql, "reading what it read");
+        assert!(vm.can_undo(), "and Undo still steps back");
+        assert_eq!(vm.stack().len(), 1);
+
+        let mut bare = ViewModel::new("orders".into(), "\"main\".\"orders\"".into());
+        assert_eq!(
+            bare.rebind().new_active_view,
+            None,
+            "no steps: the table itself"
+        );
     }
 
     #[test]

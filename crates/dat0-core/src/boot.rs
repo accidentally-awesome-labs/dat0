@@ -11,11 +11,40 @@ use crate::{
     telemetry::Telemetry,
 };
 
+/// The size past which the log is set aside at launch, for a new one.
+const LOG_ROTATE_BYTES: u64 = 10 * 1024 * 1024;
+
+/// The folder dat0's log is written to: `logs` in the cache directory.
+/// Settings → Advanced → Open logs folder opens it.
+pub fn log_dir() -> Result<PathBuf> {
+    Ok(platform::cache_dir()?.join("logs"))
+}
+
+/// Open `dat0.log` in `dir` to append to, setting the last one aside as
+/// `dat0.log.1` first when it has grown past `limit` bytes.
+pub fn open_log_file(dir: &Path, limit: u64) -> std::io::Result<std::fs::File> {
+    std::fs::create_dir_all(dir)?;
+    let path = dir.join("dat0.log");
+    if std::fs::metadata(&path).is_ok_and(|m| m.len() > limit) {
+        std::fs::rename(&path, dir.join("dat0.log.1"))?;
+    }
+    std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(path)
+}
+
 /// Initialize the tracing subscriber. Idempotent — calling twice is a no-op.
 ///
 /// When `RUST_LOG` is unset, the fallback directive is read from the persisted
 /// `settings.toml` (`log_level` field, default `"info,dat0=debug"`). On any
 /// error reading the file the hardcoded default is used — never panics.
+///
+/// The log goes to stdout and to a file in [`log_dir`]. It went to stdout
+/// alone, which a window opened from the desktop has nowhere to show, so
+/// dat0 kept no log at all, while `docs/privacy.md` described a file and
+/// Settings opened a folder with none in it (step 5.11f). A file that cannot
+/// be opened leaves the log on stdout.
 pub fn init_logging() -> Result<()> {
     let persisted = crate::settings::store::SettingsStore::with_path(
         platform::config_dir()
@@ -26,9 +55,20 @@ pub fn init_logging() -> Result<()> {
     .map(|s| s.log_level)
     .unwrap_or_else(|_| "info,dat0=debug".to_string());
     let filter = EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new(&persisted));
+    let file = log_dir()
+        .ok()
+        .and_then(|dir| open_log_file(&dir, LOG_ROTATE_BYTES).ok())
+        .map(|file| {
+            fmt::layer()
+                .with_target(false)
+                .with_ansi(false)
+                .compact()
+                .with_writer(std::sync::Mutex::new(file))
+        });
     let _ = tracing_subscriber::registry()
         .with(filter)
         .with(fmt::layer().with_target(false).compact())
+        .with(file)
         .try_init();
     Ok(())
 }

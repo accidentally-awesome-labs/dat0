@@ -138,12 +138,17 @@ async fn a_dropped_parquet_registers() {
     drop_and_assert_registered(p).await;
 }
 
+/// The refusal is an outcome, not a banner: the window that received the drop
+/// announces it, in that window (`session_boot_slot.rs`,
+/// `a_refused_drop_is_announced_once_in_the_window_that_received_it`). Core
+/// raising one of its own as well is how a refused drop showed two banners.
+///
 /// `#[serial]` because `drain_pending` is a process-global queue and a
 /// concurrent test that raises a banner would be indistinguishable from this
-/// one raising none.
+/// one raising one.
 #[tokio::test]
 #[serial]
-async fn a_dropped_sqlite_file_is_refused_with_a_banner() {
+async fn a_dropped_sqlite_file_is_refused() {
     let _ = drain_pending();
     let tmp = TempDir::new().expect("tempdir");
     let arc = session(tmp.path()).await;
@@ -152,11 +157,14 @@ async fn a_dropped_sqlite_file_is_refused_with_a_banner() {
 
     let out = handle_drop(vec![sqlite], Arc::clone(&arc)).await;
 
-    assert!(matches!(out[0], DropOutcome::Unsupported { .. }));
+    assert!(matches!(
+        out[0],
+        DropOutcome::Unsupported { ref extension, .. } if extension.as_deref() == Some("sqlite")
+    ));
     assert!(arc.lock().tabs().is_empty());
     assert!(
-        !drain_pending().is_empty(),
-        "refusing a file silently is worse than refusing it: expected a Banner"
+        drain_pending().is_empty(),
+        "the caller raises the banner; a second one from core is the duplicate"
     );
 }
 

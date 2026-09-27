@@ -288,6 +288,7 @@ pub const SCENES: &[Scene] = &[
     ),
     s("modal/onboarding", "modal", "tour panel one"),
     s("modal/crash-report", "modal", "staged payload"),
+    s("modal/bug-report-off", "modal", "crash reports off"),
     s(
         "modal/workspace-in-use",
         "modal",
@@ -341,13 +342,48 @@ pub fn scene(id: &str) -> Option<&'static Scene> {
 /// hint that moves, vanishes or gains a class is still caught. What is no longer
 /// caught is the hint's *text*, and that already has a better home:
 /// `keymap::chord_for` is unit-tested per platform.
+///
+/// The chrome's palette chord, `⌘K` or `Ctrl+K` (PD-023, step 5.8b), is
+/// platform text too, and carries `data-chord="palette"` for the same
+/// treatment.
 pub fn normalise(html: String) -> String {
     let html = html.replace("><", ">\n<");
+    let html = mask_chords(&html, "class=\"d0-hint\" aria-hidden=\"true\">");
+    mask_chord_elements(&html)
+}
+
+/// Mask the text of every element carrying `data-chord`: a chord is platform
+/// text (`⌘K` on macOS, `Ctrl+K` elsewhere), and a snapshot is shared by both.
+fn mask_chord_elements(html: &str) -> String {
     let mut out = String::with_capacity(html.len());
-    let mut rest = html.as_str();
-    const OPEN: &str = "class=\"d0-hint\" aria-hidden=\"true\">";
-    while let Some(i) = rest.find(OPEN) {
-        let (head, tail) = rest.split_at(i + OPEN.len());
+    let mut rest = html;
+    while let Some(i) = rest.find("data-chord=\"") {
+        let Some(end) = rest[i..].find('>') else {
+            break;
+        };
+        let (head, tail) = rest.split_at(i + end + 1);
+        out.push_str(head);
+        match tail.find('<') {
+            Some(j) => {
+                out.push_str("CHORD");
+                rest = &tail[j..];
+            }
+            None => {
+                rest = tail;
+                break;
+            }
+        }
+    }
+    out.push_str(rest);
+    out
+}
+
+/// Replace the text between each `open` and the next tag with `CHORD`.
+fn mask_chords(html: &str, open: &str) -> String {
+    let mut out = String::with_capacity(html.len());
+    let mut rest = html;
+    while let Some(i) = rest.find(open) {
+        let (head, tail) = rest.split_at(i + open.len());
         out.push_str(head);
         match tail.find('<') {
             Some(j) => {
@@ -445,14 +481,17 @@ fn seed(
                 TabView {
                     table: "sales".into(),
                     path: Some(PathBuf::from("/data/sales.csv")),
+                    label: None,
                 },
                 TabView {
                     table: "trips".into(),
                     path: Some(PathBuf::from("/data/trips.parquet")),
+                    label: None,
                 },
                 TabView {
                     table: "revenue_by_region".into(),
                     path: None,
+                    label: None,
                 },
             ]);
             ws.active.set(Some(0));
@@ -460,8 +499,8 @@ fn seed(
                 engine_ok: true,
                 mem_mb: 4096,
                 rows: Some((1, 12, 12)),
-                fps: 60,
                 egress: 0,
+                egress_floor: false,
             });
         }
         "shell/sidebar-collapsed" => ws.layout.write().sidebar_open = false,
@@ -539,6 +578,12 @@ fn modal(
                 backtrace: "   0: dat0_ui::components::grid::Grid\n   1: dioxus_core::scope".into(),
                 version: "0.1.0".into(),
             }),
+            data_dir: PathBuf::from("/data/state"),
+        },
+        // The fixtures' settings leave crash reports off, as they are by
+        // default: Report a Bug says so, with nothing to send.
+        "modal/bug-report-off" => Modal::CrashReport {
+            staged: None,
             data_dir: PathBuf::from("/data/state"),
         },
         "modal/workspace-in-use" => Modal::WorkspaceInUse {

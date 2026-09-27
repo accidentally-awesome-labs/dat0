@@ -101,6 +101,19 @@ async fn open_readonly_registers_queryable_non_mutable_views() {
         .expect("count monthly");
     assert_eq!(scalar_count(&r), 12, "monthly view returns 12 rows");
 
+    // The catalog lists them: a window's sidebar and its restored tabs read it.
+    let listed: Vec<String> = engine
+        .get_tables()
+        .await
+        .expect("get_tables")
+        .into_iter()
+        .map(|t| t.name)
+        .collect();
+    assert!(
+        listed.contains(&"sales".to_string()) && listed.contains(&"monthly".to_string()),
+        "the catalog lists the package's tables: {listed:?}"
+    );
+
     // A mutating statement against a view must ERROR (views are non-mutable).
     let err = engine.execute("INSERT INTO sales VALUES (999)").await;
     assert!(

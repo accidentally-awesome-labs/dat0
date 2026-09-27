@@ -371,38 +371,80 @@ fn dismissing_the_report_clears_staging_and_sends_nothing() {
 }
 
 #[test]
+#[serial]
 fn sending_the_report_clears_staging_too() {
-    let tmp = TempDir::new().unwrap();
-    let mut h = report(&tmp, true);
+    with_config_dir(|_| {
+        // Crash reports off, as by default: Send reads the settings when it
+        // is pressed (step 5.11a), so this sends nothing.
+        assert!(!dat0_core::telemetry::submission_allowed());
+        let tmp = TempDir::new().unwrap();
+        let mut h = report(&tmp, true);
 
-    h.click("report-send");
+        h.click("report-send");
 
-    assert_eq!(log_of(&h), "close");
-    assert!(
-        !crash::staged_path(tmp.path()).exists(),
-        "a sent report must not be sent again next launch"
-    );
+        assert_eq!(log_of(&h), "close");
+        assert!(
+            !crash::staged_path(tmp.path()).exists(),
+            "a sent report must not be sent again next launch"
+        );
+    });
+}
+
+/// Turn crash reports on in the scratch settings.
+fn reports_on(dir: &TempDir) {
+    let store =
+        dat0_core::settings::store::SettingsStore::with_path(dir.path().join("settings.toml"));
+    let mut settings = store.load_or_default().unwrap();
+    settings.telemetry.crash_submission_enabled = true;
+    store.save(&settings).unwrap();
 }
 
 #[test]
+#[serial]
 fn the_bug_report_and_the_crash_report_say_different_things() {
-    let tmp = TempDir::new().unwrap();
-    let bug = report(&tmp, false);
-    let bug_body = bug.text_of(bug.by_a11y_id("report-body").unwrap());
+    with_config_dir(|cfg| {
+        // A bug report asks for a description only while it can be sent.
+        // Nothing here presses Send, which with reports on would send.
+        reports_on(cfg);
+        let tmp = TempDir::new().unwrap();
+        let bug = report(&tmp, false);
+        let bug_body = bug.text_of(bug.by_a11y_id("report-body").unwrap());
 
-    let tmp2 = TempDir::new().unwrap();
-    let crashed = report(&tmp2, true);
-    let crash_body = crashed.text_of(crashed.by_a11y_id("report-body").unwrap());
+        let tmp2 = TempDir::new().unwrap();
+        let crashed = report(&tmp2, true);
+        let crash_body = crashed.text_of(crashed.by_a11y_id("report-body").unwrap());
 
-    assert_ne!(bug_body, crash_body);
-    assert_eq!(bug_body, dat0_i18n::t("report.dialog.body"));
-    assert_eq!(crash_body, dat0_i18n::t("crash.dialog.body"));
+        assert_ne!(bug_body, crash_body);
+        assert_eq!(bug_body, dat0_i18n::t("report.dialog.body"));
+        assert_eq!(crash_body, dat0_i18n::t("crash.dialog.body"));
+        assert!(bug.by_a11y_id("report-send").is_some());
+    });
+}
+
+#[test]
+#[serial]
+fn a_bug_report_while_reports_are_off_says_so_and_offers_no_send() {
+    // Send used to close on a report that went nowhere (step 5.11a).
+    with_config_dir(|_| {
+        let tmp = TempDir::new().unwrap();
+        let mut h = report(&tmp, false);
+        let body = h.text_of(h.by_a11y_id("report-body").unwrap());
+        assert_eq!(body, dat0_i18n::t("report.dialog.off"));
+        assert!(h.by_a11y_id("report-send").is_none(), "nothing to send");
+        assert!(h.by_a11y_id("report-note").is_none(), "nor to describe");
+        let close = h.by_a11y_id("report-dismiss").unwrap();
+        assert_eq!(h.text_of(close), dat0_i18n::t("common.close"));
+
+        h.click("report-dismiss");
+        assert_eq!(log_of(&h), "close");
+    });
 }
 
 #[test]
 fn the_note_field_is_optional_and_editable() {
+    // A crash's report: a bug report has a note only while reports are on.
     let tmp = TempDir::new().unwrap();
-    let mut h = report(&tmp, false);
+    let mut h = report(&tmp, true);
     let note = h.by_a11y_id("report-note").expect("a note field");
     assert_eq!(h.attr(note, "value").as_deref(), Some(""));
 

@@ -1,6 +1,7 @@
 //! MotherDuck + attachment connection management (P5c).
 pub mod connect;
 pub mod routing;
+pub mod sqlite;
 pub mod token_store;
 
 pub const MD_ALIAS: &str = "md";

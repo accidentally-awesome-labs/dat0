@@ -19,6 +19,18 @@ pub enum FormatError {
     /// than to read the parts that look benign.
     #[error("unsafe entry path in package: {entry}")]
     UnsafeEntryPath { entry: String },
+    /// A recipe table whose name cannot also be a file name — every table is
+    /// stored as `data/<name>.parquet`, and unpacking, replaying and writing
+    /// all build paths from the name — or whose `data` entry is not exactly
+    /// `data/<name>.parquet`. See [`crate::is_safe_table_name`]. Like an
+    /// escaping entry, this writer never produces one, so the package is
+    /// refused whole.
+    #[error("unsafe table name in package: {name:?}")]
+    UnsafeTableName { name: String },
+    /// Replay refused a derived table's recipe step before running it: the
+    /// step is not a single query. See `ReplayEngine::replay`.
+    #[error("recipe step for table {table:?} refused: {reason}")]
+    RecipeStepRefused { table: String, reason: String },
     #[error("source schema incompatible: {0}")]
     SchemaIncompatible(String),
     #[error("zip error: {0}")]

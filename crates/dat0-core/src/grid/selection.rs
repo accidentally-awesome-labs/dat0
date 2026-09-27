@@ -160,6 +160,72 @@ impl SelectionModel {
         });
     }
 
+    /// The smallest range covering every selected cell, with `r0 <= r1` and
+    /// `c0 <= c1`. `None` with nothing selected.
+    pub fn bounds(&self) -> Option<CellRange> {
+        self.ranges.iter().fold(None, |acc: Option<CellRange>, rg| {
+            let (r0, r1) = (rg.r0.min(rg.r1), rg.r0.max(rg.r1));
+            let (c0, c1) = (rg.c0.min(rg.c1), rg.c0.max(rg.c1));
+            Some(match acc {
+                None => CellRange { r0, c0, r1, c1 },
+                Some(b) => CellRange {
+                    r0: b.r0.min(r0),
+                    c0: b.c0.min(c0),
+                    r1: b.r1.max(r1),
+                    c1: b.c1.max(c1),
+                },
+            })
+        })
+    }
+
+    /// Every row holding a selected cell, ascending, each once.
+    ///
+    /// Built from the ranges' row spans rather than [`Self::resolved_cells`],
+    /// so a whole-row selection costs one entry per row, not one per cell.
+    /// Check [`Self::selected_row_count`] first: a select-all spans the table.
+    pub fn selected_rows(&self) -> Vec<usize> {
+        self.spans(|rg| (rg.r0, rg.r1))
+            .into_iter()
+            .flat_map(|(a, b)| a..=b)
+            .collect()
+    }
+
+    /// How many rows [`Self::selected_rows`] returns, counted from the spans.
+    pub fn selected_row_count(&self) -> usize {
+        self.spans(|rg| (rg.r0, rg.r1))
+            .into_iter()
+            .fold(0usize, |n, (a, b)| n.saturating_add(b - a + 1))
+    }
+
+    /// Every column holding a selected cell, ascending, each once.
+    pub fn selected_cols(&self) -> Vec<usize> {
+        self.spans(|rg| (rg.c0, rg.c1))
+            .into_iter()
+            .flat_map(|(a, b)| a..=b)
+            .collect()
+    }
+
+    /// The ranges' spans along one axis, merged where they overlap or touch.
+    fn spans(&self, axis: impl Fn(&CellRange) -> (usize, usize)) -> Vec<(usize, usize)> {
+        let mut spans: Vec<(usize, usize)> = self
+            .ranges
+            .iter()
+            .map(|rg| {
+                let (a, b) = axis(rg);
+                (a.min(b), a.max(b))
+            })
+            .collect();
+        spans.sort_unstable();
+        let mut merged: Vec<(usize, usize)> = Vec::with_capacity(spans.len());
+        for (a, b) in spans {
+            match merged.last_mut() {
+                Some((_, end)) if a <= end.saturating_add(1) => *end = (*end).max(b),
+                _ => merged.push((a, b)),
+            }
+        }
+        merged
+    }
+
     /// Returns `true` if `(r, c)` is covered by any range.
     pub fn contains(&self, r: usize, c: usize) -> bool {
         self.ranges.iter().any(|x| x.contains(r, c))

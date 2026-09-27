@@ -525,10 +525,9 @@ async fn a_committed_value_reaches_the_data_and_reads_back() {
 /// `Scalar::Bool`, not the string `"false"`, which is the difference between
 /// a boolean column and a corrupted one.
 ///
-/// Read back through the engine rather than the grid: `render_cell` has no
-/// `DataType::Boolean` arm, so every boolean cell paints the literal
-/// `(Boolean)` — a pre-existing dat0 limitation carried over unchanged from
-/// the GPUI build, and one this assertion must not depend on either way.
+/// Read back through the engine rather than the grid: the grid paints a
+/// boolean as `true` or `false` whatever its storage, so only the engine can
+/// tell a boolean from the string `"false"`.
 #[tokio::test]
 async fn a_picked_boolean_reaches_the_data_as_a_boolean() {
     let tmp = TempDir::new().unwrap();

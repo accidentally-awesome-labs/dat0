@@ -29,7 +29,7 @@ anyhow = "1"
 thiserror = "2"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
-notify = "6"
+notify = "8"
 once_cell = "1"
 parking_lot = "0.12"
 dirs = "5"
@@ -66,7 +66,10 @@ reqwest = { version = "0.12", default-features = false, features = ["rustls-tls"
 
 # P3b T8: SHA-256 over the downloaded blob before atomic-rename into the
 # samples cache.
-sha2 = "0.10"
+sha2 = "0.11"
+# Lowercase hex for those digests. sha2 0.11's output type, unlike 0.10's
+# GenericArray, has no `{:x}` formatting.
+hex = "0.4"
 
 # P8 T1: `.dat0` package container. Pin proven by the P8 T0 spike
 # (docs/internal/2026-06-13-p8-spike-notes.md §S2): default-features off drops
@@ -76,7 +79,11 @@ sha2 = "0.10"
 zip = { version = "8.6.0", default-features = false, features = ["deflate-flate2-zlib-rs"] }
 
 # P8 T1: validate a serialized manifest against the published JSON Schema (dev/test only).
-jsonschema = "0.36"
+# No default features: they add remote `$ref` resolution — a second reqwest
+# plus rustls' aws-lc-rs backend, which feature unification then switches on
+# in the rustls that the app's own reqwest uses. The schema resolves nothing
+# remotely; the 2020-12 meta-schema it names is built into the crate.
+jsonschema = { version = "0.49", default-features = false }
 
 # P3b T8: dev-only HTTP mock server for sample_data_fetch tests.
 mockito = "1"
@@ -126,7 +133,7 @@ num_cpus = "1"
 clap = { version = "4", features = ["derive"] }
 rand = "0.8"
 rand_chacha = "0.3" # deterministic PRNG (cross-platform reproducibility)
-rusqlite = { version = "0.31", features = ["bundled"] }
+rusqlite = { version = "0.40", features = ["bundled"] }
 
 # Internal crates
 dat0-core = { path = "crates/dat0-core" }

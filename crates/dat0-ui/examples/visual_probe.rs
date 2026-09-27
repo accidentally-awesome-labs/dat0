@@ -372,11 +372,16 @@ fn main() -> anyhow::Result<()> {
 
     dioxus::LaunchBuilder::desktop()
         .with_cfg(
-            Config::new().with_window(
-                WindowBuilder::new()
-                    .with_title("dat0 visual probe")
-                    .with_inner_size(LogicalSize::new(WINDOW.0, WINDOW.1)),
-            ),
+            Config::new()
+                .with_window(
+                    WindowBuilder::new()
+                        .with_title("dat0 visual probe")
+                        .with_inner_size(LogicalSize::new(WINDOW.0, WINDOW.1)),
+                )
+                // No menu bar. On Linux GTK draws it inside the window, so it
+                // takes 25 px of the inner size and every scene fails the
+                // viewport precondition. After `with_window`, which resets it.
+                .with_menu(None),
         )
         .with_context(fx)
         .launch(Probe);

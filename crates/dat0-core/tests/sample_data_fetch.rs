@@ -23,7 +23,7 @@ const TEST_PAYLOAD: &[u8] = b"hello, parquet payload for sample_data_fetch test"
 fn sha256_hex(bytes: &[u8]) -> String {
     let mut h = Sha256::new();
     h.update(bytes);
-    format!("{:x}", h.finalize())
+    hex::encode(h.finalize())
 }
 
 #[tokio::test]

@@ -78,7 +78,70 @@ pub fn is_active() -> bool {
     sentry::Hub::current().client().is_some()
 }
 
-/// Capture a structured event. No-op when inactive.
+/// Whether crash-report submission is on now, as the settings file says.
+///
+/// Read when a report is sent rather than taken from launch, where the client
+/// is bound: an opt-out made mid-session used to go on sending until the next
+/// launch, and an opt-in made mid-session sent nothing until then. Off when
+/// the settings cannot be read: the privacy-safe answer.
+pub fn submission_allowed() -> bool {
+    crate::platform::config_dir()
+        .ok()
+        .and_then(|dir| {
+            crate::settings::store::SettingsStore::with_path(dir.join("settings.toml"))
+                .load_or_default()
+                .ok()
+        })
+        .is_some_and(|s| s.telemetry.crash_submission_enabled)
+}
+
+/// What became of a report the user chose to send.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Submission {
+    /// Handed to the transport, and counted as egress.
+    Sent,
+    /// Crash reports are off: nothing left this machine.
+    Off,
+}
+
+/// A client bound after launch, when the opt-in came mid-session. Kept for
+/// the rest of the run, as the launch's own guard is.
+static LATE: std::sync::Mutex<Option<Telemetry>> = std::sync::Mutex::new(None);
+
+/// Send a report the user chose to send, if the settings allow it now.
+fn submit_user(
+    level: Level,
+    kind: &str,
+    message: String,
+    note: Option<&str>,
+    release: Option<&str>,
+    backtrace: Option<&str>,
+) -> Submission {
+    if !submission_allowed() {
+        return Submission::Off;
+    }
+    if !is_active() {
+        match Telemetry::init(true) {
+            Ok(t) => {
+                if let Ok(mut late) = LATE.lock() {
+                    *late = Some(t);
+                }
+            }
+            Err(e) => {
+                tracing::warn!("telemetry: could not start the client: {e:#}");
+                return Submission::Off;
+            }
+        }
+    }
+    if capture(level, kind, message, note, release, backtrace) {
+        Submission::Sent
+    } else {
+        Submission::Off
+    }
+}
+
+/// Capture a structured event, and count it as egress. No-op when inactive;
+/// true when the event went to the transport.
 fn capture(
     level: Level,
     kind: &str,
@@ -86,9 +149,9 @@ fn capture(
     note: Option<&str>,
     release: Option<&str>,
     backtrace: Option<&str>,
-) {
+) -> bool {
     if !is_active() {
-        return;
+        return false;
     }
     let mut event = Event {
         level,
@@ -112,41 +175,53 @@ fn capture(
             .extra
             .insert("backtrace".into(), Value::String(bt.to_string()));
     }
+    // egress-seam: the event, as JSON, is what the request carries; the
+    // envelope's framing and the transport's own headers are not counted,
+    // as at every seam (`egress`). Sentry's client sends it, over its own
+    // connection, so nothing else here would see these bytes leave.
+    let body = serde_json::to_vec(&event).map_or(0, |b| b.len() as u64);
+    let url = SENTRY_DSN_PUBLIC
+        .parse::<sentry::types::Dsn>()
+        .map(|d| d.envelope_api_url().to_string())
+        .unwrap_or_default();
     sentry::capture_event(event); // before_send redaction still applies
+    egress::record_request("POST", &url, 0, body);
     if let Some(c) = sentry::Hub::current().client() {
         c.flush(Some(Duration::from_secs(5)));
     }
+    true
 }
 
-/// Submit a staged crash (with optional user note). No-op when inactive.
-pub fn submit_staged(crash: &crash::StagedCrash, note: Option<&str>) {
-    capture(
+/// Submit a staged crash (with optional user note), when the settings allow
+/// it now.
+pub fn submit_staged(crash: &crash::StagedCrash, note: Option<&str>) -> Submission {
+    submit_user(
         Level::Error,
         "crash",
         crash.message.clone(),
         note,
         Some(&crash.version),
         Some(&crash.backtrace),
-    );
+    )
 }
 
-/// Submit a user-initiated bug report. No-op when inactive.
-pub fn submit_report(note: &str) {
-    capture(
+/// Submit a user-initiated bug report, when the settings allow it now.
+pub fn submit_report(note: &str) -> Submission {
+    submit_user(
         Level::Info,
         "report-a-bug",
         "User bug report".to_string(),
         Some(note),
         None,
         None,
-    );
+    )
 }
 
 /// Submit an operator/CI test event. The identifier is the event MESSAGE so it
 /// becomes the GlitchTip issue title (searchable), unlike a bug-report note
 /// which lands only in `extra.user_note`. No-op when inactive.
 pub fn submit_test_event(message: &str) {
-    capture(
+    let _ = capture(
         Level::Info,
         "e2e-test",
         message.to_string(),

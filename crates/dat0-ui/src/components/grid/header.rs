@@ -22,6 +22,7 @@ use dioxus::prelude::*;
 use dat0_core::grid::header::{HEADER_FUNNEL_PX, HEADER_GRIP_PX, HEADER_SORT_PX};
 use dat0_engine::transform::ProjectionColumn;
 
+use super::views::Mark;
 use super::{COL_W_DEFAULT, ROW_H, offset_of};
 
 /// Narrowest a column may be dragged. Below this the grip and the sort/funnel
@@ -54,6 +55,15 @@ pub struct HeaderProps {
     pub on_resize_start: EventHandler<(usize, f64)>,
     pub on_reorder_start: EventHandler<usize>,
     pub on_reorder_drop: EventHandler<usize>,
+    /// Each column's sort and filter state, parallel to `columns`.
+    #[props(default)]
+    pub marks: Vec<Mark>,
+    /// A click in a column's sort zone, and whether Shift was held.
+    #[props(default)]
+    pub on_sort: EventHandler<(usize, bool)>,
+    /// A click on a column's funnel, at the pointer's client position.
+    #[props(default)]
+    pub on_funnel: EventHandler<(usize, f64, f64)>,
 }
 
 #[component]
@@ -87,6 +97,26 @@ fn column_header(
     let on_resize_start = props.on_resize_start;
     let on_reorder_start = props.on_reorder_start;
     let on_reorder_drop = props.on_reorder_drop;
+    let (on_sort, on_funnel) = (props.on_sort, props.on_funnel);
+    let mark = props.marks.get(ix).copied().unwrap_or_default();
+    // A rank only when there is more than one key to rank.
+    let multi = props.marks.iter().filter(|m| m.sort.is_some()).count() > 1;
+    let sort_glyph = match mark.sort {
+        Some((rank, dir)) => format!(
+            "{}{}",
+            if dir == dat0_engine::SortDirection::Asc {
+                "▲"
+            } else {
+                "▼"
+            },
+            if multi {
+                rank.to_string()
+            } else {
+                String::new()
+            }
+        ),
+        None => String::new(),
+    };
 
     rsx! {
         div {
@@ -122,12 +152,20 @@ fn column_header(
             }
             span { style: "flex: 1 1 auto; overflow: hidden; text-overflow: ellipsis;", "{name}" }
             span {
+                class: "d0-sort",
                 "data-a11y-id": "col-sort-{ix}",
                 style: "width: {HEADER_SORT_PX}px; text-align: center;",
+                onclick: move |e| on_sort.call((ix, e.modifiers().shift())),
+                "{sort_glyph}"
             }
             span {
+                class: if mark.filtered { "d0-funnel is-on" } else { "d0-funnel" },
                 "data-a11y-id": "col-funnel-{ix}",
                 style: "width: {HEADER_FUNNEL_PX}px; text-align: center;",
+                onclick: move |e| {
+                    let at = e.data().client_coordinates();
+                    on_funnel.call((ix, at.x, at.y));
+                },
             }
             // Resize sits astride the column's trailing edge, the universal
             // convention, and deliberately NOT on the grip: the grip is

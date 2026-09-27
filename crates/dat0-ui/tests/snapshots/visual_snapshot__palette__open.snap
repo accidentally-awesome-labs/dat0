@@ -7,11 +7,11 @@ expression: "rendered[0].1"
 <div class="d0-palette" data-a11y-id="palette" role="dialog" aria-modal="true" aria-label="Command Palette" tabindex="-1">
 <div class="d0-palette-input">
 <span class="d0-palette-prompt" aria-hidden="true">›</span>
-<input class="d0-mono" data-a11y-id="palette-query" aria-label="Search commands" placeholder="Type a command…" value="" autofocus=true/>
+<input class="d0-mono" data-a11y-id="palette-query" aria-label="Search commands" placeholder="Type a command…" value=""/>
 <span class="d0-mono d0-hint" aria-hidden="true">esc</span>
 </div>
 <div class="d0-palette-list" data-a11y-id="palette-list">
-<div class="d0-palette-canvas" style="height: 962px;">
+<div class="d0-palette-canvas" style="height: 1066px;">
 <button class="d0-palette-row is-selected" data-a11y-id="palette-row-0" role="button" aria-label="AI Providers…" aria-selected="true" title="Settings" tabindex="-1" style="top: 0px;">
 <span class="d0-palette-glyph" aria-hidden="true">⚙</span>
 <span class="d0-palette-label">AI Providers…</span>
@@ -37,50 +37,50 @@ expression: "rendered[0].1"
 <span class="d0-palette-glyph" aria-hidden="true">✎</span>
 <span class="d0-palette-label">Cut</span>
 </button>
-<button class="d0-palette-row" data-a11y-id="palette-row-6" role="button" aria-label="Delete Row(s)" aria-selected="false" title="Edit" tabindex="-1" style="top: 156px;">
+<button class="d0-palette-row" data-a11y-id="palette-row-6" role="button" aria-label="Delete Column" aria-selected="false" title="Edit" tabindex="-1" style="top: 156px;">
+<span class="d0-palette-glyph" aria-hidden="true">✎</span>
+<span class="d0-palette-label">Delete Column</span>
+</button>
+<button class="d0-palette-row" data-a11y-id="palette-row-7" role="button" aria-label="Delete Row(s)" aria-selected="false" title="Edit" tabindex="-1" style="top: 182px;">
 <span class="d0-palette-glyph" aria-hidden="true">✎</span>
 <span class="d0-palette-label">Delete Row(s)</span>
 </button>
-<button class="d0-palette-row" data-a11y-id="palette-row-7" role="button" aria-label="Export Chart as PNG" aria-selected="false" title="File" tabindex="-1" style="top: 182px;">
+<button class="d0-palette-row" data-a11y-id="palette-row-8" role="button" aria-label="Export Chart as PNG" aria-selected="false" title="File" tabindex="-1" style="top: 208px;">
 <span class="d0-palette-glyph" aria-hidden="true">▤</span>
 <span class="d0-palette-label">Export Chart as PNG</span>
 </button>
-<button class="d0-palette-row" data-a11y-id="palette-row-8" role="button" aria-label="Export Chart as SVG" aria-selected="false" title="File" tabindex="-1" style="top: 208px;">
+<button class="d0-palette-row" data-a11y-id="palette-row-9" role="button" aria-label="Export Chart as SVG" aria-selected="false" title="File" tabindex="-1" style="top: 234px;">
 <span class="d0-palette-glyph" aria-hidden="true">▤</span>
 <span class="d0-palette-label">Export Chart as SVG</span>
 </button>
-<button class="d0-palette-row" data-a11y-id="palette-row-9" role="button" aria-label="Export…" aria-selected="false" title="File" tabindex="-1" style="top: 234px;">
+<button class="d0-palette-row" data-a11y-id="palette-row-10" role="button" aria-label="Export…" aria-selected="false" title="File" tabindex="-1" style="top: 260px;">
 <span class="d0-palette-glyph" aria-hidden="true">▤</span>
 <span class="d0-palette-label">Export…</span>
 <span class="d0-hint" aria-hidden="true">CHORD</span>
 </button>
-<button class="d0-palette-row" data-a11y-id="palette-row-10" role="button" aria-label="Fill Down" aria-selected="false" title="Edit" tabindex="-1" style="top: 260px;">
+<button class="d0-palette-row" data-a11y-id="palette-row-11" role="button" aria-label="Fill Down" aria-selected="false" title="Edit" tabindex="-1" style="top: 286px;">
 <span class="d0-palette-glyph" aria-hidden="true">✎</span>
 <span class="d0-palette-label">Fill Down</span>
 </button>
-<button class="d0-palette-row" data-a11y-id="palette-row-11" role="button" aria-label="History" aria-selected="false" title="Edit" tabindex="-1" style="top: 286px;">
+<button class="d0-palette-row" data-a11y-id="palette-row-12" role="button" aria-label="History" aria-selected="false" title="Edit" tabindex="-1" style="top: 312px;">
 <span class="d0-palette-glyph" aria-hidden="true">✎</span>
 <span class="d0-palette-label">History</span>
 </button>
-<button class="d0-palette-row" data-a11y-id="palette-row-12" role="button" aria-label="New Window" aria-selected="false" title="Navigation" tabindex="-1" style="top: 312px;">
+<button class="d0-palette-row" data-a11y-id="palette-row-13" role="button" aria-label="New Window" aria-selected="false" title="Navigation" tabindex="-1" style="top: 338px;">
 <span class="d0-palette-glyph" aria-hidden="true">→</span>
 <span class="d0-palette-label">New Window</span>
 </button>
-<button class="d0-palette-row" data-a11y-id="palette-row-13" role="button" aria-label="New query tab" aria-selected="false" title="Edit" tabindex="-1" style="top: 338px;">
+<button class="d0-palette-row" data-a11y-id="palette-row-14" role="button" aria-label="New query tab" aria-selected="false" title="Edit" tabindex="-1" style="top: 364px;">
 <span class="d0-palette-glyph" aria-hidden="true">✎</span>
 <span class="d0-palette-label">New query tab</span>
 </button>
-<button class="d0-palette-row" data-a11y-id="palette-row-14" role="button" aria-label="Open File…" aria-selected="false" title="File" tabindex="-1" style="top: 364px;">
+<button class="d0-palette-row" data-a11y-id="palette-row-15" role="button" aria-label="Open File…" aria-selected="false" title="File" tabindex="-1" style="top: 390px;">
 <span class="d0-palette-glyph" aria-hidden="true">▤</span>
 <span class="d0-palette-label">Open File…</span>
 </button>
-<button class="d0-palette-row" data-a11y-id="palette-row-15" role="button" aria-label="Open Settings" aria-selected="false" title="Settings" tabindex="-1" style="top: 390px;">
+<button class="d0-palette-row" data-a11y-id="palette-row-16" role="button" aria-label="Open Settings" aria-selected="false" title="Settings" tabindex="-1" style="top: 416px;">
 <span class="d0-palette-glyph" aria-hidden="true">⚙</span>
 <span class="d0-palette-label">Open Settings</span>
-</button>
-<button class="d0-palette-row" data-a11y-id="palette-row-16" role="button" aria-label="Open Workspace…" aria-selected="false" title="File" tabindex="-1" style="top: 416px;">
-<span class="d0-palette-glyph" aria-hidden="true">▤</span>
-<span class="d0-palette-label">Open Workspace…</span>
 </button>
 </div>
 </div>

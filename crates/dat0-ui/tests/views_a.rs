@@ -572,7 +572,7 @@ fn FilterHost(props: FilterHostProps) -> Element {
                     .push(match o {
                         Outcome::Apply(t) => format!("apply {t:?}"),
                         Outcome::Cancel => "cancel".to_string(),
-                        Outcome::Clear { pre_populated } => format!("clear {pre_populated}"),
+                        Outcome::Clear { pre_populated, .. } => format!("clear {pre_populated}"),
                     });
             },
         }

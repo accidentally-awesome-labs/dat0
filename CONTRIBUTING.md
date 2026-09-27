@@ -43,7 +43,8 @@ The repo builds with stable Rust. Prerequisites:
 
 **All platforms**
 
-- Rust toolchain — `rust-toolchain.toml` pins to stable. Install via [rustup](https://rustup.rs).
+- Rust toolchain — `rust-toolchain.toml` pins an exact release (1.97.0), which
+  rustup installs on first use. Install rustup via [rustup.rs](https://rustup.rs).
 - `git` 2.30+
 
 **macOS**

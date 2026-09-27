@@ -37,6 +37,8 @@
 //! is reachable from.
 
 pub mod editor;
+pub mod host;
+pub mod sql_text;
 pub mod tabs;
 
 use std::collections::BTreeMap;
@@ -97,6 +99,13 @@ pub enum ConsoleIntent {
         tab: String,
         sql: String,
     },
+    /// Ask AI for a statement: the host asks what for, and streams the answer
+    /// into the preview strip.
+    AskAi,
+    /// Ask AI to explain the showing statement.
+    Explain {
+        sql: String,
+    },
     /// Stop the streaming NL→SQL or Explain answer.
     StopStream,
     /// Take the generated SQL into a new tab.
@@ -127,8 +136,16 @@ pub struct SqlConsoleProps {
     /// The failed-run strip. `None` means no strip.
     #[props(default)]
     pub error: Option<String>,
+    /// AI is on, with a provider, a key and a model: NL→SQL and Explain are
+    /// offered.
+    #[props(default)]
+    pub ai_ready: bool,
     pub on_intent: EventHandler<ConsoleIntent>,
     pub on_select_tab: EventHandler<usize>,
+    /// Where each tab's caret was last reported, so a run takes the statement
+    /// the caret is in. `None` where nothing runs, as in the gallery.
+    #[props(default)]
+    pub carets: Option<host::Carets>,
 }
 
 // The schema snapshot is shared, mutable, and refreshed from a background task;
@@ -142,6 +159,8 @@ impl PartialEq for SqlConsoleProps {
             && self.running == other.running
             && self.stream == other.stream
             && self.error == other.error
+            && self.ai_ready == other.ai_ready
+            && self.carets == other.carets
             && std::sync::Arc::ptr_eq(&self.schema, &other.schema)
     }
 }
@@ -189,9 +208,12 @@ pub fn SqlConsole(props: SqlConsoleProps) -> Element {
     let active = props.active.min(tabs.len().saturating_sub(1));
     let on_intent = props.on_intent;
     let on_select_tab = props.on_select_tab;
+    let carets = props.carets;
     let running = props.running;
     let stream = props.stream.clone();
     let strip = strip_phase(&stream);
+    // AI is offered while it is ready and no answer is still arriving.
+    let ai_open = props.ai_ready && !matches!(strip, Some((_, true)));
     let error = props.error.clone();
     let focus = focus_target(&stream, error.as_deref());
     let tab_count = tabs.len();
@@ -209,7 +231,13 @@ pub fn SqlConsole(props: SqlConsoleProps) -> Element {
         // `id` is empty for the bundle's own boot ping, and the tab id when
         // an instance mounts.
         EditorMsg::Ready { id } => tracing::debug!(tab = %id, "editor ready"),
-        EditorMsg::Cursor { .. } => {}
+        EditorMsg::Cursor { id, line, col } => {
+            if let Some(mut carets) = carets {
+                // Written, never read during render: a caret move must not
+                // re-render the console.
+                carets.write().insert(id, (line, col));
+            }
+        }
     });
 
     let active_tab = tabs.get(active).cloned();
@@ -396,7 +424,7 @@ pub fn SqlConsole(props: SqlConsoleProps) -> Element {
                             }
                         },
                         span { style: "color: var(--d0-ok)", {dat0_i18n::t("sql.run")} }
-                        span { class: "d0-key", "⌘⏎" }
+                        span { class: "d0-key", "data-chord": "run", {crate::chrome::run_chord()} }
                     }
                 }
             }
@@ -405,21 +433,6 @@ pub fn SqlConsole(props: SqlConsoleProps) -> Element {
             // action; both routes end at the same intent, and the buttons exist
             // so the commands are discoverable without knowing they are there.
             div { class: "d0-console-toolbar", "data-a11y-id": "console-toolbar",
-                Tool {
-                    id: "console-run-pane",
-                    label: dat0_i18n::t("sql.run_in_pane"),
-                    on_act: {
-                        let (tab_id, sql) = (tab_id.clone(), sql.clone());
-                        move |_| {
-                            on_intent
-                                .call(ConsoleIntent::Run {
-                                    tab: tab_id.clone(),
-                                    sql: sql.clone(),
-                                    target: ResultTarget::Pane,
-                                })
-                        }
-                    },
-                }
                 Tool {
                     id: "console-new-tab",
                     label: dat0_i18n::t("sql.new_tab"),
@@ -461,6 +474,23 @@ pub fn SqlConsole(props: SqlConsoleProps) -> Element {
                                     sql: sql.clone(),
                                 })
                         }
+                    },
+                }
+                // Offered while AI is ready and no answer is still arriving:
+                // one stream at a time, as the strip shows one.
+                Tool {
+                    id: "console-nl2sql",
+                    label: dat0_i18n::t("sql.nl2sql.chip"),
+                    disabled: !ai_open,
+                    on_act: move |_| on_intent.call(ConsoleIntent::AskAi),
+                }
+                Tool {
+                    id: "console-explain",
+                    label: dat0_i18n::t("sql.explain.button"),
+                    disabled: !ai_open || sql.trim().is_empty(),
+                    on_act: {
+                        let sql = sql.clone();
+                        move |_| on_intent.call(ConsoleIntent::Explain { sql: sql.clone() })
                     },
                 }
             }
@@ -529,7 +559,8 @@ pub fn SqlConsole(props: SqlConsoleProps) -> Element {
                     class: "d0-console-strip is-error",
                     "data-a11y-id": "console-error",
                     role: AccessRole::Alert.aria(),
-                    span { class: "d0-mono", "data-a11y-id": "console-error-text", "{msg}" }
+                    // `pre`: DuckDB lines its caret up under the fault.
+                    pre { class: "d0-mono", "data-a11y-id": "console-error-text", "{msg}" }
                     Tool {
                         id: ERROR_DISMISS,
                         label: dat0_i18n::t("sql.error.dismiss"),
@@ -558,6 +589,7 @@ fn Tool(
     id: &'static str,
     label: String,
     #[props(default = false)] takes_focus: bool,
+    #[props(default = false)] disabled: bool,
     on_act: EventHandler<()>,
 ) -> Element {
     rsx! {
@@ -567,6 +599,7 @@ fn Tool(
             role: AccessRole::Button.aria(),
             "aria-label": "{label}",
             tabindex: "0",
+            disabled,
             onmounted: move |e: Event<MountedData>| {
                 if takes_focus {
                     spawn(async move {
