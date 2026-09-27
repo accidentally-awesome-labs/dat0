@@ -70,6 +70,8 @@ enum Setup {
     FailedSession,
     /// An import in flight: Cancel Import does nothing otherwise.
     ActiveImport,
+    /// A data tab open: Close Tab does nothing otherwise.
+    OpenTab,
 }
 
 /// Commands whose effect needs something in place first. Everything else is
@@ -84,6 +86,7 @@ const SETUP: &[(&str, Setup)] = &[
     ),
     (ids::SESSION_RETRY, Setup::FailedSession),
     (ids::IMPORT_CANCEL, Setup::ActiveImport),
+    (ids::VIEW_CLOSE_TAB, Setup::OpenTab),
 ];
 
 /// Offered commands whose effect needs something the headless harness does
@@ -209,6 +212,7 @@ fn Host(props: HostProps) -> Element {
                     dat0_core::import_progress::ImportProgress::new(10),
                 );
             }
+            Some(Setup::OpenTab) => ws.show_tab("sales".to_string(), None),
             None => {}
         }
     };

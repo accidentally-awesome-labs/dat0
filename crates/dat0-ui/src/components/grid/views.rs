@@ -26,7 +26,7 @@ use dat0_core::view::distinct_values::fetch_top_n;
 use dat0_core::view::filter_popover::{ColumnType, Outcome};
 use dat0_core::view::{ViewChange, ViewModel, fold_columns, route_outcome, start_view_change};
 use dat0_engine::transform::ProjectionColumn;
-use dat0_engine::{DuckDBEngine, SortDirection, Transformation, quote_ident};
+use dat0_engine::{DuckDBEngine, QueryEngine as _, SortDirection, Transformation, quote_ident};
 
 use crate::state::Workspace;
 
@@ -239,6 +239,29 @@ impl Views {
         *reread.write().entry(table.to_string()).or_default() += 1;
     }
 
+    /// `table`'s last tab closed: its view goes — the steps, the source bound
+    /// for it and the view in the engine — and the table stays. Opened again,
+    /// it shows the table bare.
+    pub fn forget(&self, table: &str) {
+        let (mut models, mut bound) = (self.models, self.bound);
+        let view = models
+            .write()
+            .remove(table)
+            .and_then(|vm| vm.active_view().map(str::to_string));
+        bound.write().remove(table);
+        let (Some(view), Some(engine)) = (view, engine(&self.ws)) else {
+            return;
+        };
+        // Best-effort, as a replaced view's drop is (`start_view_change`): a
+        // TEMP view lives in this connection only, so one left behind costs a
+        // little memory until the window closes.
+        spawn(async move {
+            if let Err(e) = engine.drop_view(&view).await {
+                tracing::debug!(%view, error = %e, "drop_view best-effort: ignored");
+            }
+        });
+    }
+
     /// Build every tab's view again, in the engine the window has now. A
     /// console run's rows were a view in the old one alone, so their models
     /// go.
@@ -290,11 +313,17 @@ impl Views {
             .unwrap_or_else(|| table.clone());
         // Claimed now, not when the future is polled: see `start_view_change`.
         let started = start_view_change(engine, table.clone(), change);
-        let mut bound = self.bound;
+        let (models, mut bound) = (self.models, self.bound);
         spawn(async move {
             // `None` is a display-only change, a superseded one, or a failure
             // already bannered: in every case the grid keeps what it shows.
-            if let Some(source) = started.await {
+            let Some(source) = started.await else {
+                return;
+            };
+            // Its model gone, the change's tab closed or a console run took
+            // its rows while it ran: binding it would show a view nothing
+            // else knows of when the table is next opened.
+            if models.peek().contains_key(&table) {
                 bound.write().insert(table, (reads, source));
             }
         });

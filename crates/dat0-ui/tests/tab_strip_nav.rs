@@ -398,6 +398,93 @@ fn a_tab_is_titled_by_its_file_rather_than_its_table() {
     });
 }
 
+// ── closing a tab (PD-038) ───────────────────────────────────────────────────
+
+/// The strip's tab titles, in order, and which one is selected.
+fn strip_state(h: &Harness) -> (Vec<String>, Option<usize>) {
+    let mut titles = Vec::new();
+    let mut selected = None;
+    while let Some(key) = h.by_a11y_id(&format!("tab-{}", titles.len())) {
+        if h.attr(key, "aria-selected").as_deref() == Some("true") {
+            selected = Some(titles.len());
+        }
+        titles.push(h.text_of(key));
+    }
+    (titles, selected)
+}
+
+#[test]
+#[serial]
+fn each_tab_has_a_close_button_named_for_it_that_is_not_a_tab_stop() {
+    with_settled_config(|| {
+        let h = mount(three_tabs(), Some(0));
+        for (i, title) in ["sales.csv", "events.parquet", "scratch"]
+            .iter()
+            .enumerate()
+        {
+            let close = h
+                .by_a11y_id(&format!("tab-close-{i}"))
+                .unwrap_or_else(|| panic!("tab {i} has no ✕"));
+            assert_eq!(h.attr(close, "role").as_deref(), Some("button"));
+            assert_eq!(
+                h.attr(close, "aria-label"),
+                Some(dat0_i18n::t("tab.close").replace("{tab}", title)),
+                "a reader hears which tab the ✕ closes"
+            );
+            assert_eq!(
+                h.attr(close, "tabindex").as_deref(),
+                Some("-1"),
+                "the ✕ is the pointer's; the strip stays one Tab stop"
+            );
+            let tab = h.by_a11y_id(&format!("tab-{i}")).unwrap();
+            assert!(
+                !subtree(&h, tab).contains(&close),
+                "the ✕ sits beside its tab: inside a `tab` it is presentational \
+                 and hidden from a reader, and a button in a button is not markup"
+            );
+        }
+    });
+}
+
+#[test]
+#[serial]
+fn closing_another_tab_leaves_the_active_one_active() {
+    with_settled_config(|| {
+        let mut h = mount(three_tabs(), Some(2));
+        h.click("tab-close-0");
+        assert_eq!(
+            strip_state(&h),
+            (vec!["events.parquet".into(), "scratch".into()], Some(1)),
+            "scratch was active and still is"
+        );
+    });
+}
+
+#[test]
+#[serial]
+fn closing_the_active_tab_selects_the_one_that_takes_its_place() {
+    with_settled_config(|| {
+        let mut h = mount(three_tabs(), Some(1));
+        h.click("tab-close-1");
+        assert_eq!(
+            strip_state(&h),
+            (vec!["sales.csv".into(), "scratch".into()], Some(1)),
+        );
+        h.click("tab-close-1");
+        assert_eq!(
+            strip_state(&h),
+            (vec!["sales.csv".into()], Some(0)),
+            "the last closed: the one before it"
+        );
+        h.click("tab-close-0");
+        assert_eq!(strip_state(&h), (Vec::new(), None), "none left");
+        assert!(
+            h.by_a11y_id("command-launcher").is_some(),
+            "the strip stays, with the launcher"
+        );
+    });
+}
+
 // ── the responsive rule ──────────────────────────────────────────────────────
 
 /// The body of the first `@media (...)` block whose condition contains `cond`.

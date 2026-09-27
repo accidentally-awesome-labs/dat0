@@ -31,6 +31,7 @@
 //! unit tests.
 
 pub mod cell_editor;
+pub mod close;
 pub mod context_menu;
 pub mod edits;
 pub mod export;

@@ -178,6 +178,14 @@ pub enum Modal {
         dropped_deletes: usize,
         reply: ModalReply,
     },
+    /// Closing a data tab whose view holds edits or deleted rows (PD-038).
+    CloseTab {
+        /// The tab's title.
+        tab: String,
+        edits: usize,
+        deletes: usize,
+        reply: ModalReply,
+    },
     SavedQueries {
         queries: Vec<SavedQuery>,
         reply: ModalReply,
@@ -443,6 +451,41 @@ impl Workspace {
         });
         active.set(Some(at));
     }
+
+    /// Take the tab at `i` out of the strip, and return it. The active tab
+    /// stays active when another tab closes; see [`active_after_close`] for
+    /// where a closed active tab hands the selection.
+    ///
+    /// Only the strip: the tab's view and the table under it are the
+    /// closer's to keep or let go (`components::grid::close`).
+    pub fn close_tab(&self, i: usize) -> Option<TabView> {
+        let (mut tabs, mut active) = (self.tabs, self.active);
+        if i >= tabs.peek().len() {
+            return None;
+        }
+        let closed = tabs.write().remove(i);
+        let left = tabs.peek().len();
+        let was = *active.peek();
+        active.set(active_after_close(was, i, left));
+        Some(closed)
+    }
+}
+
+/// Which tab is active once the tab at `closed` has gone, `left` tabs
+/// remaining.
+///
+/// Another tab's closing moves nothing the user was looking at: the active
+/// tab keeps the selection, shifted down one when the closed tab was before
+/// it. A closed active tab hands it to the tab that slides into its place,
+/// or to the one before it when it was the last — the browser's rule, and
+/// the one that keeps the eye where it was.
+pub fn active_after_close(active: Option<usize>, closed: usize, left: usize) -> Option<usize> {
+    match active? {
+        a if a < closed => Some(a),
+        a if a > closed => Some(a - 1),
+        _ if left == 0 => None,
+        _ => Some(closed.min(left - 1)),
+    }
 }
 
 /// A persisted dock size resolved into the pixels to mount with.
@@ -493,6 +536,25 @@ mod tests {
             ..from_file
         };
         assert_eq!(labelled.title(), "Query 1", "a label wins over the file");
+    }
+
+    #[test]
+    fn closing_a_tab_keeps_the_eye_where_it_was() {
+        // Tabs a b c d, c active.
+        assert_eq!(active_after_close(Some(2), 0, 3), Some(1), "c, one left");
+        assert_eq!(active_after_close(Some(2), 3, 3), Some(2), "c stays put");
+        assert_eq!(
+            active_after_close(Some(2), 2, 3),
+            Some(2),
+            "c closed: d slides into its place"
+        );
+        assert_eq!(
+            active_after_close(Some(3), 3, 3),
+            Some(2),
+            "the last closed: the one before it"
+        );
+        assert_eq!(active_after_close(Some(0), 0, 0), None, "none left");
+        assert_eq!(active_after_close(None, 0, 3), None, "nothing was active");
     }
 
     #[test]

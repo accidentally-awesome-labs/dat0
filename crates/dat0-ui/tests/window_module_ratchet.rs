@@ -38,6 +38,9 @@ const MAX_LINES: &[(&str, usize)] = &[
     // Saving a chart and showing a saved one (step 5.5c), kept out of the
     // feed, which binds and draws.
     ("charts/saved.rs", 200),
+    // New with closing a data tab (PD-038): the confirm for a view whose
+    // edits would go, beside Live Refresh's.
+    ("close_tab.rs", 200),
     ("command_palette.rs", 600),
     ("connections.rs", 600),
     ("crash_report.rs", 300),
@@ -46,6 +49,9 @@ const MAX_LINES: &[(&str, usize)] = &[
     ("export_dialog.rs", 500),
     ("filter_popover.rs", 600),
     ("grid/cell_editor.rs", 300),
+    // New with closing a data tab (PD-038): what a close takes with it and
+    // what it leaves, kept out of shell.rs as Live Refresh is.
+    ("grid/close.rs", 200),
     ("grid/context_menu.rs", 300),
     ("grid/edits.rs", 600),
     ("grid/export.rs", 200),

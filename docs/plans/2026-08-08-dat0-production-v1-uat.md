@@ -417,8 +417,17 @@ decorated window titled `Settings`.
       for a SQLite table; `Query 1` for a query's rows; the table's name for a
       table saved from a view or a query.
 - [ ] Switch tabs by keyboard: **the strip's tabs cannot be reached
-      (PD-040)**; the sidebar's FILES rows are the route (§5.4). A tab has no
-      close control (PD-038).
+      (PD-040)**; the sidebar's FILES rows are the route (§5.4).
+- [ ] **Close tabs** (PD-038). Point at an inactive tab: **its ✕ shows**; the
+      active tab's always shows. Click an inactive tab's ✕: **that tab goes,
+      and the active tab stays active.** Close the active tab with **File →
+      Close Tab**, then with the palette's `Close Tab`: **the tab to its right
+      takes its place, or the one to its left when it was the last.** Sort a
+      tab, close it, and open its file again: **it comes back unsorted, with
+      its rows.** Edit a cell, then close its tab: **`Closing will discard
+      edits` asks first, naming the tab and the count.** Cancel keeps the tab
+      and the edit; `Close anyway` closes it. Close a tab in a workspace, quit,
+      and open the workspace again: **the tab stays closed.**
 
 ### 4.4 Status bar
 
@@ -1182,7 +1191,7 @@ printf '%s' '{"message":"uat staged crash","backtrace":"uat","version":"0.1.0"}'
       rows (PD-033, §10.2), the edit caps (PD-034, §10.4), closing a scratch
       window asks nothing (PD-035: close one holding work and relaunch), Open
       Recent until relaunch (PD-036, §4.1), the wizard's dialect on refresh
-      (PD-037, §10.28), no tab close (PD-038, §4.3), the empty window at
+      (PD-037, §10.28), the empty window at
       launch (PD-039, §7.1), keyboard reach (PD-040, §5), lineage after a
       reopen (PD-031, §10.9).
 

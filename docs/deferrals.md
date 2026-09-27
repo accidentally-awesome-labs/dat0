@@ -111,7 +111,7 @@ that's modifying it; merge conflicts are signals worth investigating.
 | PD-035 | Closing a scratch window does not offer to keep its work as a workspace; the next launch offers it for recovery instead | open | low |
 | PD-036 | File → Open Recent lists the workspaces recent at launch: one opened or saved since is listed from the next launch | open | low |
 | PD-037 | Live Refresh reads a file the import wizard read with automatic detection, since the dialect chosen is not kept with the table | open | medium |
-| PD-038 | A data tab cannot be closed: the tab strip only activates tabs, and no command closes one | open | medium |
+| PD-038 | A data tab cannot be closed: the tab strip only activates tabs, and no command closes one | closed | medium |
 | PD-039 | A `.dat0` package or a workspace folder named at launch opens in a window of its own, beside an empty scratch window | open | low |
 | PD-040 | Parts of the shell cannot be reached by keyboard: the data tabs, a column's sort and filter, the inspector's lineage, and a dialog's first control | open | medium |
 | PD-041 | The release pipeline, never run, would have shipped a Linux AppImage that opened a blank window on most hosts and would not start on Ubuntu 22.04 or Debian 12, with no check that a tag carried the production update key, and its first tag would have stopped at signing the update manifest | closed | high |
@@ -3071,19 +3071,39 @@ that's modifying it; merge conflicts are signals worth investigating.
 
 ### PD-038 — A data tab cannot be closed
 
-- **Status:** open
+- **Status:** closed — 2026-09-27
 - **Severity:** medium — tabs only accumulate; the way out is a new window
 - **Affected files:** `crates/dat0-ui/src/components/shell.rs` (`TabStrip`),
-  `crates/dat0-ui/src/state.rs`
+  `crates/dat0-ui/src/state.rs`, `crates/dat0-ui/src/components/grid/close.rs`,
+  `crates/dat0-ui/src/components/grid/views.rs`,
+  `crates/dat0-ui/src/components/close_tab.rs`
 - **Symptom:** the tab strip activates a tab and has no close control, and
   no command closes a data tab (`sql.close_tab` closes a query tab). The
   GPUI build showed one tab per window, the active view's, and closed none.
-- **Fix:** a close control on each tab and a command for the active one,
-  which drop the tab and its view; the table stays in the session while
-  another tab or a saved query reads it.
+- **Fix:**
+  - Each tab carries a ✕ beside it, and `view.close_tab` (File → Close Tab
+    and the palette's `Close Tab`) closes the active one. No chord: ⌘W is
+    Close Window.
+  - A tab closes with its view: its steps, the source bound for it and the
+    view the engine built from them. The table stays in the session, so the
+    console, a saved query or chart and a package still reach it, and
+    opening its file again brings its tab back, bare. Another tab over the
+    same table keeps the view.
+  - Cell edits and deleted rows live only in the view, so when it has any,
+    `Closing will discard edits` asks first and says how many cells and
+    rows, as Live Refresh does. A view of sorts and filters closes at once.
+  - Closing another tab leaves the active one active; a closed active tab
+    hands the selection to the tab that takes its place, or to the one
+    before it when it was the last. The session records the strip as it is
+    left, so a reopened workspace does not bring a closed tab back.
+  - A view change still running when its tab closed no longer binds its
+    result, which would have shown a view the reopened tab knew nothing of.
+  - `tests/tab_close.rs` closes tabs over a real session;
+    `tests/tab_strip_nav.rs` holds the ✕ to its label, its place beside the
+    tab and the strip's one Tab stop.
 - **Discovered:** 2026-09-26, checking the new UAT checklist against the
   code.
-- **Last touched:** 2026-09-26
+- **Last touched:** 2026-09-27
 
 ### PD-039 — A package or workspace named at launch opens beside an empty window
 

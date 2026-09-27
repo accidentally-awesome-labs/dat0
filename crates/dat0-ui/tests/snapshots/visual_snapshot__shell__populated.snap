@@ -26,13 +26,22 @@ expression: "rendered[0].1"
 <span class="d0-key" data-chord="palette">CHORD</span>
 </button>
 </div>
-<button class="d0-tab is-active" data-a11y-id="tab-0" role="tab" aria-selected="true" tabindex="-1">
+<div class="d0-tab is-active">
+<button class="d0-tab-label" data-a11y-id="tab-0" role="tab" aria-selected="true" tabindex="-1">
 <span class="d0-swatch sw-csv">
 </span>sales.csv</button>
-<button class="d0-tab" data-a11y-id="tab-1" role="tab" aria-selected="false" tabindex="-1">
+<button class="d0-tab-close" data-a11y-id="tab-close-0" role="button" aria-label="Close sales.csv" tabindex="-1">✕</button>
+</div>
+<div class="d0-tab">
+<button class="d0-tab-label" data-a11y-id="tab-1" role="tab" aria-selected="false" tabindex="-1">
 <span class="d0-swatch sw-parquet">
 </span>trips.parquet</button>
-<button class="d0-tab" data-a11y-id="tab-2" role="tab" aria-selected="false" tabindex="-1">revenue_by_region</button>
+<button class="d0-tab-close" data-a11y-id="tab-close-1" role="button" aria-label="Close trips.parquet" tabindex="-1">✕</button>
+</div>
+<div class="d0-tab">
+<button class="d0-tab-label" data-a11y-id="tab-2" role="tab" aria-selected="false" tabindex="-1">revenue_by_region</button>
+<button class="d0-tab-close" data-a11y-id="tab-close-2" role="button" aria-label="Close revenue_by_region" tabindex="-1">✕</button>
+</div>
 <div class="d0-tab-filler">
 </div>
 </div>

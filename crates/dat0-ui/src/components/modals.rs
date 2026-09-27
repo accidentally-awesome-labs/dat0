@@ -66,8 +66,8 @@ use crate::state::{Modal, Workspace};
 use dat0_core::update::manifest::ArtifactEntry;
 
 use super::{
-    about, ai, connections, crash_report, export_dialog, import_wizard, live_refresh, name_prompt,
-    onboarding, query_library, recovery, saved_queries, update_ui, workspace_in_use,
+    about, ai, close_tab, connections, crash_report, export_dialog, import_wizard, live_refresh,
+    name_prompt, onboarding, query_library, recovery, saved_queries, update_ui, workspace_in_use,
 };
 
 /// The scrim. Also the selector [`CAPTURE_JS`] anchors on, so renaming it
@@ -159,6 +159,7 @@ pub fn slug(modal: &Modal) -> &'static str {
         Modal::CrashReport { .. } => "report",
         Modal::WorkspaceInUse { .. } => "workspace",
         Modal::LiveRefresh { .. } => "refresh",
+        Modal::CloseTab { .. } => "close",
         Modal::SavedQueries { .. } => "saved",
         Modal::QueryLibrary { .. } => "history",
         Modal::ImportWizard { .. } => "import",
@@ -182,6 +183,7 @@ pub fn title(modal: &Modal) -> String {
         Modal::CrashReport { staged, .. } => crash_report::title(staged.as_ref()),
         Modal::WorkspaceInUse { kind, .. } => workspace_in_use::title(kind),
         Modal::LiveRefresh { .. } => live_refresh::title(),
+        Modal::CloseTab { .. } => close_tab::title(),
         Modal::SavedQueries { .. } => dat0_i18n::t("sql.load_query"),
         Modal::QueryLibrary { .. } => dat0_i18n::t("sql.history"),
         Modal::ImportWizard { .. } => dat0_i18n::t("wizard.title"),
@@ -203,6 +205,7 @@ pub fn scrim_dismissable(modal: &Modal) -> bool {
         Modal::About { .. } => about::SCRIM_DISMISSABLE,
         Modal::CrashReport { .. } => crash_report::SCRIM_DISMISSABLE,
         Modal::LiveRefresh { .. } => live_refresh::SCRIM_DISMISSABLE,
+        Modal::CloseTab { .. } => close_tab::SCRIM_DISMISSABLE,
         Modal::Onboarding => onboarding::SCRIM_DISMISSABLE,
         Modal::Recovery { .. } => recovery::SCRIM_DISMISSABLE,
         Modal::WorkspaceInUse { .. } => workspace_in_use::SCRIM_DISMISSABLE,
@@ -519,6 +522,7 @@ fn cancel(modal: &Modal) {
         | Modal::Connections { reply, .. }
         | Modal::WorkspaceInUse { reply, .. }
         | Modal::LiveRefresh { reply, .. }
+        | Modal::CloseTab { reply, .. }
         | Modal::SavedQueries { reply, .. }
         | Modal::QueryLibrary { reply, .. }
         | Modal::ImportWizard { reply, .. }
@@ -646,6 +650,28 @@ fn body(modal: &Modal, ws: Workspace) -> Element {
             rsx! {
                 live_refresh::LiveRefreshConfirm {
                     dropped_edits, dropped_deletes,
+                    on_confirm: move |_| {
+                        confirm.call(ModalOutcome::Confirmed);
+                        close_slot(ws);
+                    },
+                    on_cancel: move |_| {
+                        reply.call(ModalOutcome::Cancelled);
+                        close_slot(ws);
+                    },
+                }
+            }
+        }
+
+        Modal::CloseTab {
+            tab,
+            edits,
+            deletes,
+            reply,
+        } => {
+            let confirm = reply.clone();
+            rsx! {
+                close_tab::CloseTabConfirm {
+                    tab, edits, deletes,
                     on_confirm: move |_| {
                         confirm.call(ModalOutcome::Confirmed);
                         close_slot(ws);

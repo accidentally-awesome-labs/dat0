@@ -66,6 +66,10 @@ const UNBOUND: &[&str] = &[
     "sql.save_as_table",
     "sql.save_query",
     "theme.toggle",
+    // ⌘W is Close Window. A second close chord beside it is one keystroke
+    // from closing the wrong thing, so closing a data tab is the File menu,
+    // the palette and the tab's own ✕ (PD-038).
+    "view.close_tab",
     "view.copy",
     "view.cut",
     "view.delete_column",

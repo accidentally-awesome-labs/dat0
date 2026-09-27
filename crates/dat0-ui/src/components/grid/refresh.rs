@@ -112,7 +112,7 @@ fn changed_title(path: &std::path::Path) -> String {
     t("livedata.changed.title").replace("{file}", &file)
 }
 
-fn clear_changed_banner(ws: Workspace, path: &std::path::Path) {
+pub(super) fn clear_changed_banner(ws: Workspace, path: &std::path::Path) {
     let title = changed_title(path);
     let mut banners = ws.banners;
     banners.write().retain(|b| b.title != title);

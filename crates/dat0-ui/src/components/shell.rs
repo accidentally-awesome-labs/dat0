@@ -336,7 +336,7 @@ pub fn Shell() -> Element {
             },
 
             TitleBar {}
-            TabStrip {}
+            TabStrip { on_close: move |i| crate::components::grid::close::close(ws, views, i) }
 
             div {
                 class: "d0-shell",
@@ -913,8 +913,10 @@ fn TitleBar() -> Element {
     }
 }
 
+/// The strip: the command launcher, then one tab per open table, each with the
+/// ✕ that closes it (PD-038).
 #[component]
-fn TabStrip() -> Element {
+fn TabStrip(on_close: EventHandler<usize>) -> Element {
     let mut ws = Workspace::use_current();
     let tabs = ws.tabs.read().clone();
     let active = *ws.active.read();
@@ -938,22 +940,40 @@ fn TabStrip() -> Element {
             }
 
             for (i, tab) in tabs.iter().enumerate() {
-                button {
+                // The tab and its ✕ are siblings: a button inside a button is
+                // not valid markup, and a `tab`'s children are presentational,
+                // so a ✕ inside it would be hidden from a screen reader.
+                div {
                     key: "{i}",
                     class: if active == Some(i) { "d0-tab is-active" } else { "d0-tab" },
-                    "data-a11y-id": "tab-{i}",
-                    role: AccessRole::Tab.aria(),
-                    "aria-selected": if active == Some(i) { "true" } else { "false" },
-                    // `AccessRole::Tab` is `TabStop::Programmatic`: the strip is
-                    // one Tab stop and arrows move within it. A `button` with no
-                    // tabindex is a Tab stop in a real webview, which is exactly
-                    // the GPUI behaviour this replaces.
-                    tabindex: "-1",
-                    onclick: move |_| ws.active.set(Some(i)),
-                    if let Some(p) = tab.path.as_ref() {
-                        span { class: "d0-swatch {format_swatch(p)}" }
+                    button {
+                        class: "d0-tab-label",
+                        "data-a11y-id": "tab-{i}",
+                        role: AccessRole::Tab.aria(),
+                        "aria-selected": if active == Some(i) { "true" } else { "false" },
+                        // `AccessRole::Tab` is `TabStop::Programmatic`: the strip is
+                        // one Tab stop and arrows move within it. A `button` with no
+                        // tabindex is a Tab stop in a real webview, which is exactly
+                        // the GPUI behaviour this replaces.
+                        tabindex: "-1",
+                        onclick: move |_| ws.active.set(Some(i)),
+                        if let Some(p) = tab.path.as_ref() {
+                            span { class: "d0-swatch {format_swatch(p)}" }
+                        }
+                        "{tab.title()}"
                     }
-                    "{tab.title()}"
+                    button {
+                        class: "d0-tab-close",
+                        "data-a11y-id": "tab-close-{i}",
+                        role: AccessRole::Button.aria(),
+                        "aria-label": dat0_i18n::t("tab.close").replace("{tab}", tab.title()),
+                        // Not a Tab stop either, so the strip stays one: the ✕
+                        // is the pointer's way to close a tab, and the
+                        // keyboard's is File → Close Tab and the palette.
+                        tabindex: "-1",
+                        onclick: move |_| on_close.call(i),
+                        "✕"
+                    }
                 }
             }
 
@@ -1043,6 +1063,7 @@ fn surface_command(
         ids::VIEW_UNDO => views.undo(),
         ids::VIEW_REDO => views.redo(),
         ids::VIEW_EXPORT => crate::components::grid::export::open(ws, views, grid_source),
+        ids::VIEW_CLOSE_TAB => crate::components::grid::close::close_active(ws, views),
         ids::LIVE_REFRESH => crate::components::grid::refresh::refresh(ws, views),
 
         // ── Panels and windows ─────────────────────────────────────────────

@@ -455,6 +455,12 @@ fn every_variant_paints_one_dialog_node_named_by_its_title() {
             dropped_deletes: 0,
             reply: reply(),
         },
+        Modal::CloseTab {
+            tab: "sales.csv".into(),
+            edits: 1,
+            deletes: 0,
+            reply: reply(),
+        },
         Modal::WorkspaceInUse {
             kind: InUse::SameMachine,
             reply: reply(),
