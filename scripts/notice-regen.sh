@@ -44,7 +44,14 @@ trap 'rm -f "$generated" "$spliced"' EXIT
 # Some crates ship their licence with CRLF line endings, and the template
 # prints each licence's text. It is written with LF endings here, so a tool
 # that normalises line endings cannot put NOTICE.md out of step with the gate.
-cargo about generate -c about.toml docs/about-template.hbs | tr -d '\r' >"$generated"
+#
+# The template names each crate without its version, so that a version bump
+# alone leaves NOTICE.md as it is: attribution needs the licence and its
+# notices, not the version. A crate the tree holds in two versions under one
+# licence would then be listed twice in a row; awk drops the repeat. Licence
+# texts, between ```` fences, pass through untouched.
+cargo about generate -c about.toml docs/about-template.hbs | tr -d '\r' |
+  awk '/^````/ { fence = !fence } fence || !/^- / || $0 != prev { print } { prev = $0 }' >"$generated"
 
 if ! awk -v gen="$generated" '
   /^<!-- BEGIN cargo-about generated -->/ {
