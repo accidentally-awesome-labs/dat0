@@ -18,7 +18,7 @@ use parking_lot::Mutex;
 use dat0_core::error_ux::Banner;
 use dat0_core::import_wizard::SniffSummary;
 use dat0_core::session::{Session, Tab};
-use dat0_engine::{FileFormat, QueryEngine as _, RegisterOpts, quote_ident};
+use dat0_engine::{FileFormat, FileRead, QueryEngine as _, RegisterOpts, quote_ident};
 use dat0_i18n::t;
 
 use crate::components::import_wizard::{WizardModel, describe_csv};
@@ -91,7 +91,7 @@ async fn import(ws: Workspace, session: Arc<Mutex<Session>>, model: WizardModel)
             .collect(),
         ..Default::default()
     };
-    let info = match engine.register_file_as_table(&path, opts).await {
+    let info = match engine.register_file_as_table(&path, opts.clone()).await {
         Ok(info) => info,
         Err(e) => {
             ws.push_banner(Banner::error(
@@ -101,12 +101,21 @@ async fn import(ws: Workspace, session: Arc<Mutex<Session>>, model: WizardModel)
             return;
         }
     };
-    if let Err(e) = shape(&engine, &info.name, &model).await {
+    let shape = model_shape(&model);
+    if let Err(e) = apply_shape(&engine, &info.name, &shape).await {
         // The table is there, as the file reads; say what was not done.
         ws.push_banner(Banner::warning_with_body(
             t("wizard.shape_failed"),
             format!("{e:#}"),
         ));
+    }
+    // How it was read, kept with the table, so Live Refresh reads the file
+    // the same way rather than guessing again (PD-037).
+    if let Err(e) = engine
+        .set_file_read(&info.name, FileRead { opts, shape })
+        .await
+    {
+        tracing::warn!(table = %info.name, "could not record how the file was read: {e:#}");
     }
 
     let persisted = session.lock().add_tab(Tab {
@@ -133,26 +142,41 @@ async fn import(ws: Workspace, session: Arc<Mutex<Session>>, model: WizardModel)
     ws.active.set(Some(last));
 }
 
-/// The wizard's columns on the table read in: the ones left out dropped,
-/// then the rest renamed, through placeholder names first so that a swap
-/// (`a` → `b`, `b` → `a`) cannot collide with itself.
-async fn shape(
+/// The wizard's columns as a [`FileRead`] shape: each column as read, and the
+/// name it is kept under, or `None` when it is left out.
+fn model_shape(model: &WizardModel) -> Vec<(String, Option<String>)> {
+    model
+        .columns
+        .iter()
+        .map(|c| {
+            let kept = c.include.then(|| c.name.trim().to_string());
+            (c.source.clone(), kept)
+        })
+        .collect()
+}
+
+/// A shape on the table read in: the columns left out dropped, then the rest
+/// renamed, through placeholder names first so that a swap (`a` → `b`,
+/// `b` → `a`) cannot collide with itself. The wizard's, when it imports;
+/// Live Refresh's, when it reads the file again (PD-037). Every name is a
+/// quoted identifier, whichever database the shape was kept in.
+pub(crate) async fn apply_shape(
     engine: &Arc<dat0_engine::DuckDBEngine>,
     table: &str,
-    model: &WizardModel,
+    shape: &[(String, Option<String>)],
 ) -> anyhow::Result<()> {
     let table = quote_ident(table);
-    for c in model.columns.iter().filter(|c| !c.include) {
+    for (source, _) in shape.iter().filter(|(_, kept)| kept.is_none()) {
         engine
             .execute(&format!(
                 "ALTER TABLE {table} DROP COLUMN {}",
-                quote_ident(&c.source)
+                quote_ident(source)
             ))
             .await?;
     }
-    let renamed: Vec<(&str, &str)> = model
-        .included()
-        .map(|c| (c.source.as_str(), c.name.trim()))
+    let renamed: Vec<(&str, &str)> = shape
+        .iter()
+        .filter_map(|(source, kept)| Some((source.as_str(), kept.as_deref()?)))
         .filter(|(source, name)| source != name)
         .collect();
     for (i, (source, _)) in renamed.iter().enumerate() {

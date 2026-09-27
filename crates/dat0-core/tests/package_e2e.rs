@@ -5,15 +5,14 @@
 //! against a single fixture package, asserting the full export → inspect →
 //! unpack → replay → diff lifecycle.
 //!
-//! CRITICAL (P8 T5 finding): derived-table provenance (`table_origins`) is
-//! in-memory ONLY — never persisted — so a COLD CLI export (which reopens the
-//! workspace via `recover_workspace`, fresh engine, empty origin map) flattens
-//! every table to `Base`, losing replayable lineage. Therefore the fixture
-//! package for the lineage/replay assertions is built from a LIVE session
-//! (`session_to_contents` + `Writer::write`), NOT a cold `export_async` — this
-//! is the only path that captures a genuine `Derived` table with parents.
-//! The self-consistent all-`Base` round-trip (export → unpack → re-export → diff
-//! is empty) is exercised separately via the CLI `export_async` path at the end.
+//! The fixture package for the lineage/replay assertions is built from a LIVE
+//! session (`session_to_contents` + `Writer::write`). Until PD-031 that was
+//! the only path that captured a `Derived` table with parents: origins lived
+//! in the engine's memory, and a COLD CLI export (which reopens the workspace
+//! via `recover_workspace`, a fresh engine) flattened every table to `Base`.
+//! The database keeps them now, so the cold export → unpack → re-export at the
+//! end carries `monthly`'s derivation through both packages, and its diff is
+//! still empty.
 
 use std::path::{Path, PathBuf};
 
@@ -224,10 +223,9 @@ async fn package_lifecycle_all_five_verbs() {
 
     // ----------------------------------------------------------------------
     // 5) DIFF (round-trip) — export → unpack → re-export of the UNPACKED
-    //    workspace is loss-free at the recipe level (empty diff). This is the
-    //    self-consistent all-Base round-trip from T5: a COLD CLI export of a
-    //    workspace directory classifies every table identically in both
-    //    packages, so the diff is genuinely empty.
+    //    workspace is loss-free at the recipe level (empty diff): a COLD CLI
+    //    export of a workspace directory classifies every table identically in
+    //    both packages, derived ones as derived since PD-031.
     // ----------------------------------------------------------------------
     let rt_pkg1 = tmp.path().join("rt1.dat0");
     export_async(&ws_dir, &rt_pkg1).await.unwrap();

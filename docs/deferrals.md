@@ -62,7 +62,7 @@ that's modifying it; merge conflicts are signals worth investigating.
 | D-022 | Live-view import mode — `read_csv` VIEW that auto-reflects source-file changes with no re-import | open | P7c | — |
 | D-023 | Cross-table refresh cascade — re-materialize the P6b dependency closure in topological order on a base-table refresh (P8b `ReplayEngine` provides the machinery; in-app wiring remains) | open | P7c | — |
 | D-024 | Per-table / global auto-refresh toggle (+ multi-table simultaneous watching) | open | P7c | — |
-| D-025 | Derived-table provenance not persisted across workspace reopen (cold CLI export flattens derived → base) | open | P8 | — |
+| D-025 | Derived-table provenance not persisted across workspace reopen (cold CLI export flattens derived → base) | closed | P8 | — |
 | D-026 | Python (non-Rust) `.dat0` reader — format is reader-ready (Parquet + tagged JSON) | open | P8 | — |
 | D-027 | In-app Inspect polish (read-only badge, scratch GC, multi-source GUI replay, Unpack button) | open | P8 | — |
 | D-028 | Privileged `/Applications` auto-update (SMJobBless/SMAppService helper for authenticated install) | open | P10a-2 | v1.x |
@@ -104,13 +104,13 @@ that's modifying it; merge conflicts are signals worth investigating.
 | PD-028 | A file drop aborted the app when `session.json` could not be written (`.expect` under `panic = "abort"`) | closed | medium |
 | PD-029 | Package replay trusted the recipe: its SQL ran with the engine's full access, and table names were used as file names unchecked | closed | high |
 | PD-030 | Opening a second file with the same stem (another folder's `data.csv`) replaced the first file's table, so the first tab showed the second file's rows | closed | high |
-| PD-031 | A table's origin lives only in the engine's memory: a session opened again from disk knows its tables but not where they came from, so a package made from it cannot replay its derived tables | open | medium |
+| PD-031 | A table's origin lives only in the engine's memory: a session opened again from disk knows its tables but not where they came from, so a package made from it cannot replay its derived tables | closed | medium |
 | PD-032 | Only the first surface to open in a window took the keyboard: a second command palette, cell edit, name prompt, filter popover or context menu opened unfocused, and what was typed went to the grid | closed | high |
 | PD-033 | The console runs PRAGMA and EXPLAIN but shows none of their rows: DuckDB will not define a view as them, and the grid reads views | open | low |
 | PD-034 | One grid edit or delete takes at most 10,000 cells or rows, and one copy at most 100,000 cells: each edited cell is a `CASE` branch every read walks | open | low |
 | PD-035 | Closing a scratch window does not offer to keep its work as a workspace; the next launch offers it for recovery instead | open | low |
 | PD-036 | File → Open Recent lists the workspaces recent at launch: one opened or saved since is listed from the next launch | open | low |
-| PD-037 | Live Refresh reads a file the import wizard read with automatic detection, since the dialect chosen is not kept with the table | open | medium |
+| PD-037 | Live Refresh reads a file the import wizard read with automatic detection, since the dialect chosen is not kept with the table | closed | medium |
 | PD-038 | A data tab cannot be closed: the tab strip only activates tabs, and no command closes one | closed | medium |
 | PD-039 | A `.dat0` package or a workspace folder named at launch opens in a window of its own, beside an empty scratch window | open | low |
 | PD-040 | Parts of the shell cannot be reached by keyboard: the data tabs, a column's sort and filter, the inspector's lineage, and a dialog's first control | closed | medium |
@@ -864,7 +864,9 @@ that's modifying it; merge conflicts are signals worth investigating.
 
 ### D-025 — Derived-table provenance not persisted across workspace reopen
 
-- **Status:** open
+- **Status:** closed — 2026-09-27, with PD-031: origins are kept in the
+  database, beside the tables, and read back when it is opened, so a cold
+  `dat0 export` records derived tables as derived.
 - **Deferred from:** P8 (T5 finding; empirically validated)
 - **Target phase:** —
 - **What it is:** Derived-table provenance — the SQL/transform that produces a
@@ -897,8 +899,9 @@ that's modifying it; merge conflicts are signals worth investigating.
 - **Originating doc:** `docs/plans/2026-06-13-dat0-p8-plan.md` (T5);
   `crates/dat0-app/src/package/mod.rs` (`classify`),
   `crates/dat0-engine/src/duckdb_engine.rs` (`table_origins`).
-- **User-facing doc:** `docs/dat0-packages.md` § "Known limitation".
-- **Last touched:** 2026-06-13.
+- **User-facing doc:** `docs/dat0-packages.md` § "Derived tables in a
+  workspace on disk".
+- **Last touched:** 2026-09-27.
 
 ### D-026 — Python (non-Rust) `.dat0` reader
 
@@ -2936,11 +2939,13 @@ that's modifying it; merge conflicts are signals worth investigating.
 
 ### PD-031 — A table's origin lives only in the engine's memory
 
-- **Status:** open
+- **Status:** closed — 2026-09-27
 - **Severity:** medium — lineage is lost quietly, and a package made from a
   reopened session is wrong rather than refused
 - **Affected files:** `crates/dat0-engine/src/duckdb_engine.rs`
-  (`table_origins`), `crates/dat0-core/src/package/mod.rs` (`classify`)
+  (`table_origins`), `crates/dat0-engine/src/origins.rs`,
+  `crates/dat0-engine/src/migrations.rs`,
+  `crates/dat0-core/src/package/mod.rs` (`classify`)
 - **Symptom:** where each table came from — a file, a SQL statement, a
   view's steps — is held in `DuckDBEngine::table_origins`, in memory, and
   written nowhere. An engine opened on an existing database (a recovered
@@ -2955,11 +2960,24 @@ that's modifying it; merge conflicts are signals worth investigating.
   `package::classify` exports them as plain base tables and a package made
   from a reopened session cannot replay them. The GPUI build had the same
   gap.
-- **Fix:** keep origins in the database beside the tables — a
-  `__dat0_meta_origins` table written with each origin change and read at
-  `init` — so they travel with the file, whichever home it is in.
+- **Fix:**
+  - Migration 2 adds `__dat0_meta_origins`, a row per table: its origin, and
+    for a file how it was read (PD-037), as JSON. The operation that makes an
+    origin writes its row under the same lock — registering a file, creating
+    a table, renaming one, dropping one — and `init` reads the rows back.
+    Rows of tables that are gone, dropped by SQL the engine did not run, are
+    removed there, so a new table of the name inherits nothing.
+  - Best-effort: a row that cannot be written or read is logged, and never
+    fails the operation or the open it describes.
+  - An attached table's origin is not kept: it is its attachment's, which
+    the session records and attaches again.
+  - A package made from a reopened session carries its derived tables'
+    derivations again, and a reopened workspace's lineage has its sources.
+  - `dat0-engine/tests/origins_persist.rs` reopens a database and reads each
+    kind of origin back, a rename's and a drop's included;
+    `dat0-core/tests/package_roundtrip.rs` packages a reopened session.
 - **Discovered:** 2026-09-26, wiring recovery (PD-023, step 5.7b).
-- **Last touched:** 2026-09-26
+- **Last touched:** 2026-09-27
 
 ### PD-032 — Only the first surface to open in a window took the keyboard
 
@@ -3054,20 +3072,32 @@ that's modifying it; merge conflicts are signals worth investigating.
 
 ### PD-037 — Live Refresh forgets the import wizard's dialect
 
-- **Status:** open
+- **Status:** closed — 2026-09-27
 - **Severity:** medium — a refresh can read such a file as other columns,
   and the view then lands on the bare table or the read fails
 - **Affected files:** `crates/dat0-ui/src/import_flow.rs`,
-  `crates/dat0-ui/src/components/grid/refresh.rs`
+  `crates/dat0-ui/src/components/grid/refresh.rs`,
+  `crates/dat0-engine/src/types.rs` (`FileRead`)
 - **Symptom:** the wizard reads a CSV the sniff could not settle with the
   delimiter, quote, header and types it was told, then drops and renames
   columns. None of that is kept with the table, so Live Refresh reads the
   file again with automatic detection, which is what the wizard was for.
-- **Fix:** keep the wizard's reading options, drops and renames with the
-  table's origin, and have Live Refresh read through them; the origin itself
-  is kept only in memory (PD-031).
+- **Fix:**
+  - The engine keeps, beside a file's origin, how it was read: the
+    registration's options and the columns kept and renamed after
+    (`FileRead`), in memory and in the database (PD-031). A registration
+    records a plain read; the wizard records its shape once it has applied
+    it.
+  - Live Refresh reads the file with those options, applies the shape, and
+    replays the view's steps onto the shaped columns.
+  - A kept read is data, not SQL: the options are rendered as escaped
+    literals and the columns as quoted identifiers each time, whichever
+    database it was kept in.
+  - `tests/import_wizard_flow.rs` imports a semicolon file without a header,
+    renames one column and leaves one out, changes the file and refreshes:
+    the new row reads on semicolons, and the rename and the drop hold.
 - **Discovered:** 2026-09-26, the import wizard (PD-023, step 5.10).
-- **Last touched:** 2026-09-26
+- **Last touched:** 2026-09-27
 
 ### PD-038 — A data tab cannot be closed
 

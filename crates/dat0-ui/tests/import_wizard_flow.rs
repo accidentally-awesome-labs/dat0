@@ -17,14 +17,14 @@ use std::time::Duration;
 use dioxus::prelude::*;
 use serial_test::serial;
 
-use dat0_core::actions::builtin::register_all;
+use dat0_core::actions::builtin::{ids, register_all};
 use dat0_core::actions::registry::ActionRegistry;
 use dat0_core::import_wizard::SniffSummary;
 use dat0_i18n::t;
 use dat0_ui::components::shell::Shell;
 use dat0_ui::components::use_window_bus;
 use dat0_ui::launch::Boot;
-use dat0_ui::router::Surface;
+use dat0_ui::router::{Surface, route};
 use dat0_ui::session_boot;
 use dat0_ui::state::Workspace;
 use dat0_ui::theme::Theme;
@@ -79,7 +79,7 @@ fn Host(props: HostProps) -> Element {
     });
     use_context_provider(|| boot.registry.clone());
     session_boot::use_session(ws, props.open.clone());
-    let _events = use_window_bus(boot, ws, surface);
+    let events = use_window_bus(boot, ws, surface);
     let ready = ws.session.read().ready().is_some();
     let offer = props.offer.clone();
     rsx! {
@@ -100,6 +100,11 @@ fn Host(props: HostProps) -> Element {
                 };
                 dat0_ui::import_flow::offer(ws, session, path, sniff);
             },
+        }
+        // Live Refresh, as the file-changed banner's button routes it.
+        button {
+            "data-a11y-id": "refresh",
+            onclick: move |_| assert!(route(ws, &events, surface, ids::LIVE_REFRESH)),
         }
         Shell {}
     }
@@ -214,45 +219,7 @@ fn the_wizard_reads_the_file_as_it_is_told() {
     let file = semicolons(&dir);
 
     let mut h = mount(Vec::new(), Some(file));
-    h.click("offer");
-    assert!(
-        pump(&mut h, |h| has(h, "wizard-delimiter")),
-        "the wizard opens"
-    );
-
-    // The columns follow the dialect: split on a character the file does
-    // not hold, each line is one column; on semicolons, three.
-    type_into(&mut h, "wizard-delimiter", "|");
-    h.click("wizard-next");
-    assert!(
-        pump(&mut h, |h| has(h, "wizard-name-0")
-            && !has(h, "wizard-name-1")),
-        "one column: {:?}",
-        text(&h, "wizard-columns")
-    );
-    h.click("wizard-back");
-    type_into(&mut h, "wizard-delimiter", ";");
-    // Read without a header, which the sniff would never choose here: the
-    // first line becomes a row, and the columns are named by position.
-    uncheck(&mut h, "wizard-header");
-    h.click("wizard-next");
-    assert!(
-        pump(&mut h, |h| has(h, "wizard-name-2")),
-        "semicolons read three: {:?}",
-        text(&h, "wizard-columns")
-    );
-
-    // The second renamed, the third left out.
-    type_into(&mut h, "wizard-name-1", "fruit");
-    uncheck(&mut h, "wizard-include-2");
-    h.click("wizard-next");
-    h.click("wizard-import");
-    assert!(
-        pump(&mut h, |h| text(h, "cell-1-1") == "apples, red"),
-        "the file is read as told: {:?} / {:?}",
-        text(&h, "tabstrip"),
-        text(&h, "banner-host")
-    );
+    import_as_told(&mut h);
     assert!(!has(&h, "import-wizard"));
     assert_eq!(text(&h, "cell-0-0"), "id", "the first line is a row");
     assert!(
@@ -263,4 +230,76 @@ fn the_wizard_reads_the_file_as_it_is_told() {
     let header = text(&h, "grid-head");
     assert!(header.contains("fruit"), "renamed: {header:?}");
     assert!(!header.contains("column2"), "left out: {header:?}");
+}
+
+#[test]
+#[serial]
+fn a_refresh_reads_the_file_as_the_wizard_was_told() {
+    // Live Refresh read the file again with automatic detection, which is
+    // what the wizard was for: the dialect, the header, the names and the
+    // columns left out were the wizard's alone (PD-037).
+    let rt = runtime();
+    let _guard = rt.enter();
+    let dir = scratch();
+    let file = semicolons(&dir);
+
+    let mut h = mount(Vec::new(), Some(file.clone()));
+    import_as_told(&mut h);
+
+    std::fs::write(
+        &file,
+        "id;label;price\n1;apples, red;2.5\n2;pears;3\n3;plums, dark;4.25\n4;quinces, gold;5\n",
+    )
+    .expect("rewrite");
+    h.click("refresh");
+    assert!(
+        pump(&mut h, |h| text(h, "cell-4-1") == "quinces, gold"),
+        "the new row, split on semicolons: {:?} / {:?}",
+        text(&h, "cell-4-1"),
+        text(&h, "banner-host")
+    );
+    assert_eq!(text(&h, "cell-0-0"), "id", "still no header");
+    let header = text(&h, "grid-head");
+    assert!(header.contains("fruit"), "still renamed: {header:?}");
+    assert!(!header.contains("column2"), "still left out: {header:?}");
+}
+
+/// Hand the semicolon file to the wizard and import it as told: semicolons,
+/// no header, the second column renamed `fruit` and the third left out.
+fn import_as_told(h: &mut Harness) {
+    h.click("offer");
+    assert!(pump(h, |h| has(h, "wizard-delimiter")), "the wizard opens");
+
+    // The columns follow the dialect: split on a character the file does
+    // not hold, each line is one column; on semicolons, three.
+    type_into(h, "wizard-delimiter", "|");
+    h.click("wizard-next");
+    assert!(
+        pump(h, |h| has(h, "wizard-name-0") && !has(h, "wizard-name-1")),
+        "one column: {:?}",
+        text(h, "wizard-columns")
+    );
+    h.click("wizard-back");
+    type_into(h, "wizard-delimiter", ";");
+    // Read without a header, which the sniff would never choose here: the
+    // first line becomes a row, and the columns are named by position.
+    uncheck(h, "wizard-header");
+    h.click("wizard-next");
+    assert!(
+        pump(h, |h| has(h, "wizard-name-2")),
+        "semicolons read three: {:?}",
+        text(h, "wizard-columns")
+    );
+
+    // The second renamed, the third left out.
+    type_into(h, "wizard-name-1", "fruit");
+    uncheck(h, "wizard-include-2");
+    h.click("wizard-next");
+    h.click("wizard-import");
+    assert!(
+        pump(h, |h| text(h, "cell-1-1") == "apples, red"),
+        "the file is read as told: {:?} / {:?}",
+        text(h, "tabstrip"),
+        text(h, "banner-host")
+    );
 }

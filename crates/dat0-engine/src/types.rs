@@ -79,7 +79,8 @@ impl FileFormat {
 /// shifted one layer: callers can still pass an explicit format. Document in
 /// T1 commit message; revisit if P3 import wizard prefers explicit-format
 /// dispatch.
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
 pub struct RegisterOpts {
     pub format: Option<FileFormat>, // None = sniff from extension
     pub delimiter: Option<char>,
@@ -97,11 +98,27 @@ pub struct ColumnInfo {
     pub nullable: bool,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum TableOrigin {
     File(PathBuf),
     Derived(DerivedOrigin),
     Attached { alias: String, source: String },
+}
+
+/// How a file was read into its table, so it can be read the same way again:
+/// the options it was registered with, and what the import wizard did to its
+/// columns after (PD-037).
+///
+/// Data, never SQL: the options are rendered as escaped literals and the
+/// column names as quoted identifiers each time they are used, so one kept in
+/// a database from elsewhere cannot say more than how to read a file.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct FileRead {
+    pub opts: RegisterOpts,
+    /// Each column as read, and the name it was kept under; `None` drops it.
+    /// Empty keeps every column as read.
+    pub shape: Vec<(String, Option<String>)>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

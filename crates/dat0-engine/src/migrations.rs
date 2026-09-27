@@ -14,11 +14,18 @@ pub struct Migration {
 }
 
 /// Production migrations. Forward-only, append-only. Never edit a shipped entry.
-pub const MIGRATIONS: &[Migration] = &[Migration {
-    version: 1,
-    name: "init",
-    up: m001_init,
-}];
+pub const MIGRATIONS: &[Migration] = &[
+    Migration {
+        version: 1,
+        name: "init",
+        up: m001_init,
+    },
+    Migration {
+        version: 2,
+        name: "origins",
+        up: m002_origins,
+    },
+];
 
 /// Apply all migrations whose version is greater than the current applied version.
 /// Idempotent — safe to call on every `init()`. Each migration runs inside a
@@ -104,6 +111,21 @@ fn m001_init(conn: &duckdb::Connection) -> std::result::Result<(), duckdb::Error
             value VARCHAR NOT NULL
         );
         INSERT OR IGNORE INTO __dat0_meta (key, value) VALUES ('dat0_workspace_version', '1');",
+    )?;
+    Ok(())
+}
+
+/// Where each table came from, and how its file was read, beside the tables
+/// (PD-031, PD-037): `crate::origins` writes a row with each change and reads
+/// them back at `init`. JSON, so an origin's shape can grow without a
+/// migration of its own.
+fn m002_origins(conn: &duckdb::Connection) -> std::result::Result<(), duckdb::Error> {
+    conn.execute_batch(
+        "CREATE TABLE IF NOT EXISTS __dat0_meta_origins (
+            name      VARCHAR PRIMARY KEY,
+            origin    VARCHAR NOT NULL,
+            file_read VARCHAR
+        );",
     )?;
     Ok(())
 }

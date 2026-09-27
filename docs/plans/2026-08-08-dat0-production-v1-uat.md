@@ -14,8 +14,8 @@
 > Checked against the code at commit `6a4e66d`: PD-023's steps 5.1 to
 > 5.11, after which PD-023 closed. What it left open is PD-033 to PD-040,
 > each named beside the check that meets it; a result worse than its entry
-> says is a new defect. PD-038 and PD-040 have closed since, and their
-> checks walk the fixes.
+> says is a new defect. PD-031, PD-037, PD-038 and PD-040 have closed
+> since, and their checks walk the fixes.
 
 ## Why this exists
 
@@ -948,8 +948,9 @@ is a defect.
       Each click unpacks a fresh copy under `<state root>/demo/`.
 - [ ] Inspector on `revenue_by_genre`. **Confirm: `Used by` lists `Revenue by
       Genre`, and a click draws the bar chart** (step 5.11b: its stored
-      source is schema-qualified). **Record** the lineage `Sources`: none are
-      expected (PD-031).
+      source is schema-qualified). **Confirm: `Sources` lists `genre`, the
+      table its SQL reads** — the unpacked workspace's database keeps each
+      table's origin (PD-031).
 
 ### 10.10 Save Workspace
 
@@ -1002,8 +1003,8 @@ is a defect.
 
 - [ ] In `uat-ws`: File → Export as .dat0 Package…. **Confirm: `uat-ws.dat0`
       suggested; `Package exported`.** Open it: **its tables, views, saved
-      queries and charts.** **Record** whether a table saved from a view keeps
-      its source; after the reopen in §10.10 it is expected not to (PD-031).
+      queries and charts.** **Confirm: a table saved from a view keeps its
+      source, after the reopen in §10.10 too** (PD-031).
 
 ### 10.15 Replay Package
 
@@ -1190,8 +1191,10 @@ printf '%s' '{"message":"uat staged crash","backtrace":"uat","version":"0.1.0"}'
       header line is a row.**
 - [ ] With a dialog up, drop `mixed.csv`: **the dialog keeps its place, and a
       banner says to close it and open the file again.**
-- [ ] Change the file and `Refresh` its tab: **record what it reads**; it
-      reads with automatic detection, not the dialect chosen (PD-037).
+- [ ] Change the file and `Refresh` its tab. **Confirm: it reads the file as
+      the wizard was told — the delimiter, the header, the names and the
+      columns left out** (PD-037). Save the window as a workspace, quit, open
+      the workspace and refresh again: **the same.**
 
 ### 10.29 Window chrome and what the chrome says (step 5.11)
 
@@ -1204,10 +1207,8 @@ printf '%s' '{"message":"uat staged crash","backtrace":"uat","version":"0.1.0"}'
 - [ ] Each known gap, where it shows, matches its entry: PRAGMA and EXPLAIN
       rows (PD-033, §10.2), the edit caps (PD-034, §10.4), closing a scratch
       window asks nothing (PD-035: close one holding work and relaunch), Open
-      Recent until relaunch (PD-036, §4.1), the wizard's dialect on refresh
-      (PD-037, §10.28), the empty window at
-      launch (PD-039, §7.1), lineage after a
-      reopen (PD-031, §10.9).
+      Recent until relaunch (PD-036, §4.1), and the empty window at launch
+      (PD-039, §7.1).
 
 ---
 

@@ -237,8 +237,10 @@ async fn restore(
         if active == Some(i) {
             now_active = Some(shown.len());
         }
-        // Where it came from lives in memory only; without it, reading the
-        // file again would import beside the table rather than into it.
+        // The database keeps its tables' origins since PD-031; one written
+        // before then keeps none, and the tab's file is the only record.
+        // Without it, reading the file again would import beside the table
+        // rather than into it.
         if let Some(path) = &tab.source_path {
             engine.restore_origin(&tab.table_name, TableOrigin::File(path.clone()));
         }

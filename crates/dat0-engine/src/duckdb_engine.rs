@@ -30,6 +30,10 @@ pub struct DuckDBEngine {
     /// transitions the engine to `Failed`, which is exactly what
     /// `assert_open` / `status()` read the poison flag to do.
     pub(crate) table_origins: Arc<parking_lot::RwLock<HashMap<String, TableOrigin>>>,
+    /// Table name → how its file was read, for a table read from one: what
+    /// Live Refresh reads it with again (PD-037). Kept beside the origins, in
+    /// memory and in the database (`crate::origins`).
+    pub(crate) file_reads: Arc<parking_lot::RwLock<HashMap<String, crate::types::FileRead>>>,
     /// The one query the connection is currently running, with the lane that
     /// issued it. DuckDB exposes a single interrupt handle per connection, so
     /// "cancel my query" is not expressible below this line — the slot is what
@@ -183,6 +187,7 @@ impl DuckDBEngine {
             scratch_path,
             status: Arc::new(RwLock::new(EngineStatus::Initializing)),
             table_origins: Arc::new(parking_lot::RwLock::new(HashMap::new())),
+            file_reads: Arc::new(parking_lot::RwLock::new(HashMap::new())),
             inflight: Arc::new(parking_lot::Mutex::new(None)),
             next_token: Arc::new(AtomicU64::new(1)),
             interrupts_fired: Arc::new(AtomicU64::new(0)),
@@ -391,13 +396,19 @@ impl crate::QueryEngine for DuckDBEngine {
         let sql = crate::register::dispatch_register_sql(path, &opts, &table_name)?;
         let path = path.to_path_buf();
 
+        let read = crate::types::FileRead {
+            opts: opts.clone(),
+            shape: Vec::new(),
+        };
         let columns = tokio::task::spawn_blocking({
             let conn = conn.clone();
             let sql = sql.clone();
             let table_name = table_name.clone();
+            let (path, read) = (path.clone(), read.clone());
             move || -> Result<Vec<crate::types::ColumnInfo>> {
                 let conn = conn.lock().map_err(|_| EngineError::EnginePoisoned)?;
                 conn.execute_batch(&sql)?;
+                crate::origins::save(&conn, &table_name, &TableOrigin::File(path), Some(&read));
                 // DESCRIBE returns columns: column_name, column_type, null, key, default, extra
                 let mut stmt = conn.prepare(&format!("DESCRIBE {}", quote_ident(&table_name)))?;
                 let rows: Vec<crate::types::ColumnInfo> = stmt
@@ -429,6 +440,7 @@ impl crate::QueryEngine for DuckDBEngine {
         self.table_origins
             .write()
             .insert(info.name.clone(), TableOrigin::File(path));
+        self.file_reads.write().insert(info.name.clone(), read);
         // NOTE: `register_file` does NOT eagerly inject `__dat0_rowid`. Unlike
         // `create_table` (a real CTAS → base table), every register path builds a
         // `CREATE OR REPLACE VIEW ... AS SELECT * FROM read_csv/read_json/
@@ -474,9 +486,14 @@ impl crate::QueryEngine for DuckDBEngine {
         // transient, so we rewrite the leading statement to target `tmp_view`.
         let path = path.to_path_buf();
 
+        let read = crate::types::FileRead {
+            opts: opts.clone(),
+            shape: Vec::new(),
+        };
         let (table_name, columns) = tokio::task::spawn_blocking({
             let conn = conn.clone();
             let path = path.clone();
+            let read = read.clone();
             move || -> Result<(String, Vec<crate::types::ColumnInfo>)> {
                 let conn = conn.lock().map_err(|_| EngineError::EnginePoisoned)?;
                 // Named under the lock, so no other import can take the name
@@ -531,6 +548,14 @@ impl crate::QueryEngine for DuckDBEngine {
                 // a committed base table.
                 ensure_rowid_blocking(&conn, &table_name)?;
                 let columns = crate::catalog::describe_table(&conn, &table_name, None)?;
+                // Recorded as a plain read: the import wizard records its own
+                // shape over it (`set_file_read`), after it has applied it.
+                crate::origins::save(
+                    &conn,
+                    &table_name,
+                    &TableOrigin::File(path.clone()),
+                    Some(&read),
+                );
                 Ok((table_name, columns))
             }
         })
@@ -547,6 +572,7 @@ impl crate::QueryEngine for DuckDBEngine {
         self.table_origins
             .write()
             .insert(info.name.clone(), TableOrigin::File(path));
+        self.file_reads.write().insert(info.name.clone(), read);
         Ok(info)
     }
 
@@ -564,6 +590,7 @@ impl crate::QueryEngine for DuckDBEngine {
         let info = tokio::task::spawn_blocking({
             let name = name.clone();
             let sql = sql.clone();
+            let origin = TableOrigin::Derived(origin.clone());
             move || -> Result<crate::types::TableInfo> {
                 let conn = conn.lock().map_err(|_| EngineError::EnginePoisoned)?;
                 // CTAS first, then inject the `__dat0_rowid` surrogate EAGERLY so
@@ -576,6 +603,7 @@ impl crate::QueryEngine for DuckDBEngine {
                 let mut info = crate::catalog::create_table(&conn, &name, &sql)?;
                 ensure_rowid_blocking(&conn, &name)?;
                 info.columns = crate::catalog::describe_table(&conn, &name, None)?;
+                crate::origins::save(&conn, &name, &origin, None);
                 Ok(info)
             }
         })
@@ -603,12 +631,15 @@ impl crate::QueryEngine for DuckDBEngine {
         let name_for_closure = name.clone();
         tokio::task::spawn_blocking(move || -> Result<()> {
             let conn = conn.lock().map_err(|_| EngineError::EnginePoisoned)?;
-            crate::catalog::drop_table(&conn, &name_for_closure, schema.as_deref())
+            crate::catalog::drop_table(&conn, &name_for_closure, schema.as_deref())?;
+            crate::origins::forget(&conn, &name_for_closure);
+            Ok(())
         })
         .await
         .map_err(|e| EngineError::TaskJoin(e.to_string()))??;
         // Remove origin entry only after the DB op succeeds.
         self.table_origins.write().remove(&name);
+        self.file_reads.write().remove(&name);
         Ok(())
     }
 
@@ -628,7 +659,9 @@ impl crate::QueryEngine for DuckDBEngine {
                 &old_for_closure,
                 &new_for_closure,
                 schema.as_deref(),
-            )
+            )?;
+            crate::origins::rename(&conn, &old_for_closure, &new_for_closure);
+            Ok(())
         })
         .await
         .map_err(|e| EngineError::TaskJoin(e.to_string()))??;
@@ -637,7 +670,11 @@ impl crate::QueryEngine for DuckDBEngine {
         // create_table), do nothing — don't fabricate an entry for the new name.
         let mut origins = self.table_origins.write();
         if let Some(origin) = origins.remove(&old) {
-            origins.insert(new, origin);
+            origins.insert(new.clone(), origin);
+        }
+        let mut reads = self.file_reads.write();
+        if let Some(read) = reads.remove(&old) {
+            reads.insert(new, read);
         }
         Ok(())
     }
@@ -1118,15 +1155,22 @@ impl DuckDBEngine {
     /// Run the migration runner inside `spawn_blocking` (DuckDB calls block).
     /// Returns Ok on success; on failure the engine init's match arm will flip
     /// status to `Failed`.
+    ///
+    /// Then read back what the database recorded of its tables' origins and
+    /// file reads (PD-031): an engine opened on an existing database knows
+    /// where its tables came from, whichever home the file is in.
     async fn apply_migrations_real(&self) -> Result<()> {
         let conn = self.conn.clone();
-        tokio::task::spawn_blocking(move || -> Result<()> {
+        let (origins, reads) = tokio::task::spawn_blocking(move || -> Result<_> {
             let conn = conn.lock().map_err(|_| EngineError::EnginePoisoned)?;
             crate::migrations::apply_migrations(&conn, crate::migrations::MIGRATIONS)?;
-            Ok(())
+            Ok(crate::origins::load(&conn))
         })
         .await
-        .map_err(|e| EngineError::TaskJoin(e.to_string()))?
+        .map_err(|e| EngineError::TaskJoin(e.to_string()))??;
+        self.table_origins.write().extend(origins);
+        self.file_reads.write().extend(reads);
+        Ok(())
     }
 
     /// Return the recorded `TableOrigin` for `name`, or `None` if not tracked.
@@ -1138,10 +1182,10 @@ impl DuckDBEngine {
     }
 
     /// Record where `name` came from, for a table this engine found in its
-    /// database rather than made. Origins are held in memory only, so an
-    /// engine opened on an existing database knows its tables but not their
-    /// sources: reading a tab's file again (Live Refresh) then found the
-    /// table's name held by an unknown table, and imported beside it.
+    /// database rather than made, in memory. The database keeps its own
+    /// record since PD-031, read at `init`; this is for a database written
+    /// before that, whose tabs still name their files, so reading one again
+    /// (Live Refresh) finds its own table rather than importing beside it.
     pub fn restore_origin(&self, name: &str, origin: TableOrigin) {
         self.table_origins.write().insert(name.to_string(), origin);
     }
@@ -1151,6 +1195,32 @@ impl DuckDBEngine {
     /// with [`Self::restore_origin`].
     pub fn origins(&self) -> HashMap<String, TableOrigin> {
         self.table_origins.read().clone()
+    }
+
+    /// How `name`'s file was read into it, for reading it the same way again
+    /// (PD-037). `None` for a table not read from a file, or read before the
+    /// engine kept this.
+    pub fn file_read(&self, name: &str) -> Option<crate::types::FileRead> {
+        self.file_reads.read().get(name).cloned()
+    }
+
+    /// Record how `name`'s file was read, over what its registration
+    /// recorded: the import wizard's shape, once it has applied it, and Live
+    /// Refresh's re-read, which registered it plain. Kept in the database, so
+    /// the next engine opened on it reads the file the same way.
+    pub async fn set_file_read(&self, name: &str, read: crate::types::FileRead) -> Result<()> {
+        self.assert_open()?;
+        let conn = self.conn.clone();
+        let (key, kept) = (name.to_owned(), read.clone());
+        tokio::task::spawn_blocking(move || -> Result<()> {
+            let conn = conn.lock().map_err(|_| EngineError::EnginePoisoned)?;
+            crate::origins::save_read(&conn, &key, &kept);
+            Ok(())
+        })
+        .await
+        .map_err(|e| EngineError::TaskJoin(e.to_string()))??;
+        self.file_reads.write().insert(name.to_owned(), read);
+        Ok(())
     }
 }
 

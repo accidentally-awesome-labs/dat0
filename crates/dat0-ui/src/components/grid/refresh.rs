@@ -7,6 +7,10 @@
 //! re-import makes anew, so they cannot; when the view has any, the dialog says
 //! how many would go and asks first. Before this, the dialog opened with zeros
 //! and its answer was thrown away, and nothing watched the file (PD-023).
+//!
+//! The file is read as it was first read: a CSV the import wizard read with a
+//! dialect, types and columns of its own is read with them again, rather than
+//! with the guesses the wizard was there to replace (PD-037).
 
 use std::path::PathBuf;
 use std::time::Duration;
@@ -16,8 +20,8 @@ use dioxus::prelude::*;
 use dat0_core::error_ux::Banner;
 use dat0_core::events::{AppEvent, AppEvents};
 use dat0_core::workspace::source_watcher::SourceWatcher;
+use dat0_engine::QueryEngine;
 use dat0_engine::transform::{Transformation, split_replayable};
-use dat0_engine::{QueryEngine, RegisterOpts};
 use dat0_i18n::t;
 
 use super::views::{Views, engine};
@@ -58,12 +62,34 @@ fn reimport(ws: Workspace, views: Views, table: String, path: PathBuf, keep: Vec
         return;
     };
     spawn(async move {
+        // How it was first read; a file read before the engine kept that is
+        // read as a drop reads one.
+        let read = engine.file_read(&table).unwrap_or_default();
         match engine
-            .register_file_as_table(&path, RegisterOpts::default())
+            .register_file_as_table(&path, read.opts.clone())
             .await
         {
             Ok(info) if info.name == table => {
-                let columns: Vec<String> = info.columns.iter().map(|c| c.name.clone()).collect();
+                let mut columns: Vec<String> =
+                    info.columns.iter().map(|c| c.name.clone()).collect();
+                if !read.shape.is_empty() {
+                    if let Err(e) =
+                        crate::import_flow::apply_shape(&engine, &table, &read.shape).await
+                    {
+                        ws.push_banner(Banner::warning_with_body(
+                            t("wizard.shape_failed"),
+                            format!("{e:#}"),
+                        ));
+                    }
+                    // The columns the steps meet are the shaped ones.
+                    if let Ok(shaped) = engine.describe_table(&table, None).await {
+                        columns = shaped.into_iter().map(|c| c.name).collect();
+                    }
+                }
+                // The registration recorded a plain read over the kept one.
+                if let Err(e) = engine.set_file_read(&table, read).await {
+                    tracing::warn!(%table, "refresh: could not keep how the file was read: {e:#}");
+                }
                 let (ops, drifted) = replayable_on(keep, &columns);
                 if drifted {
                     ws.push_banner(Banner::warning(t("livedata.replay.schema_drift")));
