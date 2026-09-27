@@ -239,6 +239,7 @@ pub fn Shell() -> Element {
                 views,
                 edits,
                 source,
+                selection,
                 charts,
                 connections,
                 perf_hud,
@@ -568,7 +569,12 @@ pub fn Shell() -> Element {
                                                 },
                                                 on_edit: move |(cell, text)| edits.commit(cell, text),
                                                 on_action: move |(id, _): (&'static str, _)| {
-                                                    edits.perform(id);
+                                                    let column = crate::components::grid::column::perform(
+                                                        id, views, source, selection,
+                                                    );
+                                                    if !column {
+                                                        edits.perform(id);
+                                                    }
                                                 },
                                             }
                                             if let Some(f) = views.funnel.cloned() {
@@ -580,7 +586,12 @@ pub fn Shell() -> Element {
                                                     at: f.at,
                                                     candidates: f.candidates,
                                                     total_distinct: f.total_distinct,
-                                                    on_outcome: move |o| views.funnel_outcome(o),
+                                                    on_outcome: move |o| {
+                                                        views.funnel_outcome(o);
+                                                        // Back to the grid, not the page
+                                                        // under the popover that went.
+                                                        crate::dom::focus("grid-viewport");
+                                                    },
                                                 }
                                             }
                                         }
@@ -920,6 +931,7 @@ fn TabStrip(on_close: EventHandler<usize>) -> Element {
     let mut ws = Workspace::use_current();
     let tabs = ws.tabs.read().clone();
     let active = *ws.active.read();
+    let count = tabs.len();
     let chord = crate::chrome::palette_chord();
 
     rsx! {
@@ -951,12 +963,31 @@ fn TabStrip(on_close: EventHandler<usize>) -> Element {
                         "data-a11y-id": "tab-{i}",
                         role: AccessRole::Tab.aria(),
                         "aria-selected": if active == Some(i) { "true" } else { "false" },
-                        // `AccessRole::Tab` is `TabStop::Programmatic`: the strip is
-                        // one Tab stop and arrows move within it. A `button` with no
-                        // tabindex is a Tab stop in a real webview, which is exactly
-                        // the GPUI behaviour this replaces.
-                        tabindex: "-1",
+                        // A roving stop: the tabs are one Tab stop, the active
+                        // tab's, and the arrows move between them (PD-040).
+                        // Every other tab is `tabindex="-1"`, because a
+                        // `button` with none is a Tab stop in a real webview —
+                        // six tabs were six Tabs before the grid under GPUI.
+                        tabindex: if active == Some(i) { "0" } else { "-1" },
                         onclick: move |_| ws.active.set(Some(i)),
+                        onkeydown: move |e: KeyboardEvent| {
+                            let Some(key) = strip_key(&e.key(), i, count) else {
+                                return;
+                            };
+                            e.prevent_default();
+                            e.stop_propagation();
+                            match key {
+                                StripKey::Go(j) => ws.active.set(Some(j)),
+                                StripKey::Close => on_close.call(i),
+                            }
+                            // The keyboard follows the selection: to the tab
+                            // moved to, or the one that took a closed tab's
+                            // place.
+                            let now = *ws.active.peek();
+                            if let Some(j) = now {
+                                crate::dom::focus(&format!("tab-{j}"));
+                            }
+                        },
                         if let Some(p) = tab.path.as_ref() {
                             span { class: "d0-swatch {format_swatch(p)}" }
                         }
@@ -967,9 +998,9 @@ fn TabStrip(on_close: EventHandler<usize>) -> Element {
                         "data-a11y-id": "tab-close-{i}",
                         role: AccessRole::Button.aria(),
                         "aria-label": dat0_i18n::t("tab.close").replace("{tab}", tab.title()),
-                        // Not a Tab stop either, so the strip stays one: the ✕
-                        // is the pointer's way to close a tab, and the
-                        // keyboard's is File → Close Tab and the palette.
+                        // Not a Tab stop, so the tabs stay one: the ✕ is the
+                        // pointer's way to close a tab, and the keyboard's is
+                        // Delete on the tab, File → Close Tab and the palette.
                         tabindex: "-1",
                         onclick: move |_| on_close.call(i),
                         "✕"
@@ -984,6 +1015,29 @@ fn TabStrip(on_close: EventHandler<usize>) -> Element {
     }
 }
 
+/// What a key pressed on a tab does.
+enum StripKey {
+    /// Select the tab at this index.
+    Go(usize),
+    /// Close the tab the key was pressed on.
+    Close,
+}
+
+/// The tab strip's keys, the WAI-ARIA tabs pattern's: the arrows step and Home
+/// and End jump, clamping as the console's strip does — a tab strip is a list
+/// — and Delete or Backspace closes the tab, as they close a query tab.
+fn strip_key(key: &Key, at: usize, count: usize) -> Option<StripKey> {
+    use crate::components::sql_console::tabs::step_index;
+    Some(match key {
+        Key::ArrowLeft => StripKey::Go(step_index(at, -1, count)),
+        Key::ArrowRight => StripKey::Go(step_index(at, 1, count)),
+        Key::Home => StripKey::Go(0),
+        Key::End => StripKey::Go(count.saturating_sub(1)),
+        Key::Delete | Key::Backspace => StripKey::Close,
+        _ => return None,
+    })
+}
+
 /// Perform a command whose state belongs to the shell.
 ///
 /// Returns false for an id nothing here owns, which `router::route` reports as
@@ -996,6 +1050,7 @@ fn surface_command(
     views: crate::components::grid::views::Views,
     edits: crate::components::grid::edits::Edits,
     grid_source: crate::components::grid::views::Shown,
+    selection: Signal<dat0_core::grid::selection::SelectionModel>,
     charts: ChartHost,
     connections: crate::connections_flow::ConnectionsHost,
     perf_hud: Signal<bool>,
@@ -1056,6 +1111,11 @@ fn surface_command(
         | ids::VIEW_DELETE_COLUMN
         | ids::VIEW_SAVE_AS_TABLE => {
             edits.perform(id);
+        }
+        // The cursor's column, sorted or filtered: the keyboard's way to what
+        // the header's zones do for a pointer (PD-040).
+        ids::VIEW_SORT_ASC | ids::VIEW_SORT_DESC | ids::VIEW_FILTER => {
+            crate::components::grid::column::perform(id, views, grid_source, selection);
         }
         // Undo steps back through the view — a sort, a filter or an edit laid
         // over the table, never the table itself — so read-only does not stand

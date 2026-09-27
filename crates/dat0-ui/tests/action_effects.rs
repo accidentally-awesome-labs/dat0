@@ -138,6 +138,9 @@ const NOT_HEADLESS: &[(&str, &str)] = &[
     (ids::VIEW_DELETE_ROWS, GRID_VERB),
     (ids::VIEW_DELETE_COLUMN, GRID_VERB),
     (ids::VIEW_SAVE_AS_TABLE, GRID_VERB),
+    (ids::VIEW_SORT_ASC, COLUMN_VERB),
+    (ids::VIEW_SORT_DESC, COLUMN_VERB),
+    (ids::VIEW_FILTER, COLUMN_VERB),
     (
         ids::LIVE_REFRESH,
         "reads a tab's file again, and a tab from a file needs a real session; \
@@ -147,6 +150,9 @@ const NOT_HEADLESS: &[(&str, &str)] = &[
 
 const GRID_VERB: &str = "acts on a selection over a table's rows, and a table needs a real \
      session; tests/grid_edits.rs performs each grid verb there";
+
+const COLUMN_VERB: &str = "acts on the column under the grid's cursor, and a column needs a \
+     real session; tests/keyboard_reach.rs sorts and filters one there";
 
 /// The `UNWIRED` list as of the review that introduced it (2026-09-25).
 /// Frozen here so the list can shrink but never grow; see

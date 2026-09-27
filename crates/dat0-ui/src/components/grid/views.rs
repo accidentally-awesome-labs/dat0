@@ -26,7 +26,9 @@ use dat0_core::view::distinct_values::fetch_top_n;
 use dat0_core::view::filter_popover::{ColumnType, Outcome};
 use dat0_core::view::{ViewChange, ViewModel, fold_columns, route_outcome, start_view_change};
 use dat0_engine::transform::ProjectionColumn;
-use dat0_engine::{DuckDBEngine, QueryEngine as _, SortDirection, Transformation, quote_ident};
+use dat0_engine::{
+    DuckDBEngine, QueryEngine as _, SortDirection, SortKey, Transformation, quote_ident,
+};
 
 use crate::state::Workspace;
 
@@ -147,6 +149,16 @@ impl Views {
                 .position(|op| matches!(op, Transformation::Sort { .. }))?;
             Some(vm.remove_at(at))
         });
+    }
+
+    /// Sort by `column` alone, `direction`: Sort Ascending and Sort Descending
+    /// on the grid cursor's column, the keyboard's sort (PD-040).
+    pub fn sort_by(&self, column: &str, direction: SortDirection) {
+        let key = SortKey {
+            column: column.to_string(),
+            direction,
+        };
+        self.change(|vm| Some(vm.set_sort(vec![key])));
     }
 
     /// Open `column`'s funnel at `at`, on the column's filter if it has one,

@@ -14,7 +14,8 @@
 > Checked against the code at commit `6a4e66d`: PD-023's steps 5.1 to
 > 5.11, after which PD-023 closed. What it left open is PD-033 to PD-040,
 > each named beside the check that meets it; a result worse than its entry
-> says is a new defect.
+> says is a new defect. PD-038 and PD-040 have closed since, and their
+> checks walk the fixes.
 
 ## Why this exists
 
@@ -416,8 +417,11 @@ decorated window titled `Settings`.
 - [ ] **Confirm tab titles**: a file's name with its swatch; `chinook_Album`
       for a SQLite table; `Query 1` for a query's rows; the table's name for a
       table saved from a view or a query.
-- [ ] Switch tabs by keyboard: **the strip's tabs cannot be reached
-      (PD-040)**; the sidebar's FILES rows are the route (§5.4).
+- [ ] Switch tabs by keyboard (PD-040). Tab from the launcher: **the active
+      tab takes focus, and it is the tabs' only stop.** ←/→ **select the
+      tab before and after, and focus follows**; Home and End jump to the
+      first and last; neither wraps. Delete or Backspace on a tab **closes
+      it**, as File → Close Tab does.
 - [ ] **Close tabs** (PD-038). Point at an inactive tab: **its ✕ shows**; the
       active tab's always shows. Click an inactive tab's ✕: **that tab goes,
       and the active tab stays active.** Close the active tab with **File →
@@ -524,8 +528,9 @@ One dialog at a time (`Modal`, `crates/dat0-ui/src/state.rs`), painted by
 For **each** dialog above, in each theme:
 
 - [ ] **Confirm: a scrim dims the window. Where focus lands on open**: the
-      name prompt's field takes it; in every other dialog it stays on the page
-      behind until the first Tab, which enters the dialog (PD-040).
+      name prompt's field takes it; every other dialog takes it itself, with
+      no ring, and a screen reader reads its title (PD-040). The first Tab
+      reaches its first control.
 - [ ] Escape straight after opening. **Confirm: it closes, exactly once** —
       not the palette or console behind it as well.
 - [ ] **Confirm: Tab cycles only inside and wraps last → first; Shift-Tab
@@ -578,10 +583,18 @@ Dialog by dialog:
       and keeps the editor open.
 - [ ] PageUp, PageDown, Home, End: **record** what they do (the grid does not
       bind them; the viewport scrolls). **Confirm: no crash, no lost focus.**
-- [ ] Open the context menu from the keyboard (Menu key or Shift+F10).
-      **Record whether it opens.** Sort and filter a column without the mouse:
-      **there is no way** (PD-040) — the sort and funnel marks take no
-      focus, and neither the palette nor the context menu sorts or filters.
+- [ ] Open the context menu from the keyboard (PD-040): the Menu key, or
+      Shift+F10. **Confirm: it opens under the active cell, with the
+      keyboard.** Its last three items are `Sort Ascending`, `Sort
+      Descending` and `Filter Column…`: **each acts on the active cell's
+      column**, and a read-only workspace keeps them. When the menu closes,
+      **the grid has the keyboard again.** In the palette, the same three
+      commands do the same.
+- [ ] `Filter Column…` from the keyboard: **the filter opens under the
+      column's funnel, holding the keyboard**; Apply or Escape **hands it back
+      to the grid.** A screen reader reads each column's sort and funnel as
+      `Sort column: <name>` and `Filter column: <name>`; neither is a Tab
+      stop.
 - [ ] In an open context menu, **arrows skip disabled items, Enter picks,
       Escape closes**. In an open filter popover, **it has the keyboard
       (PD-032) and Tab reaches the operator, value, `Apply`, `Cancel`,
@@ -593,8 +606,9 @@ Dialog by dialog:
       ↑/↓ move a cursor row; Enter or Space shows a FILES tab, folds a
       CONNECTIONS database, opens a table, opens a package; ←/→ fold and
       unfold; a folded section's rows are skipped.**
-- [ ] Tab again. **Record where focus goes**: the rows and headings are each
-      a Tab stop in a webview (PD-040), where the tree should be one.
+- [ ] Tab again. **Confirm: focus leaves the rows** — they are not Tab
+      stops (PD-040) — **for the next section heading or the pane after.** A
+      screen reader reads the cursor's row as ↑/↓ move it.
 
 ### 5.5 SQL console
 
@@ -643,8 +657,8 @@ one thing, once, on both platforms.
 ### 5.8 Panes and panels
 
 - [ ] Inspector: **confirm the mode toggle is reachable and Enter flips it.**
-      A saved chart's lineage row **cannot be reached by keyboard** (PD-040);
-      a click opens the chart.
+      Tab to a saved chart's lineage row: **Enter opens the chart** (PD-040).
+      A file's row is text, not a stop.
 - [ ] **Confirm: the chart pane's type and axis buttons, `Save`, `PNG`, `SVG`,
       and every control of the Connections and AI dialogs (`Retry` included),
       are reachable in reading order and work with Enter.** Close each pane:
@@ -1192,7 +1206,7 @@ printf '%s' '{"message":"uat staged crash","backtrace":"uat","version":"0.1.0"}'
       window asks nothing (PD-035: close one holding work and relaunch), Open
       Recent until relaunch (PD-036, §4.1), the wizard's dialect on refresh
       (PD-037, §10.28), the empty window at
-      launch (PD-039, §7.1), keyboard reach (PD-040, §5), lineage after a
+      launch (PD-039, §7.1), lineage after a
       reopen (PD-031, §10.9).
 
 ---
@@ -1250,11 +1264,11 @@ feature under "Works in the current build", add the new number to that row's
 
 Its sections as they stand (rewritten for the Dioxus build, 2026-08-13):
 
-- [ ] **§1, the §21.2 checklist.** A1 reads "PASS, automated". While PD-040 is
-      open (the grid's sort and funnel, the data tabs, the lineage rows, the
-      sidebar's Tab stops), A1 is not a pass: change its status and evidence
-      and link PD-040 and any number this run adds. Add this run's §2 result, dated, as
-      the by-eye evidence beside A2's measured one.
+- [ ] **§1, the §21.2 checklist.** A1 reads "PASS, automated". PD-040 is
+      closed (the data tabs, the grid's sort and filter, the lineage rows, the
+      sidebar's Tab stops and each dialog's focus): A1 passes if §5 found
+      nothing, and otherwise links the numbers this run adds. Add this run's
+      §2 result, dated, as the by-eye evidence beside A2's measured one.
 - [ ] **§2, WCAG contrast.** Re-run `cargo test -p dat0-core --test
       theme_tokens_contrast`. If §3 found text lost in its ground while the gate
       passed, the gate missed a pair: file it; never relax a threshold.

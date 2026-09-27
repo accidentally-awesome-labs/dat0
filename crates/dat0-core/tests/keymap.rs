@@ -33,7 +33,9 @@ use dat0_core::keymap::{Binding, DEFAULT_KEYMAP, chord_for};
 /// - `view.copy` … `view.delete_column` — grid editing runs on the grid's own
 ///   keys (`grid/keymap.rs` for the cursor, `dat0-ui`'s `keys::grid_verb` for
 ///   the verbs), which are a modal mode rather than a set of global commands
-///   and are deliberately outside `DEFAULT_KEYMAP`.
+///   and are deliberately outside `DEFAULT_KEYMAP`. `view.sort_asc`,
+///   `view.sort_desc` and `view.filter` act on the grid's cursor too, and are
+///   reached through the palette and the grid's context menu (PD-040).
 /// - `sql.new_tab`, `sql.close_tab` and the P5b reuse/promotion actions — a
 ///   global chord would collide with the SQL editor's own text-editing keymap.
 /// - everything else — menu items, panel buttons, or palette-only entries
@@ -75,10 +77,13 @@ const UNBOUND: &[&str] = &[
     "view.delete_column",
     "view.delete_rows",
     "view.fill_down",
+    "view.filter",
     "view.paste",
     "view.save_as_table",
     "view.set_null",
     "view.set_value",
+    "view.sort_asc",
+    "view.sort_desc",
     "window.new",
     "workspace.open",
     "workspace.save",

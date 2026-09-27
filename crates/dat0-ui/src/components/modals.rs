@@ -332,9 +332,13 @@ if (scrim && scrim.parentElement) {
   }
   // The control a dialog marks takes the keyboard, after the return target is
   // recorded: focused from its own mount, it got there first, and the dialog
-  // handed the keyboard back to itself on close. Not while focus is already
+  // handed the keyboard back to itself on close. A dialog that marks none
+  // takes it itself, so a reader announces it by its title and the first Tab
+  // lands on its first control; focus left on the page behind, which is
+  // inert, went nowhere until then (PD-040). Not while focus is already
   // inside, so a re-run never takes it from where the user put it.
-  const first = scrim.querySelector("[data-autofocus]");
+  const first = scrim.querySelector("[data-autofocus]")
+    || scrim.querySelector('[data-a11y-id="modal"]');
   if (first && !scrim.contains(document.activeElement)) first.focus();
 }
 "#;

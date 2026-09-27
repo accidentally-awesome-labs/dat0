@@ -1,9 +1,9 @@
 //! The grid's right-click menu.
 //!
-//! Same seven items and the same gating as the GPUI `PopupMenu`, but built out
-//! of a positioned `div[role=menu]` instead of a widget-library popup — which
-//! means arrow-key navigation, Escape and click-outside are dat0's, visible in
-//! one file, and testable.
+//! The GPUI `PopupMenu`'s seven items and gating, and three that sort and
+//! filter the cell's column (PD-040), in a positioned `div[role=menu]` rather
+//! than a widget-library popup — so arrow keys, Escape and click-outside are
+//! dat0's, in one file, and testable. The menu key and Shift+F10 open it too.
 //!
 //! Items name an [`ActionId`](dat0_core::actions::registry::ActionId); the
 //! shell performs them. `view.set_value` and `view.delete_column` need an
@@ -64,6 +64,11 @@ pub fn entries(has_selection: bool, read_only: bool) -> Vec<MenuEntry> {
             true,
         ),
         item(ids::VIEW_DELETE_COLUMN, "menu.delete_column", w, true),
+        // The view, never the table: a read-only workspace sorts and filters,
+        // as Undo steps back through the view there.
+        item(ids::VIEW_SORT_ASC, "view.sort_asc", true, true),
+        item(ids::VIEW_SORT_DESC, "view.sort_desc", true, false),
+        item(ids::VIEW_FILTER, "view.filter", true, false),
     ]
 }
 
@@ -208,11 +213,11 @@ mod tests {
     use super::*;
 
     #[test]
-    fn the_seven_items_are_always_present() {
+    fn the_ten_items_are_always_present() {
         // Present-but-disabled, never absent: a menu whose shape changes with
         // state is a menu users cannot build muscle memory for.
-        assert_eq!(entries(false, false).len(), 7);
-        assert_eq!(entries(true, true).len(), 7);
+        assert_eq!(entries(false, false).len(), 10);
+        assert_eq!(entries(true, true).len(), 10);
     }
 
     #[test]
@@ -227,11 +232,12 @@ mod tests {
     }
 
     #[test]
-    fn a_read_only_workspace_disables_every_mutation_but_not_copy() {
+    fn a_read_only_workspace_disables_every_mutation_but_not_copy_or_the_view() {
         let ro = entries(true, true);
+        let views = [ids::VIEW_SORT_ASC, ids::VIEW_SORT_DESC, ids::VIEW_FILTER];
         for e in &ro {
-            if e.id == ids::VIEW_COPY {
-                assert!(e.enabled, "copy is not a mutation");
+            if e.id == ids::VIEW_COPY || views.contains(&e.id) {
+                assert!(e.enabled, "{} is not a mutation", e.id);
             } else {
                 assert!(!e.enabled, "{} must be refused when read-only", e.id);
             }
@@ -283,7 +289,8 @@ mod tests {
             vec![
                 ids::VIEW_FILL_DOWN,
                 ids::VIEW_DELETE_ROWS,
-                ids::VIEW_DELETE_COLUMN
+                ids::VIEW_DELETE_COLUMN,
+                ids::VIEW_SORT_ASC
             ]
         );
     }

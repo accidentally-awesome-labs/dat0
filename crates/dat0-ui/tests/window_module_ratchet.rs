@@ -52,6 +52,9 @@ const MAX_LINES: &[(&str, usize)] = &[
     // New with closing a data tab (PD-038): what a close takes with it and
     // what it leaves, kept out of shell.rs as Live Refresh is.
     ("grid/close.rs", 200),
+    // New with the keyboard's sort and filter (PD-040): the cursor's column,
+    // sorted or filtered, from the palette and the grid's context menu.
+    ("grid/column.rs", 200),
     ("grid/context_menu.rs", 300),
     ("grid/edits.rs", 600),
     ("grid/export.rs", 200),

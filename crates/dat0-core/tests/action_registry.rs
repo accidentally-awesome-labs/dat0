@@ -101,11 +101,14 @@ fn builtins_register_the_expected_count() {
     //   the crash report panel with nothing staged, which nothing opened) = 42.
     // + one from PD-038 (view.close_tab — File → Close Tab; a data tab could
     //   not be closed at all) = 43.
+    // + three from PD-040 (view.sort_asc/view.sort_desc/view.filter — the
+    //   cursor's column sorted and filtered from the palette and the grid's
+    //   context menu; only a pointer could before) = 46.
     //
     // The name deliberately carries no number: it said "thirty_four" while
     // asserting 35, and a count in a test name rots on the next slice that adds
     // an action. The ledger above is the real record.
-    assert_eq!(reg.count(), 43);
+    assert_eq!(reg.count(), 46);
     let titles: Vec<String> = reg.iter().map(|d| d.title).collect();
     assert!(titles.contains(&"New Window".to_string()));
     assert!(titles.contains(&"Open Settings".to_string()));

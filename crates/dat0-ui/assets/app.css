@@ -981,6 +981,12 @@ button {
   -webkit-user-select: text;
   user-select: text;
 }
+/* A dialog that marks no control takes focus itself, so a reader can
+   announce it. The dialog is the context, not a control, so it wears no
+   ring; its first Tab stop does. */
+.d0-modal:focus-visible {
+  outline: none;
+}
 
 .d0-palette {
   align-self: flex-start;
@@ -1373,6 +1379,8 @@ button {
 }
 .d0-insp-chain.is-open {
   cursor: pointer;
+  width: 100%;
+  text-align: left;
 }
 .d0-insp-chain.is-open:hover {
   background: var(--d0-row-hover);

@@ -346,8 +346,16 @@ fn only_an_openable_node_reroots_the_inspector() {
         ..Default::default()
     });
 
-    h.click("lineage-1-raw.csv");
-    assert_eq!(h.text_of(h.by_a11y_id("rb-opened").unwrap()), "");
+    // A file has nothing to open, so its row is text: no button, no click.
+    let file = h.by_a11y_id("lineage-1-raw.csv").unwrap();
+    assert_ne!(h.attr(file, "role").as_deref(), Some("button"));
+    assert!(!h.has_listener(file, "click"), "a file row opens nothing");
+
+    // An openable row is a button, so a keyboard reaches it (PD-040): a Tab
+    // stop, which Enter and Space press.
+    let chart = h.by_a11y_id("lineage-1-revenue").unwrap();
+    assert_eq!(h.attr(chart, "role").as_deref(), Some("button"));
+    assert_ne!(h.attr(chart, "tabindex").as_deref(), Some("-1"));
 
     h.click("lineage-1-revenue");
     // Routed by kind: the shell reopens a chart, not a table tab.

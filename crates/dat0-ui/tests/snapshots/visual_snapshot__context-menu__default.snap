@@ -33,5 +33,16 @@ expression: "rendered[0].1"
 </div>
 <button class="d0-menu-item" data-a11y-id="menu-view.delete_column" role="menuitem" aria-label="Delete Column" aria-disabled="false" tabindex="-1">Delete Column</button>
 </div>
+<div class="d0-menu-entry">
+<div class="d0-menu-sep" role="separator">
+</div>
+<button class="d0-menu-item" data-a11y-id="menu-view.sort_asc" role="menuitem" aria-label="Sort Ascending" aria-disabled="false" tabindex="-1">Sort Ascending</button>
+</div>
+<div class="d0-menu-entry">
+<button class="d0-menu-item" data-a11y-id="menu-view.sort_desc" role="menuitem" aria-label="Sort Descending" aria-disabled="false" tabindex="-1">Sort Descending</button>
+</div>
+<div class="d0-menu-entry">
+<button class="d0-menu-item" data-a11y-id="menu-view.filter" role="menuitem" aria-label="Filter Column…" aria-disabled="false" tabindex="-1">Filter Column…</button>
+</div>
 </div>
 </div>

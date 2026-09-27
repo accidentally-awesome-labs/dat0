@@ -151,16 +151,25 @@ fn column_header(
                 },
             }
             span { style: "flex: 1 1 auto; overflow: hidden; text-overflow: ellipsis;", "{name}" }
-            span {
+            // Buttons, named for their column, so a reader finds them. Not Tab
+            // stops: two per column would put a wide table's whole header
+            // between the tab strip and the grid. The keyboard sorts and
+            // filters the cursor's column from the palette and the grid's
+            // context menu instead (PD-040).
+            button {
                 class: "d0-sort",
                 "data-a11y-id": "col-sort-{ix}",
+                "aria-label": format!("{}: {name}", dat0_i18n::t("grid.sort")),
+                tabindex: "-1",
                 style: "width: {HEADER_SORT_PX}px; text-align: center;",
                 onclick: move |e| on_sort.call((ix, e.modifiers().shift())),
                 "{sort_glyph}"
             }
-            span {
+            button {
                 class: if mark.filtered { "d0-funnel is-on" } else { "d0-funnel" },
                 "data-a11y-id": "col-funnel-{ix}",
+                "aria-label": format!("{}: {name}", dat0_i18n::t("grid.filter")),
+                tabindex: "-1",
                 style: "width: {HEADER_FUNNEL_PX}px; text-align: center;",
                 onclick: move |e| {
                     let at = e.data().client_coordinates();

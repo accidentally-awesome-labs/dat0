@@ -13,6 +13,9 @@
 //! | `view.set_value`     | asks for a value, then sets the selection to it  |
 //! | `view.delete_rows`   | every row holding a selected cell                |
 //! | `view.delete_column` | hides every column holding a selected cell       |
+//! | `view.sort_asc`      | sorts by the cursor's column, ascending          |
+//! | `view.sort_desc`     | sorts by the cursor's column, descending         |
+//! | `view.filter`        | opens the cursor's column's filter               |
 
 use super::builtin::{descriptor, ids};
 use super::registry::{ActionGroup, ActionRegistry, RegisterError};
@@ -30,6 +33,13 @@ pub fn register(reg: &ActionRegistry) -> Result<(), RegisterError> {
         (ids::VIEW_DELETE_COLUMN, "Delete Column"),
     ] {
         reg.register(descriptor(id, title, ActionGroup::Edit))?;
+    }
+    for (id, key) in [
+        (ids::VIEW_SORT_ASC, "view.sort_asc"),
+        (ids::VIEW_SORT_DESC, "view.sort_desc"),
+        (ids::VIEW_FILTER, "view.filter"),
+    ] {
+        reg.register(descriptor(id, dat0_i18n::t(key), ActionGroup::Edit))?;
     }
 
     Ok(())

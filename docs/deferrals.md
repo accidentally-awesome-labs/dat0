@@ -113,7 +113,7 @@ that's modifying it; merge conflicts are signals worth investigating.
 | PD-037 | Live Refresh reads a file the import wizard read with automatic detection, since the dialect chosen is not kept with the table | open | medium |
 | PD-038 | A data tab cannot be closed: the tab strip only activates tabs, and no command closes one | closed | medium |
 | PD-039 | A `.dat0` package or a workspace folder named at launch opens in a window of its own, beside an empty scratch window | open | low |
-| PD-040 | Parts of the shell cannot be reached by keyboard: the data tabs, a column's sort and filter, the inspector's lineage, and a dialog's first control | open | medium |
+| PD-040 | Parts of the shell cannot be reached by keyboard: the data tabs, a column's sort and filter, the inspector's lineage, and a dialog's first control | closed | medium |
 | PD-041 | The release pipeline, never run, would have shipped a Linux AppImage that opened a blank window on most hosts and would not start on Ubuntu 22.04 or Debian 12, with no check that a tag carried the production update key, and its first tag would have stopped at signing the update manifest | closed | high |
 
 > **Missing originating docs (noted 2026-09-25).** D-030 and D-032–D-036 cite
@@ -3125,15 +3125,19 @@ that's modifying it; merge conflicts are signals worth investigating.
 
 ### PD-040 — Parts of the shell cannot be reached by keyboard
 
-- **Status:** open
+- **Status:** closed — 2026-09-27
 - **Severity:** medium — a keyboard user can open files, run SQL and answer
   every dialog, but not sort or filter a column, switch tabs from the strip
   or follow the lineage
 - **Affected files:** `crates/dat0-ui/src/components/shell.rs` (`TabStrip`),
   `crates/dat0-ui/src/components/grid/header.rs`,
+  `crates/dat0-ui/src/components/grid/mod.rs`,
+  `crates/dat0-ui/src/components/grid/context_menu.rs`,
+  `crates/dat0-ui/src/components/grid/column.rs`,
   `crates/dat0-ui/src/components/inspector/mod.rs` (`ChainRow`),
   `crates/dat0-ui/src/components/modals.rs` (`CAPTURE_JS`),
-  `crates/dat0-ui/src/components/sidebar.rs`
+  `crates/dat0-ui/src/components/sidebar.rs`, `crates/dat0-ui/src/dom.rs`,
+  `crates/dat0-core/src/actions/edit_actions.rs`
 - **Symptom:**
   - The tab strip's one Tab stop is the ⌘K launcher. Every tab is
     `tabindex="-1"`, and nothing moves between them by arrow, though
@@ -3149,13 +3153,32 @@ that's modifying it; merge conflicts are signals worth investigating.
   - The sidebar's rows and section headings are buttons with no tabindex,
     so in a webview each is a Tab stop, where `docs/a11y.md` and
     `tests/catalog_nav.rs` describe the tree as one stop with roving rows.
-- **Fix:** a roving tabindex on the tab strip, the active tab the stop and
-  arrows moving; the header zones and lineage rows as buttons; each dialog
-  marking the control that takes focus, or the dialog itself taking it; the
-  sidebar's rows `tabindex="-1"`, as the tree's own key handling expects.
+- **Fix:**
+  - The data tabs are one roving Tab stop, the active tab's. ←/→ step and
+    Home and End jump, clamping as the console's tabs do, and the keyboard
+    follows the selection; Delete or Backspace closes the tab.
+  - Sort Ascending, Sort Descending and Filter Column… act on the column
+    under the grid's cursor, from the palette and the grid's context menu,
+    which the menu key and Shift+F10 now open under the active cell. The
+    filter opens under the column's funnel; the menu and the filter hand the
+    keyboard back to the grid when they close. The header's sort and funnel
+    are named buttons for a reader, and not Tab stops: two per column would
+    put a wide table's whole header before the grid.
+  - A lineage row that opens something is a button; a file's row is text.
+  - A dialog that marks no control takes the keyboard itself, without a
+    ring, so a reader announces it and the first Tab lands inside.
+    `examples/modal_trap_probe.rs` watches it happen in a real document.
+  - The sidebar's rows are `tabindex="-1"`, and the tree names the cursor's
+    row as its active descendant, so a reader follows the arrows.
+  - Moving focus to a sibling, and hanging a popover off an element with no
+    pointer, ask the webview by `data-a11y-id` (`crate::dom`).
+  - `tests/tab_strip_nav.rs`, `tests/catalog_nav.rs`, `tests/inspector.rs`
+    and `tests/modal_nav.rs` pin each; `tests/keyboard_reach.rs` sorts and
+    filters over a real session, and through the menu opened by Shift+F10
+    and the menu key.
 - **Discovered:** 2026-09-26, checking the new UAT checklist against the
   code.
-- **Last touched:** 2026-09-26
+- **Last touched:** 2026-09-27
 
 ### PD-041 — The release pipeline would have shipped builds that do not work
 

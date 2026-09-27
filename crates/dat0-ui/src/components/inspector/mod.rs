@@ -432,25 +432,41 @@ fn ChainRow(step: ChainStep, on_open: EventHandler<(NodeKind, String)>) -> Eleme
     let open = step.open_name.clone();
     let kind = step.kind;
 
-    rsx! {
-        div {
-            class: if open.is_some() { "d0-insp-chain is-open" } else { "d0-insp-chain" },
-            "data-a11y-id": "{id}",
-            style: "padding-left: {indent}px",
-            // The accessible name is the bare node label, not the composed
-            // glyph/edge text: the glyph is decoration and the edge is already
-            // announced as its own text run.
-            role: AccessRole::Label.aria(),
-            "aria-label": "{step.label}",
-            onclick: move |_| {
-                if let Some(name) = open.clone() {
-                    on_open.call((kind, name));
-                }
-            },
-            span { class: "d0-insp-glyph", "aria-hidden": "true", "{glyph}" }
-            span { class: "d0-insp-chain-name d0-mono", "{step.label}" }
-            span { class: "d0-insp-chain-edge d0-label", "{edge}" }
-        }
+    let body = rsx! {
+        span { class: "d0-insp-glyph", "aria-hidden": "true", "{glyph}" }
+        span { class: "d0-insp-chain-name d0-mono", "{step.label}" }
+        span { class: "d0-insp-chain-edge d0-label", "{edge}" }
+    };
+
+    // The accessible name is the bare node label, not the composed glyph/edge
+    // text: the glyph is decoration and the edge is already announced as its
+    // own text run.
+    match open {
+        // A row that opens something is a button: a Tab stop that Enter and
+        // Space press. It was a div with a click handler, which no keyboard
+        // could reach (PD-040).
+        Some(name) => rsx! {
+            button {
+                class: "d0-insp-chain is-open",
+                "data-a11y-id": "{id}",
+                style: "padding-left: {indent}px",
+                role: AccessRole::Button.aria(),
+                "aria-label": "{step.label}",
+                onclick: move |_| on_open.call((kind, name.clone())),
+                {body}
+            }
+        },
+        // A file has nothing to open, so it is text.
+        None => rsx! {
+            div {
+                class: "d0-insp-chain",
+                "data-a11y-id": "{id}",
+                style: "padding-left: {indent}px",
+                role: AccessRole::Label.aria(),
+                "aria-label": "{step.label}",
+                {body}
+            }
+        },
     }
 }
 
