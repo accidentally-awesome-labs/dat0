@@ -63,7 +63,7 @@ jobs:
       # is ever re-pinned to the self-hosted runnerkit host (operator-managed).
       - name: Free disk space (hosted Linux only)
         if: runner.environment == 'github-hosted'
-        uses: jlumbroso/free-disk-space@v1.3.1
+        uses: jlumbroso/free-disk-space@v2.0.0
         with:
           tool-cache: false
       - uses: dtolnay/rust-toolchain@1.97.0
@@ -145,7 +145,7 @@ jobs:
     steps:
       - uses: actions/checkout@v7
       - name: Free disk space (hosted Linux only)
-        uses: jlumbroso/free-disk-space@v1.3.1
+        uses: jlumbroso/free-disk-space@v2.0.0
         with:
           tool-cache: false
       - uses: dtolnay/rust-toolchain@1.97.0
