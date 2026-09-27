@@ -62,7 +62,7 @@ that's modifying it; merge conflicts are signals worth investigating.
 | D-022 | Live-view import mode — `read_csv` VIEW that auto-reflects source-file changes with no re-import | open | P7c | — |
 | D-023 | Cross-table refresh cascade — re-materialize the P6b dependency closure in topological order on a base-table refresh (P8b `ReplayEngine` provides the machinery; in-app wiring remains) | open | P7c | — |
 | D-024 | Per-table / global auto-refresh toggle (+ multi-table simultaneous watching) | open | P7c | — |
-| D-025 | Derived-table provenance not persisted across workspace reopen (cold CLI export flattens derived → base) | open | P8 | — |
+| D-025 | Derived-table provenance not persisted across workspace reopen (cold CLI export flattens derived → base) | closed | P8 | — |
 | D-026 | Python (non-Rust) `.dat0` reader — format is reader-ready (Parquet + tagged JSON) | open | P8 | — |
 | D-027 | In-app Inspect polish (read-only badge, scratch GC, multi-source GUI replay, Unpack button) | open | P8 | — |
 | D-028 | Privileged `/Applications` auto-update (SMJobBless/SMAppService helper for authenticated install) | open | P10a-2 | v1.x |
@@ -104,16 +104,16 @@ that's modifying it; merge conflicts are signals worth investigating.
 | PD-028 | A file drop aborted the app when `session.json` could not be written (`.expect` under `panic = "abort"`) | closed | medium |
 | PD-029 | Package replay trusted the recipe: its SQL ran with the engine's full access, and table names were used as file names unchecked | closed | high |
 | PD-030 | Opening a second file with the same stem (another folder's `data.csv`) replaced the first file's table, so the first tab showed the second file's rows | closed | high |
-| PD-031 | A table's origin lives only in the engine's memory: a session opened again from disk knows its tables but not where they came from, so a package made from it cannot replay its derived tables | open | medium |
+| PD-031 | A table's origin lives only in the engine's memory: a session opened again from disk knows its tables but not where they came from, so a package made from it cannot replay its derived tables | closed | medium |
 | PD-032 | Only the first surface to open in a window took the keyboard: a second command palette, cell edit, name prompt, filter popover or context menu opened unfocused, and what was typed went to the grid | closed | high |
 | PD-033 | The console runs PRAGMA and EXPLAIN but shows none of their rows: DuckDB will not define a view as them, and the grid reads views | open | low |
 | PD-034 | One grid edit or delete takes at most 10,000 cells or rows, and one copy at most 100,000 cells: each edited cell is a `CASE` branch every read walks | open | low |
 | PD-035 | Closing a scratch window does not offer to keep its work as a workspace; the next launch offers it for recovery instead | open | low |
 | PD-036 | File → Open Recent lists the workspaces recent at launch: one opened or saved since is listed from the next launch | open | low |
-| PD-037 | Live Refresh reads a file the import wizard read with automatic detection, since the dialect chosen is not kept with the table | open | medium |
-| PD-038 | A data tab cannot be closed: the tab strip only activates tabs, and no command closes one | open | medium |
+| PD-037 | Live Refresh reads a file the import wizard read with automatic detection, since the dialect chosen is not kept with the table | closed | medium |
+| PD-038 | A data tab cannot be closed: the tab strip only activates tabs, and no command closes one | closed | medium |
 | PD-039 | A `.dat0` package or a workspace folder named at launch opens in a window of its own, beside an empty scratch window | open | low |
-| PD-040 | Parts of the shell cannot be reached by keyboard: the data tabs, a column's sort and filter, the inspector's lineage, and a dialog's first control | open | medium |
+| PD-040 | Parts of the shell cannot be reached by keyboard: the data tabs, a column's sort and filter, the inspector's lineage, and a dialog's first control | closed | medium |
 | PD-041 | The release pipeline, never run, would have shipped a Linux AppImage that opened a blank window on most hosts and would not start on Ubuntu 22.04 or Debian 12, with no check that a tag carried the production update key, and its first tag would have stopped at signing the update manifest | closed | high |
 
 > **Missing originating docs (noted 2026-09-25).** D-030 and D-032–D-036 cite
@@ -864,7 +864,9 @@ that's modifying it; merge conflicts are signals worth investigating.
 
 ### D-025 — Derived-table provenance not persisted across workspace reopen
 
-- **Status:** open
+- **Status:** closed — 2026-09-27, with PD-031: origins are kept in the
+  database, beside the tables, and read back when it is opened, so a cold
+  `dat0 export` records derived tables as derived.
 - **Deferred from:** P8 (T5 finding; empirically validated)
 - **Target phase:** —
 - **What it is:** Derived-table provenance — the SQL/transform that produces a
@@ -897,8 +899,9 @@ that's modifying it; merge conflicts are signals worth investigating.
 - **Originating doc:** `docs/plans/2026-06-13-dat0-p8-plan.md` (T5);
   `crates/dat0-app/src/package/mod.rs` (`classify`),
   `crates/dat0-engine/src/duckdb_engine.rs` (`table_origins`).
-- **User-facing doc:** `docs/dat0-packages.md` § "Known limitation".
-- **Last touched:** 2026-06-13.
+- **User-facing doc:** `docs/dat0-packages.md` § "Derived tables in a
+  workspace on disk".
+- **Last touched:** 2026-09-27.
 
 ### D-026 — Python (non-Rust) `.dat0` reader
 
@@ -2936,11 +2939,13 @@ that's modifying it; merge conflicts are signals worth investigating.
 
 ### PD-031 — A table's origin lives only in the engine's memory
 
-- **Status:** open
+- **Status:** closed — 2026-09-27
 - **Severity:** medium — lineage is lost quietly, and a package made from a
   reopened session is wrong rather than refused
 - **Affected files:** `crates/dat0-engine/src/duckdb_engine.rs`
-  (`table_origins`), `crates/dat0-core/src/package/mod.rs` (`classify`)
+  (`table_origins`), `crates/dat0-engine/src/origins.rs`,
+  `crates/dat0-engine/src/migrations.rs`,
+  `crates/dat0-core/src/package/mod.rs` (`classify`)
 - **Symptom:** where each table came from — a file, a SQL statement, a
   view's steps — is held in `DuckDBEngine::table_origins`, in memory, and
   written nowhere. An engine opened on an existing database (a recovered
@@ -2955,11 +2960,24 @@ that's modifying it; merge conflicts are signals worth investigating.
   `package::classify` exports them as plain base tables and a package made
   from a reopened session cannot replay them. The GPUI build had the same
   gap.
-- **Fix:** keep origins in the database beside the tables — a
-  `__dat0_meta_origins` table written with each origin change and read at
-  `init` — so they travel with the file, whichever home it is in.
+- **Fix:**
+  - Migration 2 adds `__dat0_meta_origins`, a row per table: its origin, and
+    for a file how it was read (PD-037), as JSON. The operation that makes an
+    origin writes its row under the same lock — registering a file, creating
+    a table, renaming one, dropping one — and `init` reads the rows back.
+    Rows of tables that are gone, dropped by SQL the engine did not run, are
+    removed there, so a new table of the name inherits nothing.
+  - Best-effort: a row that cannot be written or read is logged, and never
+    fails the operation or the open it describes.
+  - An attached table's origin is not kept: it is its attachment's, which
+    the session records and attaches again.
+  - A package made from a reopened session carries its derived tables'
+    derivations again, and a reopened workspace's lineage has its sources.
+  - `dat0-engine/tests/origins_persist.rs` reopens a database and reads each
+    kind of origin back, a rename's and a drop's included;
+    `dat0-core/tests/package_roundtrip.rs` packages a reopened session.
 - **Discovered:** 2026-09-26, wiring recovery (PD-023, step 5.7b).
-- **Last touched:** 2026-09-26
+- **Last touched:** 2026-09-27
 
 ### PD-032 — Only the first surface to open in a window took the keyboard
 
@@ -3054,36 +3072,68 @@ that's modifying it; merge conflicts are signals worth investigating.
 
 ### PD-037 — Live Refresh forgets the import wizard's dialect
 
-- **Status:** open
+- **Status:** closed — 2026-09-27
 - **Severity:** medium — a refresh can read such a file as other columns,
   and the view then lands on the bare table or the read fails
 - **Affected files:** `crates/dat0-ui/src/import_flow.rs`,
-  `crates/dat0-ui/src/components/grid/refresh.rs`
+  `crates/dat0-ui/src/components/grid/refresh.rs`,
+  `crates/dat0-engine/src/types.rs` (`FileRead`)
 - **Symptom:** the wizard reads a CSV the sniff could not settle with the
   delimiter, quote, header and types it was told, then drops and renames
   columns. None of that is kept with the table, so Live Refresh reads the
   file again with automatic detection, which is what the wizard was for.
-- **Fix:** keep the wizard's reading options, drops and renames with the
-  table's origin, and have Live Refresh read through them; the origin itself
-  is kept only in memory (PD-031).
+- **Fix:**
+  - The engine keeps, beside a file's origin, how it was read: the
+    registration's options and the columns kept and renamed after
+    (`FileRead`), in memory and in the database (PD-031). A registration
+    records a plain read; the wizard records its shape once it has applied
+    it.
+  - Live Refresh reads the file with those options, applies the shape, and
+    replays the view's steps onto the shaped columns.
+  - A kept read is data, not SQL: the options are rendered as escaped
+    literals and the columns as quoted identifiers each time, whichever
+    database it was kept in.
+  - `tests/import_wizard_flow.rs` imports a semicolon file without a header,
+    renames one column and leaves one out, changes the file and refreshes:
+    the new row reads on semicolons, and the rename and the drop hold.
 - **Discovered:** 2026-09-26, the import wizard (PD-023, step 5.10).
-- **Last touched:** 2026-09-26
+- **Last touched:** 2026-09-27
 
 ### PD-038 — A data tab cannot be closed
 
-- **Status:** open
+- **Status:** closed — 2026-09-27
 - **Severity:** medium — tabs only accumulate; the way out is a new window
 - **Affected files:** `crates/dat0-ui/src/components/shell.rs` (`TabStrip`),
-  `crates/dat0-ui/src/state.rs`
+  `crates/dat0-ui/src/state.rs`, `crates/dat0-ui/src/components/grid/close.rs`,
+  `crates/dat0-ui/src/components/grid/views.rs`,
+  `crates/dat0-ui/src/components/close_tab.rs`
 - **Symptom:** the tab strip activates a tab and has no close control, and
   no command closes a data tab (`sql.close_tab` closes a query tab). The
   GPUI build showed one tab per window, the active view's, and closed none.
-- **Fix:** a close control on each tab and a command for the active one,
-  which drop the tab and its view; the table stays in the session while
-  another tab or a saved query reads it.
+- **Fix:**
+  - Each tab carries a ✕ beside it, and `view.close_tab` (File → Close Tab
+    and the palette's `Close Tab`) closes the active one. No chord: ⌘W is
+    Close Window.
+  - A tab closes with its view: its steps, the source bound for it and the
+    view the engine built from them. The table stays in the session, so the
+    console, a saved query or chart and a package still reach it, and
+    opening its file again brings its tab back, bare. Another tab over the
+    same table keeps the view.
+  - Cell edits and deleted rows live only in the view, so when it has any,
+    `Closing will discard edits` asks first and says how many cells and
+    rows, as Live Refresh does. A view of sorts and filters closes at once.
+  - Closing another tab leaves the active one active; a closed active tab
+    hands the selection to the tab that takes its place, or to the one
+    before it when it was the last. The session records the strip as it is
+    left, so a reopened workspace does not bring a closed tab back.
+  - A view change still running when its tab closed no longer binds its
+    result, which would have shown a view the reopened tab knew nothing of.
+  - `tests/tab_close.rs` closes tabs over a real session;
+    `tests/tab_strip_nav.rs` holds the ✕ to its label, its place beside the
+    tab and the strip's one Tab stop.
 - **Discovered:** 2026-09-26, checking the new UAT checklist against the
   code.
-- **Last touched:** 2026-09-26
+- **Last touched:** 2026-09-27
 
 ### PD-039 — A package or workspace named at launch opens beside an empty window
 
@@ -3105,15 +3155,19 @@ that's modifying it; merge conflicts are signals worth investigating.
 
 ### PD-040 — Parts of the shell cannot be reached by keyboard
 
-- **Status:** open
+- **Status:** closed — 2026-09-27
 - **Severity:** medium — a keyboard user can open files, run SQL and answer
   every dialog, but not sort or filter a column, switch tabs from the strip
   or follow the lineage
 - **Affected files:** `crates/dat0-ui/src/components/shell.rs` (`TabStrip`),
   `crates/dat0-ui/src/components/grid/header.rs`,
+  `crates/dat0-ui/src/components/grid/mod.rs`,
+  `crates/dat0-ui/src/components/grid/context_menu.rs`,
+  `crates/dat0-ui/src/components/grid/column.rs`,
   `crates/dat0-ui/src/components/inspector/mod.rs` (`ChainRow`),
   `crates/dat0-ui/src/components/modals.rs` (`CAPTURE_JS`),
-  `crates/dat0-ui/src/components/sidebar.rs`
+  `crates/dat0-ui/src/components/sidebar.rs`, `crates/dat0-ui/src/dom.rs`,
+  `crates/dat0-core/src/actions/edit_actions.rs`
 - **Symptom:**
   - The tab strip's one Tab stop is the ⌘K launcher. Every tab is
     `tabindex="-1"`, and nothing moves between them by arrow, though
@@ -3129,13 +3183,32 @@ that's modifying it; merge conflicts are signals worth investigating.
   - The sidebar's rows and section headings are buttons with no tabindex,
     so in a webview each is a Tab stop, where `docs/a11y.md` and
     `tests/catalog_nav.rs` describe the tree as one stop with roving rows.
-- **Fix:** a roving tabindex on the tab strip, the active tab the stop and
-  arrows moving; the header zones and lineage rows as buttons; each dialog
-  marking the control that takes focus, or the dialog itself taking it; the
-  sidebar's rows `tabindex="-1"`, as the tree's own key handling expects.
+- **Fix:**
+  - The data tabs are one roving Tab stop, the active tab's. ←/→ step and
+    Home and End jump, clamping as the console's tabs do, and the keyboard
+    follows the selection; Delete or Backspace closes the tab.
+  - Sort Ascending, Sort Descending and Filter Column… act on the column
+    under the grid's cursor, from the palette and the grid's context menu,
+    which the menu key and Shift+F10 now open under the active cell. The
+    filter opens under the column's funnel; the menu and the filter hand the
+    keyboard back to the grid when they close. The header's sort and funnel
+    are named buttons for a reader, and not Tab stops: two per column would
+    put a wide table's whole header before the grid.
+  - A lineage row that opens something is a button; a file's row is text.
+  - A dialog that marks no control takes the keyboard itself, without a
+    ring, so a reader announces it and the first Tab lands inside.
+    `examples/modal_trap_probe.rs` watches it happen in a real document.
+  - The sidebar's rows are `tabindex="-1"`, and the tree names the cursor's
+    row as its active descendant, so a reader follows the arrows.
+  - Moving focus to a sibling, and hanging a popover off an element with no
+    pointer, ask the webview by `data-a11y-id` (`crate::dom`).
+  - `tests/tab_strip_nav.rs`, `tests/catalog_nav.rs`, `tests/inspector.rs`
+    and `tests/modal_nav.rs` pin each; `tests/keyboard_reach.rs` sorts and
+    filters over a real session, and through the menu opened by Shift+F10
+    and the menu key.
 - **Discovered:** 2026-09-26, checking the new UAT checklist against the
   code.
-- **Last touched:** 2026-09-26
+- **Last touched:** 2026-09-27
 
 ### PD-041 — The release pipeline would have shipped builds that do not work
 

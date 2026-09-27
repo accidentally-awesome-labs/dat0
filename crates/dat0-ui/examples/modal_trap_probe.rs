@@ -21,6 +21,10 @@
 //! 3. **Restoration** — `dismiss_restores_focus_to_the_pre_open_stop`.
 //!    `RELEASE_JS` hands the keyboard back to whatever opened the dialog;
 //!    without it, Escape drops a keyboard user at the top of the document.
+//! 4. **A dialog that marks nothing holds the keyboard** — `CAPTURE_JS`
+//!    focuses the dialog itself when no control is marked `data-autofocus`,
+//!    so a reader announces it and the first Tab lands inside. Focus stayed
+//!    on the inert page behind it until then (PD-040).
 //!
 //! The scripts are not retyped here: they are the exported constants, put
 //! through the same substitution `modals::cycle_focus` performs, so a change to
@@ -53,6 +57,16 @@ fn name_prompt() -> Modal {
         placeholder: None,
         confirm_label: None,
         secret: false,
+        reply: ModalReply::new(|_: ModalOutcome| {}),
+    }
+}
+
+/// A confirmation, which marks no control to take the keyboard.
+fn confirm() -> Modal {
+    Modal::CloseTab {
+        tab: "sales.csv".to_string(),
+        edits: 1,
+        deletes: 0,
         reply: ModalReply::new(|_: ModalOutcome| {}),
     }
 }
@@ -124,18 +138,31 @@ try {
   );
   await waitFor(() => !q("modal"), "the dialog to dismiss");
   await waitFor(() => !q("shell-behind").inert, "the background to be released");
+  const released =
+    document.querySelectorAll("[inert]").length === 0 &&
+    q("shell-behind").getAttribute("aria-hidden") === null;
+  const restored = id(document.activeElement);
+
+  // 4. A dialog that marks no control takes the keyboard itself.
+  const opener2 = q("open-confirm");
+  opener2.focus();
+  opener2.click();
+  await waitFor(() => q("modal"), "the confirmation to mount");
+  await waitFor(() => q("shell-behind").inert, "the background to be inerted again");
+  const held = id(document.activeElement);
+  q("modal").dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
+  await waitFor(() => !q("modal"), "the confirmation to dismiss");
 
   clearTimeout(guard);
   dioxus.send({
     contained,
-    released:
-      document.querySelectorAll("[inert]").length === 0 &&
-      q("shell-behind").getAttribute("aria-hidden") === null,
+    released,
     ring,
     wrapped,
     wrappedBack,
     snappedBack,
-    restored: id(document.activeElement),
+    restored,
+    held,
   });
 } catch (e) {
   clearTimeout(guard);
@@ -175,6 +202,7 @@ struct Report {
     wrapped_back: Option<String>,
     snapped_back: Option<String>,
     restored: Option<String>,
+    held: Option<String>,
 }
 
 #[component]
@@ -203,6 +231,11 @@ fn Probe() -> Element {
                     "data-a11y-id": "open-modal",
                     onclick: move |_| ws.modal.set(Some(name_prompt())),
                     "open"
+                }
+                button {
+                    "data-a11y-id": "open-confirm",
+                    onclick: move |_| ws.modal.set(Some(confirm())),
+                    "confirm"
                 }
                 button { "data-a11y-id": "background", "background" }
             }
@@ -245,6 +278,7 @@ fn check(v: serde_json::Value) {
             .get("restored")
             .and_then(|x| x.as_str())
             .map(str::to_string),
+        held: v.get("held").and_then(|x| x.as_str()).map(str::to_string),
     };
 
     println!("--- dat0 modal trap probe ---");
@@ -258,6 +292,7 @@ fn check(v: serde_json::Value) {
     println!("  snap back     {:?}", r.snapped_back);
     println!("  released      {}", r.released);
     println!("  restored      {:?}", r.restored);
+    println!("  held          {:?}", r.held);
 
     let want_ring = ["name-prompt-field", "name-prompt-ok", "name-prompt-cancel"];
     let mut bad = Vec::new();
@@ -288,6 +323,12 @@ fn check(v: serde_json::Value) {
     }
     if !r.released {
         bad.push("the background is still inert after the dismissal".to_string());
+    }
+    if r.held.as_deref() != Some("modal") {
+        bad.push(format!(
+            "a dialog that marks no control left focus on {:?}, not on itself",
+            r.held
+        ));
     }
     if r.restored.as_deref() != Some("open-modal") {
         bad.push(format!(

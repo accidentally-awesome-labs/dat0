@@ -280,6 +280,7 @@ pub fn build() -> Menu {
         &PredefinedMenuItem::separator(),
         &item(ids::VIEW_EXPORT, "menu.file.export"),
         &PredefinedMenuItem::separator(),
+        &item(ids::VIEW_CLOSE_TAB, "menu.file.close_tab"),
         &*window_item(menu_ids::CLOSE_WINDOW),
     ]);
 
@@ -367,6 +368,7 @@ pub fn emitted_ids() -> Vec<String> {
         ids::WORKSPACE_OPEN,
         ids::WORKSPACE_SAVE,
         ids::VIEW_EXPORT,
+        ids::VIEW_CLOSE_TAB,
         ids::VIEW_UNDO,
         ids::VIEW_REDO,
         ids::CHART_VISUALIZE,
@@ -452,6 +454,7 @@ pub fn label_keys() -> Vec<&'static str> {
         "menu.file.unpack_package",
         "menu.file.replay_package",
         "menu.file.export",
+        "menu.file.close_tab",
         "menu.file.close",
         "menu.file.quit",
         // Edit

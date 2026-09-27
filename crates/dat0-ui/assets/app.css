@@ -464,6 +464,43 @@ button {
   box-shadow: inset 0 2px 0 var(--d0-accent);
 }
 
+/* The tab's own button: its swatch and title, and the whole tab's height to
+   click. The ✕ beside it closes the tab. */
+.d0-tab-label {
+  flex: 1 1 auto;
+  min-width: 0;
+  align-self: stretch;
+  display: flex;
+  align-items: center;
+  gap: var(--sp-4);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* Shown on the active tab and under the pointer, and holding its place
+   otherwise, so a tab's title does not shift when the ✕ appears. */
+.d0-tab-close {
+  flex: 0 0 auto;
+  width: 16px;
+  height: 16px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: var(--d0-r);
+  font-size: 10px;
+  color: var(--d0-chrome-muted);
+  visibility: hidden;
+}
+.d0-tab:hover .d0-tab-close,
+.d0-tab.is-active .d0-tab-close {
+  visibility: visible;
+}
+.d0-tab-close:hover {
+  color: var(--d0-ink);
+  box-shadow: inset 0 0 0 1px var(--d0-chrome-border-2);
+}
+
 .d0-statusbar {
   position: fixed;
   inset: auto 0 0 0;
@@ -944,6 +981,12 @@ button {
   -webkit-user-select: text;
   user-select: text;
 }
+/* A dialog that marks no control takes focus itself, so a reader can
+   announce it. The dialog is the context, not a control, so it wears no
+   ring; its first Tab stop does. */
+.d0-modal:focus-visible {
+  outline: none;
+}
 
 .d0-palette {
   align-self: flex-start;
@@ -1336,6 +1379,8 @@ button {
 }
 .d0-insp-chain.is-open {
   cursor: pointer;
+  width: 100%;
+  text-align: left;
 }
 .d0-insp-chain.is-open:hover {
   background: var(--d0-row-hover);

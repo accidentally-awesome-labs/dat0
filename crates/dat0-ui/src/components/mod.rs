@@ -8,6 +8,7 @@ pub mod about;
 pub mod ai;
 pub mod banner;
 pub mod charts;
+pub mod close_tab;
 pub mod command_palette;
 pub mod connections;
 pub mod crash_report;

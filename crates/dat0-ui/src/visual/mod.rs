@@ -295,6 +295,7 @@ pub const SCENES: &[Scene] = &[
         "foreign-machine conflict",
     ),
     s("modal/live-refresh", "modal", "3 edits, 1 delete dropped"),
+    s("modal/close-tab", "modal", "2 edits, 1 delete in sales.csv"),
     s("modal/recovery", "modal", "two orphans, one incomplete"),
     s("modal/import-wizard", "modal", "columns step, one invalid"),
     s("modal/update", "modal", "available, manual check"),
@@ -603,6 +604,12 @@ fn modal(
         "modal/live-refresh" => Modal::LiveRefresh {
             dropped_edits: 3,
             dropped_deletes: 1,
+            reply: reply(),
+        },
+        "modal/close-tab" => Modal::CloseTab {
+            tab: "sales.csv".into(),
+            edits: 2,
+            deletes: 1,
             reply: reply(),
         },
         "modal/recovery" => Modal::Recovery {

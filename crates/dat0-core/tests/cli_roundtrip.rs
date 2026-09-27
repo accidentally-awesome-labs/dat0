@@ -120,20 +120,12 @@ async fn build_workspace_with_derived(tmp: &std::path::Path, target: &std::path:
 /// table (`monthly`) so the derived-table data path (parquet re-materialize) is
 /// exercised.
 ///
-/// FINDING (T5): table origins live ONLY in the engine's in-memory
-/// `table_origins` map — they are NOT persisted to disk and are NOT
-/// reconstructed on reopen (`catalog::get_tables` falls back to an empty-SQL
-/// derived origin → classified Base for any table not in the live map). Because
-/// `export_async` ALWAYS reopens the workspace via `recover_workspace` (fresh
-/// engine, empty origin map), a table that was Derived in a live session is
-/// re-classified Base on the very first CLI export. The `contents_to_workspace`
-/// origin fix (records the derivation on the throwaway unpack engine) is correct
-/// and harmless, but it cannot make re-export reproduce `Derived` while export
-/// reopens. What MATTERS for this exit criterion: the round-trip is
-/// SELF-CONSISTENT — `monthly` classifies identically (Base) in BOTH packages,
-/// so the diff is genuinely empty. The data still round-trips (12 rows). Making
-/// re-export reproduce `Derived` would require persisting origins, a larger
-/// design change tracked separately.
+/// `export_async` ALWAYS reopens the workspace via `recover_workspace`, a fresh
+/// engine. Origins lived only in the engine's memory until PD-031, so that
+/// reopen re-classified `monthly` as Base in both packages: self-consistent,
+/// but the derivation was lost on the first export. They are kept in the
+/// database now, so `monthly` is Derived in both, with its SQL, and the diff
+/// is still empty. The data round-trips too (12 rows).
 #[tokio::test]
 async fn export_unpack_reexport_diff_is_empty() {
     let tmp = tempfile::TempDir::new().unwrap();
@@ -168,9 +160,8 @@ async fn export_unpack_reexport_diff_is_empty() {
         assert!(names.contains(&"sales"), "sales present");
         assert!(names.contains(&"monthly"), "monthly present");
     }
-    // `monthly` classifies IDENTICALLY across the two packages (self-consistent
-    // round-trip) — whatever kind it is in pkg1, it is the same in pkg2. (See the
-    // doc comment: origins are not persisted, so this is Base in both.)
+    // `monthly` keeps its derivation through the reopen (PD-031), in both
+    // packages.
     let kind = |p: &dat0_format::ParsedPackage| {
         p.recipe
             .tables
@@ -180,6 +171,11 @@ async fn export_unpack_reexport_diff_is_empty() {
             .kind
             .clone()
     };
+    assert_eq!(
+        kind(&a),
+        dat0_format::TableKind::Derived,
+        "the reopened workspace knows monthly's derivation"
+    );
     assert_eq!(kind(&a), kind(&b), "monthly classification round-trips");
     // And the derived table's row count survives (12 distinct id<12 rows).
     let rows = |p: &dat0_format::ParsedPackage| {

@@ -176,27 +176,15 @@ never silently produces wrong data. See
 
 ---
 
-## Known limitation — cold CLI export flattens derived tables
+## Derived tables in a workspace on disk
 
-> **`dat0 export` of a workspace *directory* (on disk) flattens derived tables
-> to base tables.**
+A workspace keeps each table's origin — the file it was read from and how, or
+the SQL or view steps that derived it — in its database, beside the tables. So
+`dat0 export` of a workspace *directory* records derived tables as derived,
+with their recipes, exactly as the in-app Export Package does from a live
+session, and `inspect` and `replay` see the same lineage.
 
-Derived-table provenance — the SQL/transform that produces a table and the link
-to its parents — currently lives **only in memory** while a workspace is open in
-the app; it is **not persisted** across a workspace reopen. Because the CLI
-`dat0 export` reopens the workspace from disk before exporting, every table is
-classified as a plain **base** table, and the resulting package is **data-only**
-(no replayable recipe / lineage).
-
-The **in-app Export Package** (from a live session) does **not** have this
-limitation — it exports straight from the running session, so the derived
-recipe and lineage are preserved, and `inspect` / `replay` work as expected.
-
-**Practical guidance:** if you need a replayable package (one whose derived
-tables can be re-run against fresh sources), export it **from the app** rather
-than via the cold CLI. A CLI-exported package still round-trips its data
-faithfully — it just records every table as base.
-
-This is tracked as deferral **D-025** in
-[`docs/deferrals.md`](deferrals.md); the fix is to persist `table_origins`
-(into `session.json` or a `.dat0/` sidecar) and restore it on workspace reopen.
+A workspace written before origins were kept there has no record of its
+tables' derivations: they export as base tables, with their data, until they
+are made again. This was deferral **D-025**, closed with **PD-031** in
+[`docs/deferrals.md`](deferrals.md).

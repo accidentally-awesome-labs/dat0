@@ -31,6 +31,8 @@
 //! unit tests.
 
 pub mod cell_editor;
+pub mod close;
+pub mod column;
 pub mod context_menu;
 pub mod edits;
 pub mod export;
@@ -345,6 +347,23 @@ pub fn Grid(props: GridProps) -> Element {
                     if editing().is_some() {
                         return;
                     }
+                    // The context menu from the keyboard: the menu key, or
+                    // Shift+F10 where there is none. It opens under the
+                    // cursor's cell, where a right-click would have put it,
+                    // so every verb in it is reachable without a pointer
+                    // (PD-040).
+                    let shift_f10 = e.key() == Key::F10 && e.modifiers() == Modifiers::SHIFT;
+                    if e.key() == Key::ContextMenu || shift_f10 {
+                        e.prevent_default();
+                        e.stop_propagation();
+                        let at = selection.read().active();
+                        spawn(async move {
+                            let cell = format!("cell-{}-{}", at.row, at.col);
+                            let p = crate::dom::anchor_below(&cell).await.unwrap_or_default();
+                            menu_at.set(Some(p));
+                        });
+                        return;
+                    }
                     if let Some(k) = crate::keys::grid_key(&e.key(), e.modifiers()) {
                         e.prevent_default();
                         e.stop_propagation();
@@ -467,11 +486,17 @@ pub fn Grid(props: GridProps) -> Element {
                     cell: selection.read().active(),
                     has_selection: selection.read().has_selection(),
                     read_only,
+                    // The keyboard goes back to the grid when the menu goes:
+                    // left on the unmounted menu, it fell to the page.
                     on_pick: move |(id, coord)| {
                         menu_at.set(None);
+                        crate::dom::focus("grid-viewport");
                         on_action.call((id, coord));
                     },
-                    on_dismiss: move |_| menu_at.set(None),
+                    on_dismiss: move |_| {
+                        menu_at.set(None);
+                        crate::dom::focus("grid-viewport");
+                    },
                 }
             }
         }

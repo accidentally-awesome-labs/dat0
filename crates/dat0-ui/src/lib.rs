@@ -20,6 +20,7 @@ pub mod clipboard;
 pub mod components;
 pub mod connections_flow;
 pub mod crash_flow;
+pub mod dom;
 pub mod files;
 #[cfg(feature = "gallery")]
 pub mod gallery;

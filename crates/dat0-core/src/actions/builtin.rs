@@ -57,8 +57,18 @@ pub mod ids {
     pub const VIEW_SET_NULL: &str = "view.set_null";
     pub const VIEW_SET_VALUE: &str = "view.set_value";
     pub const VIEW_DELETE_COLUMN: &str = "view.delete_column";
+    // PD-040: sort and filter the column under the grid's cursor. The
+    // header's sort and funnel zones are the pointer's way; these are the
+    // keyboard's, through the palette and the grid's context menu.
+    pub const VIEW_SORT_ASC: &str = "view.sort_asc";
+    pub const VIEW_SORT_DESC: &str = "view.sort_desc";
+    pub const VIEW_FILTER: &str = "view.filter";
     // P4c T11: File → Export… dialog.
     pub const VIEW_EXPORT: &str = "view.export";
+    /// Close the active data tab (PD-038): its view goes, and its table stays
+    /// in the session. No chord: ⌘W is Close Window, and a second close chord
+    /// beside it is one keystroke from closing the wrong thing.
+    pub const VIEW_CLOSE_TAB: &str = "view.close_tab";
     // UI-redesign B6: chart export. The dock title bar's own PNG/SVG buttons
     // are forced `tab_stop(false)` by upstream (`tab_panel.rs:454`), so these
     // descriptors are chart export's only keyboard path.

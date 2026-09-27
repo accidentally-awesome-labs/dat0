@@ -23,29 +23,29 @@ expression: "rendered[0].1"
 <span class="d0-insp-chain-name d0-mono">sales.csv</span>
 <span class="d0-insp-chain-edge d0-label">file import</span>
 </div>
-<div class="d0-insp-chain is-open" data-a11y-id="lineage-2-sales_clean" style="padding-left: 24px" role="note" aria-label="sales_clean">
+<button class="d0-insp-chain is-open" data-a11y-id="lineage-2-sales_clean" style="padding-left: 24px" role="button" aria-label="sales_clean">
 <span class="d0-insp-glyph" aria-hidden="true">▦</span>
 <span class="d0-insp-chain-name d0-mono">sales_clean</span>
 <span class="d0-insp-chain-edge d0-label">transform (3 ops)</span>
-</div>
+</button>
 <div class="d0-insp-target d0-mono" data-a11y-id="inspector-target" role="note" aria-label="sales">
 <span class="d0-chevron is-collapsed" aria-hidden="true">▾</span>sales</div>
 <div class="d0-label" data-a11y-id="inspector-lineage-usedby" role="note" aria-label="Used by">Used by</div>
-<div class="d0-insp-chain is-open" data-a11y-id="lineage-1-revenue_by_region" style="padding-left: 12px" role="note" aria-label="revenue_by_region">
+<button class="d0-insp-chain is-open" data-a11y-id="lineage-1-revenue_by_region" style="padding-left: 12px" role="button" aria-label="revenue_by_region">
 <span class="d0-insp-glyph" aria-hidden="true">▦</span>
 <span class="d0-insp-chain-name d0-mono">revenue_by_region</span>
 <span class="d0-insp-chain-edge d0-label">SQL reference</span>
-</div>
-<div class="d0-insp-chain is-open" data-a11y-id="lineage-2-revenue_chart" style="padding-left: 24px" role="note" aria-label="revenue_chart">
+</button>
+<button class="d0-insp-chain is-open" data-a11y-id="lineage-2-revenue_chart" style="padding-left: 24px" role="button" aria-label="revenue_chart">
 <span class="d0-insp-glyph" aria-hidden="true">📊</span>
 <span class="d0-insp-chain-name d0-mono">revenue_chart</span>
 <span class="d0-insp-chain-edge d0-label">chart</span>
-</div>
-<div class="d0-insp-chain is-open" data-a11y-id="lineage-8-deep_rollup" style="padding-left: 72px" role="note" aria-label="deep_rollup">
+</button>
+<button class="d0-insp-chain is-open" data-a11y-id="lineage-8-deep_rollup" style="padding-left: 72px" role="button" aria-label="deep_rollup">
 <span class="d0-insp-glyph" aria-hidden="true">▦</span>
 <span class="d0-insp-chain-name d0-mono">deep_rollup</span>
 <span class="d0-insp-chain-edge d0-label">SQL reference</span>
-</div>
+</button>
 </div>
 <div class="d0-insp-cards" data-a11y-id="inspector-cards">
 <div class="d0-insp-card" data-a11y-id="inspector-card-id">

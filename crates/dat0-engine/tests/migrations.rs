@@ -30,7 +30,7 @@ async fn migrations_apply_on_fresh_db() {
         "SELECT COALESCE(MAX(version), 0)::TEXT FROM __dat0_meta_migrations",
     )
     .await;
-    assert_eq!(v, "1", "first migration should be applied");
+    assert_eq!(v, "2", "every migration should be applied");
 
     let workspace_v = scalar(
         &engine,
@@ -55,7 +55,7 @@ async fn migrations_idempotent_on_reopen() {
         let engine = DuckDBEngine::new(scratch.clone(), budget()).unwrap();
         engine.init().await.unwrap();
         let count = scalar(&engine, "SELECT COUNT(*)::TEXT FROM __dat0_meta_migrations").await;
-        assert_eq!(count, "1");
+        assert_eq!(count, "2", "one row per migration, however often it opens");
         engine.close().await.unwrap();
     }
 }

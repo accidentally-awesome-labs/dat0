@@ -287,3 +287,50 @@ async fn a_failed_unpack_leaves_no_workspace_behind() {
         .collect();
     assert_eq!(left, ["notes.txt"], "the folder as it was");
 }
+
+/// A package made from a session opened again carries its derived tables'
+/// derivations (PD-031). The origins lived in the engine's memory only, so a
+/// reopened session reported every table as the engine's "unknown", and the
+/// package sealed a derived table as a plain base table it could not replay.
+#[tokio::test]
+async fn a_package_from_a_reopened_session_keeps_its_derivations() {
+    let tmp = tempfile::TempDir::new().unwrap();
+    let state_root = tmp.path().join("state");
+    let monthly_sql = "SELECT id % 12 AS m, count(*) c FROM sales GROUP BY 1";
+    let scratch_dir = {
+        let sess = Session::new(&state_root, BUDGET).await.unwrap();
+        sess.engine
+            .execute("CREATE TABLE sales AS SELECT * FROM range(42) AS r(id)")
+            .await
+            .unwrap();
+        sess.engine
+            .create_table(
+                "monthly",
+                monthly_sql,
+                DerivedOrigin::Sql(monthly_sql.into()),
+            )
+            .await
+            .unwrap();
+        sess.engine.close().await.unwrap();
+        sess.home.root_dir().to_path_buf()
+    };
+
+    let reopened = Session::recover(scratch_dir, BUDGET).await.unwrap();
+    let contents = package::session_to_contents(&reopened).await.unwrap();
+    let monthly = contents
+        .recipe
+        .tables
+        .iter()
+        .find(|t| t.name == "monthly")
+        .expect("monthly in recipe");
+    assert_eq!(monthly.kind, dat0_format::TableKind::Derived);
+    assert!(
+        matches!(
+            &monthly.derivation,
+            Some(dat0_format::Derivation::Sql { sql, .. }) if sql == monthly_sql
+        ),
+        "the derivation came back with the session: {:?}",
+        monthly.derivation
+    );
+    reopened.engine.close().await.unwrap();
+}

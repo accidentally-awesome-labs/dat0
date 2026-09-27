@@ -1,6 +1,6 @@
 ---
 source: crates/dat0-ui/tests/visual_snapshot.rs
-expression: html
+expression: "rendered[0].1"
 ---
 <div class="d0-scene" data-scene="header/default" style="width: 1440px">
 <div class="d0-grid-head" data-a11y-id="grid-head" role="row">
@@ -9,10 +9,10 @@ expression: html
 <div class="d0-grip" data-a11y-id="col-grip-0" style="width: 6px;" draggable=true>
 </div>
 <span style="flex: 1 1 auto; overflow: hidden; text-overflow: ellipsis;">id</span>
-<span class="d0-sort" data-a11y-id="col-sort-0" style="width: 20px; text-align: center;">
-</span>
-<span class="d0-funnel" data-a11y-id="col-funnel-0" style="width: 20px; text-align: center;">
-</span>
+<button class="d0-sort" data-a11y-id="col-sort-0" aria-label="Sort column: id" tabindex="-1" style="width: 20px; text-align: center;">
+</button>
+<button class="d0-funnel" data-a11y-id="col-funnel-0" aria-label="Filter column: id" tabindex="-1" style="width: 20px; text-align: center;">
+</button>
 <div class="d0-col-resize" data-a11y-id="col-resize-0">
 </div>
 </div>
@@ -20,10 +20,10 @@ expression: html
 <div class="d0-grip" data-a11y-id="col-grip-1" style="width: 6px;" draggable=true>
 </div>
 <span style="flex: 1 1 auto; overflow: hidden; text-overflow: ellipsis;">region</span>
-<span class="d0-sort" data-a11y-id="col-sort-1" style="width: 20px; text-align: center;">
-</span>
-<span class="d0-funnel" data-a11y-id="col-funnel-1" style="width: 20px; text-align: center;">
-</span>
+<button class="d0-sort" data-a11y-id="col-sort-1" aria-label="Sort column: region" tabindex="-1" style="width: 20px; text-align: center;">
+</button>
+<button class="d0-funnel" data-a11y-id="col-funnel-1" aria-label="Filter column: region" tabindex="-1" style="width: 20px; text-align: center;">
+</button>
 <div class="d0-col-resize" data-a11y-id="col-resize-1">
 </div>
 </div>
@@ -31,10 +31,10 @@ expression: html
 <div class="d0-grip" data-a11y-id="col-grip-2" style="width: 6px;" draggable=true>
 </div>
 <span style="flex: 1 1 auto; overflow: hidden; text-overflow: ellipsis;">revenue</span>
-<span class="d0-sort" data-a11y-id="col-sort-2" style="width: 20px; text-align: center;">
-</span>
-<span class="d0-funnel" data-a11y-id="col-funnel-2" style="width: 20px; text-align: center;">
-</span>
+<button class="d0-sort" data-a11y-id="col-sort-2" aria-label="Sort column: revenue" tabindex="-1" style="width: 20px; text-align: center;">
+</button>
+<button class="d0-funnel" data-a11y-id="col-funnel-2" aria-label="Filter column: revenue" tabindex="-1" style="width: 20px; text-align: center;">
+</button>
 <div class="d0-col-resize" data-a11y-id="col-resize-2">
 </div>
 </div>
@@ -42,10 +42,10 @@ expression: html
 <div class="d0-grip" data-a11y-id="col-grip-3" style="width: 6px;" draggable=true>
 </div>
 <span style="flex: 1 1 auto; overflow: hidden; text-overflow: ellipsis;">active</span>
-<span class="d0-sort" data-a11y-id="col-sort-3" style="width: 20px; text-align: center;">
-</span>
-<span class="d0-funnel" data-a11y-id="col-funnel-3" style="width: 20px; text-align: center;">
-</span>
+<button class="d0-sort" data-a11y-id="col-sort-3" aria-label="Sort column: active" tabindex="-1" style="width: 20px; text-align: center;">
+</button>
+<button class="d0-funnel" data-a11y-id="col-funnel-3" aria-label="Filter column: active" tabindex="-1" style="width: 20px; text-align: center;">
+</button>
 <div class="d0-col-resize" data-a11y-id="col-resize-3">
 </div>
 </div>

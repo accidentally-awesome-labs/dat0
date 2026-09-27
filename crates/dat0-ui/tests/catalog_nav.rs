@@ -181,6 +181,49 @@ fn the_catalog_tree_is_a_tab_stop() {
 }
 
 #[test]
+fn the_rows_are_not_tab_stops_and_the_tree_names_the_cursor_row() {
+    // The rows are buttons, and a `button` with no tabindex is a Tab stop in
+    // a real webview, so every row was one — where this file and
+    // `docs/a11y.md` describe one stop with a roving cursor (PD-040). The
+    // harness counts only `tabindex="0"`, which is why nothing here noticed.
+    let mut h = seeded();
+    let rows: Vec<_> = h
+        .dom()
+        .walk()
+        .into_iter()
+        .filter(|k| h.attr(*k, "role").as_deref() == Some("treeitem"))
+        .collect();
+    assert!(rows.len() >= 4, "the seeded rows render");
+    for row in &rows {
+        assert_eq!(
+            h.attr(*row, "tabindex").as_deref(),
+            Some("-1"),
+            "{:?} is a Tab stop of its own",
+            h.attr(*row, "data-a11y-id")
+        );
+    }
+
+    // The tree keeps focus, so a reader learns where the cursor went from
+    // the tree's active descendant, which names the cursor's row.
+    let named = |h: &Harness| {
+        let id = h
+            .attr(
+                h.by_a11y_id("catalog-tree").unwrap(),
+                "aria-activedescendant",
+            )
+            .expect("the tree names its cursor row");
+        h.dom()
+            .walk()
+            .into_iter()
+            .find(|k| h.attr(*k, "id").as_deref() == Some(id.as_str()))
+            .and_then(|k| h.attr(k, "data-a11y-id"))
+    };
+    assert_eq!(named(&h), cursor_row(&h));
+    press(&mut h, Key::ArrowDown);
+    assert_eq!(named(&h).as_deref(), Some("row-connections-0"));
+}
+
+#[test]
 fn down_moves_the_active_row() {
     // R1: the tree's own key handler receives arrows and moves the cursor.
     let mut h = seeded();

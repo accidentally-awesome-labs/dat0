@@ -1,0 +1,23 @@
+---
+source: crates/dat0-ui/tests/visual_snapshot.rs
+expression: "rendered[0].1"
+---
+<div class="d0-scene" data-scene="modal/close-tab" style="width: 1440px; height: 900px; overflow: hidden">
+<div class="d0-scrim" data-a11y-id="modal-scrim">
+<div class="d0-modal" data-a11y-id="modal" role="dialog" aria-modal="true" aria-label="Closing will discard edits" tabindex="-1">
+<div class="d0-modal-head">
+<span class="d0-label">close</span>
+<span class="d0-head-title">Closing will discard edits</span>
+</div>
+<div class="d0-modal-body" data-a11y-id="modal-body">
+<div class="d0-confirm" data-a11y-id="close-tab">
+<p class="d0-body" data-a11y-id="close-tab-body" role="note" aria-label="Closing sales.csv discards 2 cell edit(s) and 1 row deletion(s). The table stays in the session. To keep the changes, cancel and choose Save View as Table.">Closing sales.csv discards 2 cell edit(s) and 1 row deletion(s). The table stays in the session. To keep the changes, cancel and choose Save View as Table.</p>
+<div class="d0-confirm-actions">
+<button class="d0-btn is-ghost" data-a11y-id="close-tab-cancel" role="button" aria-label="Cancel">Cancel</button>
+<button class="d0-btn is-primary" data-a11y-id="close-tab-confirm" role="button" aria-label="Close anyway">Close anyway</button>
+</div>
+</div>
+</div>
+</div>
+</div>
+</div>

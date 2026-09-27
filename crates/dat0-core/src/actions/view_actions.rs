@@ -15,6 +15,7 @@ pub fn register(reg: &ActionRegistry) -> Result<(), RegisterError> {
         (ids::VIEW_UNDO, "Undo".to_string(), Edit),
         (ids::VIEW_REDO, "Redo".to_string(), Edit),
         (ids::VIEW_EXPORT, "Export\u{2026}".to_string(), File),
+        (ids::VIEW_CLOSE_TAB, dat0_i18n::t("view.close_tab"), File),
         (
             ids::CONSOLE_TOGGLE,
             dat0_i18n::t("sql.console_toggle"),

@@ -17,11 +17,12 @@
 //!   "both sides of the threshold paint" is a stylesheet guarantee and is
 //!   asserted against the stylesheet — the harness has no layout, and a
 //!   windowed probe cannot prove the *absence* of a `display: none`.
-//! * The strip is now **one** tab stop by design (`AccessRole::Tab` →
-//!   `TabStop::Programmatic`). Under GPUI every tab was its own focus stop;
-//!   six open tabs meant six Tab presses before the grid. Arrow keys move
-//!   within the strip instead. That is a deliberate change, so it is asserted
-//!   here rather than left implicit.
+//! * The tabs are **one** tab stop by design: a roving tabindex, the active
+//!   tab the stop and every other `-1`. Under GPUI every tab was its own focus
+//!   stop; six open tabs meant six Tab presses before the grid. Arrow keys,
+//!   Home and End move between the tabs instead, and Delete closes one
+//!   (PD-040). Every tab was `-1` until then, so no key reached them at all,
+//!   though this file said the arrows moved; it checked only the tabindex.
 
 mod support;
 
@@ -318,30 +319,32 @@ fn clicking_a_tab_moves_the_selection_to_it() {
     });
 }
 
+/// The strip's Tab stops, by `data-a11y-id`, in document order.
+fn stops(h: &Harness) -> Vec<String> {
+    subtree(h, strip(h))
+        .into_iter()
+        .filter(|k| h.attr(*k, "tabindex").as_deref() == Some("0"))
+        .map(|k| h.attr(k, "data-a11y-id").unwrap_or_default())
+        .collect()
+}
+
 #[test]
 #[serial]
-fn the_whole_strip_is_one_tab_stop_however_many_tabs_are_open() {
+fn the_tabs_are_one_tab_stop_however_many_are_open() {
     with_settled_config(|| {
         // Six tabs: the number at which the GPUI build's per-tab focus stops
         // became the reason a keyboard user pressed Tab six times to reach the
-        // grid. `AccessRole::Tab` is `TabStop::Programmatic` precisely so that
-        // Tab reaches the strip once and arrows move within it.
+        // grid. The active tab is the tabs' one stop, and the arrows move
+        // between them.
         let tabs: Vec<TabView> = (0..6).map(|i| tab(&format!("t{i}"), None)).collect();
-        let h = mount(tabs, Some(0));
+        let h = mount(tabs, Some(2));
 
-        let strip = strip(&h);
-        let stops: Vec<String> = subtree(&h, strip)
-            .into_iter()
-            .filter(|k| h.attr(*k, "tabindex").as_deref() == Some("0"))
-            .map(|k| h.attr(k, "data-a11y-id").unwrap_or_default())
-            .collect();
         assert_eq!(
-            stops,
-            vec!["command-launcher".to_string()],
-            "the strip must expose exactly one Tab stop"
+            stops(&h),
+            vec!["command-launcher".to_string(), "tab-2".to_string()],
+            "the launcher, and the tabs once, at the active tab"
         );
-
-        for i in 0..6 {
+        for i in [0, 1, 3, 4, 5] {
             let key = h.by_a11y_id(&format!("tab-{i}")).unwrap();
             assert_eq!(
                 h.attr(key, "tabindex").as_deref(),
@@ -351,6 +354,53 @@ fn the_whole_strip_is_one_tab_stop_however_many_tabs_are_open() {
                  which is the behaviour this replaces"
             );
         }
+    });
+}
+
+#[test]
+#[serial]
+fn the_arrows_home_and_end_move_between_the_tabs_and_stop_at_the_ends() {
+    use dioxus::html::input_data::keyboard_types::Key;
+    with_settled_config(|| {
+        let mut h = mount(three_tabs(), Some(0));
+        let selected = |h: &Harness| strip_state(h).1;
+
+        h.key_at("tab-0", Key::ArrowRight, Modifiers::empty());
+        assert_eq!(selected(&h), Some(1));
+        assert_eq!(
+            stops(&h),
+            vec!["command-launcher".to_string(), "tab-1".to_string()],
+            "the stop moves with the selection"
+        );
+        h.key_at("tab-1", Key::End, Modifiers::empty());
+        assert_eq!(selected(&h), Some(2));
+        h.key_at("tab-2", Key::ArrowRight, Modifiers::empty());
+        assert_eq!(
+            selected(&h),
+            Some(2),
+            "a strip is a list: it stops at the end"
+        );
+        h.key_at("tab-2", Key::Home, Modifiers::empty());
+        assert_eq!(selected(&h), Some(0));
+        h.key_at("tab-0", Key::ArrowLeft, Modifiers::empty());
+        assert_eq!(selected(&h), Some(0), "and at the start");
+    });
+}
+
+#[test]
+#[serial]
+fn delete_closes_the_tab_it_is_pressed_on() {
+    use dioxus::html::input_data::keyboard_types::Key;
+    with_settled_config(|| {
+        let mut h = mount(three_tabs(), Some(1));
+        h.key_at("tab-1", Key::Delete, Modifiers::empty());
+        assert_eq!(
+            strip_state(&h),
+            (vec!["sales.csv".into(), "scratch".into()], Some(1)),
+            "as a query tab's Delete closes it; the next tab takes its place"
+        );
+        h.key_at("tab-1", Key::Backspace, Modifiers::empty());
+        assert_eq!(strip_state(&h), (vec!["sales.csv".into()], Some(0)));
     });
 }
 
@@ -395,6 +445,93 @@ fn a_tab_is_titled_by_its_file_rather_than_its_table() {
         let h = mount(three_tabs(), Some(0));
         assert_eq!(h.text_of(h.by_a11y_id("tab-0").unwrap()), "sales.csv");
         assert_eq!(h.text_of(h.by_a11y_id("tab-2").unwrap()), "scratch");
+    });
+}
+
+// ── closing a tab (PD-038) ───────────────────────────────────────────────────
+
+/// The strip's tab titles, in order, and which one is selected.
+fn strip_state(h: &Harness) -> (Vec<String>, Option<usize>) {
+    let mut titles = Vec::new();
+    let mut selected = None;
+    while let Some(key) = h.by_a11y_id(&format!("tab-{}", titles.len())) {
+        if h.attr(key, "aria-selected").as_deref() == Some("true") {
+            selected = Some(titles.len());
+        }
+        titles.push(h.text_of(key));
+    }
+    (titles, selected)
+}
+
+#[test]
+#[serial]
+fn each_tab_has_a_close_button_named_for_it_that_is_not_a_tab_stop() {
+    with_settled_config(|| {
+        let h = mount(three_tabs(), Some(0));
+        for (i, title) in ["sales.csv", "events.parquet", "scratch"]
+            .iter()
+            .enumerate()
+        {
+            let close = h
+                .by_a11y_id(&format!("tab-close-{i}"))
+                .unwrap_or_else(|| panic!("tab {i} has no ✕"));
+            assert_eq!(h.attr(close, "role").as_deref(), Some("button"));
+            assert_eq!(
+                h.attr(close, "aria-label"),
+                Some(dat0_i18n::t("tab.close").replace("{tab}", title)),
+                "a reader hears which tab the ✕ closes"
+            );
+            assert_eq!(
+                h.attr(close, "tabindex").as_deref(),
+                Some("-1"),
+                "the ✕ is the pointer's; the strip stays one Tab stop"
+            );
+            let tab = h.by_a11y_id(&format!("tab-{i}")).unwrap();
+            assert!(
+                !subtree(&h, tab).contains(&close),
+                "the ✕ sits beside its tab: inside a `tab` it is presentational \
+                 and hidden from a reader, and a button in a button is not markup"
+            );
+        }
+    });
+}
+
+#[test]
+#[serial]
+fn closing_another_tab_leaves_the_active_one_active() {
+    with_settled_config(|| {
+        let mut h = mount(three_tabs(), Some(2));
+        h.click("tab-close-0");
+        assert_eq!(
+            strip_state(&h),
+            (vec!["events.parquet".into(), "scratch".into()], Some(1)),
+            "scratch was active and still is"
+        );
+    });
+}
+
+#[test]
+#[serial]
+fn closing_the_active_tab_selects_the_one_that_takes_its_place() {
+    with_settled_config(|| {
+        let mut h = mount(three_tabs(), Some(1));
+        h.click("tab-close-1");
+        assert_eq!(
+            strip_state(&h),
+            (vec!["sales.csv".into(), "scratch".into()], Some(1)),
+        );
+        h.click("tab-close-1");
+        assert_eq!(
+            strip_state(&h),
+            (vec!["sales.csv".into()], Some(0)),
+            "the last closed: the one before it"
+        );
+        h.click("tab-close-0");
+        assert_eq!(strip_state(&h), (Vec::new(), None), "none left");
+        assert!(
+            h.by_a11y_id("command-launcher").is_some(),
+            "the strip stays, with the launcher"
+        );
     });
 }
 

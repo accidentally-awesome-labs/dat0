@@ -394,6 +394,25 @@ fn a_dismissed_modal_hands_the_keyboard_back_to_where_it_came_from() {
 }
 
 #[test]
+fn a_dialog_that_marks_no_control_takes_the_keyboard_itself() {
+    // Only the name prompt marked a control, so every other dialog opened
+    // with focus on the page behind it — which the capture has just made
+    // inert — until the first Tab (PD-040). The marked control still wins;
+    // the dialog is what is left. `examples/modal_trap_probe.rs` watches it
+    // happen in a real document.
+    let marked = CAPTURE_JS
+        .find("[data-autofocus]")
+        .expect("capture still focuses a marked control");
+    let dialog = CAPTURE_JS
+        .find(&format!("[data-a11y-id=\"{DIALOG_ID}\"]"))
+        .expect("capture falls back to the dialog itself");
+    assert!(
+        marked < dialog,
+        "the marked control comes first: {CAPTURE_JS}"
+    );
+}
+
+#[test]
 fn escaping_the_picker_dismisses_it_and_tells_the_opener() {
     // The other half of `picker_escape_restores_focus`, which the harness can
     // see: the slot empties and the opener learns the user backed out, rather
@@ -453,6 +472,12 @@ fn every_variant_paints_one_dialog_node_named_by_its_title() {
         Modal::LiveRefresh {
             dropped_edits: 1,
             dropped_deletes: 0,
+            reply: reply(),
+        },
+        Modal::CloseTab {
+            tab: "sales.csv".into(),
+            edits: 1,
+            deletes: 0,
             reply: reply(),
         },
         Modal::WorkspaceInUse {

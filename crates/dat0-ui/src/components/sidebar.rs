@@ -195,6 +195,10 @@ pub fn Sidebar(props: SidebarProps) -> Element {
             .map(|(_, i, _)| *i)
     };
 
+    // The row a reader is told the tree is on. The tree keeps DOM focus and
+    // its rows are not Tab stops, so without this the cursor moved silently.
+    let cursor_row = reachable.get(at).map(|(name, i, _)| row_dom_id(name, *i));
+
     let nav_rows: Vec<CatalogRow> = reachable.iter().map(|(_, _, r)| r.clone()).collect();
     let addressed: Vec<(&'static str, usize)> =
         reachable.iter().map(|(name, i, _)| (*name, *i)).collect();
@@ -227,6 +231,7 @@ pub fn Sidebar(props: SidebarProps) -> Element {
                 "data-a11y-id": "catalog-tree",
                 role: "tree",
                 tabindex: "0",
+                "aria-activedescendant": cursor_row,
                 onkeydown: move |e: KeyboardEvent| {
                     let Some(key) = nav_key(&e.key()) else { return };
                     // Only for keys the tree owns: everything else keeps
@@ -344,8 +349,13 @@ fn Section(
                         button {
                             key: "{name}-{i}",
                             class: row_class(row, cursor == Some(i)),
+                            id: row_dom_id(name, i),
                             "data-a11y-id": "row-{name}-{i}",
                             role: "treeitem",
+                            // The tree is one Tab stop and its keys move the
+                            // cursor; a `button` with no tabindex is a stop of
+                            // its own in a real webview (PD-040).
+                            tabindex: "-1",
                             "aria-selected": if cursor == Some(i) { "true" } else { "false" },
                             "aria-expanded": match row.kind {
                                 RowKind::Parent { expanded, .. } => Some(if expanded { "true" } else { "false" }),
@@ -368,6 +378,11 @@ fn Section(
             }
         }
     }
+}
+
+/// A row's DOM id, which the tree's `aria-activedescendant` names.
+fn row_dom_id(section: &str, i: usize) -> String {
+    format!("catalog-row-{section}-{i}")
 }
 
 /// A row's classes: selection, the keyboard cursor, and the one indent level

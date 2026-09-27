@@ -15,6 +15,7 @@ pub(crate) mod export;
 pub mod extension_bootstrap;
 pub(crate) mod lineage;
 pub mod migrations;
+pub(crate) mod origins;
 pub mod profile;
 pub(crate) mod register;
 pub mod render;
@@ -35,8 +36,8 @@ pub use transform::{
 };
 pub use types::{
     ArrowRecordBatchStream, AttachOpts, ColumnInfo, DerivedOrigin, EngineStatus, ExportFormat,
-    FileFormat, MemoryBudget, PagedQueryResult, QueryLane, QueryResult, QueryToken, RegisterOpts,
-    TableInfo, TableOrigin,
+    FileFormat, FileRead, MemoryBudget, PagedQueryResult, QueryLane, QueryResult, QueryToken,
+    RegisterOpts, TableInfo, TableOrigin,
 };
 
 /// Result type for engine operations.
