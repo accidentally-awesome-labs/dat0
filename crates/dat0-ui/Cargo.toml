@@ -81,7 +81,7 @@ dat0-fixtures = { path = "../dat0-fixtures" }
 # `examples/visual_page.rs` inlines the fonts as data URIs so the emitted page
 # needs nothing from disk. Dev-only: the shipped binary serves them over the
 # `dat0://` protocol instead.
-base64 = "0.22"
+base64 = "0.23"
 # The self-dev-dependency turns `gallery` and `perf-harness` ON for this crate's
 # own test and example targets, so a flag-free `cargo test --all-targets`
 # compiles both in with no CI change. Neither reaches a release build.
