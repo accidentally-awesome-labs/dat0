@@ -113,7 +113,7 @@ plotters = { version = "0.3.7", default-features = false, features = [
 
 # Dev / test utilities
 tempfile = "3"
-serial_test = "3"
+serial_test = "4"
 
 # Engine: DuckDB native + bundled extensions (json, parquet are statically linked under `bundled`).
 # CSV reading is in DuckDB core; sqlite_scanner is NOT bundled (see D-009) and is loaded at runtime.
