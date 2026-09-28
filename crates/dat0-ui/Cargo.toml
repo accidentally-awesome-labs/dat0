@@ -73,7 +73,7 @@ font-kit = { version = "0.14.3", default-features = false, features = ["source-f
 dioxus-ssr = "=0.7.10"
 dioxus-core = "=0.7.10"
 insta = "1"
-serial_test = "3"
+serial_test = "4"
 tempfile = "3"
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "time"] }
 dat0-engine = { path = "../dat0-engine" }
