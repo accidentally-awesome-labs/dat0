@@ -15,7 +15,7 @@ The workspace uses Rust 2024 and the pinned Rust 1.97.0 toolchain. UI orchestrat
 | [`dat0-fixtures`](../crates/dat0-fixtures/src/lib.rs) | Reproducible synthetic data fixtures for development and tests |
 | [`dat0-i18n`](../crates/dat0-i18n/src/lib.rs) | Catalog-backed localized strings |
 | [`dat0-keychain`](../crates/dat0-keychain/src/lib.rs) | OS-backed credential storage and fallback behavior |
-| [`xtask`](../xtask/src/main.rs) | Existing packaging, release preflight, signing, legal-notice and performance commands |
+| [`xtask`](../xtask/src/main.rs) | Existing packaging, release preflight, signing, update-manifest verification and performance commands |
 
 ## Startup and data flow
 
