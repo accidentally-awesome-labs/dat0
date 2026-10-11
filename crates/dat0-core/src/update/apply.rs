@@ -1,9 +1,7 @@
 //! Atomic self-update: writability probe, swap, rollback, relaunch.
 //!
-//! Platform sequences follow the T0 spike (docs/internal/2026-06-22-p10a-2-t0-spike.md).
-//! Swap logic is inlined in `apply_update`; no standalone `plan_swap` is exposed
-//! because T6 uses `apply_update` directly and a separate `plan_swap` would be
-//! dead code with no callers.
+//! See `docs/release-runbook.md` for update acceptance checks. Swap logic stays
+//! in `apply_update`; a separate swap-planning interface would have no callers.
 
 use std::path::{Path, PathBuf};
 

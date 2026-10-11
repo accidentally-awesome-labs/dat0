@@ -1,63 +1,23 @@
-<!--
-The checklist below is the per-slice invariant list from
-docs/plans/2026-07-21-dat0-ui-redesign-master-plan.md §8, plus the perf budget.
-These are not suggestions — every one of them exists because something broke.
+## Summary
 
-Tick a box only after you have SEEN the command pass. If an item genuinely does
-not apply to this PR, strike it through and say why in one line; do not delete
-it silently.
--->
+<!-- What changes for users or contributors? -->
 
-## What this changes
+## Motivation / related issue
 
-<!-- One paragraph. What behaviour is different after this merges? -->
+<!-- Explain the need and link any relevant issue or discussion. Substantial features and format, persistence, or privacy changes need discussion first; see CONTRIBUTING.md. Security reports belong in private reporting, not here. -->
 
-## Why
+## Validation
 
-<!-- The problem, with file:line evidence where it is a defect. -->
+<!-- List the exact commands and behavior checks you ran, their results, and any checks not run with reasons. Do not mark unobserved results as passing. Use the change-specific checks in CONTRIBUTING.md and the advanced recipes in docs/ci.md. Live-service tests and release-host checks are not required for every PR. -->
 
-## Per-slice invariants
+- [ ] Every commit has a DCO sign-off (`git commit -s`); see [the contribution workflow](../CONTRIBUTING.md#pull-requests-review-and-dco).
 
-- [ ] **Nav / a11y suite green** — `keyboard_nav`, `input_nav`,
-      `sql_console_nav`, `sql_console_transient_nav`, `cell_editor_nav`,
-      `catalog_nav`, `ai_nav`, `recents_nav`, `a11y_content`, `a11y_spike`.
-      These assert labels and focus sequences, not colours, so token swaps are
-      invisible to them. A slice that changes an a11y **label string** updates
-      the assertion in the SAME PR. The `data-a11y-id` handles ship in release,
-      so there is no capture feature to enable.
-      `cargo test -p dat0-ui`
-- [ ] **Escape ladder — all 5 rungs intact**, and the SQL console's key
-      registration is exercised by both production and the harness. Keyboard
-      behaviour is driven through the harness's key events, never by calling an
-      action directly (transient-bars lesson).
-- [ ] **Theme switching green**, and every surface reads its tokens through
-      `var(--d0-…)` rather than a baked colour.
-      `cargo test -p dat0-ui --test theme_live_switch --test style_lint`
-- [ ] **Appearance defended** — the SSR scene catalogue covers any new surface
-      or state, and its snapshots are reviewed rather than blind-accepted.
-      The real-window probes run in CI on Linux (`windowed-probes`, under
-      Xvfb); a geometry change also re-runs `visual_probe` on macOS by hand.
-      `cargo test -p dat0-ui --test visual_snapshot`
-      `cargo run -p dat0-ui --features visual --example visual_probe`
-- [ ] **Grid perf**: the `GridDataSource` paging path is unchanged, or the
-      change is justified here and re-baselined.
-- [ ] **crash-e2e + session round-trip green**; any session-schema change is
-      additive-only.
-- [ ] **Perf budget** — `cargo xtask perf --check` passes on the release host.
-      Attach the JSON, or apply the `run-perf` label to run the blocking
-      `perf-gate` job on this PR.
+## Conditional checks
 
-## Standard gate
+<!-- Complete the relevant items and explain items that do not apply. -->
 
-- [ ] `cargo fmt --all -- --check`
-- [ ] `cargo clippy --workspace --all-targets -- -D warnings`
-- [ ] `cargo test --workspace`
-
-## Ratchets and register
-
-- [ ] Any ratcheted quantity this PR moves (`window_module_ratchet`'s ceilings,
-      `design_contract`'s track counts, the `style_lint` `ALLOW` table) is
-      adjusted **in this PR**, by the measured delta — those tests fail
-      stale-under as well as over.
-- [ ] `docs/deferrals.md` entries this PR opens or closes are edited here.
-- [ ] New invariant introduced → a ratchet test defends it.
+- [ ] **UI interaction / accessibility:** exercised user interaction through the existing harness and production keyboard-event routing, including Escape priority and release accessibility handles. See [accessibility guidance](../docs/a11y.md).
+- [ ] **Appearance / geometry:** preserved token-only styling, checked theme contrast/switching, reviewed actual SSR snapshot changes, and exercised real-window geometry/focus where relevant. See [change-specific checks](../CONTRIBUTING.md#change-specific-checks).
+- [ ] **Package / session compatibility:** documented any persistence or format impact, retained explicit versions/migrations/defaults, and ran relevant round-trip and compatibility checks. See [the format contract](../docs/dat0-format-v1.md).
+- [ ] **Outbound data / security:** described any new network traffic, authentication, privacy, or trust-boundary changes and updated the [privacy guide](../docs/privacy.md) as needed. Undisclosed vulnerabilities use [private reporting](https://github.com/accidentally-awesome-labs/dat0/security/advisories/new).
+- [ ] **Dependencies / licensing:** ran the relevant supply-chain checks and updated NOTICE through the canonical regeneration procedure when dependency attribution changed. See [contribution instructions](../CONTRIBUTING.md).

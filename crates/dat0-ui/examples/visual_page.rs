@@ -116,8 +116,7 @@ fn index_page(index: &BTreeMap<&'static str, Vec<(String, String)>>) -> String {
         "<!doctype html>\n<html lang=\"en\">\n<head>\n\
          <meta charset=\"utf-8\">\n<title>dat0 — visual scenes</title>\n\
          </head>\n<body>\n<h1>dat0 visual scenes</h1>\n\
-         <p>{} scenes x {} themes. Compare against \
-         <code>docs/internal/design/redesign-landing-v4.dc.html</code>.</p>\n{body}</body>\n</html>\n",
+         <p>{} scenes x {} themes.</p>\n{body}</body>\n</html>\n",
         SCENES.len(),
         BUILTIN_IDS.len(),
     )

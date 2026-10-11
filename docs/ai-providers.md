@@ -4,11 +4,12 @@ dat0 ships with a **bring-your-own-key (BYOK) AI layer**. AI is **off by default
 and does nothing until you supply an API key from a provider you already have an
 account with. dat0 never proxies your key through its own servers.
 
+[Documentation index](README.md)
+
 ## Opening the AI Providers panel
 
 Open the panel from the **View** menu → **AI Providers…**, or search for it in the
-Command Palette (`⇧⌘P`). It is a standalone dock, independent of the Connections
-panel.
+Command Palette (`⇧⌘P`). It opens as a modal panel.
 
 ## Supported providers
 
@@ -26,20 +27,20 @@ Select a provider from the panel's picker, then fill in the fields below.
 
 ## Entering your API key
 
-Type or paste your key into the **API key** field and press **Save key**.
+Press **Save key** to open an entry prompt, paste or type the key, and confirm.
 
-- The key is written to the **OS keychain** (macOS Keychain / the platform
-  equivalent). It is **never** written to `settings.toml`, session files, logs, or
-  telemetry.
+- The key normally goes to the **OS secret store** (macOS Keychain or Linux
+  Secret Service), not ordinary settings or telemetry. If the store cannot
+  open, the app uses an in-memory fallback and warns that the key will not
+  survive quitting.
 - The panel shows **"Key set"** or **"No key"** — the key itself is never echoed
   back to the UI.
 - To remove a stored key, press **Forget key**.
 
 ## Model
 
-Enter the model name in the **Model** field. Each provider shows a hint with
-example model IDs (e.g. `claude-opus-4-8` for Anthropic, `gpt-4o` for OpenAI).
-There is no hard default; you must enter one.
+Press **Save model** to open the model-entry prompt and confirm a model ID.
+Each provider shows example IDs. There is no hard default; enter a model.
 
 ## Enabling AI
 
@@ -60,23 +61,15 @@ provider + security + payload path and verify that your key is accepted.
 
 ## What leaves your machine
 
-The first time you invoke a Test-connection or enable AI, a one-time notice
-appears:
+AI requests authenticate with your key at the selected service and send schema
+(table/column names and types) plus your prompt. **Explain SQL** sends the SQL
+being explained. User text is not structurally sanitized: data, paths, or secrets
+you paste into it can reach the provider.
 
-> **AI requests leave your machine.**
-> Schema names and your prompt are sent to the selected provider. No row data is
-> sent unless 'Include sample rows' is on.
-
-dat0 enforces this structurally: the outbound request carries only table and column
-**names** (no values), plus your text prompt. Row data is **never** included by
-default.
-
-### Include sample rows (opt-in)
-
-The **Include sample rows in requests** toggle adds a small number of representative
-row values to the payload — useful if you want the AI to reason about actual content
-rather than just schema shape. This toggle is off by default. When it is on, the
-provider receives real row values from your data.
+The current desktop request builders send `sample_rows: None` for both streams.
+The **Include sample rows in requests** preference is stored and defaults off,
+but turning it on does **not** currently attach preview rows. This is not a
+general guarantee about the contents of arbitrary prompt text.
 
 ## Custom endpoints
 
@@ -93,8 +86,9 @@ By default, dat0 applies **SSRF protection** to the Custom endpoint URL:
   (`169.254.x.x`, `fe80::/10`, including the AWS/GCP metadata IP `169.254.169.254`).
 - IPv6 ULA ranges (`fc00::/7`) are blocked.
 
-The protection validates the URL when you save it **and** re-checks all resolved
-IP addresses at request time to defend against DNS-rebinding.
+The URL is validated and resolved IP addresses are rechecked at request time.
+This is not connection pinning: the HTTP client independently resolves DNS
+again when sending, leaving a DNS re-resolution race.
 
 ### Advanced override (local models)
 
@@ -105,11 +99,11 @@ any internet-facing endpoint.
 
 ## Privacy summary
 
-| What is sent | Always | Only with "Include sample rows" on |
-|---|---|---|
-| Your text prompt | yes | — |
-| Table names | yes | — |
-| Column names and types | yes | — |
-| Row values | **never** | yes |
-| Session files / file paths | **never** | **never** |
-| API key | in auth header to your chosen provider only | — |
+| Channel | What leaves the machine |
+|---|---|
+| AI prompt / Explain SQL | User text or SQL plus schema, to the chosen provider |
+| Automatic sample rows | Not attached by current desktop streams, even with the stored toggle on |
+| API key | Authentication to the chosen service |
+
+See [Privacy](privacy.md) for separate crash, update, extension, and remote-data
+channels and the limits of redaction.

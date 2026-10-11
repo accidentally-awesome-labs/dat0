@@ -4,6 +4,9 @@ on:
   push:
     branches: [main]
 
+permissions:
+  contents: read
+
 env:
   # See ci.yml for the full rationale. Incremental caches are written but never
   # reused in CI (every run is a clean build) and cost GBs of disk on a runner
@@ -14,6 +17,7 @@ env:
 
 jobs:
   glitchtip-roundtrip:
+    if: github.repository == 'accidentally-awesome-labs/dat0' && github.ref == 'refs/heads/main' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
     runs-on: ubuntu-latest
     timeout-minutes: 60
     # `continue-on-error` used to sit HERE, at job level, which swallowed the
@@ -23,21 +27,23 @@ jobs:
     # regression regardless of whether GlitchTip's API is reachable.
     # Only the ASSERTION step depends on a live external service, so only the
     # assertion step is soft (see the ai_live lesson in ci.yml).
-    env:
-      DAT0_GLITCHTIP_DSN_PUBLIC: ${{ secrets.GLITCHTIP_DSN_PUBLIC }}
-      GLITCHTIP_API_TOKEN: ${{ secrets.GLITCHTIP_API_TOKEN }}
-      GLITCHTIP_PROJECT_SLUG: ${{ secrets.GLITCHTIP_PROJECT_SLUG }}
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
       - name: Skip if secrets absent
         id: gate
+        env:
+          HAVE_DSN: ${{ secrets.GLITCHTIP_DSN_PUBLIC != '' }}
+          HAVE_API_TOKEN: ${{ secrets.GLITCHTIP_API_TOKEN != '' }}
+          HAVE_PROJECT_SLUG: ${{ secrets.GLITCHTIP_PROJECT_SLUG != '' }}
         run: |
-          if [ -z "${DAT0_GLITCHTIP_DSN_PUBLIC}" ] || [ -z "${GLITCHTIP_API_TOKEN}" ] || [ -z "${GLITCHTIP_PROJECT_SLUG}" ]; then
+          if [ "$HAVE_DSN" != true ] || [ "$HAVE_API_TOKEN" != true ] || [ "$HAVE_PROJECT_SLUG" != true ]; then
             echo "secrets not set — skipping live e2e"; echo "run=false" >> "$GITHUB_OUTPUT"
           else
             echo "run=true" >> "$GITHUB_OUTPUT"
           fi
-      - uses: dtolnay/rust-toolchain@1.97.0
+      - uses: dtolnay/rust-toolchain@ca36e3307eb02aaffd8a9268ae90e586fd4f461e # 1.97.0
         if: steps.gate.outputs.run == 'true'
       # wry links against WebKitGTK and libsoup; without the -dev packages the
       # build fails at pkg-config time, which looks nothing like a missing
@@ -49,6 +55,8 @@ jobs:
           sudo apt-get install -y libwebkit2gtk-4.1-dev libsoup-3.0-dev libsecret-1-dev libxdo-dev
       - name: Build + send test event
         if: steps.gate.outputs.run == 'true'
+        env:
+          DAT0_GLITCHTIP_DSN_PUBLIC: ${{ secrets.GLITCHTIP_DSN_PUBLIC }}
         run: |
           cargo build -p dat0-ui --release --bin dat0
           ./target/release/dat0 __telemetry-test
@@ -59,6 +67,9 @@ jobs:
         # third-party ingestion API whose availability and lag we do not
         # control, so a failure here must not redden main.
         continue-on-error: true
+        env:
+          GLITCHTIP_API_TOKEN: ${{ secrets.GLITCHTIP_API_TOKEN }}
+          GLITCHTIP_PROJECT_SLUG: ${{ secrets.GLITCHTIP_PROJECT_SLUG }}
         run: |
           sleep 15  # ingestion lag
           BASE="${GLITCHTIP_API_URL:-https://app.glitchtip.com}"

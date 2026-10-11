@@ -35,12 +35,12 @@
 //! `Scalar::Date`, and `Scalar::Timestamp` all serialize as plain JSON strings
 //! (making round-trip ambiguous), and where `FilterValue::None` would collide
 //! with `FilterValue::Scalar(Scalar::Null)` (both serialize as JSON `null`).
-//! See PD-014 in `docs/deferrals.md`.
+//! See `docs/dat0-format-v1.md` for the tagged wire contract.
 //!
 //! Cross-language consumers (e.g. future Python .dat0 reader for P8) can route
 //! on the discriminator fields without Rust-side knowledge.
 //!
-//! See design §3 for the full wire-format specification and examples.
+//! The public format guide and JSON Schema specify compatibility requirements.
 
 use serde::{Deserialize, Serialize};
 

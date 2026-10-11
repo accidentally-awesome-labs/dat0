@@ -1,399 +1,112 @@
 # dat0 Release Runbook
 
-> Operational reference for cutting a signed, notarized dat0 release.
-> Covers the full secret inventory, cut-a-release steps, artifact verification,
-> and pointers to clean-VM UAT.
->
-> Pipeline file: `.github/workflows/release.yml` (commit `f2dae56`).
-> Security ops (cert renewal, key rotation): see `docs/security-runbook.md`.
->
-> **Before the first release:** `docs/release-prerequisites.md` (RL1) lists the
-> five human-only prerequisites — minisign key, GPG subkey, Apple enrolment,
-> the `nyc_taxi.parquet` asset, GlitchTip credentials. None of them are done
-> yet, and none of the steps below can succeed until they are.
+Public operational reference for preparing, packaging, verifying and publishing a release. There are no published binaries yet; the artifact table below describes the intended release output, not available downloads. [Documentation index](README.md).
 
----
+See [release prerequisites](release-prerequisites.md) for outstanding human provisioning, [security operations](security-runbook.md) for rotation/private reporting, and [CI](ci.md) for contributor checks. Ordinary contributors do not need signing or service credentials.
 
-## Secret inventory
+## Trust boundary and secret inventory
 
-All secrets live in the GitHub repository's **Settings → Secrets and variables →
-Actions** store. Never commit any of these values to source control.
+[Release workflow](../.github/workflows/release.yml) accepts only the canonical `accidentally-awesome-labs/dat0` repository: manual dispatch on `refs/heads/main`, or a push of a `refs/tags/v*` tag. The no-secret `validate-ref` job rejects other refs/events before build or signing. For tags, it fetches main and requires `git merge-base --is-ancestor "$GITHUB_SHA" origin/main`. This checks main ancestry, not merely a tag name.
 
-| Secret name | What it is | How to populate |
+`gate`, `macos`, `linux` and `publish` use the protected **release** environment, whose deployment policies permit exactly the `main` branch and `v*` tags. Put signing, notary, minisign and GPG material in **Settings → Environments → release → Secrets**; never commit values. Telemetry credentials remain separately scoped to the workflows that consume them. The release DSN must be accessible to release jobs; ordinary CI/heavy builds use the development stub, not a production override.
+
+| Secret | Purpose |
+|---|---|
+| `APPLE_DEV_ID_CERT_P12` | Base64 Developer ID Application certificate, private key and chain |
+| `CERT_PASSWORD` | Certificate export password |
+| `KEYCHAIN_PASSWORD` | Ephemeral runner keychain password |
+| `AC_API_KEY_P8` | Base64 App Store Connect API private key |
+| `AC_KEY_ID`, `AC_ISSUER_ID` | Notary API identifiers |
+| `DAT0_SIGN_IDENTITY` | Exact Developer ID Application identity including Team ID |
+| `GPG_PRIVATE_KEY` | ASCII-armored dedicated Linux signing subkey |
+| `GPG_PASSPHRASE` | Optional passphrase for that subkey |
+| `MINISIGN_SECRET_KEY` | Full production update-signing secret key |
+| `GLITCHTIP_DSN_PUBLIC` | Crash DSN compiled as `DAT0_GLITCHTIP_DSN_PUBLIC` |
+
+Export private files to an operator-selected protected directory, not a Desktop/shared folder. For example, with `PROTECTED_DIR` set to that directory, use `base64 -i "$PROTECTED_DIR/dat0-dev-id.p12"` or `base64 -i "$PROTECTED_DIR/AuthKey_XXXX.p8"` when provisioning. Protect offline backups and remove temporary exports after successful provisioning.
+
+The [release preflight](../xtask/src/release.rs) checks workspace/tag version, production update key, DSN, sample hash and nine required signing-secret presence flags. It receives presence booleans rather than signing values; the DSN is checked separately. Tag findings stop the release; manual-run findings are warnings. Missing prerequisites are not completed by a successful unsigned run.
+
+## Artifact layout
+
+| Published artifact | Producer | Provisioned release contents |
 |---|---|---|
-| `APPLE_DEV_ID_CERT_P12` | Base64-encoded Developer ID Application `.p12` exported from Keychain Access. Includes the private key + the full cert chain. | `base64 -i ~/Desktop/dat0-dev-id.p12` → paste the output. |
-| `CERT_PASSWORD` | Password chosen when exporting the `.p12` from Keychain Access. | Plain string; set when you do the export. |
-| `KEYCHAIN_PASSWORD` | Password used to create the ephemeral CI build keychain (`build.keychain`). Choose any strong value — it is used only within the runner. | Generate once; store alongside the other Apple secrets. |
-| `AC_API_KEY_P8` | Base64-encoded App Store Connect API key (`.p8` file). Obtained from App Store Connect → Users and Access → Integrations → App Store Connect API. | `base64 -i ~/Desktop/AuthKey_XXXX.p8` → paste the output. |
-| `AC_KEY_ID` | The key ID displayed next to the `.p8` in App Store Connect (e.g. `ABC1234567`). | Copy from the App Store Connect UI. |
-| `AC_ISSUER_ID` | The issuer UUID shown at the top of the App Store Connect API keys page (e.g. `xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx`). | Copy from the App Store Connect UI. |
-| `GPG_PRIVATE_KEY` | ASCII-armored GPG private key used to sign `dat0.AppImage`. Export with `gpg --armor --export-secret-keys <fingerprint>`. | Paste the full `-----BEGIN PGP PRIVATE KEY BLOCK-----` block. |
-| `GPG_PASSPHRASE` | Passphrase protecting the GPG private key (if set). | See the **Linux GPG signing — passphrase wiring** note below. |
-| `DAT0_SIGN_IDENTITY` | The full `Developer ID Application: …` string as it appears in `security find-identity -v -p codesigning`. | Copy verbatim, including the parenthetical Team ID suffix. |
-| `MINISIGN_SECRET_KEY` | The production update-signing key; the publish job signs `latest.json` with it. | `docs/release-prerequisites.md` §1. |
-| `GLITCHTIP_DSN_PUBLIC` | The crash-report DSN both release builds compile in. | See **CI secrets** under GlitchTip below. |
+| `dat0-<version>-universal.dmg` | macos | Developer ID signed, notarized, stapled universal macOS app (arm64 + x86_64) |
+| `dat0-<version>-x86_64.AppImage` | linux | Linux x86_64 AppImage |
+| `dat0-<version>-x86_64.AppImage.sig` | linux | Detached binary GPG signature, not `.asc` |
+| `dat0.app.tar.gz` | macos | Signed, notarized and stapled update bundle, re-tarred after stapling |
+| `latest.json`, `latest.json.minisig` | publish | Signed updater manifest |
+| `SHA256SUMS` | publish | Checksums for DMG, AppImage, signature and tarball |
 
-The notary tool (`xcrun notarytool`) receives its credentials at runtime via
-environment variables set in the CI **"Sign + notarize"** step:
-`AC_KEY_ID`, `AC_ISSUER_ID`, and `AC_API_KEY_PATH` (the path
-`$RUNNER_TEMP/ac_api_key.p8` to the decoded key file written by the preceding
-"Notary API key file" step).
+There is no Linux aarch64 release artifact. Build/upload names under `target/` stay unversioned (`dat0.dmg`, `dat0.AppImage`); publish stages versioned basenames. The tarball is deliberately unversioned because the [manifest generator](../xtask/src/manifest.rs) uses that URL. Artifacts are downloaded from the same workflow run before publication.
 
-`release.yml`'s first job, `gate`, is told whether each of these is set, never
-its value, and `cargo xtask release-check` stops a tag that lacks one.
+## Prepare through a contribution PR
 
-### macOS entitlements (important)
-
-The hardened-runtime signature uses **no entitlements**. The `dat0.app` binary,
-DuckDB, and the Metal rendering path all operate cleanly under the hardened
-runtime with an **empty entitlements set** — no JIT, no unsigned-memory, no
-special allowances required. This is the minimal, most-hardened signing posture.
-If a future dependency requires entitlements, add them in the xtask `sign` step
-and document them here.
-
----
-
-## Linux GPG signing — passphrase wiring
-
-> **Resolved (RL4).** The wiring defect described here for P10a is fixed; what
-> follows documents the behaviour that shipped, not an open decision.
-
-The original defect: `GPG_PASSPHRASE` was declared only in the **"Import GPG
-key"** step's `env:`, and GitHub Actions step-scoped `env:` does not propagate.
-The actual signing command runs in the separate **"Bundle + sign"** step, so a
-passphrase-protected key would hang or fail non-interactively.
-
-**What `release.yml` does now.** The **"Bundle + sign"** step declares
-`DAT0_GPG_PASSPHRASE: ${{ secrets.GPG_PASSPHRASE }}`, and the **"Import GPG
-key"** step writes `allow-loopback-pinentry` into `~/.gnupg/gpg-agent.conf`.
-
-**What `xtask` does with it.** `xtask/src/linux.rs::gpg_sign` reads
-`DAT0_GPG_PASSPHRASE` and branches:
-
-- **Empty or unset** (the recommended posture — a dedicated passphraseless CI
-  signing subkey, `docs/security-runbook.md:120-123`) → plain
-  `gpg --batch --yes --detach-sign`. The loopback flags are **omitted**, not
-  passed empty: `--passphrase-fd 0` with an empty passphrase makes gpg fail on
-  a passphraseless key rather than skip the prompt.
-- **Set** → `gpg --batch --yes --pinentry-mode loopback --passphrase-fd 0
-  --detach-sign`, with the passphrase written to the child's **stdin**. Never
-  on argv, which `ps` exposes on a shared runner.
-
-So both key postures work, and the recommended one needs no secret at all.
-
-**Provisioning either key:** `docs/release-prerequisites.md` step 2.
-
-**Dry-run check:** confirm `dat0.AppImage.sig` exists and that
-`cargo xtask verify --linux` (which runs `gpg --verify`) passes.
-
----
-
-## Artifact layout (produced by `release.yml`)
-
-| Artifact | Job | Contents |
-|---|---|---|
-| `dat0-<version>-universal.dmg` | `macos` | Signed + notarized + stapled universal DMG (arm64 + x86_64 lipo'd binary) |
-| `dat0-<version>-x86_64.AppImage` | `linux` | Signed Linux AppImage (x86_64) |
-| `dat0-<version>-x86_64.AppImage.sig` | `linux` | Detached binary GPG signature (`.sig`, NOT `.asc`) |
-| `dat0.app.tar.gz` | `macos` | macOS auto-update payload: the **signed, notarized and stapled** bundle, re-tarred by `sign::sign_and_notarize` after `stapler staple` (`macos::tar_app`). **Unversioned by design** — `xtask/src/manifest.rs` points `latest.json`'s macOS URL at this exact name. |
-| `latest.json` + `.minisig` | `publish` | minisign-signed update manifest |
-| `SHA256SUMS` | `publish` | SHA-256 checksums for the DMG, AppImage, `.sig`, and the tarball |
-
-In-`target/` and in-artifact filenames stay **unversioned** (`dat0.dmg`,
-`dat0.AppImage`) because `xtask::sign::verify` and the `publish` job address
-them by fixed path. The version is applied by the publish job's
-**"Stage release assets under their versioned names"** step, because
-`gh release` names each asset after its basename and has no rename flag. These
-are the names `README.md:36-38` documents to users.
-
----
-
-## Cut a release — step by step
-
-### 1. Bump the version
-
-Edit `Cargo.toml` (root, `[workspace.package]` section). The current version
-is `0.1.0`. Bump it following semver:
-
-```toml
-[workspace.package]
-version = "1.0.0"
-```
-
-### 2. Regenerate NOTICE if dependencies changed
-
-If you added, removed, or updated any Cargo dependency since the last release,
-regenerate `NOTICE.md` **on a Linux host** (PD-003: `cargo about generate`
-output is not byte-identical across macOS and Linux; the CI gate runs on Linux,
-so the committed NOTICE must match what Linux generates):
-
-```bash
-scripts/notice-regen.sh
-```
-
-It rewrites only the block between the `cargo-about generated` markers, and
-refuses to run with any cargo-about but the version it pins (the one the gate
-uses). Do not redirect `cargo about generate` into `NOTICE.md`: that replaces
-the hand-written notice, icon, font and vendored-JavaScript sections with the
-bare crate list. On macOS, take the regenerated `NOTICE.md` from the failed
-`notice` check's artifacts instead.
-
-If no dependency changed since the last regeneration, skip this step — the
-existing `NOTICE.md` is already in sync (confirmed by the CI `notice` job).
-
-### 3. Commit and tag
-
-```bash
-git add Cargo.toml Cargo.lock NOTICE.md   # add NOTICE.md only if regenerated
-git commit --signoff -m "chore: bump version to 1.0.0"
-git tag -a v1.0.0 -m "dat0 v1.0.0"
-git push origin main
-git push origin v1.0.0
-```
-
-### 4. Watch the release workflow
-
-The `v1.0.0` tag push triggers `release.yml`. Monitor the run:
-
-```bash
-gh run list --workflow=release.yml --limit 5
-gh run watch <run-id>
-```
-
-Jobs run in order: `gate` → `macos` and `linux` (in parallel) → `publish`
-(tag-only). `gate` runs `cargo xtask release-check --tag <tag>` and stops the
-release before anything is built when the tag does not name the workspace
-version, the updater still trusts the test key, the crash-report DSN or a
-signing secret is missing, or the NYC taxi sample's hash is a placeholder.
-Run `cargo xtask release-check` before tagging to see the same list.
-`publish` signs `latest.json` and checks the signature as the app will
-(`cargo xtask verify-manifest`, against the committed public key) before it
-uploads anything. If any job fails, check its log for the failing step.
-Common failure modes are documented in the troubleshooting section below.
-
-### 5. Run the perf gate on the release host
-
-```bash
-cargo xtask perf --check
-```
-
-All six scenarios must pass. This is the only place the 60 fps / 1 s cold-launch
-/ 200 MB idle-RSS numbers the marketing page prints are actually checked against
-a running window — `ci.yml`'s copy is advisory (`continue-on-error`), because a
-virtualized GPU cannot defend a frame-rate claim.
-
-Attach the emitted JSON lines to the release PR. Two arms can fail:
-
-- **`FAIL … over budget`** — the absolute number in
-  `docs/internal/perf-baselines.json`. Do not ship; the claim would be false.
-- **`FAIL … worse than the recorded`** — a >20% regression against this host's
-  own committed baseline. Investigate before shipping; if the regression is
-  understood and accepted, re-record with `--update-baseline` **in its own
-  commit**, so the loosening is a reviewed act rather than a side effect.
-
-`RECORD` (not `PASS`) on every scenario means this host has no committed
-baseline yet. That is expected on a new machine; run `--update-baseline` once
-and commit the result.
-
-This step may be run earlier, on the release branch, since its output belongs on
-the release PR. It is placed here so that a release cut without it is visibly
-skipping a numbered step.
-
-### 6. Watch the post-merge main run (project CI lesson)
-
-The push to `main` (step 3) also triggers `ci.yml`. The macOS grid-scroll
-bench is push-to-main-only and is the first indicator of a disk-reclaim
-regression. Confirm it goes green:
-
-```bash
-gh run list --workflow=ci.yml --limit 3
-gh run watch <main-run-id>
-```
-
-Do **not** declare a release green until both `release.yml` and the post-merge
-`ci.yml` main run are confirmed green.
-
-### 7. Verify the release artifacts
-
-After `publish` completes, confirm the GitHub Release page has (with
-`<version>` = the tag without its leading `v`):
-- `dat0-<version>-universal.dmg`
-- `dat0-<version>-x86_64.AppImage`
-- `dat0-<version>-x86_64.AppImage.sig`
-- `dat0.app.tar.gz`
-- `latest.json` and `latest.json.minisig`
-- `SHA256SUMS`
-
-Download and verify locally:
-
-```bash
-V=1.0.0   # the release version
-
-# macOS
-shasum -a 256 "dat0-$V-universal.dmg" | grep -F "$(grep "dat0-$V-universal.dmg" SHA256SUMS | awk '{print $1}')"
-
-# Linux AppImage + signature
-sha256sum "dat0-$V-x86_64.AppImage" | grep -F "$(grep "dat0-$V-x86_64.AppImage " SHA256SUMS | awk '{print $1}')"
-gpg --verify "dat0-$V-x86_64.AppImage.sig" "dat0-$V-x86_64.AppImage"   # must print "Good signature"
-```
-
-### 8. Run the clean-VM UAT
-
-See `docs/plans/2026-06-17-dat0-p10a-uat.md` for the full manual checklist.
-Do not mark a release shipped until all UAT items are checked.
-
----
+1. Branch from current `upstream/main`; bump `[workspace.package].version` in root `Cargo.toml` and update the lockfile as necessary. Follow [CONTRIBUTING](../CONTRIBUTING.md), including DCO sign-off on every commit. Open a focused release-preparation PR; do not push preparation commits directly to main.
+2. If dependencies changed, regenerate NOTICE on Linux with `scripts/notice-regen.sh` using its pinned cargo-about version. It replaces only the generated marker block; never overwrite NOTICE with raw cargo-about output. On macOS use the failed NOTICE check's correction artifact. The reusable `notice` job is always called by CI.
+3. Validate relevant contributor checks and obtain `CI required` and external `DCO` success, resolve review threads, and merge normally. Do not use skip directives that leave required checks pending. Observe the resulting main CI run, including main-only live-service checks. Hosted PR checks and eight Linux real-window probes do not require production secrets; optional `run-heavy`/`run-perf` labels are explained in [CI](ci.md).
+4. On a supported release desktop, run `cargo xtask perf --check`. All six scenarios need actual measurements and budget verdicts. The helper builds selected release artifacts itself. `SKIP` is not a measurement. See [public budgets](performance-baselines.json) and [CI performance guidance](ci.md). Absolute budget failures or regressions over the recorded host baseline require investigation; never loosen baselines to hide a regression. Any justified baseline update is a separate reviewed change. Attach measurements to the preparation PR.
+5. Run the main-only dry run below and record its run URL, revision, unsigned/signed mode and actual outcomes in the release PR. Complete provisioned checks before publishing.
 
 ## Workflow dispatch — dry run
 
-To test the pipeline without publishing a release, trigger `release.yml`
-manually via `workflow_dispatch`:
-
 ```bash
-gh workflow run release.yml
+gh workflow run release.yml --repo accidentally-awesome-labs/dat0 --ref main
+gh run list --repo accidentally-awesome-labs/dat0 --workflow release.yml --limit 5
+gh run watch <run-id> --repo accidentally-awesome-labs/dat0
 ```
 
-All jobs run normally but the `publish` job is skipped (gated on
-`github.ref_type == 'tag'`), and `gate` lists its findings as warnings instead
-of stopping. So a dry run never signs the update manifest; its steps are
-checked offline instead (`xtask/tests/release_workflow.rs`,
-`xtask/tests/manifest_verify.rs`). Artifacts are uploaded and available for
-download from the Actions run summary. It needs no secrets: without them,
-macOS makes a disk image of the app signed ad hoc and Linux an unsigned
-AppImage, and both are still built, checked and smoke-tested. Use this for:
+Manual main runs never publish, even if signing material is present. Without secrets, macOS creates an ad-hoc-signed app disk image and Linux an unsigned AppImage. Builds, bundle/version/architecture/Info.plist checks, artifact uploads and Linux smoke checks still run. Linux AppImage smoke covers Ubuntu 22.04, Debian 12 and Ubuntu 24.04; inspect the `appimage-smoke` screenshots, not only exit status. The AppImage bundles selected dependencies but uses host WebKitGTK/GTK/GLib; see [Linux packaging](../xtask/src/linux.rs) and [smoke script](../scripts/appimage-smoke.sh).
 
-- First-time pipeline validation (esp. the GPG passphrase wiring check above).
-- Testing cert/key rotation after a renewal.
-- Confirming a notarization path still works after an Xcode update.
+With provisioned secrets, manual runs can exercise platform signing and notarization. They still do **not** exercise production manifest signing or publication because `publish` is skipped. Fixture-based [manifest verification tests](../xtask/tests/manifest_verify.rs) and [wire round-trip tests](../crates/dat0-core/tests/update_manifest_roundtrip.rs) do not prove a production key was used. Record explicitly which checks were not exercised. No successful provisioned signing run is claimed here.
 
-Record the run URL in the release notes or in the team chat for traceability.
+## Publish a provisioned release
 
-### Last verified dry run
-
-**NOT YET RUN with the RL1 secrets** (`docs/release-prerequisites.md`). A
-dry run without them exercises everything but signing, notarization and
-manifest signing.
+After preparation has merged and acceptance evidence is complete, fetch upstream main and tag the intended reviewed main-history revision. Only the authorized maintainer may create/update/delete production `v*` tags under the release-tag ruleset.
 
 ```bash
-gh workflow run release.yml && gh run watch
+git fetch upstream
+git tag -a v1.0.0 <reviewed-main-revision> -m "dat0 v1.0.0"
+git push upstream v1.0.0
 ```
 
-Record the run URL here once it is green:
+Use the actual workspace version, not this example literally. The sequence is `validate-ref` → `gate` → `macos` and `linux` → `publish`. Only a canonical **tag push** with a `v*` ref can publish; manual branch/tag dispatches other than main are rejected. Tags always require signing and all preflight findings to be resolved, rather than silently shipping unsigned.
 
-| Date | Run URL | Result |
-|---|---|---|
-| 2026-09-26 | [release run #3](https://github.com/accidentally-awesome-labs/dat0/actions/runs/36262576705), `0ebe25b` | Dry run without secrets, green. `gate` listed the four owner-only findings as warnings: the test update key, no crash-report DSN, the NYC taxi sample's placeholder hash, the nine signing secrets. macOS: a universal binary (`lipo`: `x86_64 arm64`) that prints `dat0 0.1.0 (0ebe25b)`, an Info.plist that lints, and a disk image of the app signed ad hoc, made by create-dmg. Linux: the AppImage, built on Ubuntu 22.04, drew its page on Ubuntu 22.04, Debian 12 and 24.04. Signing, notarization and `publish` were not exercised. |
+`publish` signs the update manifest and runs `cargo xtask verify-manifest` against the committed public key before uploading. Inspect all jobs and the release asset list; no skipped signing step is a signed-release success. Do not casually move a published tag to repair failures: diagnose first and follow maintainer tag policy.
 
----
+## Signed artifact verification and manual acceptance
 
-## Troubleshooting
+These are provisioned release checks, **not** prerequisites for every contribution or proof supplied by an unsigned dry run. Use clean machines and synthetic data; record OS/architecture, revision, artifact hashes, commands, observations and unperformed items in the release PR. Do not declare a release shipped until all applicable acceptance items have evidence.
 
-| Symptom | Likely cause | Fix |
-|---|---|---|
-| `security import` fails (cert not trusted) | `APPLE_DEV_ID_CERT_P12` is stale or the cert expired | Re-export the `.p12` from a Mac with the valid cert installed; update the secret. |
-| `codesign` exits non-zero (`The specified item could not be found`) | `DAT0_SIGN_IDENTITY` string does not exactly match the cert CN | Run `security find-identity -v -p codesigning` on the signing Mac; copy verbatim. |
-| `notarytool submit` returns `Invalid` status | Entitlement or binary issue | Run `xcrun notarytool log <submission-id>` to see the notarization report. |
-| `gpg --detach-sign` exits non-zero / prompts | `DAT0_GPG_PASSPHRASE` set for a passphraseless key, or unset for a protected one | See **Linux GPG signing — passphrase wiring** above; the variable must match the key. |
-| `publish` job skipped on a tag push | Preceding `macos` or `linux` job failed | Fix the failing job first; re-push the tag after fixing the source. |
-| `verify-manifest` fails: the signature "does not verify against the key dat0 trusts" | `MINISIGN_SECRET_KEY` is not the pair of `crates/dat0-core/assets/minisign-public-key.txt` | Nothing was published. Set the secret to the key whose public half is committed (`docs/release-prerequisites.md` §1) and re-run the failed job. |
-| `notice` CI gate warns after a dep change | NOTICE.md regenerated on macOS, not Linux | Regenerate on Linux; commit the result (see step 2 above). |
+- **Installation / Gatekeeper:** install on a clean macOS machine, assess the notarized/stapled app and DMG, and confirm Gatekeeper permits launch. Install and launch the Linux AppImage on clean supported hosts. Verify actual window rendering.
+- **Identity / integrity:** compare CLI `--version`, About version and Git SHA with the tagged build; verify each artifact against `SHA256SUMS`, and verify the detached Linux signature with the published trusted public key (`gpg --verify "dat0-$V-x86_64.AppImage.sig" "dat0-$V-x86_64.AppImage"`). Use `shasum -a 256` on macOS or `sha256sum -c SHA256SUMS` on Linux. Check signature fingerprint against the independently distributed key, not just “Good signature.” Run `cargo xtask verify --macos` / `--linux` on corresponding provisioned build artifacts.
+- **Packages / routing:** verify `.dat0` file association opens read-only Inspect, not a mutable workspace. Test restart persistence and second-launch forwarding to the existing process with identical profile variables; confirm intended package/workspace opens and normal shutdown.
+- **Updater round trip:** on disposable test installations, verify signed-manifest download, verification, artifact download and apply, followed by relaunch/version confirmation. Verify launch-check opt-out and explicit manual checks; exercise non-writable-install fallback. Reject tampered manifests, manifests signed by the wrong key, and artifacts with a wrong hash. Do not substitute test-key fixture success for the production-key path.
+- **Synthetic telemetry:** verify default-off consent, no submission before opting in, receipt after a deliberate synthetic submission, and crash-specific redaction of sensitive path patterns. Inspect the received event, not only the client exit code. Use synthetic notes/data, never private datasets or real credentials. Local logs/user notes are not universally sanitized; see [privacy](privacy.md).
 
----
+## Signing details and troubleshooting
 
-## See also
+macOS hardened-runtime signing currently uses no entitlements; if a dependency requires them, change [signing implementation](../xtask/src/sign.rs) through review and document the reason.
 
-- `docs/security-runbook.md` — cert renewal cadence, key rotation, SECURITY.md process
-- `docs/release-prerequisites.md` — the five human-only prerequisites (RL1)
-- `docs/plans/2026-06-17-dat0-p10a-uat.md` — clean-VM UAT checklist
-- `docs/ci-mac-vm-runner.md` — tart-based self-hosted macOS runner (D-013)
-- `.github/workflows/release.yml` — the pipeline itself
-- `xtask/src/` — the `bundle-macos`, `sign-macos`, `bundle-linux`, `verify` subcommands
+[Linux signing](../xtask/src/linux.rs) reads `DAT0_GPG_PASSPHRASE`. Empty/unset means a passphraseless dedicated CI subkey and plain batch detached signing. A set passphrase uses loopback pinentry and stdin, never argv. The import step enables `allow-loopback-pinentry`; Bundle + sign has its own passphrase environment because step-local values do not propagate. Verify `.sig` existence and `cargo xtask verify --linux` only when GPG signing was actually enabled.
 
----
+| Failure | Action |
+|---|---|
+| Ref/ancestry rejection | Dispatch main or tag a reviewed main-history revision in the canonical repo |
+| Preflight finding | Complete the corresponding prerequisite; never downgrade a tag finding |
+| Certificate import / codesign identity | Renew/re-export certificate and match `DAT0_SIGN_IDENTITY` exactly |
+| Notary rejection | Inspect `xcrun notarytool log <submission-id>`; do not waive Gatekeeper |
+| GPG prompt/failure | Match passphrase wiring to the selected subkey |
+| Manifest signature rejection | Match secret key to the committed production public key; nothing should publish |
+| NOTICE mismatch | Regenerate with the canonical Linux script / correction artifact |
+| Publish skipped | Manual run: expected. Tag run: inspect failed dependencies/event guard |
 
-## GlitchTip / crash reporting
+## Crash-report wiring and rotation
 
-> **Added P10c (2026-06-25).** Covers the self-hosted GlitchTip instance that
-> receives opt-in crash reports and Report-a-Bug events from dat0.
+The release DSN is compiled into the binary via `DAT0_GLITCHTIP_DSN_PUBLIC`; development/ordinary CI uses `.cargo/config.toml`'s stub. This concerns crash reporting, not all application networking.
 
-### Instance and DSN provenance
+The main-only canonical [crash-e2e workflow](../.github/workflows/crash-e2e.yml) separately consumes `GLITCHTIP_DSN_PUBLIC`, `GLITCHTIP_API_TOKEN` (read access to project issues) and `GLITCHTIP_PROJECT_SLUG`. Missing secrets cause an explicit skip. Build/run failures remain hard failures; remote receipt assertion is advisory. It is not a required PR verdict.
 
-dat0 uses a **self-hosted GlitchTip instance** (confirmed by the user: only the
-GlitchTip path exists; managed/Sentry is a fallback option noted in spec R11 if
-the self-hosted instance becomes unmaintainable). The public DSN is baked into
-the release binary at compile time via `env!("DAT0_GLITCHTIP_DSN_PUBLIC")` in
-`crates/dat0-core/src/telemetry/`. Development and CI builds use the stub value
-`https://stub@glitchtip.invalid/1` (set in `.cargo/config.toml`) so no reports
-are sent during development. Only a release build compiled with the real DSN emits events.
+For a provisioned manual synthetic check, build with the selected DSN and run `target/release/dat0 __telemetry-test`; confirm the `dat0 telemetry e2e` event arrives. This directly submits a synthetic message without a real panic or crash sentinel. Spot-check `filepath`, `abs_path` and `module` redaction against [redactor source](../crates/dat0-core/src/telemetry/redaction.rs).
 
-### CI secrets
-
-Add these three secrets to the GitHub repository
-(**Settings → Secrets and variables → Actions**) before the `crash-e2e` soft
-gate runs live:
-
-| Secret name | What it is | Where to find it |
-|---|---|---|
-| `GLITCHTIP_DSN_PUBLIC` | Public DSN for the dat0 GlitchTip project (the full `https://…@host/N` URL). Used as `DAT0_GLITCHTIP_DSN_PUBLIC` at build time. | GlitchTip → project → Settings → Client Keys. |
-| `GLITCHTIP_API_TOKEN` | Personal or bot API token with read access to the dat0 project's issues. | GlitchTip → account settings → API Tokens. |
-| `GLITCHTIP_PROJECT_SLUG` | The URL slug for the dat0 project (e.g. `dat0`). | Visible in the GlitchTip project URL: `…/organizations/<org>/projects/<slug>/`. |
-
-The `crash-e2e.yml` workflow has `continue-on-error: true` (design D4 — a live
-external dependency must never redden `main`). The job is a clean skip when any
-of the three secrets are absent.
-
-### DSN rotation
-
-If the DSN needs to be rotated (key compromise, project re-key):
-
-1. In GlitchTip: generate a new DSN key for the dat0 project.
-2. Update `GLITCHTIP_DSN_PUBLIC` in GitHub Secrets.
-3. Cut a new release build — the DSN is baked in at compile time, so the old
-   binary continues to use the old key until users update.
-4. Revoke the old key in GlitchTip only after the majority of users are on a
-   build that carries the new DSN (check crash-volume drop on the old key).
-
-### Postgres backups and uptime monitoring
-
-GlitchTip persists data in Postgres. Recommended hygiene:
-
-- **Daily backups:** `pg_dump` or managed-snapshot at the hosting layer.
-  Retain at least 7 days of snapshots.
-- **Uptime check:** add the GlitchTip web URL to an uptime monitor (e.g.
-  UptimeRobot free tier). Alert to a team channel. If the instance goes dark,
-  dat0 continues operating normally (the SDK drops events silently when the
-  DSN is unreachable); no user data is lost, but crash signals stop arriving.
-- **Spec R11 fallback:** if the self-hosted instance becomes unmaintainable,
-  migrate to Sentry's managed free tier. The DSN format is compatible;
-  rotation procedure above applies.
-
-### Reading incoming crash issues
-
-1. Open GlitchTip → dat0 project → **Issues**.
-2. Each crash shows: exception type, top-of-stack, OS/arch/version, and the
-   free-form note the user appended before submitting.
-3. Filter by `environment:production` to exclude test events.
-4. Look for the `dat0 telemetry e2e` tag/title to identify CI smoke events;
-   these can be muted or filtered as noise once the gate is stable.
-5. **Redaction check (periodic):** spot-check that `filepath`, `abs_path`, and
-   `module` fields do not contain real home-directory paths. The redactor
-   (`telemetry/redact.rs`) strips `/Users/<name>/` and `/home/<name>/`; confirm
-   it is still active after any telemetry refactor.
-
-### Manual smoke test
-
-To verify the live round-trip outside of CI, build with the real DSN and run:
-
-```bash
-DAT0_GLITCHTIP_DSN_PUBLIC="<real-dsn>" cargo build -p dat0-ui --release --bin dat0
-./target/release/dat0 __telemetry-test
-# Wait ~15 s, then check GlitchTip Issues for "dat0 telemetry e2e"
-```
-
-The `__telemetry-test` subcommand (implemented in T10) emits a synthetic
-`message`-type event with the title `"dat0 telemetry e2e"` and exits 0. It
-exercises the full submission path (panic hook bypassed; direct `sentry::capture_message`)
-without triggering a real panic or leaving a crash sentinel on disk.
-
-See also `docs/plans/2026-06-24-dat0-p10c-uat.md` §4 for the full manual UAT
-sequence.
+For DSN rotation, create the replacement in the service, update the workflow-scoped `GLITCHTIP_DSN_PUBLIC`, and cut a new reviewed build. Existing binaries keep their compiled DSN until users update. Plan old-key revocation with the service owner; a compromised credential may require immediate revocation rather than waiting for adoption. Follow [security operations](security-runbook.md) and [private reporting](../SECURITY.md).

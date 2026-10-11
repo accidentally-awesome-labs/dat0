@@ -1,6 +1,6 @@
 //! Pure panel data + pager helpers for the first-run tour carousel.
 //!
-//! `PANELS` is the ordered 7-panel script (design D3 / onboarding-v1.md §5):
+//! `PANELS` is the ordered 7-panel tour script:
 //! each panel bundles its illustration bytes (via `include_bytes!`) plus the
 //! i18n keys for its headline and one-line body. The pager helpers (`next` /
 //! `back` / `is_last`) are the carousel's navigation arithmetic, kept pure and
@@ -17,7 +17,7 @@ pub struct Panel {
     pub body_key: &'static str,
 }
 
-/// The 7-panel tour script, in order (onboarding-v1.md §5 table).
+/// The 7-panel tour script, in display order.
 pub const PANELS: [Panel; 7] = [
     Panel {
         image: include_bytes!("../../assets/onboarding/p1.png"),

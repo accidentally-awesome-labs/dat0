@@ -1,319 +1,128 @@
 # dat0 Security Runbook
 
-> Operational security reference for P10a and P10a-2's signing and notarization secrets.
-> Covers renewal cadence, key storage, rotation procedures, and the
-> SECURITY.md inbox process.
->
-> Scope: **P10a secrets** (Apple Developer cert, GPG signing key, notary
-> API key) **+ P10a-2 minisign update-signing key** (`latest.json` signature).
+Operational reference for release key storage, renewal, rotation, and private vulnerability response. See the [documentation index](README.md), [public security policy](../SECURITY.md), [release prerequisites](release-prerequisites.md), and [release runbook](release-runbook.md).
 
----
+## Trust and provisioning boundary
+
+Store signing, notarization, minisign, GPG, and ephemeral build-keychain material in the protected GitHub Actions **`release` environment**, with offline backups in an encrypted password manager. Never commit private keys or put their values in logs, issues, or documentation. Public verification keys belong in version control and public distribution channels.
+
+Release validation accepts only canonical-repository `v*` tag pushes or manual dispatch on `main`; tag commits must be ancestors of `main`. Manual main runs never publish. The release environment permits the `main` branch and `v*` tags. Ordinary PR checks run on hosted runners without release secrets. Release preparation changes go through a DCO-signed PR, not a direct push to main.
+
+Telemetry credentials are separately scoped to the workflows and steps that consume them; they are not release signing material. Ordinary contributor checks use the development telemetry configuration, not production credentials. See [CI](ci.md) for required checks and main-only live-service traffic.
+
+A manual run uses:
+
+```bash
+gh workflow run release.yml --repo accidentally-awesome-labs/dat0 --ref main
+```
+
+When signing material is absent, the existing unsigned dry-run path can exercise packaging and platform smoke checks. It does **not** validate production manifest signing or prove release provisioning complete. When credentials are installed, a manual main run can exercise signing without publication. Follow the release runbook's provisioned acceptance checks before publishing a tag.
 
 ## Apple Developer ID Certificate
 
-### What it is
+`APPLE_DEV_ID_CERT_P12` and `CERT_PASSWORD` hold the exported certificate and private key used to codesign the DMG and enclosed binary. `DAT0_SIGN_IDENTITY` identifies the signing identity. A signed distribution also needs successful notarization and clean-machine Gatekeeper verification.
 
-The `Developer ID Application` certificate (stored in GitHub Actions as
-`APPLE_DEV_ID_CERT_P12` + `CERT_PASSWORD`) is issued by Apple and used to
-codesign `dat0.dmg` and its enclosed binary. Without a valid cert, Gatekeeper
-blocks the app on any macOS user's machine.
-
-### Renewal cadence
-
-Developer ID certificates are valid for **5 years** from issuance. Apple sends
-email reminders at 30 days and again at 7 days before expiry, but do not rely
-solely on those emails.
-
-**60-day-before-expiry reminder (spec R12):**
-Set a recurring calendar reminder (or a GitHub Actions scheduled workflow alert)
-to fire 60 days before the certificate's `Not After` date. Check the current
-expiry with:
+Developer ID certificates are valid for five years from issuance. Set an operator reminder 60 days before expiry; do not rely solely on Apple's reminders. On the Mac holding the certificate, inspect its dates:
 
 ```bash
-# On the Mac that holds the private key:
 security find-certificate -c "Developer ID Application" -p | \
-    openssl x509 -noout -dates
+  openssl x509 -noout -dates
 ```
 
-### Renewal procedure
+To renew:
 
-1. In Xcode → Settings → Accounts, or via the Apple Developer portal
-   (developer.apple.com → Certificates), request a new Developer ID Application
-   certificate.
-2. Download and install it into your local Keychain.
-3. Export the new cert + private key as a `.p12` (Keychain Access → right-click
-   → Export; set a strong export password).
-4. Base64-encode and update the `APPLE_DEV_ID_CERT_P12` GitHub secret:
-   ```bash
-   base64 -i ~/Desktop/dat0-dev-id-new.p12 | pbcopy
-   ```
-5. Update `CERT_PASSWORD` to the new export password.
-6. Update `DAT0_SIGN_IDENTITY` if the certificate's Common Name or Team ID
-   changed (it usually does not).
-7. Run a `workflow_dispatch` dry run (`gh workflow run release.yml`) to confirm
-   the new cert works before the old one expires.
-8. Delete the `.p12` file from your Desktop after the secret is updated.
+1. Request a new Developer ID Application certificate through Xcode Accounts or the Apple Developer portal and install it in the local Keychain.
+2. Export the certificate and private key as a password-protected `.p12` to an operator-selected protected path.
+3. Base64-encode it and update `APPLE_DEV_ID_CERT_P12` in the `release` environment. Update `CERT_PASSWORD` and, if changed, `DAT0_SIGN_IDENTITY`.
+4. Run the manual main workflow and complete signing, notarization, and clean-machine verification before the old certificate expires.
+5. Remove temporary exported material securely according to the operator's storage policy; retain the encrypted backup.
 
-Keep the old cert installed locally until confirmed the new one signs and
-notarizes cleanly — Apple's transition window allows both to be valid
-simultaneously.
+Keep the old certificate available during the verified transition while both certificates remain valid.
 
----
+## App Store Connect Notary API Key
 
-## App Store Connect (Notary) API Key
+`AC_API_KEY_P8`, `AC_KEY_ID`, and `AC_ISSUER_ID` authenticate `xcrun notarytool`. Apple allows the `.p8` download only once. Keep it in encrypted storage; the base64-encoded value belongs only in the `release` environment secret, never in Git.
 
-### What it is
-
-The `AC_API_KEY_P8`, `AC_KEY_ID`, and `AC_ISSUER_ID` secrets are the
-credentials `xcrun notarytool` uses to submit the signed DMG to Apple for
-notarization. The `.p8` key is downloaded **once** from App Store Connect;
-Apple does not let you re-download it.
-
-### Storage
-
-- The `.p8` file must be kept in a secure location (encrypted keychain or
-  password manager). If lost, revoke the API key in App Store Connect and
-  create a new one.
-- Do not store the raw `.p8` file in any git repository. Only the base64-encoded
-  value belongs in a GitHub Secret.
-
-### Rotation
-
-API keys do not expire but should be rotated if the key is believed compromised:
-
-1. App Store Connect → Users and Access → Integrations → App Store Connect API
-   → Revoke the current key.
-2. Create a new key (type: Developer).
-3. Download the new `.p8` immediately (shown once).
-4. Base64-encode and update `AC_API_KEY_P8`.
-5. Update `AC_KEY_ID` and `AC_ISSUER_ID` if they changed (the issuer UUID does
-   not change with key rotation; the key ID does).
-6. Run a `workflow_dispatch` dry run to confirm notarization works.
-
----
+If compromised or lost, revoke the key in App Store Connect → Users and Access → Integrations, create a replacement Developer key, and download it immediately. Update `AC_API_KEY_P8`, `AC_KEY_ID`, and any changed issuer ID. Verify notarization with a manual main run. API keys do not expire automatically.
 
 ## GPG Signing Key (Linux AppImage)
 
-### What it is
+`GPG_PRIVATE_KEY` produces the detached AppImage signature. Publish the public key and fingerprint through the release documentation and project website so users can import the key and independently verify:
 
-The GPG private key (`GPG_PRIVATE_KEY`) is used to produce the detached
-`.sig` file alongside `dat0.AppImage`. Users verify with:
 ```bash
 gpg --verify dat0.AppImage.sig dat0.AppImage
 ```
 
-The public key should be published at a well-known URL (e.g. in the README and
-on the project website) so users can import it before verifying.
+### Passphrase wiring
 
-### Passphrase decision — wired for BOTH postures (RL4)
+A dedicated passphraseless CI signing subkey is the current recommended posture; leave `GPG_PASSPHRASE` unset. A passphrase-protected key is also supported. The workflow forwards `GPG_PASSPHRASE` as `DAT0_GPG_PASSPHRASE` to the signing step. `xtask/src/linux.rs::gpg_sign` adds loopback pinentry and `--passphrase-fd 0` only when that variable is non-empty, sending the passphrase over stdin, not argv. See [release prerequisites](release-prerequisites.md) and the release runbook for provisioning.
 
-> Full details in `docs/release-runbook.md` under
-> **"Linux GPG signing — passphrase wiring"**.
+### Storage and rotation
 
-The P10a defect — `GPG_PASSPHRASE` set only in the "Import GPG key" step's
-`env:`, which does not propagate to the "Bundle + sign" step — is fixed.
-`release.yml` now passes `DAT0_GPG_PASSPHRASE` to the signing step, and
-`xtask/src/linux.rs::gpg_sign` adds `--pinentry-mode loopback
---passphrase-fd 0` **only when that variable is non-empty**, feeding the
-passphrase over stdin rather than argv.
+Keep the private key and any passphrase in encrypted offline storage and the `release` environment. Commit and publish only the public key; do not link to an unprovisioned public-key file as if it already existed.
 
-- **(Recommended, and the default posture)** a **passphraseless** dedicated CI
-  signing subkey. Leave `GPG_PASSPHRASE` unset; `gpg_sign` omits the loopback
-  flags entirely, which is required — passing `--passphrase-fd 0` with an empty
-  passphrase makes gpg fail on such a key rather than skip the prompt.
-- **(Alternative)** a passphrase-protected key. Set `GPG_PASSPHRASE`; the
-  loopback path engages automatically. No workflow edit needed.
+Rotate on suspected compromise or on the operator's renewal schedule:
 
-Provisioning either key: `docs/release-prerequisites.md` step 2.
-
-### Key storage
-
-- Store the private key (and passphrase, if set) in a password manager.
-- The GitHub Secret holds the exported ASCII-armored key; the corresponding
-  public key should be committed to the repository (`docs/dat0-signing-key.asc`
-  or similar) and published so users can verify artifacts independently.
-
-### Rotation
-
-Rotate the signing key if the private key is believed compromised, or on a
-regular schedule (e.g. yearly for the CI subkey):
-
-1. Generate a new key (or subkey):
+1. Generate a new key or signing subkey, for example:
    ```bash
-   gpg --quick-gen-key "dat0 CI Signing <security@yourorg.example>" ed25519 sign 2y
+   gpg --quick-gen-key "dat0 CI Signing <security@dat0.app>" ed25519 sign 2y
    ```
-2. Export and update `GPG_PRIVATE_KEY` in GitHub Secrets.
-3. If passphraseless (recommended), `GPG_PASSPHRASE` remains empty or vestigial.
-4. Publish the new public key alongside the old one (do not revoke the old key
-   immediately — existing users may still hold it for verifying past releases).
-5. Annotate the release notes for the first release signed with the new key.
-6. Run a `workflow_dispatch` dry run to confirm signing works.
-
----
+2. Update `GPG_PRIVATE_KEY` and, when needed, `GPG_PASSPHRASE` in the `release` environment. Remove an obsolete passphrase when moving to a passphraseless key.
+3. Publish the new public key and fingerprint, and identify the first release signed by it. For routine rotation, retain old public keys for historical artifact verification.
+4. For compromise, revoke the compromised key and publish the revocation and incident guidance; do not delay revocation merely to preserve historical trust.
+5. Exercise signing and independent signature verification in a manual main run before publication.
 
 ## minisign Update-Signing Key (`latest.json`)
 
-### What it is
+The updater verifies the signed update manifest before trusting its version or download URL. Its public key is embedded from `crates/dat0-core/assets/minisign-public-key.txt`; the app never holds the secret key.
 
-The minisign secret key is used by the `release.yml` CI workflow to sign the
-`latest.json` update manifest. The in-app updater (`dat0-core`) fetches
-`latest.json` and verifies its minisign signature before trusting any version
-or download URL. The app embeds the public key at build time via:
-
-```rust
-const MINISIGN_PUBLIC_KEY: &str = include_str!("../assets/minisign-public-key.txt");
-```
-
-(`crates/dat0-core/assets/minisign-public-key.txt`). The app **verifies only**
-— it never holds the secret key.
-
-### Passphrase decision — **passwordless CI key** (deliberate)
-
-The CI key is generated without a passphrase (`-W` flag):
+The CI key is passwordless for non-interactive signing:
 
 ```bash
-# Generate a new passwordless minisign key pair:
-minisign -G -W -p minisign-public-key.txt -s minisign-secret-key.key
-# Or with rsign (Rust re-implementation):
-rsign generate -W -p minisign-public-key.txt -s minisign-secret-key.key
+minisign -G -W -p minisign-public-key.txt -s dat0-minisign.key
+# Alternative Rust implementation:
+rsign generate -W -p minisign-public-key.txt -s dat0-minisign.key
 ```
 
-**Passwordless is deliberate.** The P10a GPG signing key ran into a
-passphrase-propagation pitfall in `release.yml` — `GPG_PASSPHRASE` was set in
-the "Import" step's `env:` but did not reach the "Bundle + sign" step, so the
-detach-sign hung waiting for a PIN. See the
-[GPG "Passphrase decision" note](#passphrase-decision--wired-for-both-postures-rl4)
-above. A passwordless minisign key avoids that class of bug entirely: the key
-is disposable (rotate on compromise), and the GitHub Secret encryption is the
-sole access control — a passphrase would add no meaningful protection over the
-secret itself. The CI signs `latest.json` non-interactively: `rsign sign -W`
-reads the key without asking for a password. Without `-W`, rsign asks on the
-terminal even for a passwordless key, and a runner has none, so the signing
-fails.
+Generate keys only on an appropriate protected operator system. Store secret contents as `MINISIGN_SECRET_KEY` in the `release` environment and in an encrypted offline backup. Protect temporary files and never commit them. `rsign sign -W` avoids a terminal password prompt on CI; environment protection and secret access control remain essential.
 
-### Storage
+The publication path signs `latest.json` and then runs `cargo xtask verify-manifest` against the committed public key before uploading. A successful unsigned packaging run does not exercise this path.
 
-- **Secret key contents** — stored only as the `MINISIGN_SECRET_KEY` GitHub
-  Actions repository secret (the full ASCII content of `minisign-secret-key.key`)
-  plus an offline backup in a password manager. The raw file must **never be
-  committed** to the repository.
-- **Public key** — committed to the repository at
-  `crates/dat0-core/assets/minisign-public-key.txt` and embedded by the app
-  via `include_str!`. This is the only key material that belongs in version
-  control.
+### Rotation and client migration
 
-How CI uses the secret (`release.yml`'s `publish` job, abridged): the step
-that holds it runs nothing but the pinned `rsign`, and the next checks the
-signature as the app will, against the committed public key, before anything
-is uploaded.
+1. Generate a replacement key pair and update `MINISIGN_SECRET_KEY` in the `release` environment.
+2. Replace the committed embedded public key through a reviewed, DCO-signed PR.
+3. Coordinate the client migration: clients with the old embedded key cannot verify manifests signed by the new key. There is no cross-signing or key-transition window. For routine rotation, arrange and communicate a client update before switching keys.
+4. On compromise, rotate immediately and publish an advisory and manual-update instructions. Old clients can see signature failures until updated; do not weaken verification to bypass them.
+5. Identify the first release using the replacement key and verify signing, wrong-key rejection, tamper rejection, and artifact hashes using the release runbook.
 
-```yaml
-- name: Sign the update manifest
-  env:
-    MINISIGN_SECRET_KEY: ${{ secrets.MINISIGN_SECRET_KEY }}
-  run: |
-    key="$RUNNER_TEMP/minisign.key"
-    trap 'rm -f "$key"' EXIT
-    printf '%s' "$MINISIGN_SECRET_KEY" > "$key"
-    rsign sign -W -s "$key" -x target/latest.json.minisig target/latest.json
-- name: The manifest verifies against the key dat0 trusts
-  run: cargo xtask verify-manifest
-```
+### Production provisioning remains required
 
-### Rotation
+The production update key is not yet provisioned; the committed public key is the development test key. Before any production release, provision `MINISIGN_SECRET_KEY`, replace the embedded key, and complete the provisioned release checks. The ignored production-key test in `crates/dat0-core/tests/update_key_is_production.rs` rejects the committed test key. See [release prerequisites](release-prerequisites.md) for commands and [release acceptance](release-runbook.md) for clean-machine and update verification. Do not represent this prerequisite as complete based on an unsigned dry run.
 
-Rotate the minisign key if the secret is believed compromised, or on a regular
-schedule (e.g. yearly):
+## Build Keychain and Hardened Runtime
 
-1. Generate a new passwordless key pair (see "Passphrase decision" above).
-2. Update `MINISIGN_SECRET_KEY` in GitHub Secrets with the new secret key contents.
-3. Replace `crates/dat0-core/assets/minisign-public-key.txt` with the new public
-   key and commit it.
-4. Cut a new release that ships the updated embedded public key. Clients running
-   the **old** embedded key can still verify **old** releases — they cannot verify
-   releases signed with the new key until they update. This is the migration
-   caveat: there is no cross-signing or key-transition window; prompt users to
-   update before rotating if the old key is not compromised. In a compromise
-   scenario, rotate immediately and accept that clients still on the old embedded
-   key will see signature-verification failures (and fall back to the manual
-   nudge) until they update; communicate this urgently via the release notes and
-   a SECURITY advisory.
-5. Annotate the release notes for the first release signed with the new key.
-6. Run a `workflow_dispatch` dry run to confirm the new key signs and verifies
-   cleanly.
+`KEYCHAIN_PASSWORD` creates and unlocks the ephemeral macOS build keychain. Store it in the `release` environment and rotate it when operator access changes or compromise is suspected; it is not an application credential.
 
-### Current state — dry-run blocker
+The release uses an empty hardened-runtime entitlements set. If a dependency requires an additional entitlement, review its necessity, change the xtask signing configuration through a PR, document the added privilege, and notarize the resulting artifact again. Entitlements are not retroactive.
 
-> **The production key is NOT yet provisioned.** `crates/dat0-core/assets/minisign-public-key.txt`
-> currently holds the **T1 test key** (generated during development). Before any
-> real release, a human MUST:
->
-> 1. Generate a production passwordless key pair (see above).
-> 2. Set `MINISIGN_SECRET_KEY` to the new secret key in GitHub Secrets.
-> 3. Replace the embedded public key in `crates/dat0-core/assets/minisign-public-key.txt`
->    and commit it.
->
-> Until these steps are done, either the test key ships to real users (invalid for
-> production releases) or the CI sign step fails (no production secret set). The
-> full end-to-end validation is a `workflow_dispatch` dry-run + the clean-VM UAT
-> in `docs/plans/2026-06-22-dat0-p10a-2-uat.md`.
->
-> **This is now enforced, not just documented.**
-> `crates/dat0-core/tests/update_key_is_production.rs` compares the embedded key
-> against the committed test fixture and **fails while they are identical** —
-> which is the state of the tree today. The exact commands are
-> `docs/release-prerequisites.md` step 1.
+## Private vulnerability response
 
----
+The [public policy](../SECURITY.md) defines private advisory reporting and **security@dat0.app**, with best-effort acknowledgment within 7 days, assessment within 14 days, and a fix or mitigation plan within 30 days for high-severity reports. An internal aim to acknowledge within 48 hours is not a separate public promise or SLA.
 
-## Keychain Bootstrap Password
+On receipt:
 
-The `KEYCHAIN_PASSWORD` secret is used only to create and unlock the ephemeral
-`build.keychain` within the macOS CI runner. It never leaves the runner and is
-not cryptographically significant. Rotate it anytime (e.g. on team membership
-changes) by generating a new random value and updating the secret.
-
----
-
-## macOS Entitlements (hardened runtime)
-
-**The P10a release uses an empty entitlements set.** The dat0 binary, DuckDB,
-and the Metal rendering layer all operate correctly under the hardened runtime
-with no special entitlements. This is the most restricted, most Gatekeeper-
-friendly posture.
-
-If a future dependency requires an entitlement (e.g. JIT compilation for a
-scripting engine, or `com.apple.security.network.client` for a new network
-surface), add it to the xtask `sign` step's entitlements file, document it
-here, and re-notarize. Entitlement additions require a fresh notarization
-submission; they are not retroactive.
-
----
-
-## SECURITY.md inbox process
-
-The `SECURITY.md` file at the repository root describes the responsible
-disclosure policy and the intake email address for security reports.
-
-On receipt of a security report:
-
-1. Acknowledge within **48 hours** (even if just "received, investigating").
-2. Reproduce and assess severity (CVSS score or equivalent).
-3. For confirmed vulnerabilities:
-   - Do NOT discuss on public issues or PRs until patched.
-   - Prepare a fix on a private branch.
-   - Coordinate a disclosure date with the reporter (90-day max).
-   - Cut a patch release using this runbook.
-   - Publish a GitHub Security Advisory after the patch ships.
-4. Update `SECURITY.md` if the contact address or process changes.
-
----
+1. Acknowledge privately, reproduce safely, and assess impact and severity. Do not request production credentials or private datasets when synthetic input suffices.
+2. Keep undisclosed details out of public issues, PRs, and workflow logs. Prepare fixes in a **temporary private GitHub security advisory fork** or a **separate private repository**. A branch of this public repository is not private.
+3. Coordinate disclosure and reporter credit or anonymity. Route upstream-only defects upstream while assessing their effect on dat0.
+4. Land the fix on `main` at coordinated disclosure and publish a fixed revision/advisory; publish a fixed release when releases exist. There is not yet a released-version/backport support matrix.
+5. For exposed credentials, have the service owner revoke them, provision replacements through the proper protected channel, and review affected artifacts and access. Do not expose secret values in the advisory.
+6. Update the public policy if reporting routes or supported-version commitments change.
 
 ## See also
 
-- `docs/release-runbook.md` — full secret inventory, cut-a-release steps
-- `docs/plans/2026-06-17-dat0-p10a-uat.md` — P10a clean-VM verification checklist
-- `docs/plans/2026-06-22-dat0-p10a-2-uat.md` — P10a-2 auto-update clean-VM UAT checklist
-- `SECURITY.md` — public-facing disclosure policy
-- `docs/deferrals.md` D-003 / D-004 — closed by P10a-2 (unified Rust updater superseded Sparkle/AppImageUpdate)
-- `docs/deferrals.md` D-028 — privileged `/Applications` auto-update (SMJobBless helper, v1.x)
+- [Release runbook](release-runbook.md): packaging, signing, manual acceptance, and publication.
+- [Release prerequisites](release-prerequisites.md): provisioning checklist and production-key verification.
+- [Security policy](../SECURITY.md): public disclosure policy.
+- [Privacy guide](privacy.md): application network and data boundaries.
+- [Support](../SUPPORT.md): non-sensitive questions and conduct reporting.

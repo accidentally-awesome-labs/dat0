@@ -6,10 +6,10 @@ features keep that snapshot honest when the world around it changes:
 
 - **Live-data refresh** — when a table's source file changes on disk, dat0
   offers to re-import it and replay your work.
-- **Recovery** — if dat0 (or a workspace save) was interrupted, the next launch
-  offers to bring the unfinished work back.
+- **Recovery** — a later launch offers to review leftover scratch work,
+  including cleanly closed sessions, and interrupted workspace promotions.
 
-Both are introduced in P7c.
+[Documentation index](README.md)
 
 ## Live-data refresh
 
@@ -20,9 +20,9 @@ that file changes on disk, a banner appears at the top of the window:
 
 > **`<file>` changed on disk** — **[Refresh]**
 
-Click **Refresh** to pull the new data in. dat0 re-imports the file (the same
-sniffing and import path as the original drag-and-drop) and then replays the
-work you've done on that tab onto the fresh data.
+Click **Refresh** to pull the new data in. dat0 reuses the persisted dialect,
+type, and column read options from the original import, then replays your work
+onto the fresh data. Older tables without recorded read options use defaults.
 
 The watch follows the **active** table. When you switch to a different table, the
 watch re-targets to that table's source file.
@@ -71,10 +71,9 @@ From there you can re-apply the filters and sorts against the new column set.
 
 ## Recovery
 
-dat0 saves your scratch work continuously, and "Save Workspace" promotes that
-work into a folder on disk. If either is interrupted — dat0 quits unexpectedly, or
-a Save Workspace doesn't finish — the next launch detects the leftover work and
-shows a banner:
+dat0 saves scratch work continuously, and **Save Workspace** promotes that work
+into a folder on disk. A later launch detects leftover scratch sessions
+(including sessions closed normally) and unfinished workspace saves, and shows:
 
 > **_N_ item(s) to recover from a previous session** — Restore them or discard
 > them. **[Review]**
@@ -84,10 +83,11 @@ found, in two groups:
 
 ### Orphaned sessions
 
-Scratch work from a session that didn't exit cleanly. Each row names the tables
-that were open. For each one:
+Scratch work left behind by a previous session, whether it closed normally or
+was interrupted. Each row names the tables that were open. For each one:
 
-- **Open** — bring the scratch session back, with its tabs restored.
+- **Open** — reopen the scratch session and its persisted tabs/state. Transient
+  SQL-result tabs need their queries rerun.
 - **Discard** — permanently remove that orphaned scratch session.
 
 ### Interrupted workspaces

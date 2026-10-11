@@ -5,7 +5,7 @@ edition = "2024"
 license = "Apache-2.0"
 repository = "https://github.com/accidentally-awesome-labs/dat0"
 authors = ["Accidentally Awesome Labs"]
-rust-version = "1.85"
+rust-version.workspace = true
 
 [[bin]]
 name = "dat0"

@@ -1250,10 +1250,9 @@ fn ensure_rowid_blocking(conn: &duckdb::Connection, table: &str) -> Result<()> {
         ))?;
     }
 
-    // Inject the deterministic surrogate in physical scan order. This is the
-    // T0-probe-verified SQL (docs/internal/dat0-p4b-t0-probe.md §3): gap-free
-    // 0..n-1, keyed off `rowid` (scan order), stable across reads. The
-    // `dat0:surrogate` COMMENT marks the column so future calls are no-ops.
+    // Inject a deterministic, gap-free 0..n-1 surrogate keyed off `rowid`
+    // (physical scan order), stable across reads. The `dat0:surrogate` COMMENT
+    // marks the column so future calls are no-ops; see docs/dat0-format-v1.md.
     conn.execute_batch(&format!(
         "ALTER TABLE {qt} ADD COLUMN {rowid} BIGINT;\n\
          UPDATE {qt} SET {rowid} = seq.rn FROM (\n\

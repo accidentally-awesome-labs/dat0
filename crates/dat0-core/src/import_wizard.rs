@@ -1,32 +1,17 @@
-//! Import wizard drawer.
+//! Import-wizard sniffing and trigger model; the desktop flow is in
+//! `dat0-ui/src/import_flow.rs`. See `docs/architecture.md`.
 //!
-//! The pure trigger predicate [`should_show_wizard`] is unit-tested in
-//! `tests/import_wizard.rs`. The drawer GPUI view itself is stubbed for T9
-//! and will be wired in a follow-up that mounts the verified Sheet pattern
-//! (or hand-rolled overlay) from the T0 spike.
-//!
-//! ## PD-011 substitute heuristic (P3b T9)
-//!
-//! `duckdb::sniff_csv` does NOT expose `top_score` / `next_score` /
-//! `encoding_supported` / per-column confidence. The plan's three-clause rule
-//! references fields that don't exist in DuckDB 1.4.x output. See
-//! `docs/internal/duckdb-arrow-api-notes.md` §SniffCsv and `docs/deferrals.md`
-//! PD-011 for the full drift analysis.
-//!
-//! T9 implements the **dual-sniff + UTF-8 check** substitute documented in
-//! PD-011 §5:
+//! DuckDB 1.4.x `sniff_csv` does not expose candidate-delimiter scores,
+//! encoding support, or per-column confidence. The trigger uses a dual-sniff
+//! agreement check and a UTF-8 check instead:
 //!
 //! 1. Run `sniff_csv(path, sample_size := 4096)` and
 //!    `sniff_csv(path, sample_size := 65536)`. If the inferred `Delimiter`
-//!    differs between the two runs → ambiguous. We synthesise
-//!    `top_score = 0.55, next_score = 0.53` so the 5% predicate fires.
-//!    Otherwise → `top_score = 1.0, next_score = 0.0`.
-//! 2. Read the first 8 KB of the file; if `std::str::from_utf8` fails →
-//!    `encoding_supported = false`.
-//! 3. Per-column confidence is intentionally skipped for v1 (Option C from
-//!    PD-011 §4) — flagged as a follow-up; the field stays `false` here.
-//!
-//! PD-011 is **closed at T13 retro**, not here.
+//!    differs, synthesise `top_score = 0.55, next_score = 0.53` so the 5%
+//!    predicate fires; otherwise use `top_score = 1.0, next_score = 0.0`.
+//! 2. Check the first 8 KB with `std::str::from_utf8`; a failure sets
+//!    `encoding_supported = false`. The wizard does not convert encodings.
+//! 3. Per-column confidence is not available and remains `false`.
 
 use std::path::Path;
 
@@ -34,7 +19,7 @@ use anyhow::Context;
 
 /// Numerical summary of a CSV sniff. The `top_score` / `next_score` fields are
 /// synthesised by [`sniff`] from the dual-sniff agreement check (see module
-/// docstring + PD-011). They are not pulled from `sniff_csv` directly because
+/// documentation). They are not pulled from `sniff_csv` directly because
 /// DuckDB 1.4.x does not expose candidate-delimiter scores.
 #[derive(Debug, Clone)]
 pub struct SniffSummary {

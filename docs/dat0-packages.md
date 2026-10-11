@@ -9,6 +9,8 @@ For the normative on-disk format (the zip layout, the JSON schemas, the replay
 compatibility rule in RFC-2119 terms), see
 [`docs/dat0-format-v1.md`](dat0-format-v1.md).
 
+[Documentation index](README.md)
+
 ---
 
 ## Package vs. workspace — two different things
@@ -17,8 +19,8 @@ These look similar but are not the same:
 
 | | `.dat0` **package** (a *file*) | `.dat0/` **workspace** (a *directory*) |
 |---|---|---|
-| What | An **immutable, shareable** zip archive | A **mutable** working home on disk (P7) |
-| Contains | Parquet data cache + canonical recipe / sources / views / queries JSON | A live DuckDB database + session + lock |
+| What | An **immutable, shareable** zip archive | A **mutable** working home on disk |
+| Contains | Parquet data cache + recipe / sources / views / queries / charts JSON | A live DuckDB database + session + lock |
 | Use | Sharing, archival, replay, diffing | Day-to-day editing in the app |
 | Filename | `report.dat0` (a single file) | `report/.dat0/` (a subdirectory of a project folder) |
 
@@ -39,6 +41,11 @@ workspace.
 - **Views** — per-table display overlays (filters / sorts / column order) from
   your open tabs.
 - **Saved queries** — your saved SQL.
+- **Saved charts** — chart definitions and their source references.
+
+**Before sharing:** packages contain table data, saved SQL, and source URI/path
+provenance. Review those contents for credentials and private information; use
+minimal synthetic data for public bug reports.
 
 The metadata is self-describing tagged JSON, so a package is readable without
 dat0 or Rust.
@@ -52,8 +59,7 @@ All package actions live under the **File** menu.
 - **File → Export as .dat0 Package** — write the window's tables, tabs, saved
   queries and charts to a `.dat0` file you choose. A package already there is
   replaced only once the new one is written whole. Exporting from a **live
-  session** captures the full recipe, including derived tables and their
-  lineage (see the known limitation below).
+  session** captures the full recipe, including derived tables and their lineage.
 - **File → Open .dat0 Package** — open a package **read-only** to inspect it (see
   below).
 - **File → Unpack .dat0 Package** — materialize a package into a fresh workspace
@@ -97,7 +103,8 @@ dat0 inspect <pkg.dat0> --json   # machine-readable JSON
 
 Lists the tables (name, kind, row/column counts), the lineage edges
 (`derived <- parent`), the saved queries, and the saved charts (name, type,
-source). No engine is started — this reads metadata only, so it's instant.
+source). The inspect operation reads metadata, not table data. Binary startup
+can still initialize DuckDB and acquire extensions; headless does not mean offline.
 
 ### `dat0 unpack` — package → workspace
 
@@ -137,8 +144,8 @@ dat0 diff <a.dat0> <b.dat0> --json   # machine-readable JSON
 
 Compares two packages across four dimensions — **schema** (columns
 added/removed/retyped), **lineage** (tables added/removed, derivation changed),
-**row counts**, and **saved queries** — matched by name. The diff is metadata-only
-(it never reads the Parquet data), so it's fast.
+**row counts**, and **saved queries** — matched by name. The diff operation reads
+metadata rather than Parquet rows; binary startup can still acquire extensions.
 
 #### Exit codes
 
@@ -152,7 +159,7 @@ added/removed/retyped), **lineage** (tables added/removed, derivation changed),
 
 ```sh
 # Fail a CI job if a regenerated package drifted from the committed one:
-dat0 diff committed.dat0 fresh.dat0 || echo "package changed!"
+dat0 diff committed.dat0 fresh.dat0
 ```
 
 The other verbs exit `0` on success and `2` on error.
@@ -186,5 +193,5 @@ session, and `inspect` and `replay` see the same lineage.
 
 A workspace written before origins were kept there has no record of its
 tables' derivations: they export as base tables, with their data, until they
-are made again. This was deferral **D-025**, closed with **PD-031** in
-[`docs/deferrals.md`](deferrals.md).
+are made again. Current workspaces persist origins and read options in DuckDB;
+see [Architecture](architecture.md) for the durable-origin registry.

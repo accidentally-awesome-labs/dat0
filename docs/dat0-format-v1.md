@@ -1,17 +1,17 @@
 # dat0 `.dat0` package format — v1 (normative)
 
-**Status:** Ratified (P8a). **Format version:** 1. **Last updated:** 2026-06-13.
+**Format version:** 1. **Last updated:** 2026-06-13.
 
 This document is the normative specification for the dat0 `.dat0` *package*
 format, version 1. The key words **MUST**, **MUST NOT**, **SHOULD**, and **MAY**
 are to be interpreted as in RFC 2119.
 
-The canonical model types live in the `dat0-format` crate
-(`crates/dat0-format/src/model.rs`); the published JSON Schema for the manifest
-is at [`docs/schemas/dat0-manifest-v1.schema.json`](schemas/dat0-manifest-v1.schema.json).
+The canonical model types live in
+[`dat0-format/src/model.rs`](../crates/dat0-format/src/model.rs); the published
+[manifest JSON Schema](schemas/dat0-manifest-v1.schema.json) defines the strict
+v1 manifest shape. This repository document is authoritative.
 
-> A public mirror of this spec at `dat0.app/format/v1` is a P11 deliverable;
-> until then this file in the repo is authoritative.
+[Documentation index](README.md).
 
 ---
 
@@ -22,8 +22,8 @@ is at [`docs/schemas/dat0-manifest-v1.schema.json`](schemas/dat0-manifest-v1.sch
   of a dat0 workspace's data, recipe, sources, views, and saved queries. It is
   the unit of sharing and archival.
 - A **`.dat0/` *directory*** (a *workspace*) is a different thing entirely — the
-  on-disk, mutable workspace home introduced in P7 (manifest + DuckDB +
-  session + lock + lineage). It is **not** a package. Do not conflate them: one
+  on-disk, mutable workspace home (manifest + DuckDB + session + lock +
+  lineage). It is **not** a package. Do not conflate them: one
   is a sharable file, the other is a working directory.
 - A package is produced by an **exporter** (the dat0 app) and consumed by a
   **reader** (dat0, or any third-party tool — see §11).
@@ -197,11 +197,13 @@ on unpack.
 - **MUST** be readable by any standard Parquet/Arrow consumer (the format is
   cross-language; see §11). dat0 reads them via DuckDB `read_parquet`.
 
-The P8 T0 spike (`docs/internal/2026-06-13-p8-spike-notes.md` §S1) verified that
-this round trip preserves type fidelity with no widening: `DECIMAL(p,s)` keeps
-its precision/scale, `DATE` does not promote to `TIMESTAMP`, `BIGINT` and
-`TIMESTAMP` are unchanged, and an all-NULL row does not perturb inferred types.
-No explicit CAST-pinning projection is therefore required by the writer.
+The round trip MUST preserve type fidelity without widening: `DECIMAL(p,s)`
+keeps its precision/scale, `DATE` does not promote to `TIMESTAMP`, `BIGINT`
+and `TIMESTAMP` are unchanged, and an all-NULL row does not perturb types.
+The [writer](../crates/dat0-format/src/writer.rs) uses DuckDB Parquet export;
+the [writer tests](../crates/dat0-format/tests/writer.rs) and
+[corruption tests](../crates/dat0-format/tests/corruption.rs) cover package
+round trips and refusal paths. No explicit CAST-pinning projection is required.
 
 ---
 
@@ -250,6 +252,13 @@ Format versioning is semantic: **dat0 1.x reads format 1.x.**
   forward-compatibility is provided by the serde reader, not by the published
   schema.
 
+Changes MUST preserve tagged-wire, type-fidelity, checksum and replay contracts.
+Validate [model serialization](../crates/dat0-format/tests/model_serde.rs),
+[schema](../crates/dat0-format/tests/manifest_schema.rs), round-trip/corruption
+tests, and [replay compatibility](../crates/dat0-format/tests/replay.rs).
+The [reader](../crates/dat0-format/src/reader.rs) and
+[replay implementation](../crates/dat0-format/src/replay.rs) are public references.
+
 ---
 
 ## §10 Non-goals (v1)
@@ -266,9 +275,9 @@ A `.dat0` package is readable without dat0 or Rust:
 
 - **Data** is plain Apache Parquet (§7) — readable by Arrow, pandas, Polars,
   DuckDB, Spark, etc.
-- **Metadata** is self-describing tagged JSON. Following the PD-014 tagged-wire
-  convention (see `docs/deferrals.md` and the `dat0-engine` `transform` module
-  docs), every polymorphic node carries an explicit `kind`/`tag` discriminator:
+- **Metadata** is self-describing tagged JSON. The
+  [engine transform model](../crates/dat0-engine/src/transform.rs) and
+  [package model](../crates/dat0-format/src/model.rs) use explicit discriminators:
   `manifest.kind == "package"`, each `derivation.kind ∈ {sql, transform}`, and
   each `Transformation` op is internally tagged on `kind`. A non-Rust reader can
   therefore **route on these discriminators** without any Rust-side type

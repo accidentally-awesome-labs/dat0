@@ -3,18 +3,18 @@ on:
   push:
     branches: [main]
   pull_request:
-    # `labeled` is REQUIRED for the `run-perf` gate below to be reachable.
-    # The default set is [opened, synchronize, reopened]; without `labeled`,
-    # applying the label to an existing PR triggers nothing, and re-running the
+    # Label additions and removals recompute the optional `run-perf` gate.
+    # Applying the label to an existing PR triggers a new run; re-running the
     # workflow re-evaluates `if:` against the ORIGINAL event payload — which
     # does not carry the new label. This is the same trigger heavy.yml uses for
     # `run-heavy`.
     #
-    # COST, stated plainly: any label change on a PR now re-runs this whole
-    # workflow, and because `cancel-in-progress` is on, labelling mid-run
-    # cancels and restarts it. Apply `run-perf` / `run-heavy` BEFORE or WITH
-    # the push you want them to cover.
-    types: [opened, synchronize, reopened, labeled]
+    # Any label change re-runs this workflow. With cancel-in-progress enabled,
+    # apply `run-perf` / `run-heavy` before or with the push they should cover.
+    types: [opened, synchronize, reopened, labeled, unlabeled]
+
+permissions:
+  contents: read
 
 # Cancel in-progress runs on the same branch/PR when a new commit lands.
 # Stops minute-stacking from rapid-fire pushes.
@@ -46,13 +46,15 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
-      - uses: actions/checkout@v7
-      - uses: dtolnay/rust-toolchain@1.97.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@ca36e3307eb02aaffd8a9268ae90e586fd4f461e # 1.97.0
         with: { components: rustfmt }
       # Registry + git + target caching. `fmt` compiles nothing, but the
       # registry/git half still removes the DuckDB + Dioxus source fetch from
       # every run, which is most of this job's wall time.
-      - uses: Swatinem/rust-cache@v2
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
         with:
           cache-targets: true
       - run: cargo fmt --all -- --check
@@ -61,8 +63,10 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
-      - uses: actions/checkout@v7
-      - uses: dtolnay/rust-toolchain@1.97.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@ca36e3307eb02aaffd8a9268ae90e586fd4f461e # 1.97.0
         with: { components: clippy }
       # `--all-targets` on Linux now compiles the webview stack's `-sys` build
       # scripts, which pkg-config against glib/gtk/soup. Before the Dioxus
@@ -80,7 +84,7 @@ jobs:
       # `clippy --all-targets` is a full check build; target caching is the
       # whole point here. This job has no disk ceiling problem (it never
       # produces the debug test-binary set that `build-and-test` does).
-      - uses: Swatinem/rust-cache@v2
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
         with:
           cache-targets: true
       - run: cargo clippy --workspace --all-targets -- -D warnings
@@ -91,19 +95,10 @@ jobs:
       matrix:
         # Per-PR matrix kept narrow on purpose. Heavier coverage runs in
         # heavy.yml on a schedule (and on demand via `run-heavy` PR label).
-        # macos-13 (Intel): D-006 — oversubscribed runner pool.
-        # linux-arm64: moved to heavy.yml — adds ~30% minutes for marginal
-        #   coverage delta vs linux-x86_64. Re-add if a real arm-Linux user
-        #   surfaces.
-        # `labels` is an array of runner labels. Hosted runners use a single
-        # built-in label (e.g. `macos-14`). Self-hosted uses the registered
-        # label set. `runs-on: ${{ fromJSON(...) }}` AND-matches all labels.
+        # Both platforms use disposable GitHub-hosted runners.
+        # `labels` is an array; fromJSON supplies it to runs-on.
         target:
           - { labels: '["macos-14"]',                              triple: aarch64-apple-darwin,     name: macos-arm64  }
-          # Temporarily routed back to ubuntu-latest while runnerkit host
-          # is recovered (disk exhaustion 2026-05-26 on PR #5). Re-route to
-          # runnerkit labels once host is restored. Billing impact: Linux
-          # = 1x multiplier, ~1h per PR — manageable short-term.
           - { labels: '["ubuntu-latest"]',                         triple: x86_64-unknown-linux-gnu, name: linux-x86_64 }
     runs-on: ${{ fromJSON(matrix.target.labels) }}
     # Backstop against a hung step burning to GitHub's 6-hour default. The
@@ -114,7 +109,6 @@ jobs:
     # OTHER step that stalls. Well clear of normal cost (Linux ~75m, macOS ~40m).
     timeout-minutes: 120
     env:
-      DAT0_GLITCHTIP_DSN_PUBLIC: ${{ secrets.GLITCHTIP_DSN_PUBLIC }}
       # LINUX: drop DWARF from dev/test binaries. This is the disk fix.
       #
       # MEASURED (the #53 telemetry, same commit, same profile):
@@ -180,28 +174,21 @@ jobs:
       # and still rebuilding release DuckDB. That is the P5c runner death the
       # reclaim exists to prevent. See the bench steps at the end of this job.
       CARGO_PROFILE_DEV_DEBUG: 0
-      # Whether this run can hold the live-service secrets (MotherDuck,
-      # OpenRouter). Dependabot runs and pull requests from forks never get
-      # Actions secrets, so for them the live steps below are skipped, with a
-      # notice, instead of failing on a missing secret. Every other run — a
-      # branch in this repo, a push to main — still hard-fails without them.
-      #
-      # Before this, every Dependabot PR went red on "Require MotherDuck
-      # token" after Build and Test had passed: an update could only merge by
-      # overriding a required check, so none did. The live tests still run on
-      # the push to main that lands the update.
-      LIVE_SECRETS: ${{ github.actor != 'dependabot[bot]' && !github.event.pull_request.head.repo.fork }}
+      # Only canonical main pushes may run the live-service checks. Every PR,
+      # including same-repository and Dependabot PRs, receives the skip notice.
+      LIVE_SECRETS: ${{ github.repository == 'accidentally-awesome-labs/dat0' && github.event_name == 'push' && github.ref == 'refs/heads/main' }}
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
       # GitHub-hosted ubuntu-latest ships ~14 GB free disk by default;
       # dat0's debug-profile cargo test --workspace blows past that
       # (duckdb + arrow + sentry rlib chain). Free ~30 GB by
       # removing preinstalled language tooling we don't use.
-      # See docs/ci-mac-vm-runner.md / docs/ci.md for the wider disk
-      # story. Skipped on self-hosted (operator manages disk there).
+      # See docs/ci.md for target/profile disk-reclamation requirements.
       - name: Free disk space (hosted Linux only)
         if: runner.os == 'Linux' && runner.environment == 'github-hosted'
-        uses: jlumbroso/free-disk-space@v2.0.0
+        uses: jlumbroso/free-disk-space@ceedf095f4ec1a097402bc6bd80831f2e1a6fde6 # v2.0.0
         with:
           tool-cache: true
           android: true
@@ -220,7 +207,7 @@ jobs:
           echo '| phase | avail | used | target/ |' >> "$GITHUB_STEP_SUMMARY"
           echo '|---|---|---|---|' >> "$GITHUB_STEP_SUMMARY"
           ./.github/scripts/disk-report.sh baseline "${{ matrix.target.triple }}"
-      - uses: dtolnay/rust-toolchain@1.97.0
+      - uses: dtolnay/rust-toolchain@ca36e3307eb02aaffd8a9268ae90e586fd4f461e # 1.97.0
         with:
           targets: ${{ matrix.target.triple }}
       # Registry + git caching ONLY. `cache-targets: false` is load-bearing:
@@ -232,7 +219,7 @@ jobs:
       # it would recreate the exhaustion the reclaims exist to prevent.
       # What the registry/git half removes is the DuckDB + Dioxus + Arrow source
       # fetch, which is pure download time with no disk-ceiling downside.
-      - uses: Swatinem/rust-cache@v2
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
         with:
           cache-targets: false
           key: ${{ matrix.target.name }}
@@ -241,13 +228,9 @@ jobs:
       # (crates/dat0-core/src/globals.rs), so per-test process
       # isolation is not a nicety here — it is what lets those tests stop
       # serializing against each other inside one binary.
-      - uses: taiki-e/install-action@nextest
-      # apt + dbus-launch steps are skipped on self-hosted runners. Those
-      # runners must have the listed packages pre-installed on the host image
-      # (see docs/ci.md for the install command) and dbus/gnome-keyring
-      # running as user services. runnerkit images do not include sudo
-      # NOPASSWD, so per-job `sudo apt` fails. Hosted ubuntu-latest still
-      # needs them installed in-job since the image is wiped per run.
+      - uses: taiki-e/install-action@b1351b86cd80d01fa50a500e2c3e435ce4e1dd60 # nextest
+      # Install native dependencies and start Secret Service in the disposable
+      # hosted Linux job.
       - name: Linux deps (webview + keychain + charts)
         if: runner.os == 'Linux' && runner.environment == 'github-hosted'
         run: |
@@ -271,24 +254,18 @@ jobs:
         if: always()
         run: ./.github/scripts/disk-report.sh after-build-release "${{ matrix.target.triple }}"
       - name: Prime sqlite_scanner extension cache (avoid concurrent INSTALL race)
-        run: |
-          # `--target` keeps these in the SAME target/<triple>/ trees as the Build
-          # (release) + Test (debug) steps. Without it, cargo builds separate host
-          # `target/{release,debug}` trees — i.e. two MORE full DuckDB compiles
-          # (one debug) on disk, which exhausted the ~14 GB ubuntu runner once
-          # P7a added more test binaries. Reusing the trees frees that headroom.
-          cargo run --release --target ${{ matrix.target.triple }} -p dat0-fixtures -- --out /tmp/dat0-prime --csv-bytes 4096 --sqlite-target-bytes 4096 || true
-          # Force a one-shot INSTALL so subsequent test-binary processes find the extension cached.
-          cargo test -p dat0-engine --target ${{ matrix.target.triple }} --test attach_dispatch -- --nocapture || true
+        # Reuse the target/<triple>/ debug tree used by the following tests.
+        # This test installs the extension and verifies all three fixture rows.
+        run: cargo test --locked -p dat0-engine --target ${{ matrix.target.triple }} --test attach_sqlite -- --nocapture
       # The release tree is DEAD WEIGHT from here on — drop it before the debug
       # test build, which is what actually exhausts the disk.
       #
       # `Build` (release) and `Test` (debug) both land in target/<triple>/, so the
       # runner carries BOTH full trees at once (each with its own ~1.6 GB duckdb
-      # rlib). The last consumer of the release tree is the Prime step above
-      # (`cargo run --release`); everything after this — Test, MotherDuck,
-      # OpenRouter — is debug. On Linux ~7.5 GB of release artifacts just sit
-      # there while the debug tree (duckdb + the workspace's test binaries)
+      # rlib). Build is the last consumer of the release tree; Prime, Test,
+      # MotherDuck and OpenRouter all use debug artifacts. On Linux ~7.5 GB
+      # of release artifacts otherwise sit unused while the debug tree
+      # (duckdb + the workspace's test binaries)
       # balloons past the limit. The runner PROCESS itself then dies with `No
       # space left on device` mid-step — it reddened main on b55758b and blocked
       # PR #51. `Free disk space` is already maxed out and CARGO_INCREMENTAL=0
@@ -355,17 +332,14 @@ jobs:
       - name: 'Disk: after Test (LOW-WATER MARK)'
         if: always()
         run: ./.github/scripts/disk-report.sh after-test "${{ matrix.target.triple }}"
-      # P5c (D3): MotherDuck integration is a REQUIRED gate. The token is a
-      # repo secret (Settings → Secrets and variables → Actions → MOTHERDUCK_TOKEN).
-      # Dependabot and fork PRs receive no secrets; for them this step and the
-      # three after it are skipped (`LIVE_SECRETS`, job env) and the next step
-      # says so.
+      # MotherDuck is a hard gate on canonical main pushes. All PRs and fork
+      # pushes skip the four live-service steps and receive an explicit notice.
       - name: Live-service tests skipped (no secrets for this run)
         if: env.LIVE_SECRETS != 'true'
         env:
           RUN_BY: ${{ github.event.pull_request.head.repo.fork && 'a pull request from a fork' || github.actor }}
         run: |
-          echo "::notice::Skipped the MotherDuck and OpenRouter live tests: this run ($RUN_BY) gets no Actions secrets. They run on the push to main."
+          echo "::notice::Skipped the MotherDuck and OpenRouter live tests: this run ($RUN_BY) is not a canonical main push. They run on the push to upstream main."
       - name: Require MotherDuck token
         if: env.LIVE_SECRETS == 'true'
         env:
@@ -437,9 +411,8 @@ jobs:
       # that reddens main on runner variance is worse than no gate at all —
       # it trains everyone to ignore it. What this step IS for: recording the
       # `ci-hosted` host's numbers on every merge so drift is visible.
-      # `--check` on a host with no entry in docs/internal/perf-baselines.json
-      # RECORDS rather than compares (see the MX2 decision table), so the
-      # first run here is informational by construction.
+      # Absolute budgets are in docs/performance-baselines.json. Hosts without
+      # recorded values still get budget checks, but no regression comparison.
       # The BLOCKING gate is the `perf-gate` job below.
       #
       # Gated to push events (i.e. merges to main), NOT pull_request: the
@@ -469,6 +442,7 @@ jobs:
       - name: Perf harness — advisory check (macOS only, push to main)
         if: runner.os == 'macOS' && github.event_name != 'pull_request'
         continue-on-error: true
+        shell: bash
         env:
           # Keys the baseline entry. Without it a virtualized runner would be
           # compared against dev-box numbers, which is the comparison MX2's
@@ -483,7 +457,7 @@ jobs:
       - name: Upload perf artifact
         if: runner.os == 'macOS' && github.event_name != 'pull_request'
         continue-on-error: true
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
           name: perf-check-${{ github.sha }}
           path: perf-check.jsonl
@@ -494,10 +468,7 @@ jobs:
   # heavy.yml's `run-heavy`, because the six-scenario run costs ~30-40 min of
   # 10x-billed macOS minutes and most PRs cannot move frame time.
   #
-  # No `continue-on-error`: this is the gate. When dedicated (non-virtualized)
-  # macOS hardware appears, the ONLY line that changes is `runs-on:` — the
-  # command, the budgets and the host key stay as they are. Promoting this from
-  # label-triggered to every-PR is tracked as its own deferral.
+  # No `continue-on-error`: a requested perf gate must succeed.
   perf-gate:
     name: Perf budget (run-perf label)
     # Label-gated only. Unlike heavy.yml this does NOT run on push: the
@@ -508,18 +479,21 @@ jobs:
     runs-on: macos-14
     timeout-minutes: 60
     steps:
-      - uses: actions/checkout@v7
-      - uses: dtolnay/rust-toolchain@1.97.0
-      - uses: Swatinem/rust-cache@v2
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@ca36e3307eb02aaffd8a9268ae90e586fd4f461e # 1.97.0
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
         with:
           cache-targets: false
       - name: cargo xtask perf --check (all six scenarios)
+        shell: bash
         env:
           DAT0_PERF_HOST: ci-hosted
         run: cargo xtask perf --check | tee perf-gate.jsonl
       - name: Upload perf artifact
         if: always()
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
           name: perf-gate-${{ github.sha }}
           path: perf-gate.jsonl
@@ -548,14 +522,16 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 90
     steps:
-      - uses: actions/checkout@v7
-      - uses: dtolnay/rust-toolchain@1.97.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@ca36e3307eb02aaffd8a9268ae90e586fd4f461e # 1.97.0
         with: { components: llvm-tools-preview }
-      - uses: Swatinem/rust-cache@v2
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
         with:
           cache-targets: false
       - name: Free disk space
-        uses: jlumbroso/free-disk-space@v2.0.0
+        uses: jlumbroso/free-disk-space@ceedf095f4ec1a097402bc6bd80831f2e1a6fde6 # v2.0.0
         with:
           tool-cache: true
           android: true
@@ -578,8 +554,8 @@ jobs:
           echo "DBUS_SESSION_BUS_ADDRESS=$DBUS_SESSION_BUS_ADDRESS" >> $GITHUB_ENV
           echo "GNOME_KEYRING_CONTROL=$GNOME_KEYRING_CONTROL" >> $GITHUB_ENV
           echo "SSH_AUTH_SOCK=$SSH_AUTH_SOCK" >> $GITHUB_ENV
-      - uses: taiki-e/install-action@nextest
-      - uses: taiki-e/install-action@cargo-llvm-cov
+      - uses: taiki-e/install-action@b1351b86cd80d01fa50a500e2c3e435ce4e1dd60 # nextest
+      - uses: taiki-e/install-action@be76f545a6a2f94fb131c5bb748ebed32edb5760 # cargo-llvm-cov
       - name: cargo llvm-cov
         env:
           # Same OOM cap as build-and-test: instrumented builds link the same
@@ -593,7 +569,7 @@ jobs:
         run: cargo llvm-cov nextest --workspace --lcov --output-path lcov.info
       - name: Upload lcov
         if: always()
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
           name: lcov-${{ github.sha }}
           path: lcov.info
@@ -616,8 +592,10 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 90
     steps:
-      - uses: actions/checkout@v7
-      - uses: dtolnay/rust-toolchain@1.97.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@ca36e3307eb02aaffd8a9268ae90e586fd4f461e # 1.97.0
       - name: Linux deps (webview + keychain + charts) and a virtual display
         run: |
           sudo apt-get update
@@ -627,7 +605,7 @@ jobs:
             libfontconfig1-dev libssl-dev \
             libwebkit2gtk-4.1-dev libsoup-3.0-dev libxdo-dev \
             xvfb
-      - uses: Swatinem/rust-cache@v2
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
       - name: Build the probes
         run: >-
           cargo build --release -p dat0-ui
@@ -647,8 +625,10 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
-      - uses: actions/checkout@v7
-      - uses: EmbarkStudios/cargo-deny-action@v2
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - uses: EmbarkStudios/cargo-deny-action@3c6349835b2b7b196a839186cb8b78e02f7b5f25 # v2
         with:
           command: check
 
@@ -656,7 +636,9 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
       - run: ./scripts/i18n-check.sh
 
   no-standalone-arrow:
@@ -664,11 +646,13 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
       - name: Verify no `arrow = ` workspace/crate dep
         run: |
           if grep -rE '^arrow\s*=' Cargo.toml crates/*/Cargo.toml; then
-            echo "::error::Standalone arrow dep would break duckdb::arrow type chain. See P2 retro #2."
+            echo "::error::Standalone arrow dep would break the duckdb::arrow type chain. See docs/architecture.md."
             exit 1
           fi
           echo "OK: no standalone arrow dep"
@@ -678,16 +662,19 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
-      - uses: actions/checkout@v7
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@ca36e3307eb02aaffd8a9268ae90e586fd4f461e # 1.97.0
       - name: Verify no gpui/dioxus in the dat0-core dependency tree
         run: |
           # `dat0-core` is what makes the UI swappable: every module in it must
           # compile without knowing what is drawing. A toolkit dep sneaking in
           # via a re-export is invisible in review and fatal in a year.
-          if cargo tree -p dat0-core -e normal | grep -qE '(gpui|dioxus)'; then
+          tree="$(cargo tree --locked -p dat0-core -e normal)"
+          if grep -qE '(gpui|dioxus)' <<< "$tree"; then
             echo "::error::dat0-core must not depend on a UI toolkit."
-            cargo tree -p dat0-core -e normal | grep -E '(gpui|dioxus)'
+            grep -E '(gpui|dioxus)' <<< "$tree"
             exit 1
           fi
           echo "OK: dat0-core is toolkit-free"
@@ -697,7 +684,9 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
       - name: Verify no `__debug_query_scalar` references
         run: |
           if grep -rE '__debug_query_scalar' crates/ 2>/dev/null; then
@@ -705,3 +694,70 @@ jobs:
             exit 1
           fi
           echo "OK: no __debug_query_scalar references"
+
+  notice:
+    uses: ./.github/workflows/notice.yml
+
+  docs-check:
+    name: Documentation links
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - name: Check public tree
+        run: bash .github/scripts/check-public-tree.sh
+      - name: List tracked public guides
+        shell: bash
+        run: |
+          git ls-files -- README.md CONTRIBUTING.md SECURITY.md CODE_OF_CONDUCT.md SUPPORT.md \
+            .github/pull_request_template.md ':(glob)docs/*.md' \
+            > "$RUNNER_TEMP/dat0-docs-inputs.txt"
+      - name: Check local links and fragments
+        uses: lycheeverse/lychee-action@e7477775783ea5526144ba13e8db5eec57747ce8 # v2.9.0
+        with:
+          lycheeVersion: v0.24.2
+          fail: true
+          failIfEmpty: true
+          token: ''
+          args: >-
+            --offline --include-fragments --no-progress
+            --root-dir '${{ github.workspace }}'
+            --files-from '${{ runner.temp }}/dat0-docs-inputs.txt'
+
+  ci-required:
+    name: CI required
+    if: ${{ always() }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions: {}
+    needs:
+      - fmt
+      - clippy
+      - build-and-test
+      - windowed-probes
+      - supply-chain
+      - i18n-check
+      - no-standalone-arrow
+      - dat0-core-purity
+      - no-debug-query-scalar
+      - notice
+      - docs-check
+      - perf-gate
+    steps:
+      - name: Require mandatory jobs and the expected perf result
+        shell: bash
+        env:
+          NEEDS_JSON: ${{ toJSON(needs) }}
+          RUN_PERF: ${{ github.event_name == 'pull_request' && contains(github.event.pull_request.labels.*.name, 'run-perf') }}
+        run: |
+          jq -e --argjson perf "$RUN_PERF" '
+            . as $jobs
+            | ["fmt", "clippy", "build-and-test", "windowed-probes", "supply-chain",
+               "i18n-check", "no-standalone-arrow", "dat0-core-purity",
+               "no-debug-query-scalar", "notice", "docs-check"] as $required
+            | all($required[]; $jobs[.].result == "success")
+              and (if $perf then $jobs["perf-gate"].result == "success"
+                   else $jobs["perf-gate"].result == "skipped" end)
+          ' <<< "$NEEDS_JSON"

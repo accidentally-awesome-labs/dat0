@@ -1,11 +1,12 @@
 # Pinned (not floating "stable") so a rustc/clippy release can't silently change
 # CI or local behavior. This is the single source of truth for the version cargo
-# runs; the CI workflows install the SAME version via `dtolnay/rust-toolchain@1.97.0`
-# (both must match, or a component/version mismatch can occur).
+# runs; CI installs the SAME version using the version-specific
+# `dtolnay/rust-toolchain` commit ca36e3307eb02aaffd8a9268ae90e586fd4f461e
+# (1.97.0). That action embeds the compiler version; it has no toolchain input.
 #
-# To bump: change `channel` here AND every `dtolnay/rust-toolchain@<ver>` ref in
-# .github/workflows/*.yml to the new version, in one PR — so any new lint or
-# behavior change lands reviewably instead of reddening main out of the blue.
+# To bump: change `channel` here AND every version-specific Rust action SHA
+# and version comment in .github/workflows/*.yml in one PR. Resolve the commit
+# for the new compiler version so any new lint or behavior change is reviewable.
 [toolchain]
 channel = "1.97.0"
 components = ["rustfmt", "clippy"]

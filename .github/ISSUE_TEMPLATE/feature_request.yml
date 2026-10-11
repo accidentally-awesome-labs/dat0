@@ -1,0 +1,28 @@
+name: Feature request
+description: Describe a problem and a proposed improvement.
+labels: [enhancement]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem
+      description: What user need or workflow is not served today?
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed improvement
+      description: Describe the desired behavior; an implementation is not required.
+    validations:
+      required: true
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives
+      description: What alternatives or workarounds have you considered?
+  - type: textarea
+    id: compatibility
+    attributes:
+      label: Compatibility and impact
+      description: Optional impact on existing workflows, packages, sessions, or outbound network traffic.
