@@ -1,46 +1,12 @@
-//! 1M-row virtualized-scroll bench.
+//! Headless per-cell rendering benchmark over a synthetic 1M-row Arrow batch.
 //!
-//! Generates a synthetic Arrow batch (Int64, Float64, Utf8, UInt64; 1%
-//! nulls), drives the same `render_cell` dispatch the live grid uses
-//! over the full row range, and samples frame time. The bench is
-//! GPU-kernel-independent: it measures the cost of the per-cell render
-//! decision plus Arrow column access — the path that dominates real-world
-//! scroll frames once the widget reaches steady state. Real GPU
-//! frame-pacing is verified at P10 on the provisioned self-hosted GPU
-//! runner; P3a's metric is an *engine + cell-render* upper bound.
+//! Measures `renderers::render_cell` dispatch and Arrow column access in a plain
+//! loop. It does not mount the desktop grid, a WebView, or a window, and cannot
+//! establish layout, focus, GPU time, or real frame pacing.
 //!
-//! T13 (P3b) note: T4 mounted the real `gpui_component::Table` widget
-//! against `WorkspaceShell.data_source`, but the Table widget cannot be
-//! exercised headlessly — `TableDelegate::render_td_cell` takes
-//! `&mut Window` and runs inside the GPUI foreground executor + Cocoa
-//! main thread. A non-window test harness has no `Window` to pass.
-//! T13 therefore keeps the existing harness (which measures `render_cell`
-//! over the same in-memory Arrow batch the real `GridTableDelegate` calls
-//! through) as the P3b baseline. Real-Table frame timing is deferred to
-//! the P10 perf-budget runner per spec line 819. See
-//! `docs/internal/p3-bench-baselines.md` for the recorded numbers + the
-//! headless-vs-Table comparison plan.
-//!
-//! ⚠ UI-redesign B5 ruling — WHAT THIS BENCH DOES NOT MEASURE.
-//!
-//! This harness calls `renderers::render_cell` in a plain loop over a synthetic
-//! Arrow batch. It never builds a `Window`, a `WorkspaceShell`, or the
-//! `gpui_component::Table` widget, so it is blind to everything about how the
-//! grid is MOUNTED: the `TableDelegate`, `render_td`, the per-cell theme reads
-//! inside it, and the whole element tree above the table. Its sensitivity
-//! surface is `render_cell` plus Arrow column access, and nothing else.
-//!
-//! Consequently the A5 and A6 readings — "the bench held with `grid/mod.rs` in
-//! the diff" — were measuring something that structurally could not contain
-//! those changes. They are not evidence of no regression; they are evidence of
-//! nothing, and must not be cited as reassurance.
-//!
-//! B5 (DockArea adoption) keeps this bench as a `render_cell` watchdog, which
-//! it genuinely is — that function is on the per-cell hot path — and bases its
-//! own no-regression claim on structure instead: `grid/mod.rs` is byte-
-//! untouched, and `DockItem::Panel` puts zero elements between the shell and the
-//! `Table` (measured: panel-body bounds equal host bounds). Real per-frame
-//! timing remains D-013's perf runner, which already owns it as a P10-exit gap.
+//! Keep this as a per-cell hot-path watchdog. Real-window geometry checks and
+//! frame-interval scenarios are described in `docs/ci.md`; their budgets and
+//! recorded host measurements live in `docs/performance-baselines.json`.
 
 use criterion::{Criterion, Throughput, black_box, criterion_group, criterion_main};
 use dat0_core::grid::renderers::render_cell;

@@ -1,0 +1,11 @@
+blank_issues_enabled: true
+contact_links:
+  - name: Questions and discussions
+    url: https://github.com/accidentally-awesome-labs/dat0/discussions
+    about: Ask usage or architecture questions.
+  - name: Report a security vulnerability
+    url: https://github.com/accidentally-awesome-labs/dat0/security/advisories/new
+    about: Report vulnerabilities and data leaks privately, not in a public issue.
+  - name: Contribution guide
+    url: https://github.com/accidentally-awesome-labs/dat0/blob/main/CONTRIBUTING.md
+    about: Read setup, validation, and contribution instructions.

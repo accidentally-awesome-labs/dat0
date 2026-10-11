@@ -53,8 +53,8 @@
 //! check); this one carries generic invariants across everything. Duplicating
 //! the shell's numbers here would give two tests that fail together.
 //!
-//! Not a CI job: hosted runners have no display, the same constraint
-//! `docs/deferrals.md` records as D-032 for the perf scroll scenarios.
+//! CI runs this under Linux Xvfb with the other seven real-window probes.
+//! Desktop macOS validation remains separate; see `docs/ci.md`.
 //!
 //! Exits 0 when every scene passes, 1 otherwise.
 

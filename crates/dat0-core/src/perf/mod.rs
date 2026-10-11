@@ -1,10 +1,8 @@
 //! MX1: real frame-interval instrumentation for the workspace window.
 //!
-//! Every "60 fps" claim dat0 makes — `README.md`, `docs/design/onboarding-v1.md`,
-//! the marketing page — was unbacked before this module existed, and the only
-//! bench in the tree says so about itself: `benches/grid_scroll.rs` calls
-//! `render_cell` in a plain loop, never builds a `Window`, and its own doc block
-//! calls the readings "evidence of nothing".
+//! Real-window measurements complement the headless `benches/grid_scroll.rs`,
+//! which measures only per-cell dispatch and Arrow access. See `docs/ci.md`
+//! and `docs/performance-baselines.json` for scenarios and recorded budgets.
 //!
 //! This is the instrument that replaces the guess. It records nothing but wall
 //! clock, costs one `Instant::now()` and at most one `VecDeque` eviction per

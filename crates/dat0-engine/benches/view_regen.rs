@@ -5,10 +5,10 @@
 //!   t2  = execute_paged("SELECT * FROM v", 0, 100)            // first page
 //!   t3  = execute_paged("SELECT * FROM v", 999_900, 100)      // last page (forces full materialisation)
 //!
-//! Hot-path metric per design §9: t1 + t2 (Apply-click → first row paint).
-//! Target: < 500 ms p95 on macOS-arm + linux-x86. If exceeded, document
-//! Plan B (CTAS-on-apply) in docs/internal/dat0-p4a-t0-spike.md and amend
-//! design §4 + plan T2/T4/T13 in place.
+//! Hot-path metric: t1 + t2 (apply to first-page engine result).
+//! Target: < 500 ms p95 on macOS-arm + linux-x86. If exceeded, report the
+//! measured regression and discuss alternatives such as CTAS-on-apply; do not
+//! change baselines to hide it. See docs/ci.md for validation procedures.
 
 use std::sync::Arc;
 

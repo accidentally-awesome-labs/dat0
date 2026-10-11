@@ -1,20 +1,23 @@
 # dat0 Per-Release Privacy Review Process
 
 > **Scope:** This checklist must be completed by a maintainer before signing and
-> publishing any release. It verifies that the transmitted/never-transmitted
-> contract in `docs/privacy.md` §2–§4 accurately reflects the current code.
+> publishing any release. It checks that the channel-specific contract in
+> [Privacy](privacy.md) accurately reflects current request builders and transport.
+
+[Documentation index](README.md)
 
 ---
 
 ## Overview
 
-dat0 makes privacy guarantees in three code areas:
+Privacy boundaries span request construction, transport, and capture:
 
 | Area | Key files |
 |---|---|
 | Crash-report redaction | `crates/dat0-core/src/telemetry/redaction.rs` |
-| AI schema-only payload filter | `crates/dat0-core/src/ai/schema_ctx.rs`, `crates/dat0-core/src/ai/request.rs` |
-| SSRF provider-URL guard | `crates/dat0-core/src/ai/ssrf.rs` |
+| AI schema and desktop request builders | `crates/dat0-core/src/ai/schema_ctx.rs`, `crates/dat0-core/src/ai/request.rs`, `crates/dat0-ui/src/components/ai.rs`, `crates/dat0-ui/src/ai_flow.rs` |
+| SSRF and AI transport | `crates/dat0-core/src/ai/ssrf.rs`, `crates/dat0-core/src/ai/transport.rs` |
+| Other network seams | Update checks/download/apply, remote sample downloads, DuckDB extension acquisition, MotherDuck connections, and egress accounting |
 
 Each area has a standing automated test suite. The checklist below verifies that
 those tests still pass, that no new code bypasses the guards, and that
@@ -26,8 +29,8 @@ those tests still pass, that no new code bypasses the guards, and that
 
 ### 1. Crash-report redaction (`telemetry/redaction.rs`)
 
-**Goal:** Confirm no schema names, column names, query text, file paths, or key
-material can leak through crash reports.
+**Goal:** Preserve crash-specific redaction and consent, and review new event
+fields for sensitive content; pattern redaction is not a universal sanitizer.
 
 - [ ] Run `cargo test -p dat0-core telemetry` and confirm all tests pass.
 - [ ] Open `crates/dat0-core/src/telemetry/redaction.rs` and verify:
@@ -46,10 +49,10 @@ material can leak through crash reports.
 
 ---
 
-### 2. AI schema-only payload filter (R17)
+### 2. AI schema and desktop request builders
 
-**Goal:** Confirm the AI feature sends only table names, column names, and column
-types — never row values, query results, file paths, or `.dat0` contents.
+**Goal:** Confirm schema contains names/types only, desktop streams attach no
+automatic sample rows, and documentation discloses prompts and Explain SQL.
 
 - [ ] Run `cargo test -p dat0-core ai` and confirm all tests pass, including:
   - `maps_names_and_types_drops_surrogate` (schema_ctx.rs)
@@ -63,24 +66,23 @@ types — never row values, query results, file paths, or `.dat0` contents.
 - [ ] Open `crates/dat0-core/src/ai/request.rs` and verify:
   - `AiRequest` has no field that can structurally carry row data other than
     `sample_rows: Option<SampleRows>`.
-  - Confirm that `sample_rows` is only populated when the user has explicitly
-    enabled the include-sample-rows toggle, and that it is `None` by default.
+  - Confirm default `sample_rows` is `None`; do not infer the desktop behavior
+    from the core type's ability to carry optional samples.
   - `SchemaContext` contains only `Vec<TableSchema>` (name + `Vec<ColumnSchema>`
     with name + type).
-- [ ] Grep for any new call site that constructs `AiRequest` and confirm
-  `sample_rows` is `None` or only set behind the user toggle:
-  ```
-  grep -rn "AiRequest {" crates/dat0-core/src/
-  ```
-- [ ] Cross-check against `docs/privacy.md` §3 and §4 — if the payload shape
-  changed, update the doc to match.
+- [ ] Inspect every `AiRequest` builder in both `crates/dat0-core/src/` and
+  `crates/dat0-ui/src/`, especially `components/ai.rs`: current NL→SQL and Explain
+  streams pass `sample_rows: None` even with the stored toggle on.
+- [ ] Verify prompts and Explain SQL go to the chosen provider, authentication
+  uses its key, and arbitrary user text is not represented as sanitized.
+- [ ] Cross-check [Privacy](privacy.md) §3–§4 and [AI providers](ai-providers.md).
 
 ---
 
 ### 3. SSRF provider-URL guard (`ai/ssrf.rs`)
 
-**Goal:** Confirm that a user-supplied Custom provider URL cannot be used to
-redirect AI requests to loopback, private, or link-local network addresses.
+**Goal:** Preserve default endpoint restrictions and accurately disclose the
+advanced HTTP/private-address override and DNS re-resolution caveat.
 
 - [ ] Run `cargo test -p dat0-core ssrf` and confirm all tests pass, including:
   - `blocks_private_and_local_ranges`
@@ -101,22 +103,25 @@ redirect AI requests to loopback, private, or link-local network addresses.
   ```
   grep -rn "validate_url\|ValidatedUrl" crates/dat0-core/src/
   ```
+- [ ] Inspect `ai/transport.rs`: every Custom send uses the guard and resolved-IP
+  check. The HTTP client's independent DNS resolution leaves a race; do not
+  describe the existing check as connection pinning.
 - [ ] Cross-check against `docs/privacy.md` §4 — if the guard behavior changed,
   update the doc.
 
 ---
 
-### 4. §15.2/§15.3 transmitted/never-transmitted contract
+### 4. Channel-specific end-to-end contract
 
-**Goal:** Confirm that `docs/privacy.md` §2 (transmitted) and §3 (never
-transmitted) are still accurate end-to-end.
+**Goal:** Confirm consent, secret storage, and all network triggers match
+[Privacy](privacy.md), without treating crash opt-in as a global offline switch.
 
 - [ ] **Telemetry opt-in gate:** Open `crates/dat0-core/src/settings/schema.rs`
   and confirm `Telemetry.crash_submission_enabled` still defaults to `false`
   (via `#[serde(default)]` on the struct — `bool` defaults to `false`).
-- [ ] **Keychain-only secrets:** Confirm no code path writes a BYOK API key or
-  a MotherDuck token to `settings.toml`, a session file, a log line, or a
-  telemetry event. Grep:
+- [ ] **Secret storage and authentication:** Review OS-store/in-memory fallback
+  behavior and service authentication. Confirm no path writes a BYOK key or
+  MotherDuck token to settings, sessions, log lines, or telemetry events. Grep:
   ```
   grep -rn "motherduck_token\|api_key" crates/dat0-core/src/settings/
   grep -rn "api_key.*log\|log.*api_key" crates/dat0-core/src/
@@ -124,22 +129,31 @@ transmitted) are still accurate end-to-end.
 - [ ] **No new transmitted fields:** Review the diff since the last release for
   any new field added to `ClientOptions` in `telemetry/mod.rs`, any new tag or
   breadcrumb attached to Sentry events, or any new field added to `AiRequest`.
+- [ ] Review UI request builders, update-check/download seams, remote sample
+  fetches, extension acquisition and MotherDuck connections. Check default-on
+  update checks and default-off crash reports separately.
+- [ ] Check egress accounting remains described as application-layer only;
+  MotherDuck's unmetered channel must retain the `+` lower-bound indication.
+- [ ] Review local logs and user notes as potentially sensitive; crash-pattern
+  redaction does not sanitize all arbitrary text.
 - [ ] Update `docs/privacy.md` with today's date in the "Last updated" line if
   any of the above verified items changed.
 
 ---
 
-## Running all privacy-related tests at once
+## Running privacy-related tests
+
+Run each filter separately so Cargo applies it correctly:
 
 ```bash
-cargo test -p dat0-core -- telemetry ai ssrf 2>&1 | grep -E "^(test |FAILED|ok|error)"
+cargo test -p dat0-core telemetry
+cargo test -p dat0-core ai
+cargo test -p dat0-core ssrf
 ```
 
-Or the full workspace gate:
-
-```bash
-cargo test --workspace
-```
+Use [CONTRIBUTING](../CONTRIBUTING.md) and [CI](ci.md) for the workspace nextest
+and doctest gates. No live credentials or sensitive submissions are needed for
+this documentation review.
 
 All tests in the three areas above must be green before the release tag is
 pushed.

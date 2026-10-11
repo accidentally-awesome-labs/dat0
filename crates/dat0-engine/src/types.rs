@@ -1,4 +1,4 @@
-//! Engine type surface. Per spec §2.9.
+//! Engine type surface; see `docs/architecture.md` for the DuckDB/Arrow contract.
 
 use std::collections::HashMap;
 use std::path::PathBuf;
@@ -70,15 +70,10 @@ impl FileFormat {
     }
 }
 
-/// Per spec §2.9. `encoding` deliberately absent (D-010).
+/// File registration options. Encoding conversion is not supported.
 ///
-/// **Spec deviation (intentional):** spec §2.9 declares `format: FileFormat`
-/// with auto-detection externalized to the caller. The plan uses
-/// `format: Option<FileFormat>` so the engine handles auto-detect internally
-/// (None = sniff from path extension). This is the same end-user contract,
-/// shifted one layer: callers can still pass an explicit format. Document in
-/// T1 commit message; revisit if P3 import wizard prefers explicit-format
-/// dispatch.
+/// `format: None` lets the engine infer the format from the path extension;
+/// callers can supply an explicit format. See docs/architecture.md.
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct RegisterOpts {
@@ -106,8 +101,7 @@ pub enum TableOrigin {
 }
 
 /// How a file was read into its table, so it can be read the same way again:
-/// the options it was registered with, and what the import wizard did to its
-/// columns after (PD-037).
+/// registration options and the import wizard's column choices.
 ///
 /// Data, never SQL: the options are rendered as escaped literals and the
 /// column names as quoted identifiers each time they are used, so one kept in

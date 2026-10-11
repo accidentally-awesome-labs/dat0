@@ -9,10 +9,8 @@ use std::sync::atomic::{AtomicU64, Ordering};
 /// tree if it still exists; errors are swallowed because the OS will
 /// reclaim `/tmp` eventually and a partial cleanup must never block
 /// test teardown. Kept in-crate to avoid a new dependency on `tempfile`
-/// — the existing P1 tests use `tempfile::tempdir()` via `dev-deps`,
-/// but `open_in_memory` is part of the runtime crate's public API and
-/// must work in non-test builds too (T11 deferral close in
-/// `docs/deferrals.md`).
+/// — tests use `tempfile::tempdir()` via `dev-deps`, but `open_in_memory`
+/// is part of the runtime crate's public API and must work in non-test builds.
 struct InMemoryGuard(PathBuf);
 
 impl Drop for InMemoryGuard {

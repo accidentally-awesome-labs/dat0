@@ -17,7 +17,7 @@ edition = "2024"
 license = "Apache-2.0"
 repository = "https://github.com/accidentally-awesome-labs/dat0"
 authors = ["Accidentally Awesome Labs"]
-rust-version = "1.85"
+rust-version = "1.97"
 
 [workspace.dependencies]
 # Async + utilities
@@ -71,11 +71,11 @@ sha2 = "0.11"
 # GenericArray, has no `{:x}` formatting.
 hex = "0.4"
 
-# P8 T1: `.dat0` package container. Pin proven by the P8 T0 spike
-# (docs/internal/2026-06-13-p8-spike-notes.md §S2): default-features off drops
-# the heavy zstd/lzma/xz/bzip2 codecs we don't need; `deflate-flate2-zlib-rs`
-# selects the pure-Rust zlib backend (the bare `deflate-flate2` feature fails to
-# compile — "No compression backend selected"). Stored Parquet + Deflated JSON.
+# `.dat0` package container: default-features off drops the heavy zstd/lzma/xz/
+# bzip2 codecs we do not need; `deflate-flate2-zlib-rs` selects the pure-Rust
+# zlib backend (the bare `deflate-flate2` feature fails to compile —
+# "No compression backend selected"). Stored Parquet + Deflated JSON.
+#
 zip = { version = "8.6.0", default-features = false, features = ["deflate-flate2-zlib-rs"] }
 
 # P8 T1: validate a serialized manifest against the published JSON Schema (dev/test only).
@@ -116,7 +116,7 @@ tempfile = "3"
 serial_test = "3"
 
 # Engine: DuckDB native + bundled extensions (json, parquet are statically linked under `bundled`).
-# CSV reading is in DuckDB core; sqlite_scanner is NOT bundled (see D-009) and is loaded at runtime.
+# CSV reading is in DuckDB core; sqlite_scanner is runtime-installed, not bundled.
 # Arrow types are consumed via duckdb::arrow re-exports — DO NOT add a standalone `arrow` dep.
 duckdb = { version = "=1.4.4", features = ["bundled", "json", "parquet"] }
 

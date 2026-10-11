@@ -11,15 +11,52 @@ permissions:
   contents: read
 
 jobs:
+  validate-ref:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    steps:
+      - name: Validate release event and ref
+        shell: bash
+        env:
+          RELEASE_REPOSITORY: ${{ github.repository }}
+          RELEASE_EVENT: ${{ github.event_name }}
+          RELEASE_REF: ${{ github.ref }}
+          RELEASE_SHA: ${{ github.sha }}
+        run: |
+          if [[ "$RELEASE_REPOSITORY" != 'accidentally-awesome-labs/dat0' ]] ||
+             ! { [[ "$RELEASE_EVENT" == push && "$RELEASE_REF" == refs/tags/v* ]] ||
+                 [[ "$RELEASE_EVENT" == workflow_dispatch && "$RELEASE_REF" == refs/heads/main ]]; }; then
+            echo 'Release dispatch is allowed only on main; publication requires a v* tag push.' >&2
+            exit 1
+          fi
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+      - name: Require tag ancestry on main
+        if: github.event_name == 'push'
+        shell: bash
+        env:
+          RELEASE_SHA: ${{ github.sha }}
+        run: |
+          git fetch origin refs/heads/main:refs/remotes/origin/main
+          git merge-base --is-ancestor "$RELEASE_SHA" origin/main
+
   gate:
+    needs: validate-ref
+    environment: release
     # What a release must carry before anything is built for it:
     # xtask/src/release.rs. A tag stops here on any finding; a dry run lists
     # them as warnings and goes on.
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
-      - uses: actions/checkout@v7
-      - uses: dtolnay/rust-toolchain@1.97.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@ca36e3307eb02aaffd8a9268ae90e586fd4f461e # 1.97.0
       - name: What a release must carry
         env:
           DAT0_GLITCHTIP_DSN_PUBLIC: ${{ secrets.GLITCHTIP_DSN_PUBLIC }}
@@ -42,6 +79,7 @@ jobs:
 
   macos:
     needs: gate
+    environment: release
     runs-on: macos-14
     timeout-minutes: 90
     env:
@@ -49,8 +87,10 @@ jobs:
       # rather than shipping unsigned. A dry run signs when they are set.
       SIGN: ${{ github.ref_type == 'tag' || secrets.APPLE_DEV_ID_CERT_P12 != '' }}
     steps:
-      - uses: actions/checkout@v7
-      - uses: dtolnay/rust-toolchain@1.97.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@ca36e3307eb02aaffd8a9268ae90e586fd4f461e # 1.97.0
         # Block style: in a `{ … }` mapping the comma ends the entry, so only
         # aarch64 was installed and the x86_64 half of the universal build
         # failed (release run #1).
@@ -134,13 +174,14 @@ jobs:
       # Artifact filenames stay unversioned: the publish job below and
       # xtask::sign::verify both address them by fixed path. The version is
       # applied when the assets are staged for the GitHub Release.
-      - uses: actions/upload-artifact@v7
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with: { name: dat0-dmg, path: target/macos/dat0.dmg }
-      - uses: actions/upload-artifact@v7
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with: { name: dat0-app-tarball, path: target/macos/dat0.app.tar.gz }
 
   linux:
     needs: gate
+    environment: release
     # The oldest glibc dat0 supports. A binary runs on the glibc it was built
     # against and newer: one built on ubuntu-latest (24.04) needed glibc 2.38,
     # which Ubuntu 22.04 and Debian 12 do not have.
@@ -150,8 +191,10 @@ jobs:
       # As for macOS: a tag always signs; a dry run signs when the key is set.
       SIGN: ${{ github.ref_type == 'tag' || secrets.GPG_PRIVATE_KEY != '' }}
     steps:
-      - uses: actions/checkout@v7
-      - uses: dtolnay/rust-toolchain@1.97.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@ca36e3307eb02aaffd8a9268ae90e586fd4f461e # 1.97.0
       - name: Tools
         run: |
           sudo apt-get update
@@ -223,24 +266,27 @@ jobs:
       - name: Verify the signature
         if: env.SIGN == 'true'
         run: cargo xtask verify --linux
-      - uses: actions/upload-artifact@v7
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with: { name: dat0-appimage, path: 'target/linux/dat0.AppImage*' }
-      - uses: actions/upload-artifact@v7
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         if: always()
         with: { name: appimage-smoke, path: target/linux/smoke/, if-no-files-found: ignore }
 
   publish:
     needs: [gate, macos, linux]
-    if: github.ref_type == 'tag'
+    if: github.event_name == 'push' && github.ref_type == 'tag' && startsWith(github.ref, 'refs/tags/v')
+    environment: release
     runs-on: ubuntu-latest
     timeout-minutes: 60
     permissions:
       contents: write
     steps:
-      - uses: actions/checkout@v7
-      - uses: actions/download-artifact@v8
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
         with: { path: dist }
-      - uses: dtolnay/rust-toolchain@1.97.0
+      - uses: dtolnay/rust-toolchain@ca36e3307eb02aaffd8a9268ae90e586fd4f461e # 1.97.0
       - name: Stage release assets under their versioned names
         # `gh release`'s asset name is the file's basename — there is no rename
         # flag — so the version is applied by copying, here, at upload time.

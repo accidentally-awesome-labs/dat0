@@ -1,9 +1,11 @@
 # dat0 Privacy Policy
 
-> **Last updated:** 2026-09-26
+> **Last updated:** 2026-10-11
 >
-> This document describes exactly what dat0 captures, what it sends, and what it
-> never sends. It is the reference for the **Settings → Telemetry** section.
+> This policy separates local capture, crash submission, and other network
+> channels. The Telemetry switch controls crash reports, not all networking.
+
+[Documentation index](README.md)
 
 ---
 
@@ -33,8 +35,8 @@ potentially containing absolute paths.
 dat0 can send crash reports to a **self-hosted** error tracker (GlitchTip) when
 something goes wrong. This feature is:
 
-- **Off by default.** The `crash_submission_enabled` field in `Settings.toml`
-  defaults to `false`. Nothing leaves your machine until you explicitly turn it on.
+- **Off by default.** The `crash_submission_enabled` field in `settings.toml`
+  defaults to `false`. Crash reports are not submitted until you opt in.
 - **Your choice, always.** You can toggle it at any time in
   **Settings → Telemetry → Enable crash report submission**. The setting is
   read when a report is sent, so turning it off stops the next one, and
@@ -72,51 +74,52 @@ Before any crash event leaves the process, the `before_send` hook in
 - Exception message text is also scanned for path-like strings
   (`/Users/…`, `/home/…`, `C:\…`) and those spans are replaced with `<redacted>`.
 
----
-
-## 3. What is never transmitted
-
-Regardless of your Telemetry setting, the following data **never leaves your
-machine** via dat0's telemetry or AI features:
-
-| Category | Detail |
-|---|---|
-| Schema and column names | Not sent in crash telemetry. (Schema and column names + types **are** sent to your configured AI provider when you use the AI feature — see §4.) |
-| Query text and results | SQL you write or results dat0 returns are never sent |
-| File paths | Absolute file-system paths are redacted before any outbound network call |
-| Source data | Row values from your tables or imported files are never transmitted |
-| Derived data | Results of computed columns, transforms, or views are never transmitted |
-| `.dat0` package contents | Contents of any `.dat0` workspace or package file are never transmitted |
-| AI prompt content | Your natural-language queries to the AI feature stay on-device between your machine and the AI provider you configured |
-| BYOK API keys | Your provider API keys are stored in the OS keychain only; they are never written to settings files, session files, logs, or telemetry |
-| MotherDuck token | Your MotherDuck authentication token is stored in the OS keychain only; it is never written to settings files, session files, logs, or telemetry |
+Redaction is crash-specific and pattern-based, not a general sanitizer. Local
+logs and free-text user notes can contain sensitive information; review notes
+and any diagnostics before sharing them.
 
 ---
 
-## 4. AI feature and outbound API calls
+## 3. Local data and service credentials
 
-When you use the AI (NL→SQL) feature, dat0 sends a request to the AI provider
-you configured (Anthropic, OpenAI, OpenRouter, or a Custom endpoint). By default
-the payload is schema-only:
+Local file workflows do not automatically upload tables or package contents.
+This does not prevent you from explicitly sharing a package, pasting data into
+an AI prompt, or using a remote service.
 
-- **Sent by default:** table names, column names, and column types.
-- **Never sent:** query results, file paths, or `.dat0` package contents.
-- **Sent only when you enable the toggle:** If you turn on the
-  **include-sample-rows** toggle (in the AI panel), a bounded set of stringified
-  preview row values from the current result is also included in the request to
-  your AI provider. This toggle is off by default (`include_sample_rows = false`
-  in `AiSettings`).
+AI keys and MotherDuck tokens normally use OS secret stores, with in-memory
+fallback behavior when those stores are unavailable. They are not ordinary
+settings or crash telemetry. They **are sent to the selected service for
+authentication**. MotherDuck connections execute against a remote database;
+that channel is separate from local file workflows.
 
-The schema-only default is enforced structurally in
-`crates/dat0-core/src/ai/schema_ctx.rs` and `crates/dat0-core/src/ai/request.rs`.
-The `SchemaContext` built by `build_schema_context` maps names and types only.
-`AiRequest.sample_rows` is `None` unless the include-sample-rows toggle is on.
+## 4. AI and other network channels
 
-dat0 does not proxy your AI requests through its own servers. Requests go directly
-from your machine to the provider endpoint you configured. Custom provider URLs
-are validated against an SSRF guard (`crates/dat0-core/src/ai/ssrf.rs`) that
-blocks loopback, private, link-local, and unspecified IP ranges, and requires
-HTTPS.
+AI requests go directly to the selected Anthropic, OpenAI, OpenRouter, or Custom
+endpoint, not through dat0's servers. They include schema names/types and the
+user prompt; **Explain SQL** includes the SQL being explained. Arbitrary user
+text is not structurally sanitized, so anything pasted into it can be sent.
+
+Current desktop stream builders in `crates/dat0-ui/src/components/ai.rs` pass
+`sample_rows: None`. The stored **Include sample rows** toggle does not currently
+attach preview rows. The schema builder itself maps names and types, not values.
+
+Custom endpoints require HTTPS and reject local/private addresses by default.
+The advanced override allows HTTP/private endpoints for local models. Resolved
+addresses are checked before requests, but the HTTP client resolves again when
+connecting: the check is not DNS connection pinning and leaves a re-resolution
+race. See [AI providers](ai-providers.md) for configuration.
+
+Other traffic has its own controls and triggers:
+
+- **Update checks:** launch checks are default-on (`update_auto_check = true`);
+  manual checks and selected update downloads also use the network.
+- **Extensions:** DuckDB can acquire extensions when needed, including SQLite
+  and MotherDuck extensions.
+- **Remote samples:** selecting a remote sample downloads it.
+- **Chosen services:** MotherDuck and AI use the selected remote service.
+
+The egress display is application-layer accounting, **not packet capture**.
+MotherDuck is unmetered; a `+` indicates the displayed total is a lower bound.
 
 ---
 
@@ -136,17 +139,18 @@ network configuration is required.
 
 | What | Transmitted? |
 |---|---|
-| Stack trace + OS + dat0 version (crash report) | Only if you opt in (default: off) |
-| AI schema payload (table/column names + types) | Only when you use the AI feature, directly to your chosen provider |
-| AI sample-rows payload (preview row values) | Only when you use the AI feature **and** have enabled the include-sample-rows toggle (off by default) |
-| Query text, results, file paths | Never |
-| API keys, MotherDuck token | Never (OS keychain only) |
-| `.dat0` package contents | Never |
+| Crash report | Only when opted in (default: off); crash-specific redaction applies |
+| AI schema, prompt, Explain SQL | To the selected provider when requested; user text is not sanitized |
+| Automatic AI preview rows | Not attached by current desktop streams |
+| Keys / MotherDuck token | Authentication to the selected service; normally held in OS stores |
+| Launch update check | Default-on, independent of crash consent |
+| Extensions / selected remote samples | Downloaded when needed or selected |
+| Local tables / packages | No automatic upload from local file workflows |
 
 ---
 
 ## 7. Questions
 
-Open an issue at
-[github.com/accidentally-awesome-labs/dat0](https://github.com/accidentally-awesome-labs/dat0)
-or email the maintainers listed in `NOTICE.md`.
+For non-sensitive questions, see [Support](../SUPPORT.md).
+Report vulnerabilities or suspected data leaks privately via
+[Security](../SECURITY.md), not a public issue.

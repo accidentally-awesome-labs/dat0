@@ -3,9 +3,9 @@
 //! Runs each scenario as a subprocess, parses the one JSON line it prints, and
 //! compares the measurement against two independent things:
 //!
-//! - **The budget** — the numbers `docs/specs/2026-04-26-dat0-design.md` commits
-//!   to and the marketing page repeats. Absolute, host-independent, and the only
-//!   arm that can fail on a machine nobody has recorded.
+//! - **The budget** — the absolute, host-independent limits in
+//!   `docs/performance-baselines.json`. See `docs/ci.md` for measurement and
+//!   update procedures; these limits apply even on an unrecorded host.
 //! - **The recorded baseline for this host** — a regression tripwire that only
 //!   engages once someone has committed that host's numbers. A new machine
 //!   (including CI's first run) records rather than fails, because a red gate on
@@ -32,7 +32,7 @@ pub const SCENARIOS: &[&str] = &[
 ];
 
 /// Where the committed budgets and per-host baselines live.
-pub const BASELINE_PATH: &str = "docs/internal/perf-baselines.json";
+pub const BASELINE_PATH: &str = "docs/performance-baselines.json";
 
 /// The one metric a scenario is judged on. Named so the JSON stays readable and
 /// a typo is a parse error rather than a silently-skipped comparison.

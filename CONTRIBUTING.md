@@ -1,154 +1,175 @@
 # Contributing to dat0
 
-Thanks for your interest in dat0. This document covers how to contribute.
+## Ways to contribute
 
-## Status
+Bug reports with a small synthetic reproduction, documentation fixes, accessibility
+and Linux desktop improvements, format review, and focused code changes are welcome.
+See [SUPPORT](SUPPORT.md) for questions and reporting routes. Maintainers curate
+`good first issue` work with a bounded task and acceptance criteria; the label is
+not a promise that every open issue is suitable for a newcomer.
 
-dat0 is implemented. The design specification
-([`docs/specs/2026-04-26-dat0-design.md`](docs/specs/2026-04-26-dat0-design.md))
-remains the reference for intent, but the workbench itself is real code —
-build and run it with the steps under **Building from source** below.
+Small fixes and documentation may go straight to a pull request. Discuss substantial
+features and changes to the package format, persistence, or privacy in an issue or
+[Discussion](https://github.com/accidentally-awesome-labs/dat0/discussions) first.
+Report vulnerabilities and possible data leaks **privately** via [SECURITY](SECURITY.md),
+not through that public discussion process.
 
-Code-level contributions are open. Spec feedback, use-case scenarios that
-reveal gaps, `.dat0` format review, and cross-platform tradeoff discussion
-(especially Linux desktop polish) are all still welcome.
+## Setup
 
-## Developer Certificate of Origin (DCO)
+The supported development baseline is **Rust 1.97.0**, pinned in
+[`rust-toolchain.toml`](rust-toolchain.toml), with Rust 2024. We do not claim a
+separately tested older MSRV. Install [rustup](https://rustup.rs), then the tools below.
 
-dat0 uses the **Developer Certificate of Origin** (DCO) — see <https://developercertificate.org>. By signing off on a commit, you certify that you wrote the code or have the right to submit it under this project's license (Apache-2.0).
-
-### How to sign off
-
-Add a `Signed-off-by` line to every commit. The simplest way is the `-s` flag:
-
-```
-git commit -s -m "your message"
-```
-
-This appends:
-
-```
-Signed-off-by: Your Name <your.email@example.com>
-```
-
-Use the same name and email as your `git config user.name` and `git config user.email` settings.
-
-### DCO check
-
-A bot enforces DCO sign-off on every pull request. Commits without a sign-off are flagged and must be amended before merge.
-
-## Building from source
-
-The repo builds with stable Rust. Prerequisites:
-
-**All platforms**
-
-- Rust toolchain — `rust-toolchain.toml` pins an exact release (1.97.0), which
-  rustup installs on first use. Install rustup via [rustup.rs](https://rustup.rs).
-- `git` 2.30+
-
-**macOS**
-
-- Xcode Command Line Tools: `xcode-select --install`
-
-That is the whole list. No Metal toolchain: dat0 renders through a WebKit
-webview, not a GPU shader pipeline.
-
-**Linux**
+On **macOS**, install Xcode Command Line Tools with `xcode-select --install`.
+On **Ubuntu/Debian**, install the native compiler and WebKit/keychain/chart dependencies:
 
 ```sh
+sudo apt-get update
 sudo apt-get install -y \
+  build-essential pkg-config \
   libwebkit2gtk-4.1-dev libsoup-3.0-dev libxdo-dev \
   libsecret-1-dev dbus-x11 gnome-keyring \
   libpango1.0-dev libfontconfig1-dev \
-  libxkbcommon-dev libxkbcommon-x11-dev \
-  libssl-dev
+  libxkbcommon-dev libxkbcommon-x11-dev libssl-dev
 ```
 
-- **webkit2gtk / soup** — the webview dat0's UI renders into. Nothing builds
-  without these.
-- **libsecret / dbus-x11 / gnome-keyring** — the `dat0-keychain` Secret Service
-  backend.
-- **pango / fontconfig** — text rendering for chart labels, through plotters'
-  `ttf` feature.
-- **xkbcommon** — keyboard handling in the windowing layer.
-- **libssl-dev** — the `libduckdb-sys` build.
+Running the desktop app requires a graphical session. Headless UI tests still
+compile the native WebKit dependencies; a headless Rust test is not a way to
+avoid installing them. Ordinary Rust development does not need system DuckDB or
+Arrow, a Metal SDK, `dx`, Node, paid-service credentials, or signing keys.
+Preserve [`.cargo/config.toml`](.cargo/config.toml): it includes the bundled-DuckDB
+C++ shim and a development crash-service stub. Node/npm are needed only to rebuild
+the checked-in CodeMirror bundle.
 
-This is the same list CI installs (`.github/workflows/ci.yml`, "Linux deps"),
-which is the set to trust if this one ever drifts again. Equivalent packages on
-Fedora / Arch are similarly named.
+## Build, test, run
 
-**Build, test, run**
+Run these commands from the repository root:
 
 ```sh
-cargo build --workspace
-cargo nextest run --workspace     # or: cargo test --workspace
-cargo run --bin dat0
+rustup toolchain install 1.97.0 --profile minimal --component rustfmt --component clippy
+cargo install cargo-nextest --locked
+cargo build --locked --workspace
+cargo test --locked -p dat0-engine --test attach_sqlite -- --nocapture
+cargo nextest run --locked --workspace
+cargo test --locked --workspace --doc
+cargo run --locked -p dat0-ui --bin dat0
 ```
 
-A standalone window titled "dat0" opens. Close it to exit. Pass a path to open
-it — `cargo run --bin dat0 -- data.csv` — and note that a second launch while
-one is already running forwards the file to the existing process rather than
-starting a new one.
+The SQLite test primes the shared DuckDB extension cache before concurrent tests
+and verifies attachment against a small fixture. Extension acquisition can require
+network access. Nextest runs tests in separate processes, isolating process-global
+state; it does not run doctests, hence the separate command. The built-in
+`cargo test` runner is available, but is not an equivalent isolation model.
+Ignored tests have distinct prerequisites; see [CI test categories](docs/ci.md#ignored-and-live-test-categories).
+Never use workspace-wide `--include-ignored` as a routine contributor check.
 
-> **A clean checkout is fully green.** One test is `#[ignore]`d rather than
-> failing: `dat0-core::update_key_is_production`, the release tripwire for the
-> placeholder update-signing key. It fails by design until RL1 step 1 generates
-> a production key, so it is skipped in the workspace run and gated behind
-> `cargo test -p dat0-core --test update_key_is_production -- --ignored`.
-> See `docs/release-prerequisites.md`.
+To open a file, use `cargo run --locked -p dat0-ui --bin dat0 -- data.csv`.
+A second launch with the same profile forwards its request to the existing process.
+For speed investigations use a release build, not debug DuckDB:
+`cargo run --locked --release -p dat0-ui --bin dat0`.
 
-**Build a release binary for anything about speed.** DuckDB compiled without
-optimisation is slow enough to mislead you about the thing dat0 exists to do:
-`cargo run --release --bin dat0`.
+## Scratch profiles and troubleshooting
 
-**Testing against a scratch profile.** `DAT0_CONFIG_DIR` relocates the whole
-config directory, so you can leave your own settings alone — and deleting it
-gives you a genuine first run, which is the only way to see the onboarding tour
-and the first-run empty state again:
+Generate small deterministic fixtures and run without changing your ordinary app settings:
 
 ```sh
-DAT0_CONFIG_DIR=/tmp/dat0-scratch XDG_DATA_HOME=/tmp/dat0-scratch/data \
-  RUST_LOG=info cargo run --bin dat0
+scratch="$(mktemp -d /tmp/dat0-dev.XXXXXX)"
+cargo run --locked -p dat0-fixtures -- \
+  --out "$scratch/fixtures" --seed 42 \
+  --csv-bytes 4096 --sqlite-target-bytes 4096
+export DAT0_CONFIG_DIR="$scratch/config"
+export DAT0_CACHE_DIR="$scratch/cache"
+export XDG_DATA_HOME="$scratch/data"
+export RUST_LOG=info
+cargo run --locked -p dat0-ui --bin dat0
 ```
 
-**Note on `.cargo/config.toml`**: a stub value for `DAT0_GLITCHTIP_DSN_PUBLIC` is
-baked at compile time; CI overrides it via secrets. Local dev needs no extra env
-setup.
+Complete or skip the first-run tour, then open `generated.csv` in the fixture directory
+with the file picker; its columns include `id`, `name`, and `score`. From another terminal
+with **identical profile variables**, run
+`target/debug/dat0 "$scratch/fixtures/generated.csv"` to exercise forwarding. Close
+all windows normally and reopen this profile to check that onboarding stays completed.
+Keep the variables in every terminal; different profiles are different app instances.
 
-## How to propose changes
+`DAT0_CONFIG_DIR` relocates configuration and `DAT0_CACHE_DIR` relocates caches/logs.
+Linux app data additionally uses `$XDG_DATA_HOME/dat0`; macOS app data shares the
+configuration directory. These overrides do **not** isolate OS credential stores or
+`~/.duckdb/extensions`. This is a convenience profile, not a security sandbox.
+Default tests may download extensions. macOS keychain tests use a real `dat0-test`
+item; explicitly opted-in Linux native-keychain tests need an unlocked Secret Service
+session. Do not enter real service credentials for ordinary validation.
 
-1. **Open an issue first** for non-trivial changes, especially around the spec. This avoids wasted work if the direction differs.
-2. **Fork the repo**, branch from `main`.
-3. **Make your changes**, with DCO-signed commits.
-4. **Open a pull request**. The CI will run available checks; the DCO bot validates sign-off.
-5. **Engage with review**. Maintainers may ask for changes or rationale.
+Missing `cc` or `pkg-config` means native build prerequisites are missing. WebKit,
+Soup, or GTK lookup errors need the Linux packages above. Secret Service errors
+need a session bus and unlocked keyring, not a fake keychain result. For extension
+download failures check network access and the shared extension cache. Under memory
+or disk pressure use `CARGO_BUILD_JOBS=2`, `CARGO_INCREMENTAL=0`, and consistently
+set `CARGO_PROFILE_DEV_DEBUG=0` across build/test commands; changing profiles midway
+causes rebuilds. [CI](docs/ci.md) explains disk reclamation, test isolation and
+performance checks. Debug-versus-release timings are not comparable.
 
-## Coding standards
+## Change-specific checks
 
-- Rust 2024 edition (workspace pins MSRV 1.85)
-- `cargo fmt --all -- --check` clean (rustfmt config in `rustfmt.toml`; nightly-only options have been removed pending a CI fmt-strategy decision)
-- `cargo clippy --workspace --all-targets -- -D warnings` clean
-- Unit + integration tests required for new code. Component behaviour goes
-  through the headless harness in `crates/dat0-ui/tests/support/`; appearance
-  is covered by the SSR snapshots in `tests/visual_snapshot.rs` and, for real
-  geometry, `examples/visual_probe.rs` (see "Visual gate" in `docs/ci.md`)
-- All UI strings must pass through `dat0_i18n::t("…")`. The `scripts/i18n-check.sh` heuristic flags candidates; CI runs it in warn-only mode in P1 and tightens to a merge gate as the UI grows.
+| Contribution | Commands and contract |
+|---|---|
+| Rust changes | `cargo fmt --all -- --check`; `cargo clippy --locked --workspace --all-targets -- -D warnings`; relevant nextest targets plus doctests |
+| Engine/package changes | `cargo nextest run --locked -p dat0-engine -p dat0-format`; preserve the [format](docs/dat0-format-v1.md) and [schema](docs/schemas/dat0-manifest-v1.schema.json), and exercise round-trip/corruption cases |
+| UI behavior | `cargo nextest run --locked -p dat0-ui`; use the existing [`tests/support`](crates/dat0-ui/tests/support) harness and accessible handles, not calls that bypass user interaction |
+| Appearance | `cargo nextest run --locked -p dat0-ui --test visual_snapshot`; intentional updates use `INSTA_UPDATE=always cargo test --locked -p dat0-ui --test visual_snapshot`, then inspect the actual snapshot changes |
+| Real geometry/focus | `cargo run --locked -p dat0-ui --features visual --example visual_probe` on a desktop; CI runs eight real-window probes under Linux Xvfb via [windowed-probes.sh](.github/scripts/windowed-probes.sh) |
+| Localization | Add entries in [`en.json`](crates/dat0-i18n/src/strings/en.json), use `dat0_i18n::t`, run `bash scripts/i18n-check.sh` and `cargo test --locked -p dat0-i18n`; referenced-key checking is blocking |
+| CodeMirror | From `crates/dat0-ui/vendor/codemirror`: `npm ci`, `npm run build`; commit the rebuilt [`assets/codemirror.js`](crates/dat0-ui/assets/codemirror.js) and exercise `console_probe` |
+| Dependencies/licensing | `cargo deny check`; retain deliberate DuckDB/Dioxus pins and the Arrow re-export policy. On Linux install `cargo-about` with `cargo install cargo-about --locked --features cli --version 0.9.2`, then run `scripts/notice-regen.sh`. On macOS use the failed-check correction artifact. Never overwrite NOTICE with raw cargo-about output |
+| Heavy/performance/live tests | See [heavy tests](docs/ci.md#heavy-tests), [performance](docs/ci.md#performance) and [ignored/live categories](docs/ci.md#ignored-and-live-test-categories). Maintainers apply `run-heavy`/`run-perf` when relevant; these are not prerequisites for every PR |
+| Public documentation/tree | `bash .github/scripts/check-public-tree.sh`; [offline link validation](docs/ci.md#documentation-and-publication-boundary). Run the tree check **before pushing** |
 
-## Phase scope, deferrals, plan defects
+Keep `dat0-core` toolkit-free. Consume engine Arrow types through `duckdb::arrow`,
+not a standalone Arrow dependency. Session shape changes require explicit versioning,
+migration/default handling and round-trip compatibility checks. See [architecture](docs/architecture.md).
+UI tests must drive keyboard events through production routing, preserve Escape
+priority and release accessibility handles, use token-only styling, and check theme
+contrast/switching. Reviewed SSR snapshots complement, not replace, real-window
+geometry checks; see [accessibility](docs/a11y.md) and [CI](docs/ci.md#visual-and-interaction-checks).
 
-Before opening a non-trivial PR, scan [`docs/deferrals.md`](docs/deferrals.md) — the canonical register of work split across phases and known plan defects. Phase plans live in `docs/plans/` and reference this register.
+## Pull requests, review and DCO
 
-## Code of Conduct
+1. Fork [the canonical repository](https://github.com/accidentally-awesome-labs/dat0).
+2. Clone your fork and add upstream (replace `YOUR-USER`):
 
-By participating, you agree to abide by the [Code of Conduct](CODE_OF_CONDUCT.md).
+   ```sh
+   git clone https://github.com/YOUR-USER/dat0.git
+   cd dat0
+   git remote add upstream https://github.com/accidentally-awesome-labs/dat0.git
+   git fetch upstream
+   git switch -c your-focused-change upstream/main
+   ```
 
-## License
+3. Make a focused change and exercise the affected behavior. Record honest commands,
+   results and any checks not run in the [PR template](.github/pull_request_template.md).
+4. Sign off **every** commit: `git commit -s -m "Describe the change"`.
+5. Push only your contribution branch and open a PR against upstream `main`.
+6. Respond to maintainer review, resolve threads and update your branch if main moves.
 
-Contributions are accepted under the terms of [Apache License 2.0](LICENSE).
+The [Developer Certificate of Origin](https://developercertificate.org) certifies
+that you wrote the contribution or have the right to submit it under Apache-2.0.
+Use your own Git-configured name/email in `Signed-off-by`. Sign-off is **not** GPG
+or SSH commit signing, and this project does not require a CLA. The installed DCO
+app checks every PR; it remains a separately required check alongside **CI required**.
+Do not use commit skip directives on PRs: required checks can remain pending.
 
-## Where to ask questions
+To repair your last commit: `git commit --amend --no-edit --signoff`.
+For your own contribution branch: `git rebase --signoff upstream/main`, then
+`git push --force-with-lease` **only to that branch in your fork**. Never rewrite
+another person's commits or upstream main. Check the DCO app's result after repair.
 
-- GitHub Discussions (when the repo is public)
-- Discord (link to be published at v1 launch)
-- Spec questions: open an issue tagged `spec`
+## Maintainer decisions and help
+
+Maintainers decide scope and merges. Main requires a PR, successful CI/DCO checks,
+an up-to-date branch and resolved review threads. With one maintainer there is no
+required independent approval; outside contributors still cannot merge without
+maintainer write authority. CODEOWNERS requests review, not enforcement by itself.
+No phase-plan, deferrals-ledger or new RFC process is required.
+
+Use [SUPPORT](SUPPORT.md) for help and [SECURITY](SECURITY.md) for private vulnerability
+reports. Participation follows the [Code of Conduct](CODE_OF_CONDUCT.md).
+Contributions are accepted under [Apache-2.0](LICENSE).

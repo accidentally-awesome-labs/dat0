@@ -2,11 +2,9 @@
 //!
 //! ## Why three groups and not four
 //!
-//! P6a grouped by *provenance*: Sources / Cloud / Tables / Derived. That is a
-//! taxonomy of how a relation came to exist, and it made the sidebar answer a
-//! question nobody asks while browsing. The v4 sidebar
-//! (`009-redesign-landing-v4/DESIGN-SPEC.md` §2) groups by *where the bytes
-//! live*, which is the question that changes what you can do with a row:
+//! Grouping by provenance (Sources / Cloud / Tables / Derived) describes how a
+//! relation came to exist. The sidebar instead groups by *where the bytes live*,
+//! which changes what you can do with a row; see `docs/catalog-inspector.md`:
 //!
 //! - [`CatalogTree::files`] — everything resident on this machine. A CSV
 //!   registered from disk and a SQL view derived from it are both local; the

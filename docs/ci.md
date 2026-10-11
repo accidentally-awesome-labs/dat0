@@ -1,479 +1,232 @@
-# CI Setup
+# CI and advanced validation
 
-> Operational reference for dat0's GitHub Actions setup. Covers per-PR
-> validation (`ci.yml`), the perf gate, the visual gate, coverage and
-> supply-chain jobs, heavy exit-criteria tests (`heavy.yml`), the NOTICE drift
-> gate (`notice.yml`), the crash round-trip (`crash-e2e.yml`), the PD-004
-> diagnostic (`pd004-diagnose.yml`), and the runnerkit self-hosted Linux runner
-> that backs the Linux matrix entry.
+[Documentation index](README.md) · [Contributor setup](../CONTRIBUTING.md)
 
----
+Use CONTRIBUTING for prerequisites and the ordinary build/test/run sequence. This
+reference covers checks that depend on the kind of change, optional large/live
+workloads, and maintainer workflow operations. Credential-free does not mean offline:
+DuckDB extension acquisition and dependency downloads can use the network.
 
-## Workflows
+## Workflows and required verdict
 
-| File | Triggers | Jobs | Runner |
-|---|---|---|---|
-| `.github/workflows/ci.yml` | push to `main`, all PRs | fmt, clippy, i18n-check, build-and-test (macos-arm64, linux-x86_64), windowed-probes, coverage, supply-chain, no-standalone-arrow, no-debug-query-scalar | hosted macos-14 + hosted/self-hosted Linux |
-| `.github/workflows/ci.yml` (`perf-gate`) | PRs labelled `run-perf` | perf-gate — blocking `cargo xtask perf --check`, all six scenarios | hosted macos-14 |
-| `.github/workflows/heavy.yml` | **weekly cron (Mon 06:00 UTC)**, `workflow_dispatch`, PRs with `run-heavy` label | exit-criteria (1 GB CSV + 500 MB Parquet + 100 MB SQLite), view-regen-bench | hosted Linux |
-| `.github/workflows/notice.yml` | NOTICE.md / manifest drift | notice — **hard gate** since QA2 (PD-003 closed) | hosted `ubuntu-latest` (pinned; see below) |
-| `.github/workflows/crash-e2e.yml` | push to `main`, `workflow_dispatch` | glitchtip-roundtrip | hosted `ubuntu-latest` |
-| `.github/workflows/pd004-diagnose.yml` | `workflow_dispatch` only | keychain-linux — **diagnostic, not a gate** (PD-004) | hosted `ubuntu-latest` |
-| `.github/workflows/release.yml` | tags, `workflow_dispatch` | macos, linux, publish | hosted |
-
-Every job carries a `timeout-minutes`. That is a hard rule, not a style
-preference: a hung step burns to GitHub's 6-hour default, and because the job
-never finishes, a REQUIRED check goes down with it — `continue-on-error`
-cannot rescue a hang. This happened twice on PR #49.
-
-### Which jobs gate
-
-| Gate | Blocking? | Why |
+| Workflow | Triggers and role | Runners |
 |---|---|---|
-| fmt, clippy, build-and-test, i18n-check (pass 2), supply-chain, notice, no-standalone-arrow, no-debug-query-scalar | **yes** | deterministic, hermetic |
-| windowed-probes | yes — make it a required check once it has a green week | six real WebKitGTK windows under Xvfb; see "Visual gate" |
-| coverage | no — reporting only | no threshold exists yet; see below |
-| perf advisory step (inside build-and-test) | no | virtualized GPU cannot defend a frame-rate claim |
-| perf-gate | **yes**, when the `run-perf` label is applied | same command, real verdict |
-| OpenRouter live AI step | no | third-party outage must not redden main |
-| crash-e2e **assertion step** | no | live GlitchTip ingestion; build + run above it ARE blocking |
-| i18n-check pass 1 | no | heuristic; false-positives on ~646 lines |
+| [`ci.yml`](../.github/workflows/ci.yml) | Main pushes and all PRs, including label additions/removals; ordinary checks, reusable NOTICE, docs and aggregate verdict | GitHub-hosted Ubuntu and macOS 14 arm64 |
+| [`heavy.yml`](../.github/workflows/heavy.yml) | Monday 06:00 UTC, manual dispatch, `run-heavy` PRs; large fixtures and view-regeneration bench | GitHub-hosted Ubuntu |
+| [`notice.yml`](../.github/workflows/notice.yml) | Reusable workflow called by every CI run; canonical Linux NOTICE generation | GitHub-hosted Ubuntu |
+| [`crash-e2e.yml`](../.github/workflows/crash-e2e.yml) | Canonical main push/manual run; opt-in synthetic crash round trip when provisioned | GitHub-hosted Ubuntu |
+| [`pd004-diagnose.yml`](../.github/workflows/pd004-diagnose.yml) | Manual development-ref diagnostic for Linux Secret Service; sanitized results belong on the relevant public issue | GitHub-hosted Ubuntu |
+| [`release.yml`](../.github/workflows/release.yml) | Canonical main manual dispatch or a `v*` tag push in main history; protected release operations | GitHub-hosted macOS and Ubuntu |
 
-`heavy.yml`'s cron runs **weekly** (Mondays 06:00 UTC), not nightly. The
-original argument for disabling it entirely — solo-dev, low PR frequency, most
-nightly runs validating nothing — was about cadence, not about whether the
-heaviest gate in the repo should depend on a human remembering a label. Weekly
-answers the cost objection at one-seventh the minutes. Result lands in the
-job summary.
+Main requires **CI required** (GitHub Actions) and **DCO** (the installed external
+DCO app). The always-running aggregate requires successful `fmt`, `clippy`,
+`build-and-test` (both platforms), `windowed-probes`, `supply-chain`, `i18n-check`,
+`no-standalone-arrow`, `dat0-core-purity`, `no-debug-query-scalar`, `notice` and
+`docs-check`. Missing, failed, cancelled or unexpectedly skipped results fail.
+`perf-gate` must succeed when `run-perf` is requested and must be skipped otherwise.
+Coverage, optional heavy workloads, crash ingestion and release jobs are not part
+of this required verdict. Commit skip directives can leave required checks pending;
+do not use them on PRs.
 
-## CI wall time
+All PR/label-triggered jobs stay GitHub-hosted. Labels authorize extra work, not a
+sandbox for untrusted code. Checkouts do not retain credentials; workflow tokens
+default to read-only, and the release publish job alone requests contents write.
+External actions are pinned to commits and maintained through Dependabot.
+Timeouts and per-ref cancellation prevent stalled or superseded runs from lingering.
+Adding or removing a label recomputes CI; set opt-in labels before the push you want
+covered when possible.
 
-### Pre-change (measured)
+## Test isolation and resource pressure
 
-These are the numbers `build-and-test` ran at before QA1, and they are the
-reason the job-level `timeout-minutes: 120` was chosen ("well clear of normal
-cost", `.github/workflows/ci.yml`):
+CI builds release artifacts, primes SQLite with a blocking
+`cargo test --locked -p dat0-engine --test attach_sqlite -- --nocapture`, then runs
+nextest and doctests using its matrix target. Nextest isolates each test in its own
+process, which matters for process-global state and singleton initialization.
+`cargo test` is available but does not provide equivalent isolation. Nextest does
+not run doctests; `cargo test --locked --workspace --doc` is a separate gate.
 
-| Leg | Pre-change wall time | Source |
-|---|---|---|
-| `build-and-test` / linux-x86_64 | **~75 min** | `ci.yml` job-timeout comment, from observed runs |
-| `build-and-test` / macos-arm64 | **~40 min** | same |
+The native Linux package list is in [CONTRIBUTING](../CONTRIBUTING.md#setup).
+Headless compilation still needs WebKitGTK/Soup and the other native dependencies.
+Explicit native keychain runs additionally need a session bus and unlocked Secret
+Service; absence is not a successful native-keychain measurement.
 
-Both legs ran with **zero Rust caching** — every job re-fetched and rebuilt
-the DuckDB + Dioxus + Arrow source graph from scratch.
+For constrained local builds, use `CARGO_BUILD_JOBS=2`, `CARGO_INCREMENTAL=0`, and
+consistent `CARGO_PROFILE_DEV_DEBUG=0` across all dev/test steps. Profile changes
+invalidate artifacts. CI retains its target/profile disk-reclamation steps because
+bundled DuckDB and many linked test binaries consume substantial space; registry/git
+caching is useful even when target caching is disabled. Shell pipelines use explicit
+Bash with pipefail, so successful `tee` does not conceal failed cargo commands.
+Debug timings do not establish release performance.
 
-### Post-change
+## Visual and interaction checks
 
-> **NOT YET MEASURED.** QA1 landed three changes that move this number —
-> `Swatinem/rust-cache@v2` on `fmt` / `clippy` / `build-and-test`,
-> `cargo-nextest` replacing `cargo test`, and a separate `--doc` step. None of
-> them has run on `main` yet, so there is no post-change figure. Do not
-> estimate one here.
->
-> **Fill this table from the FIRST `main` run after QA1 merges:**
->
-> | Leg | Post-change wall time | Run URL |
-> |---|---|---|
-> | `build-and-test` / linux-x86_64 | _(fill in)_ | _(fill in)_ |
-> | `build-and-test` / macos-arm64 | _(fill in)_ | _(fill in)_ |
-> | `fmt` | _(fill in)_ | _(fill in)_ |
-> | `clippy` | _(fill in)_ | _(fill in)_ |
->
-> Note that the **first** post-merge run is a cache MISS by definition —
-> `rust-cache` has nothing to restore until a run on the default branch has
-> populated it. Record the first run AND the second; the second is the steady
-> state, the first is the cold cost.
+Behavior tests use [`crates/dat0-ui/tests/support`](../crates/dat0-ui/tests/support)
+and production accessible handles. Drive user keyboard events through production
+routing instead of invoking handlers directly. Preserve Escape priority and release
+accessibility handles. Styling uses tokens; review contrast and theme switching.
+The [accessibility checklist](a11y.md#1-accessibility-checklist) is the public contract.
 
-### Why `cache-targets: false` on `build-and-test`
+SSR snapshots cover appearance without a display:
 
-That job fights a disk ceiling, not a compile-time one. It deliberately
-`rm -rf`s `target/<triple>/release` before the debug test build, and on macOS
-`rm -rf`s the whole `target/<triple>` before the perf harness — both reclaims
-exist because the runner PROCESS has died with `No space left on device`
-mid-step (it reddened `main` on b55758b). Caching a target dir the job then
-deletes would upload gigabytes per run for nothing, and restoring one would
-recreate the exhaustion the reclaims prevent. The registry + git half of
-`rust-cache` still applies and is pure win: it removes the DuckDB / Dioxus /
-Arrow source fetch. `fmt` and `clippy` have no such ceiling and use
-`cache-targets: true`.
-
-### Why nextest
-
-`cargo nextest run` executes each test in its own process. dat0 has 136 tests
-using `serial_test` and several that mutate process-global `OnceLock`s
-(`crates/dat0-core/src/globals.rs:20-25` — the state root and the recents
-store, both write-once and installed during boot). Inside a single `cargo test`
-binary those must serialize against one another, and a global left dirty by
-one test is visible to the next. Per-test processes remove both problems.
-
-nextest does **not** run doctests, so `cargo test --workspace --doc` runs as a
-separate step. Dropping it would silently stop gating every doc example.
-
-## Coverage
-
-`ci.yml`'s `coverage` job runs
-`cargo llvm-cov nextest --workspace --lcov --output-path lcov.info` and uploads
-`lcov.info` as an artifact. It is **reporting only — there is deliberately no
-threshold.**
-
-> **First measured: 84.7% of lines** — 19 780 line records over 194 files and
-> 8 038 functions, whole workspace, 1 708 tests. From the first green hosted run
-> (`ubuntu-latest`, 2026-08-13), computed from the uploaded `lcov.info`.
->
-> The local macOS measurement taken while diagnosing the job read 84.9% over
-> 19 789 records and 8 005 functions — same 194 files, a 0.2 point difference
-> from platform-conditional code compiled on one host and not the other. Use the
-> Linux figure as canonical, since that is the host the gate runs on.
->
-> That measured figure — not a guessed round number — becomes the floor of a
-> later ratchet. A threshold chosen before the number is known either sits
-> uselessly below reality or fails on day one; either way it teaches everyone
-> to ignore it.
-
-### Why the job sets `CARGO_PROFILE_DEV_DEBUG: 0`
-
-Without it the job cannot run at all. It failed every time with `No space left
-on device`, and gave up no logs explaining why: the runner had filled its disk
-so completely that it could not write its own diagnostic file, so the job
-surfaced as "failed" with `cargo llvm-cov` still `in_progress`. The evidence was
-only visible as a check annotation.
-
-The workspace builds 190 integration-test binaries, each linking a
-`libduckdb-sys` rlib that is 1.6 GB on its own. `build-and-test` already calls
-the ordinary debug build its low-water mark for disk; instrumenting the same
-workload on top of that never had room.
-
-Debug info is what did not fit, and coverage does not need it — llvm-cov takes
-line numbers from the coverage map that `-C instrument-coverage` emits, not from
-DWARF. Measured on the whole workspace:
-
-| build | target dir |
-|-------|-----------|
-| ordinary debug (`debug = "line-tables-only"`) | 64 GB |
-| instrumented, `CARGO_PROFILE_DEV_DEBUG=0` | **21 GB** |
-
-The report is undiminished at 21 GB: the line, file and function counts above
-are from exactly that build. Dropping debug info costs the coverage numbers
-nothing and is the only reason this job reports at all.
-
-## Supply chain
-
-`ci.yml`'s `supply-chain` job runs `EmbarkStudios/cargo-deny-action@v2` against
-`deny.toml` at the repo root. **This one gates.**
-
-`deny.toml` and `about.toml` both carry the same 12-entry SPDX allow-list, and
-they must stay in sync — `about.toml` drives NOTICE.md rendering, `deny.toml`
-is the enforcing copy. `deny.toml` mirrors `about.toml`'s graph settings
-(same four targets, `exclude-dev = true` matching `ignore-dev-dependencies`)
-so the allow-list is enforced against the graph it was derived from.
-
-Notable settings and why:
-
-- `[advisories] yanked = "deny"` — a yanked crate in the lockfile means we build
-  a version upstream withdrew.
-- `[bans] multiple-versions = "warn"` — the dioxus + duckdb + arrow + sentry graph
-  carries duplicate minor versions dat0 neither controls nor can unify. Denying
-  would make the gate unpassable for reasons unrelated to dat0's own choices.
-- `[sources] unknown-git = "deny"` with an **empty** `allow-git`. The migration
-  removed dat0's only git dependency, so the lockfile now carries zero
-  `source = "git+…"` entries and nothing needs excusing.
-
-`.github/dependabot.yml` runs weekly for `cargo` and `github-actions`, grouping
-minor+patch into one PR each. It **ignores** `dioxus`, `dioxus-desktop`,
-`dioxus-ssr`, `dioxus-core` and `duckdb`: all five are exact-pinned with recorded
-rationale (`crates/dat0-ui/Cargo.toml`, root `Cargo.toml`) and their upgrade
-cadence is governed by `docs/upstream-watch.md`, not by a bot. The dioxus crates
-share a `VirtualDom` across the four, so a bot bumping one of them alone mixes
-two versions of the same core types in one build. It also ignores the
-`dtolnay/rust-toolchain` action: that action's ref is the Rust version, which
-moves with `rust-toolchain.toml` in one deliberate PR.
-
-A Dependabot PR gets no Actions secrets, so `build-and-test` skips the live
-MotherDuck and OpenRouter steps for it (and for fork PRs), announcing the skip
-with a notice; they run on the push to `main`. Every other run still hard-fails
-without the secrets.
-
-## NOTICE gate
-
-`notice.yml` regenerates `NOTICE.md` with `scripts/notice-regen.sh` and fails
-if the result differs from the committed file. The script rewrites only the
-block between the `cargo-about generated` markers and pins the cargo-about
-version the job installs; the job runs on Linux because the dual-licence
-tiebreak differs on macOS (PD-003). Every dependency bump changes the block,
-since it lists versions. When the gate fails, the regenerated file is attached
-to the run as the `NOTICE.md` artifact: committing it is the fix, from any
-machine, including for a Dependabot PR.
-
-## Perf gate
-
-Two entry points, deliberately:
-
-1. **Advisory step** inside `build-and-test`, macOS + push-to-main only,
-   `continue-on-error: true`, `DAT0_PERF_HOST=ci-hosted`. Runs three scenarios
-   (`scroll_1m`, `cold_launch`, `idle_rss`). A virtualized macOS VM with no
-   dedicated GPU cannot honestly defend a frame-rate claim, and a gate that
-   reddens `main` on runner variance trains everyone to ignore it. This step
-   exists to record the `ci-hosted` numbers on every merge so drift is visible.
-2. **`perf-gate` job**, PRs with the `run-perf` label, **no**
-   `continue-on-error`, all six scenarios. This is the real verdict.
-
-```bash
-gh label create run-perf --description "Run the blocking perf-gate job on this PR" --color 1D76DB   # one-time
-gh pr edit <N> --add-label run-perf
+```sh
+cargo nextest run --locked -p dat0-ui --test visual_snapshot
+INSTA_UPDATE=always cargo test --locked -p dat0-ui --test visual_snapshot
 ```
 
-When dedicated (non-virtualized) macOS hardware arrives, the only line in
-`perf-gate` that changes is `runs-on:`. Promoting it from label-triggered to
-every-PR is tracked as its own deferral (see `docs/deferrals.md`, D-013's
-successor).
+The second command intentionally updates snapshots. Inspect the actual diffs before
+committing. Markup is not geometry or focus proof. On a desktop run:
 
-> **Labelling re-runs CI.** `ci.yml`'s `pull_request` trigger includes
-> `labeled`, which it must — otherwise applying `run-perf` to an existing PR
-> fires nothing, and re-running the workflow re-evaluates `if:` against the
-> original event payload, which does not carry the new label. The cost is that
-> **any** label change re-runs the whole workflow, and `cancel-in-progress`
-> means labelling mid-run cancels and restarts it. Apply `run-perf` and
-> `run-heavy` before, or together with, the push you want them to cover.
-
-## Visual gate
-
-Two tiers, both in CI.
-
-1. **HTML snapshots — `crates/dat0-ui/tests/visual_snapshot.rs`.** An ordinary
-   test target, so `cargo nextest run --workspace` already picks it up; the
-   self-dev-dependency at `crates/dat0-ui/Cargo.toml` turns the `visual` feature
-   on for this crate's own targets with no flag. Every scene in
-   `dat0_ui::visual::SCENES` is SSR'd and `insta`-snapshotted, and the two
-   scenes whose markup differs per theme are snapshotted three times. Hermetic,
-   no display.
-
-   ```bash
-   cargo nextest run -p dat0-ui --test visual_snapshot
-   INSTA_UPDATE=always cargo test -p dat0-ui --test visual_snapshot   # accept
-   ```
-
-   Reading the diff before committing **is** the check for this tier.
-
-2. **Real-window probe — `crates/dat0-ui/examples/visual_probe.rs`.** Walks the
-   same catalogue in one wry window, in all three themes, and asserts computed
-   geometry, containment and typography through `document::eval`. This is the
-   only tier that can see a layout: markup is not a layout, which is how the
-   shell once rendered its catalog *on top of* the data grid while fifteen
-   numeric assertions passed.
-
-   ```bash
-   cargo run -p dat0-ui --features visual --example visual_probe   # ~15s, exits 0/1
-   ```
-
-   **CI runs it on Linux** in the `windowed-probes` job, under Xvfb, together
-   with the five other real-window probes (`shell_probe`, `window_probe`,
-   `modal_trap_probe`, `settings_window_probe`, `console_probe`), through
-   `.github/scripts/windowed-probes.sh`. This used to be "deliberately not a CI
-   job" on the grounds that hosted runners have no display; on Linux, Xvfb is
-   one, and WebKitGTK renders into it like any other. macOS still has to be run
-   by hand before a UI change lands:
-
-   ```bash
-   cargo build --release -p dat0-ui --example visual_probe   # and the others
-   .github/scripts/windowed-probes.sh visual_probe           # any subset
-   xvfb-run -a -s "-screen 0 1920x1200x24" .github/scripts/windowed-probes.sh   # Linux, headless
-   ```
-
-   Its window must be 1440×900 inside, which is why it launches with no menu
-   bar — GTK draws one inside the window on Linux — and it fails loudly rather
-   than mis-measuring if the window manager hands back anything smaller. The
-   frame-time scenarios are another matter: timing a virtual display measures
-   the runner, which is why those stay on dedicated hardware (D-032).
-
-`examples/visual_page.rs` is the human half of the same renders: it writes every
-scene to a self-contained HTML file under `target/visual/`, fonts inlined as
-data URIs, plus an `index.html` grouped by surface. That is the vehicle for the
-side-by-side against `docs/internal/design/redesign-landing-v4.dc.html`.
-
-```bash
-cargo run -p dat0-ui --features visual --example visual_page && open target/visual/index.html
+```sh
+cargo run --locked -p dat0-ui --features visual --example visual_probe
 ```
 
-## i18n gate
+CI's `windowed-probes` job builds and runs **eight** real WebKitGTK probes under
+Linux Xvfb: `shell_probe`, `window_probe`, `modal_trap_probe`,
+`settings_window_probe`, `console_probe`, `visual_probe`, `grid_probe`, and
+`focus_probe`. The existing [helper](../.github/scripts/windowed-probes.sh) keeps
+per-probe profile/session isolation, timeouts, and collects failures rather than
+stopping at the first probe. Its Linux invocation after building the release examples is:
 
-`scripts/i18n-check.sh` has two passes with different authority:
-
-- **Pass 1 — advisory.** Heuristic hunt for UI strings that bypass
-  `dat0_i18n::t()`. It flags ~646 lines, nearly all false positives (every
-  non-UI `.into()` / `.to_string()`), so it warns and never gates.
-- **Pass 2 — gate.** Every key the code references must exist in
-  `crates/dat0-i18n/src/strings/en.json`. Exact, not heuristic: `t()` echoes the
-  key back on a miss, so an unresolved key renders `catalog.empty.files` into
-  the user's face. Non-zero exit, naming each key.
-
-Two extractors feed pass 2, because there are two ways a key reaches `t()`:
-string-literal call sites (a regex sees these), and **const key-lists** —
-`pub const *_KEYS: &[&str] = &[…]` — which exist precisely because their call
-sites compose the key at runtime from an enum variant or a group name, making
-them invisible to the regex. Declaring the list is the contract that makes
-those keys checkable. Current consumers: `error_ux::engine::ENGINE_ERROR_KEYS`,
-`catalog::CATALOG_EMPTY_KEYS`.
-
-The scan is scoped to `crates/*/src`. Tests are excluded on purpose: several
-reference deliberately-absent keys to assert the miss behaviour itself
-(`crates/dat0-i18n/tests/basic.rs:10`, `crates/dat0-core/tests/i18n_p10c_keys.rs:18`),
-so scanning them would make the gate demand the very keys other tests demand be
-absent.
-
-## Matrix coverage
-
-Per-PR matrix kept narrow on purpose:
-
-- `macos-14` (Apple Silicon arm64) — primary platform, hosted, **10× billing**.
-- `linux-x86_64` — secondary platform, self-hosted via runnerkit, **0× billing**.
-
-Removed from per-PR (tracked in `docs/deferrals.md`):
-
-- `macos-13` Intel — D-006. Hosted pool oversubscribed; revisit when capacity allows or self-hosted Mac arrives.
-- `linux-arm64` — moved to `heavy.yml` (was originally in per-PR matrix). Adds ~30% minutes for marginal coverage delta vs linux-x86_64. Re-add if a real arm-Linux user surfaces.
-
-## Self-hosted Linux runner (runnerkit)
-
-The `linux-x86_64` matrix entry routes to a runnerkit self-hosted runner
-matching label set `[self-hosted, Linux, runnerkit]`. Hosted vs self-hosted
-is selected at workflow load time via `runs-on: ${{ fromJSON(matrix.target.labels) }}`.
-
-### Host requirements
-
-The runner host **must** have these packages installed. The `Linux deps`
-step in both workflows is gated to `runner.environment == 'github-hosted'`
-because runnerkit images do not configure NOPASSWD sudo.
-
-```bash
-sudo apt-get update
-sudo apt-get install -y \
-  build-essential pkg-config \
-  libsecret-1-dev dbus-x11 gnome-keyring \
-  libpango1.0-dev libxkbcommon-dev libxkbcommon-x11-dev \
-  libfontconfig1-dev libssl-dev
+```sh
+xvfb-run -a -s "-screen 0 1920x1200x24" bash .github/scripts/windowed-probes.sh
 ```
 
-`build-essential` provides `cc` (the linker rust uses). `pkg-config` is
-required by libsecret and several arrow/duckdb native deps.
+The human review gallery embeds fonts and writes scene/theme links to `target/visual`:
 
-If runnerkit supports image baking, add the above to the base image so
-re-provisions inherit. Otherwise install manually on each new runnerkit
-host.
-
-### dbus + gnome-keyring
-
-The keychain test surface uses libsecret → Secret Service → dbus session
-bus. On hosted runners the `dbus-launch` step runs per-job; on self-hosted
-the user session bus is expected to be running already (e.g., systemd
-user service). The dbus-launch step is gated to hosted runners only.
-
-### Memory
-
-Earlier runnerkit runners OOM-killed `ld` during dev-profile test
-binary linking. Resolved by provisioning runners with enough RAM
-(persistent cloud runner suffices). If OOM recurs, see the
-"OOM mitigations" section below.
-
-### Cargo cache
-
-The persistent runner reuses `~/.cargo/registry` and `target/` across
-runs. First run on a fresh image takes ~25 min compile + ~25 min test
-(~50 min total). Subsequent runs hit the cache and finish much faster.
-
-If the runner is re-provisioned (cold), expect the long-run timing
-again on the first build.
-
-## Heavy tests (`run-heavy` label)
-
-`heavy.yml` runs the `#[ignore = "requires generated fixtures"]`
-exit-criteria suite. Triggers:
-
-- **Weekly cron** — Mondays 06:00 UTC. The floor; runs whether or not anyone
-  remembers a label.
-- `workflow_dispatch` — manual run from the Actions tab.
-- PRs labeled `run-heavy` — apply when a PR touches engine internals,
-  fixture generator, or the attach/streaming code paths.
-
-```bash
-# Apply label from CLI:
-gh label create run-heavy --description "Run heavy.yml exit_criteria suite on this PR" --color FF6B35   # one-time
-gh pr edit <N> --add-label run-heavy
+```sh
+cargo run --locked -p dat0-ui --features visual --example visual_page
+# Open target/visual/index.html in your browser.
 ```
 
-Fixture cache is keyed by `hashFiles('crates/dat0-fixtures/**')`. Cache
-miss → full generation (~15-20 min for 1 GB CSV + 500 MB Parquet + 100 MB
-SQLite). Cache hit → tests run against existing fixture directory.
+Review those actual scenes and the affected desktop behavior; no private design
+HTML is a prerequisite.
 
-## Concurrency
+## Localization
 
-`ci.yml` has `concurrency: cancel-in-progress: true` grouped by
-`github.ref`. Rapid-fire pushes to the same branch cancel earlier
-in-progress runs to prevent minute-stacking. `heavy.yml` has the same.
+Run `bash scripts/i18n-check.sh` and `cargo test --locked -p dat0-i18n`.
+The heuristic pass for untranslated strings is advisory; the referenced-key pass
+is blocking. Literal `t()` keys and declared `*_KEYS` lists must exist in
+[`en.json`](../crates/dat0-i18n/src/strings/en.json). Runtime-composed keys need the
+existing explicit key-list mechanism. Tests containing deliberately absent keys
+are not part of the source scan.
 
-## When to apply `run-heavy` to a PR
+## Dependencies, licenses and NOTICE
 
-Apply the label if any of:
+Run `cargo deny check` against [`deny.toml`](../deny.toml). Keep its SPDX policy
+aligned with [`about.toml`](../about.toml). Deliberate DuckDB/Dioxus pins and the
+`duckdb::arrow` re-export chain are described in [upstream watch](upstream-watch.md).
+Dependabot maintains Cargo and action updates, not independent bumps of those pins.
+The core-purity check must fail if `cargo tree` itself fails; absence of output is
+not evidence that core is toolkit-free.
 
-- PR touches `crates/dat0-engine/src/**` (engine internals).
-- PR touches `crates/dat0-fixtures/**` (generator changes).
-- PR touches the `tests/exit_criteria.rs` assertions.
-- PR is the consumer of a deferred attach/streaming fix.
+Every CI run calls the canonical NOTICE workflow, without secrets. On Linux:
 
-Otherwise, the per-PR `ci.yml` suite is sufficient — exit_criteria is
-about size-bound IO behavior which doesn't depend on most product code.
-
-## Bypassing the linux-x86_64 self-hosted runner
-
-If the runnerkit host is offline or being re-provisioned, the per-PR
-linux-x86_64 job will queue indefinitely. To unblock without removing
-the matrix entry:
-
-1. Temporarily change `ci.yml` linux matrix entry's `labels` field to
-   `'["ubuntu-latest"]'`.
-2. Land your PR.
-3. Revert the `labels` change once the self-hosted runner is healthy.
-
-This burns hosted Linux minutes during the bypass window but unblocks
-release-critical PRs.
-
-## Escalating heavy.yml from weekly to nightly
-
-QA4 enabled the weekly cron (`0 6 * * 1`). The original re-enable criteria
-documented in `heavy.yml`'s header — team grows to 2+ devs, release cadence
-demands continuous validation, or a drift incident shows a shorter interval
-would have caught it earlier — now govern the step from **weekly to nightly**,
-not from off to on. Change the one line:
-
-```yaml
-  schedule:
-    - cron: '0 6 * * *'   # 06:00 UTC daily
+```sh
+cargo install cargo-about --locked --features cli --version 0.9.2
+scripts/notice-regen.sh
 ```
 
-Cost check before you do: the job is ~45 min on hosted Linux (1× billing), so
-nightly is ~5.25 h/week against weekly's ~45 min.
+The version pin lives in [the generator](../scripts/notice-regen.sh), and the workflow
+extracts it. Only the marked generated block is replaced; handwritten icons/fonts/
+JavaScript attribution remains. **Never redirect raw cargo-about output over NOTICE.**
+The generator normalizes line endings and duplicate attribution, and the Linux
+license selection is canonical. On macOS download and inspect the regenerated
+`NOTICE.md` correction artifact from the failed check, then commit that file.
 
-## OOM mitigations (if needed in the future)
+## Documentation and publication boundary
 
-If self-hosted Linux Test step OOMs during dev-profile link, three knobs
-in order of preference:
+Before pushing, run:
 
-1. **Workspace `Cargo.toml`** — `[profile.dev] debug = "line-tables-only"`. **APPLIED in P8** after the hosted ubuntu Test step hit `No space left on device` (full-DWARF test binaries × ~9 new P8 test bins exhausted the ~14 GB disk; macOS has more disk and passed). Cuts dev-profile link RAM ~40-60% AND test-binary disk ~60% workspace-wide. Tradeoff: panic backtraces without inlined frames. Acceptable for CI.
-2. **Per-job cargo concurrency** — set `CARGO_BUILD_JOBS: '2'` (or `'1'` on very low RAM) on the linux-x86_64 matrix entry's env block. Caps concurrent rustc/link processes.
-3. **Host swap** — add 8-16 GB swap (`/swapfile` + `swapon`). Won't make CI fast but stops OOM cascade. Recommend regardless of (1)/(2).
+```sh
+bash .github/scripts/check-public-tree.sh
+```
 
-Also: protect the runner agent itself from OOM. Set `OOMScoreAdjust=-500`
-on the runner systemd service so the kernel reaps the linker before
-killing the agent. Check runnerkit's unit file for the equivalent
-setting.
+The helper checks tracked entries against the root `.gitignore` policy, not global
+Git excludes. Local internal notes may remain ignored, but must not be tracked.
+Public samples need a narrow root-policy exception; `git add -f` does not bypass
+the check. CI can block merging a violation, not erase already-pushed content.
+Cleanup applies to the current tree; historical commits, forks and old PR views
+are not purged.
 
-## See also
+`docs-check` generates inputs from the Git index, so ignored local documents do not
+enter validation. To reproduce the offline local-target/fragment check with Lychee
+**0.24.2** from the repository root:
 
-- `docs/deferrals.md` — D-006 (macOS Intel), D-013 (macOS self-host),
-  PD-003 (closed by QA2), PD-004 (open; `pd004-diagnose.yml` is its instrument).
-- `docs/upstream-watch.md` — pinned-dep cadence; governs the five crates
-  `.github/dependabot.yml` ignores.
-- `deny.toml` — supply-chain policy; keep its `allow` list in sync with
-  `about.toml`'s `accepted`.
-- `scripts/i18n-check.sh` — the i18n gate; pass 2 is blocking.
-- `.github/workflows/ci.yml`, `heavy.yml`, `notice.yml`, `crash-e2e.yml`,
-  `pd004-diagnose.yml`, `release.yml` — sources of truth.
+```sh
+export RUNNER_TEMP="$(mktemp -d /tmp/dat0-links.XXXXXX)"
+git ls-files -- README.md CONTRIBUTING.md SECURITY.md CODE_OF_CONDUCT.md SUPPORT.md \
+  .github/pull_request_template.md ':(glob)docs/*.md' \
+  > "$RUNNER_TEMP/dat0-docs-inputs.txt"
+lychee --offline --include-fragments --no-progress \
+  --root-dir "$(git rev-parse --show-toplevel)" \
+  --files-from "$RUNNER_TEMP/dat0-docs-inputs.txt"
+```
+
+External-network availability is not a merge gate. Broken current local links are
+fixed rather than broadly suppressed.
+
+## Performance
+
+Budgets and recorded host measurements live in
+[`performance-baselines.json`](performance-baselines.json). The shared loader and
+`--update-baseline` writer use this public input; missing/malformed input is an error.
+For the two fixture-free startup scenarios on a supported desktop:
+
+```sh
+cargo xtask perf --check --scenario idle_rss --scenario cold_launch
+```
+
+The helper builds the selected scenarios' release artifacts itself. App and example
+builds are separate to prevent development-feature leakage. A **SKIP is not a
+measurement**. Do not change budgets or recorded baselines to conceal a regression.
+Host keys distinguish developer hardware from virtualized CI; absolute budgets and
+recorded-host regression checks serve different purposes. A new host does not supply
+an old-host regression comparison.
+
+Two CI entry points share that interface: the macOS main-push advisory records
+`scroll_1m`, `cold_launch`, and `idle_rss` with `DAT0_PERF_HOST=ci-hosted`; the
+`run-perf` PR job runs all six scenarios as a blocking verdict. Maintainers apply
+`run-perf` when relevant: `gh pr edit <N> --add-label run-perf`. Real frame timing is
+not a general throughput guarantee for arbitrary hardware or virtual displays.
+
+## Heavy tests
+
+`heavy.yml` runs weekly, manually, and for `run-heavy` PRs. Maintainers apply it for
+changes to size-bound engine/attach/streaming behavior or the fixture generator:
+`gh pr edit <N> --add-label run-heavy`. It generates/caches the large fixtures for
+[`exit_criteria`](../crates/dat0-engine/tests/exit_criteria.rs) and runs the
+view-regeneration bench. It is not a prerequisite for every documentation/UI PR.
+Use the workflow's scoped fixture generation and test commands, not a workspace-wide
+ignored-test invocation.
+
+## Ignored and live test categories
+
+| Category | Prerequisite and scope |
+|---|---|
+| Large fixtures | Generated 1 GB CSV, 500 MB Parquet and 100 MB SQLite; targeted `dat0-engine` `exit_criteria`, normally through heavy.yml |
+| Live MotherDuck/OpenRouter | Chosen service credentials and network access; targeted `md_attach` / `ai_live`, not the default suite |
+| Native keychain | macOS uses a real `dat0-test` item; Linux explicitly opted-in runs require unlocked Secret Service; preserve target-specific ignore behavior |
+| Timing-sensitive cancellation | Dedicated targeted `view_lifecycle` ignored case; do not treat a loaded shared runner as reliable timing evidence |
+| Production update key | Targeted ignored `update_key_is_production` release tripwire; provisioned release preparation, not ordinary contributors |
+
+Live-service steps are permitted only for a push to `refs/heads/main` in
+`accidentally-awesome-labs/dat0`. All PRs, including same-repository and Dependabot
+PRs, and fork-main pushes explicitly skip them. MotherDuck remains a hard main gate;
+OpenRouter live smoke is bounded and advisory. Ordinary CI/heavy use the development
+DSN stub, not production crash credentials. Default tests may still acquire extensions.
+
+## Coverage and release operations
+
+Coverage uploads an LCOV report and is advisory, with no threshold. Instrumented
+builds use reduced dev debug information for disk capacity; that does not replace
+behavioral validation. Do not promote an unmeasured threshold into a merge gate.
+
+Release preparation uses DCO-signed PRs and the normal required checks. See
+[release prerequisites](release-prerequisites.md), [release runbook](release-runbook.md),
+and [security operations](security-runbook.md). Main dispatch:
+`gh workflow run release.yml --repo accidentally-awesome-labs/dat0 --ref main`.
+Absent signing material permits the existing unsigned packaging dry run; it does
+not exercise production manifest signing and never publishes. Signing/notary/minisign/
+GPG material belongs in the protected `release` environment. Telemetry credentials
+are separately scoped to the workflows that consume them; never put real values in
+public logs or issue reports.

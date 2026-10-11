@@ -23,8 +23,10 @@ Thumbs.db
 
 # Local environment
 .env
-.env.local
-.env.*.local
+.env.*
+!.env.example
+!.env.sample
+!.env.template
 
 # Secrets / signing (never commit)
 *.pem
@@ -32,6 +34,9 @@ Thumbs.db
 *.cer
 .sentry-cli.toml
 ed25519_private.key
+*.p8
+/dat0-minisign.key
+/dat0-ci-signing.key
 
 # Logs
 *.log
@@ -71,3 +76,13 @@ rust_out
 # Vendored JS build inputs (the built bundle in crates/dat0-ui/assets/ IS committed;
 # node_modules is not — see crates/dat0-ui/vendor/codemirror/README.md).
 node_modules/
+
+# Private planning and local assistant state (working copies may be retained)
+/docs/plans/
+/docs/specs/
+/docs/design/
+/docs/internal/
+/docs/deferrals.md
+/docs/ci-mac-vm-runner.md
+/.claude/
+/.planning/

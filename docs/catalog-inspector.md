@@ -4,6 +4,8 @@ dat0's left **Catalog** dock and right **Inspector** dock give you a structural
 view of the window's tables and a one-scan statistical profile of the table in
 the active tab.
 
+[Documentation index](README.md)
+
 ## Toggling the docks
 
 Both docks are off by default. Toggle them from the **View** menu:
@@ -78,9 +80,8 @@ window's thread, whenever its pane is open, and shows:
 
 Profiling is built on DuckDB's `SUMMARIZE`, which computes all column statistics
 in a single table scan. Whole-table mode runs `SUMMARIZE <table>`; current-view
-mode runs `SUMMARIZE (SELECT * FROM <the view the grid reads>)`. Profiling a
-1M-row table completes well under the 2-second target (≈85 ms measured on a
-typical machine).
+mode runs `SUMMARIZE (SELECT * FROM <the view the grid reads>)`. Runtime depends
+on the data, active view, and host; no fixed latency is guaranteed.
 
 ### When it profiles again
 

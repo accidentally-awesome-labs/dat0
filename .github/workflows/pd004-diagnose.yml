@@ -2,30 +2,28 @@ name: PD-004 diagnose (keychain on Linux)
 
 # DIAGNOSTIC INSTRUMENT, not a gate. Manual dispatch only.
 #
-# PD-004 (docs/deferrals.md): `crates/dat0-keychain/tests/round_trip.rs:3` is
-# `#[cfg_attr(target_os = "linux", ignore)]` because the Secret Service backend
-# reportedly panics with `SS error: result not returned from SS API` on hosted
-# Ubuntu. That diagnosis is from 2026-04-26 and has never been re-checked —
-# meanwhile `ci.yml` grew the obvious remedy (`dbus-launch` +
-# `gnome-keyring-daemon --unlock --start --components=secrets`, ci.yml:191-198)
-# and the deferral was never revisited against it.
-#
-# The deliverable of this workflow is THE CAPTURED ERROR, pasted into PD-004.
-# It deliberately runs the same setup ci.yml already uses (arm A) AND the
-# `dbus-run-session` form PD-004 suggests as fix (a) (arm B), so the log shows
-# which one — if either — actually works. Do NOT remove the `cfg_attr` on the
-# strength of a green run here without also making the real CI job run it.
+# The Linux native Secret Service round trip is explicitly opted in because it
+# needs an unlocked keyring session. Compare ci.yml's dbus-launch setup (arm A)
+# with dbus-run-session (arm B), retaining the captured errors as evidence.
+# Post sanitized results to the relevant public issue; see docs/ci.md.
+# Do not remove the native-test ignore solely on a green diagnostic run without
+# making the ordinary Linux CI path exercise the same setup.
 on:
   workflow_dispatch: {}
+
+permissions:
+  contents: read
 
 jobs:
   keychain-linux:
     runs-on: ubuntu-latest
     timeout-minutes: 45
     steps:
-      - uses: actions/checkout@v7
-      - uses: dtolnay/rust-toolchain@1.97.0
-      - uses: Swatinem/rust-cache@v2
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@ca36e3307eb02aaffd8a9268ae90e586fd4f461e # 1.97.0
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
         with:
           cache-targets: true
       - name: Linux deps
@@ -80,11 +78,11 @@ jobs:
             tail -n 40 /tmp/pd004-arm-b.log 2>/dev/null || echo "(no log)"
             echo '```'
             echo ""
-            echo "Paste the failing arm's exact error into PD-004 in docs/deferrals.md."
+            echo "Post the failing arm's sanitized error and run URL to the relevant public issue."
           } >> "$GITHUB_STEP_SUMMARY"
       - name: Upload logs
         if: always()
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
           name: pd004-diagnose-${{ github.sha }}
           path: |

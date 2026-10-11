@@ -7,9 +7,8 @@
 //!
 //! So this launches the real shell in a real window, reads back
 //! `getBoundingClientRect` and `getComputedStyle` for the load-bearing
-//! surfaces, and asserts the Design system's numbers in Rust. It is the
-//! automated half of the design gate; the manual half is the side-by-side
-//! against `docs/internal/design/redesign-landing-v4.dc.html`.
+//! surfaces, and asserts the design system's numbers in Rust. See `docs/ci.md`
+//! for the real-window gate and the `visual_page` gallery for appearance review.
 //!
 //! ```text
 //! cd crates/dat0-ui && cargo run --example shell_probe
