@@ -85,7 +85,7 @@ cargo run --locked -p dat0-ui --bin dat0
 ```
 
 Complete or skip the first-run tour, then open `generated.csv` in the fixture directory
-with the file picker; its columns are `id`, `name`, and `score`. From another terminal
+with the file picker; its columns include `id`, `name`, and `score`. From another terminal
 with **identical profile variables**, run
 `target/debug/dat0 "$scratch/fixtures/generated.csv"` to exercise forwarding. Close
 all windows normally and reopen this profile to check that onboarding stays completed.
