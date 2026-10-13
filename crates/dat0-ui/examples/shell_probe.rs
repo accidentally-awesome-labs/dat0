@@ -66,6 +66,10 @@ try {
     "Geist Mono to load",
   );
   await settle();
+  await waitFor(
+    () => q("grid-viewport") && q("row-0"),
+    "the CSV grid to mount",
+  );
 
   const box = (id) => {
     const el = q(id);
@@ -85,6 +89,39 @@ try {
   const rootVar = (name) =>
     getComputedStyle(document.documentElement).getPropertyValue(name).trim();
 
+  // A single good frame can land between two bad ones. Observe the production
+  // shell after a real import, without resizing the window or writing layout.
+  const layout = {
+    sidebar_min_w: Infinity,
+    sidebar_max_w: -Infinity,
+    grid_min_x: Infinity,
+    grid_max_x: -Infinity,
+    window_min_w: Infinity,
+    window_max_w: -Infinity,
+  };
+  const sampleLayout = () => {
+    const sidebar = box("sidebar");
+    const grid = box("grid-viewport");
+    const width = sidebar ? sidebar.w : 0;
+    const x = grid ? grid.x : 0;
+    layout.sidebar_min_w = Math.min(layout.sidebar_min_w, width);
+    layout.sidebar_max_w = Math.max(layout.sidebar_max_w, width);
+    layout.grid_min_x = Math.min(layout.grid_min_x, x);
+    layout.grid_max_x = Math.max(layout.grid_max_x, x);
+    layout.window_min_w = Math.min(layout.window_min_w, window.innerWidth);
+    layout.window_max_w = Math.max(layout.window_max_w, window.innerWidth);
+  };
+  const observer = new MutationObserver(sampleLayout);
+  observer.observe(document.querySelector(".d0-window"), {
+    attributes: true,
+    attributeFilter: ["style", "class"],
+    childList: true,
+    subtree: true,
+  });
+  sampleLayout();
+  await new Promise((resolve) => setTimeout(resolve, 1500));
+  sampleLayout();
+  observer.disconnect();
   clearTimeout(guard);
   dioxus.send({
     titlebar: box("titlebar"),
@@ -104,6 +141,7 @@ try {
     // The three sections are always present, even when empty.
     sections: ["section-files", "section-connections", "section-packages"].filter((s) => q(s)).length,
     fonts_loaded: document.fonts.check("12.5px 'Geist Mono'"),
+    ...layout,
   });
 } catch (e) {
   clearTimeout(guard);
@@ -154,17 +192,52 @@ struct Report {
     sections: usize,
     #[serde(default)]
     fonts_loaded: bool,
+    #[serde(default)]
+    sidebar_min_w: i64,
+    #[serde(default)]
+    sidebar_max_w: i64,
+    #[serde(default)]
+    grid_min_x: i64,
+    #[serde(default)]
+    grid_max_x: i64,
+    #[serde(default)]
+    window_min_w: i64,
+    #[serde(default)]
+    window_max_w: i64,
 }
 
 fn main() {
+    let runtime = tokio::runtime::Runtime::new().expect("probe runtime");
+    let _runtime_guard = runtime.enter();
+    std::fs::create_dir_all(scratch()).expect("probe directory");
+    dat0_core::globals::install_state_root(scratch().join("data"));
     let registry = ActionRegistry::new();
     dat0_core::actions::builtin::register_all(&registry).expect("built-ins register");
-    let boot = Boot::new(registry, Vec::new());
+    let fixture = fixture_path();
+    std::fs::write(
+        &fixture,
+        "id,name,score\n1,alpha,10\n2,beta,20\n3,gamma,30\n",
+    )
+    .expect("write CSV fixture");
+    let boot = Boot::new(registry, vec![fixture]);
 
     dioxus::LaunchBuilder::desktop()
         .with_cfg(dat0_ui::launch::config())
         .with_context(boot)
         .launch(Probe);
+}
+
+fn scratch() -> std::path::PathBuf {
+    std::env::temp_dir().join(format!("dat0-shell-probe-{}", std::process::id()))
+}
+
+fn fixture_path() -> std::path::PathBuf {
+    scratch().join("fixture.csv")
+}
+
+fn exit(code: i32) -> ! {
+    let _ = std::fs::remove_dir_all(scratch());
+    std::process::exit(code)
 }
 
 #[component]
@@ -184,7 +257,7 @@ fn Probe() -> Element {
                 Ok(v) => v,
                 Err(e) => {
                     eprintln!("probe channel failed: {e}");
-                    std::process::exit(2);
+                    exit(2);
                 }
             };
             report(r);
@@ -198,7 +271,7 @@ fn report(r: Report) {
     println!("--- dat0 shell probe ---");
     if let Some(e) = r.error {
         println!("probe error: {e}");
-        std::process::exit(1);
+        exit(1);
     }
 
     let tokens = dat0_core::theme::builtin_or_default(dat0_core::theme::DEFAULT_ID);
@@ -246,6 +319,21 @@ fn report(r: Report) {
         beside.to_string(),
         "true".into(),
     );
+    check(
+        "sidebar remains expanded",
+        format!("{}..{}", r.sidebar_min_w, r.sidebar_max_w),
+        "238..238".into(),
+    );
+    check(
+        "grid position stays fixed",
+        (r.grid_min_x == r.grid_max_x).to_string(),
+        "true".into(),
+    );
+    check(
+        "probe window stays fixed",
+        (r.window_min_w == r.window_max_w).to_string(),
+        "true".into(),
+    );
     let tall = match (side, pane) {
         // Within a splitter's width of each other: they are two tracks of one
         // row, not two rows.
@@ -275,11 +363,11 @@ fn report(r: Report) {
 
     if fails.is_empty() {
         println!("PASS");
-        std::process::exit(0);
+        exit(0);
     }
     println!("FAIL ({} mismatches)", fails.len());
     for f in &fails {
         println!("  - {f}");
     }
-    std::process::exit(1);
+    exit(1);
 }

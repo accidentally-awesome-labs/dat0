@@ -330,6 +330,10 @@ pub fn Grid(props: GridProps) -> Element {
                 // the first scroll: on first layout, when the stylesheet lands,
                 // and whenever the window or a pane beside it resizes.
                 onresize: move |e| {
+                    // This size belongs to the grid, not the window. Bubbling it
+                    // to Shell overwrites the window extent and oscillates the
+                    // responsive sidebar as the grid expands and contracts.
+                    e.stop_propagation();
                     if let Ok(size) = e.data().get_content_box_size() {
                         let mut vp = viewport.write();
                         vp.width = size.width;
