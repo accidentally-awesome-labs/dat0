@@ -91,6 +91,11 @@ stopping at the first probe. Its Linux invocation after building the release exa
 xvfb-run -a -s "-screen 0 1920x1200x24" bash .github/scripts/windowed-probes.sh
 ```
 
+`shell_probe` boots a real session on a small synthetic CSV and samples sidebar
+width and grid position while the window size stays fixed. This catches layout
+feedback loops that a single good frame misses. Grid resize events are
+element-local: they must not supply the shell's window-size measurements.
+
 The human review gallery embeds fonts and writes scene/theme links to `target/visual`:
 
 ```sh
