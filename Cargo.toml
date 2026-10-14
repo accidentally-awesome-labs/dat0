@@ -95,7 +95,7 @@ insta = "1"
 
 
 # Bench
-criterion = { version = "0.5", features = ["html_reports", "async_tokio"] }
+criterion = { version = "0.8", features = ["html_reports", "async_tokio"] }
 
 # P9a Charts: plotters renders the 7 chart types to a bitmap buffer (BGRA→GPUI
 # img) + PNG/SVG export. plotters core+svg were transitive (via criterion);
