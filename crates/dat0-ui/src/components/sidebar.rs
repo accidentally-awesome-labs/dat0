@@ -250,10 +250,10 @@ pub fn Sidebar(props: SidebarProps) -> Element {
                         // `open_table_tab`; `nav` keeps it out of `NavAction`
                         // for exactly that reason, so it activates here.
                         NavAction::None => {
-                            if nav::package_activation(&nav_rows, at, key).is_some() {
-                                if let Some(target) = addressed.get(at) {
-                                    on_open.call(*target);
-                                }
+                            if nav::package_activation(&nav_rows, at, key).is_some()
+                                && let Some(target) = addressed.get(at)
+                            {
+                                on_open.call(*target);
                             }
                         }
                     }

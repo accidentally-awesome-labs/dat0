@@ -88,7 +88,7 @@ fn cell_text(r: usize, c: usize) -> String {
             ((r * 7919 + c * 104_729) % 1_000_000) as f64 / 1000.0
         ),
         3 => {
-            if (r + c) % 2 == 0 {
+            if (r + c).is_multiple_of(2) {
                 "true".to_string()
             } else {
                 "false".to_string()

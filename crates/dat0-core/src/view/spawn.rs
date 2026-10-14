@@ -129,10 +129,10 @@ async fn run_view_change(
 
     // Best-effort: the new view is already bound, so failing to drop the old
     // one costs a little memory and nothing else.
-    if let Some(prev) = change.previous_active_view {
-        if let Err(e) = engine.drop_view(&prev).await {
-            tracing::debug!(view = %prev, error = %e, "drop_view best-effort: ignored");
-        }
+    if let Some(prev) = change.previous_active_view
+        && let Err(e) = engine.drop_view(&prev).await
+    {
+        tracing::debug!(view = %prev, error = %e, "drop_view best-effort: ignored");
     }
 
     Ok(Some(ds))

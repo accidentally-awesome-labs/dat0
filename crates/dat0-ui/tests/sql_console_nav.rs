@@ -167,10 +167,10 @@ fn tab_labels(h: &mut Harness, n: usize) -> Vec<String> {
     let mut seen: Vec<String> = Vec::new();
     for _ in 0..n {
         h.press_tab();
-        if let Some(l) = h.focused_label() {
-            if seen.last() != Some(&l) {
-                seen.push(l);
-            }
+        if let Some(l) = h.focused_label()
+            && seen.last() != Some(&l)
+        {
+            seen.push(l);
         }
     }
     seen
