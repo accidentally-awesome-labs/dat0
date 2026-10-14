@@ -23,22 +23,22 @@ async fn resolve_base_url(provider: Provider, cfg: &AiSettings) -> Result<String
     }
     // Custom: scheme + literal-IP checks, then resolve-and-recheck.
     let validated = ssrf::validate_url(&cfg.custom_base_url, cfg.advanced_override)?;
-    if !cfg.advanced_override {
-        if let Some(host) = validated.0.host_str() {
-            let port = validated.0.port_or_known_default().unwrap_or(443);
-            // DNS-rebinding guard: every resolved IP must pass. NOTE: this is a
-            // recheck, not connection-pinning — reqwest re-resolves the host
-            // independently at `.send()`, leaving a residual TOCTOU window. Full
-            // pinning (a custom reqwest resolver bound to the checked IP) is a
-            // deferred hardening follow-up; the recheck closes the practical gap
-            // for a key the user themselves supplied.
-            let addrs = tokio::net::lookup_host((host, port))
-                .await
-                .map_err(|e| anyhow!("dns resolution failed: {e}"))?;
-            for sa in addrs {
-                if ssrf::is_blocked_ip(sa.ip()) {
-                    bail!("resolved to a blocked address: {}", sa.ip());
-                }
+    if !cfg.advanced_override
+        && let Some(host) = validated.0.host_str()
+    {
+        let port = validated.0.port_or_known_default().unwrap_or(443);
+        // DNS-rebinding guard: every resolved IP must pass. NOTE: this is a
+        // recheck, not connection-pinning — reqwest re-resolves the host
+        // independently at `.send()`, leaving a residual TOCTOU window. Full
+        // pinning (a custom reqwest resolver bound to the checked IP) is a
+        // deferred hardening follow-up; the recheck closes the practical gap
+        // for a key the user themselves supplied.
+        let addrs = tokio::net::lookup_host((host, port))
+            .await
+            .map_err(|e| anyhow!("dns resolution failed: {e}"))?;
+        for sa in addrs {
+            if ssrf::is_blocked_ip(sa.ip()) {
+                bail!("resolved to a blocked address: {}", sa.ip());
             }
         }
     }

@@ -17,10 +17,10 @@ impl SettingsWatcher {
         let mut watcher =
             notify::recommended_watcher(move |res: notify::Result<notify::Event>| match res {
                 Ok(event) => {
-                    if matches!(event.kind, EventKind::Modify(_) | EventKind::Create(_)) {
-                        if let Ok(s) = store.load_or_default() {
-                            on_change(s);
-                        }
+                    if matches!(event.kind, EventKind::Modify(_) | EventKind::Create(_))
+                        && let Ok(s) = store.load_or_default()
+                    {
+                        on_change(s);
                     }
                 }
                 Err(e) => tracing::warn!(?e, "settings watcher error"),

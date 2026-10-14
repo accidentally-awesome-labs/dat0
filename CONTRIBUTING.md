@@ -19,6 +19,8 @@ not through that public discussion process.
 The supported development baseline is **Rust 1.97.0**, pinned in
 [`rust-toolchain.toml`](rust-toolchain.toml), with Rust 2024. We do not claim a
 separately tested older MSRV. Install [rustup](https://rustup.rs), then the tools below.
+Clippy uses the workspace's `rust-version` from [`Cargo.toml`](Cargo.toml); do not
+add a separate MSRV override that drifts from the supported baseline.
 
 On **macOS**, install Xcode Command Line Tools with `xcode-select --install`.
 On **Ubuntu/Debian**, install the native compiler and WebKit/keychain/chart dependencies:

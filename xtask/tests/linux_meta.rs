@@ -20,10 +20,7 @@ fn mime_xml_registers_dat0_glob() {
     assert!(m.contains("*.dat0"));
 }
 
-use std::path::Path;
-use xtask::linux::{
-    BUNDLED_LIBRARIES, HOST_LIBRARIES, RPATH, classify, needed, parse_needed, parse_rpath,
-};
+use xtask::linux::{BUNDLED_LIBRARIES, HOST_LIBRARIES, RPATH, classify, parse_needed, parse_rpath};
 
 #[test]
 fn readelf_needed_lines_are_parsed_in_order() {
@@ -51,6 +48,9 @@ fn only_a_dt_rpath_counts_as_the_library_path() {
 #[cfg(target_os = "linux")]
 #[test]
 fn readelf_reads_what_a_real_binary_links() {
+    use std::path::Path;
+    use xtask::linux::needed;
+
     let libs = needed(Path::new(env!("CARGO_BIN_EXE_xtask"))).unwrap();
     assert!(libs.iter().any(|l| l.starts_with("libc.so")), "{libs:?}");
 }

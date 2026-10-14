@@ -135,10 +135,10 @@ fn find_unknown_transform_kind(doc: &serde_json::Value) -> Option<String> {
             continue;
         };
         for op in stack {
-            if let Some(kind) = op.get("kind").and_then(|k| k.as_str()) {
-                if !KNOWN_TRANSFORM_KINDS.contains(&kind) {
-                    return Some(kind.to_string());
-                }
+            if let Some(kind) = op.get("kind").and_then(|k| k.as_str())
+                && !KNOWN_TRANSFORM_KINDS.contains(&kind)
+            {
+                return Some(kind.to_string());
             }
         }
     }

@@ -1,2 +1,0 @@
-# project-wide clippy config (lint thresholds, allowlists)
-msrv = "1.85"

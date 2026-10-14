@@ -24,7 +24,7 @@ fn build_batch() -> RecordBatch {
     let mut s_b = StringBuilder::with_capacity(ROWS, ROWS * 8);
     let mut u_b = UInt64Builder::with_capacity(ROWS);
     for r in 0..ROWS {
-        if r % 100 == 0 {
+        if r.is_multiple_of(100) {
             i_b.append_null();
             f_b.append_null();
             s_b.append_null();

@@ -90,11 +90,11 @@ pub fn compile_view_sql(base: &str, ops: &[Transformation]) -> Result<String, Re
             sql.push_str(" WHERE ");
             sql.push_str(&where_clauses.join(" AND "));
         }
-        if let Some(keys) = sort {
-            if !keys.is_empty() {
-                sql.push_str(" ORDER BY ");
-                sql.push_str(&render_sort(keys));
-            }
+        if let Some(keys) = sort
+            && !keys.is_empty()
+        {
+            sql.push_str(" ORDER BY ");
+            sql.push_str(&render_sort(keys));
         }
         return Ok(sql);
     }
@@ -123,11 +123,11 @@ pub fn compile_view_sql(base: &str, ops: &[Transformation]) -> Result<String, Re
         sql.push_str(" WHERE ");
         sql.push_str(&where_clauses.join(" AND "));
     }
-    if let Some(keys) = sort {
-        if !keys.is_empty() {
-            sql.push_str(" ORDER BY ");
-            sql.push_str(&render_sort(keys));
-        }
+    if let Some(keys) = sort
+        && !keys.is_empty()
+    {
+        sql.push_str(" ORDER BY ");
+        sql.push_str(&render_sort(keys));
     }
     Ok(sql)
 }

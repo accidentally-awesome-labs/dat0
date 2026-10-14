@@ -273,12 +273,14 @@ pub fn Grid(props: GridProps) -> Element {
                 },
                 on_reorder_start: move |col: usize| reordering.set(Some(col)),
                 on_reorder_drop: move |to: usize| {
-                    if let Some(from) = reordering.take() {
-                        if from != to && from < n_cols && to < n_cols {
-                            // The owner moves the column; its width follows
-                            // the column, not the place (`views::use_fit`).
-                            props.on_reorder.call((from, to));
-                        }
+                    if let Some(from) = reordering.take()
+                        && from != to
+                        && from < n_cols
+                        && to < n_cols
+                    {
+                        // The owner moves the column; its width follows
+                        // the column, not the place (`views::use_fit`).
+                        props.on_reorder.call((from, to));
                     }
                 },
                 marks: props.marks.clone(),

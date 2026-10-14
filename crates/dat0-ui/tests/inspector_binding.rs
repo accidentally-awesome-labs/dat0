@@ -61,7 +61,7 @@ const COMMANDS: &[&str] = &[
 fn sales(rows: usize) -> String {
     let mut csv = String::from("region,amt\n");
     for i in 1..=rows {
-        let region = if i % 2 == 0 { "EU" } else { "US" };
+        let region = if i.is_multiple_of(2) { "EU" } else { "US" };
         csv.push_str(&format!("{region},{i}\n"));
     }
     csv

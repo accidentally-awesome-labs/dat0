@@ -114,11 +114,11 @@ impl QueryCancel {
 
 impl Drop for QueryCancel {
     fn drop(&mut self) {
-        if self.armed {
-            if let Some(e) = self.engine.upgrade() {
-                e.interrupt_scoped(self.token);
-                e.end_query(self.token);
-            }
+        if self.armed
+            && let Some(e) = self.engine.upgrade()
+        {
+            e.interrupt_scoped(self.token);
+            e.end_query(self.token);
         }
     }
 }

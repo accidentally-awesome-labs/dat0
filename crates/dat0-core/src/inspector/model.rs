@@ -122,10 +122,10 @@ impl InspectorModel {
     pub fn patch_column(&mut self, col: &str, new: dat0_engine::ColumnProfile) {
         if let Some(t) = self.target_table.clone() {
             let e = self.epoch_of(&t);
-            if let Some(p) = self.cache.get_mut(&(t, e)) {
-                if let Some(slot) = p.columns.iter_mut().find(|c| c.name == col) {
-                    *slot = new;
-                }
+            if let Some(p) = self.cache.get_mut(&(t, e))
+                && let Some(slot) = p.columns.iter_mut().find(|c| c.name == col)
+            {
+                *slot = new;
             }
         }
     }

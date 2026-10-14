@@ -39,12 +39,12 @@ pub(crate) fn referenced_tables_blocking(
 fn collect_cte_names(v: &serde_json::Value, out: &mut HashSet<String>) {
     match v {
         serde_json::Value::Object(map) => {
-            if let Some(cte) = map.get("cte_map") {
-                if let Some(entries) = cte.get("map").and_then(|m| m.as_array()) {
-                    for e in entries {
-                        if let Some(k) = e.get("key").and_then(|k| k.as_str()) {
-                            out.insert(k.to_string());
-                        }
+            if let Some(cte) = map.get("cte_map")
+                && let Some(entries) = cte.get("map").and_then(|m| m.as_array())
+            {
+                for e in entries {
+                    if let Some(k) = e.get("key").and_then(|k| k.as_str()) {
+                        out.insert(k.to_string());
                     }
                 }
             }
@@ -66,12 +66,12 @@ fn collect_base_tables(
     match v {
         serde_json::Value::Object(map) => {
             let is_base = map.get("type").and_then(|t| t.as_str()) == Some("BASE_TABLE");
-            if is_base {
-                if let Some(name) = map.get("table_name").and_then(|n| n.as_str()) {
-                    if !ctes.contains(name) && seen.insert(name.to_string()) {
-                        out.push(name.to_string());
-                    }
-                }
+            if is_base
+                && let Some(name) = map.get("table_name").and_then(|n| n.as_str())
+                && !ctes.contains(name)
+                && seen.insert(name.to_string())
+            {
+                out.push(name.to_string());
             }
             for val in map.values() {
                 collect_base_tables(val, ctes, out, seen);
