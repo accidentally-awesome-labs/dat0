@@ -131,7 +131,7 @@ num_cpus = "1"
 
 # Fixtures generator (T12): deterministic CSV/Parquet/SQLite from a seed.
 clap = { version = "4", features = ["derive"] }
-rand = "0.8"
+rand = "0.9"
 rand_chacha = "0.3" # deterministic PRNG (cross-platform reproducibility)
 rusqlite = { version = "0.40", features = ["bundled"] }
 
