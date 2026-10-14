@@ -190,13 +190,13 @@ pub fn apply_update(install: &Path, downloaded: &Path) -> anyhow::Result<()> {
     // --- Phase 3: rename downloaded over target (MANDATORY — never cp/write-in-place) ---
     if let Err(e) = std::fs::rename(downloaded, install) {
         // Rollback
-        if backup_path.exists() {
-            if let Err(rollback_err) = std::fs::rename(&backup_path, install) {
-                tracing::error!(
-                    "update rollback failed; install may be missing at {}: {rollback_err}",
-                    install.display()
-                );
-            }
+        if backup_path.exists()
+            && let Err(rollback_err) = std::fs::rename(&backup_path, install)
+        {
+            tracing::error!(
+                "update rollback failed; install may be missing at {}: {rollback_err}",
+                install.display()
+            );
         }
         return Err(e).context("could not rename new binary into place");
     }
