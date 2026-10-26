@@ -54,7 +54,7 @@ jobs:
       # Registry + git + target caching. `fmt` compiles nothing, but the
       # registry/git half still removes the DuckDB + Dioxus source fetch from
       # every run, which is most of this job's wall time.
-      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
         with:
           cache-targets: true
       - run: cargo fmt --all -- --check
@@ -84,7 +84,7 @@ jobs:
       # `clippy --all-targets` is a full check build; target caching is the
       # whole point here. This job has no disk ceiling problem (it never
       # produces the debug test-binary set that `build-and-test` does).
-      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
         with:
           cache-targets: true
       - run: cargo clippy --workspace --all-targets -- -D warnings
@@ -219,7 +219,7 @@ jobs:
       # it would recreate the exhaustion the reclaims exist to prevent.
       # What the registry/git half removes is the DuckDB + Dioxus + Arrow source
       # fetch, which is pure download time with no disk-ceiling downside.
-      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
         with:
           cache-targets: false
           key: ${{ matrix.target.name }}
@@ -483,7 +483,7 @@ jobs:
         with:
           persist-credentials: false
       - uses: dtolnay/rust-toolchain@ca36e3307eb02aaffd8a9268ae90e586fd4f461e # 1.97.0
-      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
         with:
           cache-targets: false
       - name: cargo xtask perf --check (all six scenarios)
@@ -527,7 +527,7 @@ jobs:
           persist-credentials: false
       - uses: dtolnay/rust-toolchain@ca36e3307eb02aaffd8a9268ae90e586fd4f461e # 1.97.0
         with: { components: llvm-tools-preview }
-      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
         with:
           cache-targets: false
       - name: Free disk space
@@ -605,7 +605,7 @@ jobs:
             libfontconfig1-dev libssl-dev \
             libwebkit2gtk-4.1-dev libsoup-3.0-dev libxdo-dev \
             xvfb
-      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
       - name: Build the probes
         run: >-
           cargo build --release -p dat0-ui
